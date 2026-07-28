@@ -1,0 +1,27 @@
+{
+  "name": "@tomato-clock/android",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "web:build": "npm --prefix ../web run build",
+    "android:sync": "npm run web:build && cap sync android",
+    "android:assemble": "cd android && gradlew.bat assembleDebug",
+    "android:test": "cd android && gradlew.bat testDebugUnitTest lintDebug"
+  },
+  "dependencies": {
+    "@capacitor/android": "^7.4.3",
+    "@capacitor/app": "^7.1.0",
+    "@capacitor/core": "^7.4.3",
+    "@capacitor/filesystem": "^7.1.8",
+    "@capacitor/local-notifications": "^7.0.3",
+    "@capacitor/share": "^7.0.4",
+    "@capacitor/status-bar": "^7.0.3"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^7.4.3",
+    "@types/node": "^24.10.1",
+    "typescript": "^5.9.3"
+  }
+}

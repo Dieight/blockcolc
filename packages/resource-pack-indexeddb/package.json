@@ -1,0 +1,19 @@
+{
+  "name": "@tomato-clock/resource-pack-indexeddb",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@tomato-clock/resource-pack": "file:../resource-pack"
+  },
+  "devDependencies": {
+    "fake-indexeddb": "^6.2.4",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  }
+}

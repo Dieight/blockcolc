@@ -1,0 +1,16 @@
+{
+  "name": "方块钟 Blockcolc",
+  "short_name": "方块钟",
+  "description": "用专注时间建造自己的方块村落",
+  "lang": "zh-CN",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f3f5f2",
+  "theme_color": "#f3f5f2",
+  "icons": [
+    { "src": "/icons/blockcolc-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/icons/blockcolc-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

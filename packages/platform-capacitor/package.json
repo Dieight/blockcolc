@@ -1,0 +1,25 @@
+{
+  "name": "@tomato-clock/platform-capacitor",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@capacitor/app": "^7.1.0",
+    "@capacitor/core": "^7.4.3",
+    "@capacitor/filesystem": "^7.1.8",
+    "@capacitor/local-notifications": "^7.0.3",
+    "@capacitor/share": "^7.0.4",
+    "@capacitor/status-bar": "^7.0.3",
+    "@tomato-clock/application": "file:../application"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  }
+}

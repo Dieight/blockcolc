@@ -1,0 +1,24 @@
+{
+  "name": "@tomato-clock/storage-indexeddb",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "scripts": {
+    "test": "vitest run test",
+    "typecheck": "tsc --noEmit",
+    "test:e2e": "playwright test"
+  },
+  "dependencies": {
+    "@tomato-clock/application": "file:../application",
+    "@tomato-clock/domain": "file:../domain"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.55.1",
+    "@types/node": "^24.10.1",
+    "fake-indexeddb": "^6.2.4",
+    "typescript": "^5.9.3",
+    "vite": "^7.1.7",
+    "vitest": "^3.2.4"
+  }
+}
