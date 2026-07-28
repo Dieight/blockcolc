@@ -1,5 +1,23 @@
 apply plugin: 'com.android.application'
 
+def releaseStoreFile = System.getenv('BLOCKCOLC_STORE_FILE')
+def releaseStorePassword = System.getenv('BLOCKCOLC_STORE_PASSWORD')
+def releaseKeyAlias = System.getenv('BLOCKCOLC_KEY_ALIAS')
+def releaseKeyPassword = System.getenv('BLOCKCOLC_KEY_PASSWORD')
+def releaseSigningConfigured = [
+    releaseStoreFile,
+    releaseStorePassword,
+    releaseKeyAlias,
+    releaseKeyPassword,
+].every { it != null && !it.isBlank() }
+def releaseTaskRequested = gradle.startParameter.taskNames.any {
+    it.toLowerCase().contains('release')
+}
+
+if (releaseTaskRequested && !releaseSigningConfigured) {
+    throw new GradleException('Release signing credentials are required. Use tools/Build-AndroidRelease.ps1.')
+}
+
 android {
     namespace "com.blockcolc.app"
     compileSdk rootProject.ext.compileSdkVersion
@@ -7,8 +25,8 @@ android {
         applicationId "com.blockcolc.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        versionCode 2
+        versionName "1.0.1"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -16,8 +34,21 @@ android {
             ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    signingConfigs {
+        if (releaseSigningConfigured) {
+            release {
+                storeFile file(releaseStoreFile)
+                storePassword releaseStorePassword
+                keyAlias releaseKeyAlias
+                keyPassword releaseKeyPassword
+            }
+        }
+    }
     buildTypes {
         release {
+            if (releaseSigningConfigured) {
+                signingConfig signingConfigs.release
+            }
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }

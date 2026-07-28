@@ -19,6 +19,10 @@ google-services.json
 *.p12
 *.pem
 *.key
+*.clixml
+keystore.properties
+**/keystore.properties
+*signing-recovery*
 
 # Android and IDE output
 .gradle/
