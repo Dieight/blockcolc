@@ -151,6 +151,18 @@ def write_android_resources(foreground: Image.Image, resource_root: Path) -> Non
         )
 
 
+def write_web_resources(foreground: Image.Image, resource_root: Path) -> None:
+    resource_root.mkdir(parents=True, exist_ok=True)
+    web_foreground = rescale_subject(foreground, round(FOREGROUND_CANVAS * 0.80))
+    icon = Image.new("RGBA", foreground.size, BRAND_BACKGROUND)
+    icon.alpha_composite(web_foreground)
+    for size in (192, 512):
+        icon.resize((size, size), Image.Resampling.LANCZOS).save(
+            resource_root / f"blockcolc-{size}.png",
+            optimize=True,
+        )
+
+
 def checkerboard(size: int, cell: int = 32) -> Image.Image:
     result = Image.new("RGBA", (size, size))
     draw = ImageDraw.Draw(result)
@@ -215,6 +227,7 @@ def main() -> None:
     parser.add_argument("input", type=Path)
     parser.add_argument("output", type=Path)
     parser.add_argument("--android-res", type=Path)
+    parser.add_argument("--web-icons", type=Path)
     args = parser.parse_args()
 
     args.output.mkdir(parents=True, exist_ok=True)
@@ -238,6 +251,8 @@ def main() -> None:
     )
     if args.android_res:
         write_android_resources(foreground, args.android_res)
+    if args.web_icons:
+        write_web_resources(foreground, args.web_icons)
 
 
 if __name__ == "__main__":

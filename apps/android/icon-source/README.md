@@ -8,7 +8,8 @@ Android foreground and legacy launcher assets are generated deterministically fr
 python tools\build-adaptive-icon-source.py `
   apps\android\icon-source\blockcolc-icon-source.png `
   artifacts\adaptive-icon `
-  --android-res apps\android\android\app\src\main\res
+  --android-res apps\android\android\app\src\main\res `
+  --web-icons apps\web\public\icons
 ```
 
 The script removes only the neutral edge-connected background, preserves the enclosed clock face, fits the subject to the adaptive-icon safe zone, and generates density-specific PNGs. The adaptive background color is `#F3F5F2`.

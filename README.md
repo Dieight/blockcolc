@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="apps/web/public/icons/blockcolc-192.png" width="112" height="112" alt="方块钟图标">
+  <img src="apps/web/public/icons/blockcolc-512.png" width="128" height="128" alt="方块钟图标">
 </p>
 
 # 方块钟 / Blockcolc
