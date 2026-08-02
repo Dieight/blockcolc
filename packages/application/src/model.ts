@@ -8,13 +8,14 @@ import type {
 } from "@tomato-clock/domain";
 import { projectProgressBasisPoints } from "@tomato-clock/domain";
 
-type GeneratedCommandType = "CreateProject" | "AddSubtask" | "StartFocus" | "ReportSubtaskProgress";
+type GeneratedCommandType = "CreateProject" | "AddSubtask" | "StartFocus" | "ReportSubtaskProgress" | "CompleteFocusEarly";
 
 export type ApplicationCommand =
   | { type: "CreateProject"; title: string; blueprintId: string; importedBlueprint?: Project["importedBlueprint"]; subtasks: Array<{ title: string }> }
   | { type: "AddSubtask"; title: string }
   | { type: "StartFocus"; subtaskId: string; plannedDurationMs: number }
   | { type: "ReportSubtaskProgress"; subtaskId: string; focusSessionIds: string[]; progressBasisPoints: number }
+  | { type: "CompleteFocusEarly" }
   | Exclude<DomainCommand, { type: GeneratedCommandType }>;
 
 export type ApplicationWarningCode =

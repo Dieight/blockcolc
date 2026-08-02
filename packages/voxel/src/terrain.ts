@@ -30,13 +30,21 @@ export function createSteppedTerrainData(
   placements: readonly VillagePlacement[],
   roads: readonly RoadCell[],
   additionalPads: readonly TerrainPad[] = [],
+  minimumRadius?: { x: number; z: number },
 ): MergedGeometryData {
   const extent = villageExtent(placements, roads, additionalPads);
   const cells = new Map<string, number>();
-  const radiusX = Math.max(26, Math.max(Math.abs(extent.minX), Math.abs(extent.maxX)) + 9);
-  const radiusZ = Math.max(24, Math.max(Math.abs(extent.minZ), Math.abs(extent.maxZ)) + 9);
-  for (let x = -Math.ceil(radiusX); x <= Math.ceil(radiusX); x += 1) {
-    for (let z = -Math.ceil(radiusZ); z <= Math.ceil(radiusZ); z += 1) {
+  const outerX = Math.max(Math.abs(extent.minX), Math.abs(extent.maxX)) + 9;
+  const outerZ = Math.max(Math.abs(extent.minZ), Math.abs(extent.maxZ)) + 9;
+  // Keep the island round while enclosing every accepted building footprint.
+  const radius = Math.max(26, minimumRadius?.x ?? 0, minimumRadius?.z ?? 0, Math.hypot(outerX, outerZ));
+  const radiusX = radius;
+  const radiusZ = radius;
+  // A 1x1 mesh is useful close up, but a large circular settlement otherwise
+  // consumes an excessive number of independent terrain vertices on mobile.
+  const cellSize = radius > 70 ? 2 : 1;
+  for (let x = -Math.ceil(radiusX); x <= Math.ceil(radiusX); x += cellSize) {
+    for (let z = -Math.ceil(radiusZ); z <= Math.ceil(radiusZ); z += cellSize) {
       const normalized = (x / radiusX) ** 2 + (z / radiusZ) ** 2;
       const edgeNoise = ((stableHash(`edge:${x}:${z}`) % 100) - 50) / 1_500;
       if (normalized + edgeNoise > 1) continue;
@@ -56,15 +64,16 @@ export function createSteppedTerrainData(
     const [xText, zText] = key.split(":");
     const x = Number(xText);
     const z = Number(zText);
+    const half = cellSize / 2;
     const top = height - 0.5;
     addQuad([
-      x - 0.5, top, z - 0.5, x - 0.5, top, z + 0.5,
-      x + 0.5, top, z + 0.5, x + 0.5, top, z - 0.5,
+      x - half, top, z - half, x - half, top, z + half,
+      x + half, top, z + half, x + half, top, z - half,
     ], "grass");
-    addExposedSide(x, z, height, -1, 0, cells, addQuad);
-    addExposedSide(x, z, height, 1, 0, cells, addQuad);
-    addExposedSide(x, z, height, 0, -1, cells, addQuad);
-    addExposedSide(x, z, height, 0, 1, cells, addQuad);
+    addExposedSide(x, z, height, -1, 0, cellSize, cells, addQuad);
+    addExposedSide(x, z, height, 1, 0, cellSize, cells, addQuad);
+    addExposedSide(x, z, height, 0, -1, cellSize, cells, addQuad);
+    addExposedSide(x, z, height, 0, 1, cellSize, cells, addQuad);
   }
   const indexCount = Object.values(indicesByMaterial).reduce((sum, indices) => sum + indices.length, 0);
   return {
@@ -98,12 +107,6 @@ export function createRoadGeometryData(
 }
 
 function heightForCell(x: number, z: number, placements: readonly VillagePlacement[], additionalPads: readonly TerrainPad[]): number {
-  for (const placement of placements) {
-    if (Math.abs(x - placement.worldPosition.x) <= placement.footprint.width / 2 + 1
-      && Math.abs(z - placement.worldPosition.z) <= placement.footprint.depth / 2 + 1) {
-      return placement.worldPosition.y;
-    }
-  }
   for (const pad of additionalPads) {
     if (Math.abs(x - pad.x) <= pad.width / 2 + 1 && Math.abs(z - pad.z) <= pad.depth / 2 + 1) return pad.groundLevel;
   }
@@ -116,19 +119,21 @@ function addExposedSide(
   height: number,
   dx: number,
   dz: number,
+  cellSize: number,
   cells: ReadonlyMap<string, number>,
   addQuad: (vertices: readonly number[], material: TerrainMaterial) => void,
 ): void {
-  const neighbor = cells.get(`${x + dx}:${z + dz}`) ?? -2;
+  const neighbor = cells.get(`${x + dx * cellSize}:${z + dz * cellSize}`) ?? -2;
   if (neighbor >= height) return;
+  const half = cellSize / 2;
   for (let layer = neighbor; layer < height; layer += 1) {
     const bottom = layer - 0.5;
     const top = layer + 0.5;
     const material: TerrainMaterial = layer >= 0 ? "dirt" : "stone";
-    if (dx < 0) addQuad([x - 0.5, bottom, z + 0.5, x - 0.5, top, z + 0.5, x - 0.5, top, z - 0.5, x - 0.5, bottom, z - 0.5], material);
-    else if (dx > 0) addQuad([x + 0.5, bottom, z - 0.5, x + 0.5, top, z - 0.5, x + 0.5, top, z + 0.5, x + 0.5, bottom, z + 0.5], material);
-    else if (dz < 0) addQuad([x - 0.5, bottom, z - 0.5, x - 0.5, top, z - 0.5, x + 0.5, top, z - 0.5, x + 0.5, bottom, z - 0.5], material);
-    else addQuad([x + 0.5, bottom, z + 0.5, x + 0.5, top, z + 0.5, x - 0.5, top, z + 0.5, x - 0.5, bottom, z + 0.5], material);
+    if (dx < 0) addQuad([x - half, bottom, z + half, x - half, top, z + half, x - half, top, z - half, x - half, bottom, z - half], material);
+    else if (dx > 0) addQuad([x + half, bottom, z - half, x + half, top, z - half, x + half, top, z + half, x + half, bottom, z + half], material);
+    else if (dz < 0) addQuad([x - half, bottom, z - half, x - half, top, z - half, x + half, top, z - half, x + half, bottom, z - half], material);
+    else addQuad([x + half, bottom, z + half, x + half, top, z + half, x - half, top, z + half, x - half, bottom, z + half], material);
   }
 }
 

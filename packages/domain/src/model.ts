@@ -78,11 +78,19 @@ export interface ActiveFocusSession extends FocusSessionBase {
 }
 
 export type FocusInterruptionReason = "user-cancelled" | "app-switch-limit";
+export type FocusInterruptionCategory =
+  | "external-interruption"
+  | "task-blocked"
+  | "fatigue"
+  | "priority-changed"
+  | "device-or-app"
+  | "other";
 
 export type FocusSession = FocusSessionBase &
   (
-    | { status: "completed"; completedAt: ISOInstant; completedLocalDate: ISODate }
-    | { status: "interrupted"; interruptedAt: ISOInstant; interruptionReason: FocusInterruptionReason }
+    | { status: "completed"; completedAt: ISOInstant; completedLocalDate: ISODate; actualDurationMs: number }
+    | { status: "completed-early"; completedAt: ISOInstant; completedLocalDate: ISODate; actualDurationMs: number }
+    | { status: "interrupted"; interruptedAt: ISOInstant; interruptionReason: FocusInterruptionReason; interruptionCategory: FocusInterruptionCategory | null; actualDurationMs: number }
   );
 
 export interface DailyGoal {
@@ -126,6 +134,13 @@ export interface DecorationBlueprintResource {
   importedAt: ISOInstant;
 }
 
+/** Locally stored building template available to future projects only. */
+export interface BuildingBlueprintResource {
+  id: string;
+  blueprint: ImportedBlueprintV1;
+  importedAt: ISOInstant;
+}
+
 export interface DecorationReward {
   date: ISODate;
   projectId: string;
@@ -142,7 +157,7 @@ export interface FocusIntegrityPolicy {
 }
 
 export interface DomainState {
-  schemaVersion: 2;
+  schemaVersion: 4;
   projects: Project[];
   activeProjectId: string | null;
   retiredSubtaskIds: string[];
@@ -156,6 +171,7 @@ export interface DomainState {
   focusIntegrityPolicy: FocusIntegrityPolicy;
   decorationBlueprintResources: DecorationBlueprintResource[];
   decorationRewards: DecorationReward[];
+  buildingBlueprintResources: BuildingBlueprintResource[];
 }
 
 export type DomainCommand =
@@ -169,7 +185,8 @@ export type DomainCommand =
   | { type: "ReorderSubtasks"; orderedSubtaskIds: string[] }
   | { type: "StartFocus"; sessionId: string; subtaskId: string; plannedDurationMs: number }
   | { type: "CompleteFocus" }
-  | { type: "CancelFocus" }
+  | { type: "CompleteFocusEarly"; reportId: string }
+  | { type: "CancelFocus"; interruptionCategory?: FocusInterruptionCategory | null }
   | { type: "ConfigureFocusIntegrity"; enabled: boolean; maxEffectiveExcursions: number }
   | { type: "GrantFocusLifecycleExemption" }
   | { type: "RecordFocusBackgrounded"; reason: FocusBackgroundReason }
@@ -181,7 +198,9 @@ export type DomainCommand =
   | { type: "EnableDecay"; damagePerMissedPlannedDayBasisPoints: number; gracePlannedDays: number }
   | { type: "DisableDecay" }
   | { type: "AssessDecay" }
-  | { type: "ImportDecorationBlueprint"; blueprint: ImportedBlueprintV1 };
+  | { type: "ImportDecorationBlueprint"; blueprint: ImportedBlueprintV1 }
+  | { type: "ImportBuildingBlueprint"; blueprint: ImportedBlueprintV1 }
+  | { type: "DeleteBuildingBlueprint"; blueprintId: string };
 
 export type DomainEvent =
   | { type: "ProjectCreated"; projectId: string }
@@ -195,7 +214,8 @@ export type DomainEvent =
   | { type: "SubtasksReordered" }
   | { type: "FocusStarted"; sessionId: string; endsAt: ISOInstant }
   | { type: "FocusCompleted"; sessionId: string }
-  | { type: "FocusInterrupted"; sessionId: string; reason: FocusInterruptionReason }
+  | { type: "FocusCompletedEarly"; sessionId: string; subtaskId: string; actualDurationMs: number }
+  | { type: "FocusInterrupted"; sessionId: string; reason: FocusInterruptionReason; category: FocusInterruptionCategory | null }
   | { type: "FocusIntegrityConfigured"; enabled: boolean; maxEffectiveExcursions: number }
   | { type: "FocusLifecycleExemptionGranted"; sessionId: string }
   | { type: "FocusBackgrounded"; sessionId: string; reason: FocusBackgroundReason; backgroundedAt: ISOInstant }
@@ -212,6 +232,8 @@ export type DomainEvent =
   | { type: "BuildingConditionDecayed"; projectId: string; conditionBasisPoints: number; newlyMissedPlannedDays: number }
   | { type: "BuildingConditionRepaired"; projectId: string; conditionBasisPoints: number }
   | { type: "DecorationBlueprintImported"; resourceId: string }
+  | { type: "BuildingBlueprintImported"; resourceId: string }
+  | { type: "BuildingBlueprintDeleted"; resourceId: string }
   | { type: "DecorationRewardGranted"; date: ISODate; projectId: string; resourceId: string };
 
 export type DomainErrorCode =

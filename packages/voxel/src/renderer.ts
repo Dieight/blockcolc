@@ -19,6 +19,7 @@ import {
   layoutVillage,
   placeImportedDecorations,
   roadCellsForVillage,
+  terrainHeightAt,
   type ImportedDecorationPlacement,
   type VillagePlacement,
 } from "./village";
@@ -92,6 +93,14 @@ export interface RendererDiagnostics {
   render: { calls: number; triangles: number; points: number; lines: number };
   memory: { geometries: number; textures: number };
   interactionP95Ms: number | null;
+  interactionTotalP95Ms: number | null;
+  interactionTotalMaxMs: number;
+  pointerMoveCount: number;
+  resizeCount: number;
+  shadowToggleCount: number;
+  shadowTransformSyncCount: number;
+  shadowTransformSyncTotalMs: number;
+  shadowTransformSyncMaxMs: number;
   activeResourcePackId: string | null;
   atlasPageCount: number;
   texturedBatchCount: number;
@@ -139,6 +148,10 @@ export interface RendererDiagnostics {
   experimentMeshCount: number;
   fullscreenPassCount: 0;
   continuousRendering: false;
+  lowLatencyWebGl: boolean;
+  nativeInputReceivedCount: number;
+  nativeInputLastSequence: number;
+  nativeInputRenderedSequence: number;
 }
 
 export interface VoxelResourcePack {
@@ -180,7 +193,6 @@ const colors: Record<string, number> = {
 const DEFAULT_FACE_UV_WORDS = packFaceUvTransform();
 const SKY_RADIUS = 120;
 const MAX_STAR_COUNT = 960;
-
 interface TrackedEmissiveMaterial {
   material: THREE.MeshStandardMaterial;
   level: number;
@@ -205,6 +217,15 @@ export function layoutWorlds(
   return resolved.map((world, index) => ({ ...world, ...placements[index]! }));
 }
 
+function stableProjectHash(value: string): number {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return hash >>> 0;
+}
+
 export function createVoxelRenderer(
   canvas: HTMLCanvasElement,
   options: {
@@ -212,16 +233,44 @@ export function createVoxelRenderer(
     resolveBlueprint?: BlueprintResolver;
     resourcePackAtlasMaximumSize?: number;
     visualExperiment?: VoxelVisualExperiment;
+    /** Previews keep the camera fitted to the building while terrain extends past the viewport. */
+    previewMode?: boolean;
+    subscribeNativeInput?: (listener: (sample: {
+      active: boolean;
+      dx: number;
+      dy: number;
+      sequence: number;
+      nativeInputUptimeMs: number;
+      nativeDispatchUptimeMs: number;
+    }) => void) => Promise<() => Promise<void>>;
   } = {},
 ): VoxelRenderer {
   const previewBlueprint = options.blueprint ? validateBlueprint(options.blueprint) : null;
   const resolveBlueprint = options.resolveBlueprint ?? ((id: string) => (
     previewBlueprint && previewBlueprint.id === id ? previewBlueprint : resolveBuiltinBlueprint(id)
   ));
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false, powerPreference: "high-performance" });
+  const requestedLowLatencyWebGl = options.previewMode !== true;
+  const lowLatencyContext = canvas.getContext("webgl2", {
+    alpha: true,
+    antialias: true,
+    depth: true,
+    stencil: false,
+    premultipliedAlpha: true,
+    preserveDrawingBuffer: false,
+    powerPreference: "high-performance",
+    desynchronized: requestedLowLatencyWebGl,
+  });
+  const renderer = new THREE.WebGLRenderer({
+    canvas,
+    context: lowLatencyContext ?? undefined,
+    antialias: true,
+    alpha: false,
+    powerPreference: "high-performance",
+  });
+  const lowLatencyWebGl = renderer.getContext().getContextAttributes()?.desynchronized === true;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.shadowMap.type = options.previewMode ? THREE.PCFSoftShadowMap : THREE.PCFShadowMap;
   renderer.shadowMap.autoUpdate = false;
   renderer.setClearColor(0xb9c8bd, 1);
 
@@ -315,11 +364,31 @@ export function createVoxelRenderer(
   let qualityTier = selectQualityTier(deviceSignals(renderer, 0));
   let qualityProfile = QUALITY_PROFILES[qualityTier];
   let interactionFrameDurations: number[] = [];
+  let interactionTotalDurations: number[] = [];
+  let interactionTotalMaxMs = 0;
+  let pointerMoveCount = 0;
+  let resizeCount = 0;
+  let shadowToggleCount = 0;
+  let shadowTransformSyncTotalMs = 0;
+  let shadowTransformSyncMaxMs = 0;
   let interacting = false;
+  let nativeInputActive = false;
+  let nativeInputDeltaX = 0;
+  let nativeInputDeltaY = 0;
+  let nativeInputLastSequence = 0;
+  let nativeInputRenderedSequence = 0;
+  let nativeInputUnsubscribe: (() => Promise<void>) | null = null;
+  let nativeInputReceivedCount = 0;
+  let sceneVoxelCount = 0;
   let fittedDistance = 24;
   let cameraDistance = 24;
   let cameraPitch = THREE.MathUtils.degToRad(38);
   const defaultCameraPitch = THREE.MathUtils.degToRad(38);
+  let cameraAzimuth = Math.PI / 4;
+  const defaultCameraAzimuth = Math.PI / 4;
+  let targetCameraPitch = cameraPitch;
+  let targetCameraAzimuth = cameraAzimuth;
+  let lastCameraUpdateMs = performance.now();
   const cameraTarget = new THREE.Vector3(0, 3, 0);
   const pointers = new Map<number, { x: number; y: number }>();
   let previousPinchDistance: number | null = null;
@@ -348,11 +417,13 @@ export function createVoxelRenderer(
   let lastShadowRefreshReason: ShadowRefreshReason | "none" = "none";
   let lastShadowSample: ShadowRefreshSample | undefined;
   let shadowExtent = 18;
-  let cloudMaterial: THREE.MeshBasicMaterial | null = null;
+  let cloudMaterial: THREE.MeshLambertMaterial | null = null;
   let cloudBlockCount = 0;
   const requestedVisualExperiment = options.visualExperiment ?? "none";
+  const previewMode = options.previewMode === true;
   let experimentWaterMaterial: THREE.MeshPhysicalMaterial | null = null;
   let experimentBeamMaterial: THREE.MeshBasicMaterial | null = null;
+  let rainAnimation: { mesh: THREE.InstancedMesh; drops: readonly { x: number; z: number; phase: number }[]; baseY: number; spanY: number; elapsedMs: number; lastUpdateMs: number } | null = null;
 
   function material(id: string): THREE.MeshStandardMaterial {
     let found = materials.get(id);
@@ -360,10 +431,12 @@ export function createVoxelRenderer(
       const response = materialResponse(materialResponseForMaterialId(id));
       found = new THREE.MeshStandardMaterial({
         color: colors[id] ?? 0xffffff,
-        roughness: response.roughness,
+        roughness: id === "glass" ? 0.16 : response.roughness,
         metalness: response.metalness,
         transparent: id === "glass",
-        opacity: id === "glass" ? 0.72 : 1,
+        opacity: id === "glass" ? 0.5 : 1,
+        emissive: id === "glass" ? 0x315c72 : 0x000000,
+        emissiveIntensity: id === "glass" ? 0.18 : 0,
       });
       trackMaterialEffects(found);
       materials.set(id, found);
@@ -375,15 +448,28 @@ export function createVoxelRenderer(
     if (disposed || frame !== 0) return;
     frame = requestAnimationFrame(() => {
       frame = 0;
+      const frameStarted = performance.now();
+      if (options.subscribeNativeInput && (nativeInputDeltaX !== 0 || nativeInputDeltaY !== 0)) {
+        targetCameraAzimuth += nativeInputDeltaX * 0.011;
+        targetCameraPitch = THREE.MathUtils.clamp(targetCameraPitch + nativeInputDeltaY * 0.0045, THREE.MathUtils.degToRad(24), THREE.MathUtils.degToRad(64));
+        nativeInputDeltaX = 0;
+        nativeInputDeltaY = 0;
+        nativeInputRenderedSequence = nativeInputLastSequence;
+      }
+      const cameraStillMoving = applyPendingCameraUpdate(frameStarted);
       const started = performance.now();
       renderer.render(scene, camera);
       const elapsed = performance.now() - started;
       if (interacting) {
         interactionFrameDurations.push(elapsed);
         if (interactionFrameDurations.length > 60) interactionFrameDurations.shift();
+        const totalElapsed = performance.now() - frameStarted;
+        interactionTotalDurations.push(totalElapsed);
+        if (interactionTotalDurations.length > 60) interactionTotalDurations.shift();
+        interactionTotalMaxMs = Math.max(interactionTotalMaxMs, totalElapsed);
       }
-      updateDiagnosticsDataset();
       maybeDowngradeQuality();
+      if (interacting || nativeInputActive || cameraStillMoving) requestRender();
     });
   }
 
@@ -403,18 +489,6 @@ export function createVoxelRenderer(
     const indices = referencedAnimatedTextureIndices.get(page) ?? new Set<number>();
     indices.add(textureIndex);
     referencedAnimatedTextureIndices.set(page, indices);
-  }
-
-  function syncCachedShadowTransform(): void {
-    if (!sun.shadow.map || renderer.shadowMap.needsUpdate) return;
-    // The world and its directional light rotate together, so the cached depth
-    // texture remains valid. Three.js only refreshes the shadow sampling matrix
-    // while rendering a shadow map, however, which leaves a stale projection
-    // when autoUpdate is disabled. Update the transforms and matrix without
-    // paying for a full shadow-map redraw on every pointer move.
-    rotatableWorldRoot.updateWorldMatrix(true, true);
-    sun.shadow.updateMatrices(sun);
-    cachedShadowTransformSyncs += 1;
   }
 
   function rebuild(worlds: readonly WorldSnapshot[]): void {
@@ -439,8 +513,17 @@ export function createVoxelRenderer(
     translucentGeometryVoxelCount = 0;
     tintedVoxelCount = 0;
     referencedAnimatedTextureIndices.clear();
-    const positioned = layoutWorlds(worlds, resolveBlueprint);
+    const initialPositioned = layoutWorlds(worlds, resolveBlueprint);
+    const buildingPads: TerrainPad[] = [];
+    const positioned = initialPositioned.map((world) => {
+      const lift = stableProjectHash(world.projectId) % 100 < 35 ? 1 + stableProjectHash(`lift:${world.projectId}`) % 3 : 0;
+      if (lift === 0) return world;
+      const raised = { ...world, worldPosition: { ...world.worldPosition, y: world.worldPosition.y + lift } };
+      buildingPads.push({ x: raised.worldPosition.x, z: raised.worldPosition.z, width: raised.footprint.width, depth: raised.footprint.depth, groundLevel: raised.worldPosition.y });
+      return raised;
+    });
     const voxelCount = positioned.reduce((sum, world) => sum + world.blueprint.voxels.length, 0);
+    sceneVoxelCount = voxelCount;
     qualityTier = selectQualityTier(deviceSignals(renderer, voxelCount));
     applyQuality(qualityTier);
 
@@ -461,11 +544,12 @@ export function createVoxelRenderer(
       depth: decoration.footprint.depth,
       groundLevel: decoration.worldPosition.y,
     }));
-    const terrainData = createSteppedTerrainData(positioned, roads, decorationPads);
+    const terrainData = createSteppedTerrainData(positioned, roads, [...buildingPads, ...decorationPads], previewMode ? { x: 64, z: 64 } : undefined);
     addTerrain(terrainData);
     addHighQualityExperiment(terrainData);
-    addRoads(roads, positioned, decorationPads);
+    addRoads(roads, positioned, [...buildingPads, ...decorationPads]);
     const emissivePoints: EmissivePoint[] = [];
+    addRoadLamps(roads, positioned, emissivePoints);
     for (const world of positioned) addBuilding(world, emissivePoints);
     for (const decoration of importedDecorations) addImportedDecoration(decoration, emissivePoints);
     activeResourcePack?.atlas.pages.forEach((page, pageIndex) => {
@@ -473,10 +557,11 @@ export function createVoxelRenderer(
       if (page.animationLookup && controller) controller.setActiveTextureIndices(referencedAnimatedTextureIndices.get(pageIndex) ?? []);
     });
     addClusteredLights(emissivePoints);
-    updateSceneBounds(positioned, importedDecorations, terrainData);
+    updateSceneBounds(positioned, importedDecorations, terrainData, previewMode);
     updateWeather(localDateForDate(new Date()), true);
     updateLighting(new Date(), true);
     frameScene(true);
+    updateDiagnosticsDataset();
     requestRender();
   }
 
@@ -557,6 +642,32 @@ export function createVoxelRenderer(
     mesh.receiveShadow = true;
     mesh.userData.roadTriangles = data.triangleCount;
     roadGroup.add(mesh);
+  }
+
+  function addRoadLamps(roads: ReturnType<typeof roadCellsForVillage>, placements: readonly VillagePlacement[], emissivePoints: EmissivePoint[]): void {
+    if (roads.length < 8) return;
+    const occupied = placements.map((placement) => ({
+      x: placement.worldPosition.x, z: placement.worldPosition.z,
+      radius: Math.max(placement.footprint.width, placement.footprint.depth) / 2 + 2,
+    }));
+    const candidates = roads.filter((cell, index) => index % 14 === 7
+      && occupied.every((building) => Math.hypot(cell.x - building.x, cell.z - building.z) > building.radius));
+    const selected = candidates.slice(0, 8);
+    if (selected.length === 0) return;
+    const poles = new THREE.InstancedMesh(new THREE.BoxGeometry(0.28, 2.5, 0.28), material("wood"), selected.length);
+    const lanterns = new THREE.InstancedMesh(new THREE.BoxGeometry(0.72, 0.72, 0.72), material("lamp"), selected.length);
+    const matrix = new THREE.Matrix4();
+    selected.forEach((cell, index) => {
+      const ground = terrainHeightAt(cell.x, cell.z);
+      matrix.makeTranslation(cell.x, ground + 1.25, cell.z); poles.setMatrixAt(index, matrix);
+      matrix.makeTranslation(cell.x, ground + 2.55, cell.z); lanterns.setMatrixAt(index, matrix);
+      emissivePoints.push({ x: cell.x, y: ground + 2.55, z: cell.z, intensity: 15 });
+    });
+    poles.instanceMatrix.needsUpdate = true;
+    lanterns.instanceMatrix.needsUpdate = true;
+    poles.castShadow = true;
+    lanterns.castShadow = true;
+    roadGroup.add(poles, lanterns);
   }
 
   function addBuilding(world: PositionedWorldSnapshot, emissivePoints: EmissivePoint[]): void {
@@ -997,6 +1108,7 @@ export function createVoxelRenderer(
     currentWeather = weatherForLocalDate(localDate);
     clearGroup(atmosphereGroup, true);
     cloudMaterial = null;
+    rainAnimation = null;
     cloudBlockCount = 0;
     const random = seededRandom(currentWeather.seed);
     const size = contentBounds.getSize(new THREE.Vector3());
@@ -1004,22 +1116,31 @@ export function createVoxelRenderer(
     const spanZ = Math.max(28, size.z + 12);
     const cloudCount = Math.max(1, Math.round(currentWeather.cloudCount * qualityProfile.weatherDensity));
     const cloudGeometry = new THREE.BoxGeometry(1, 1, 1);
-    cloudMaterial = new THREE.MeshBasicMaterial({ color: currentLighting.cloudColor });
+    cloudMaterial = new THREE.MeshLambertMaterial({ color: currentLighting.cloudColor });
     const cloudLobes = qualityProfile.cloudLobes;
     cloudBlockCount = cloudCount * cloudLobes;
     const clouds = new THREE.InstancedMesh(cloudGeometry, cloudMaterial, cloudBlockCount);
     const matrix = new THREE.Matrix4();
     const cloudBase = Math.max(14, contentBounds.max.y + 7);
     for (let cloudIndex = 0; cloudIndex < cloudCount; cloudIndex += 1) {
-      const center = new THREE.Vector3((random() - 0.5) * spanX, cloudBase + random() * 4, (random() - 0.5) * spanZ);
-      const width = 3 + random() * 4;
-      const depth = 1.4 + random() * 2.4;
+      const angle = random() * Math.PI * 2;
+      const radius = Math.sqrt(random()) * (0.22 + random() * 0.46);
+      const center = new THREE.Vector3(
+        Math.cos(angle) * spanX * radius,
+        cloudBase + random() * 4,
+        Math.sin(angle) * spanZ * radius,
+      );
+      const width = 2.3 + random() * 3.8;
+      const depth = 2.3 + random() * 3.8;
       for (let lobe = 0; lobe < cloudLobes; lobe += 1) {
-        const offset = lobe === 0 ? 0 : (lobe % 2 === 0 ? -1 : 1) * width * 0.34;
+        const angle = random() * Math.PI * 2;
+        const radius = lobe === 0 ? 0 : (0.3 + random() * 0.55) * Math.max(width, depth);
+        const lobeWidth = width * (0.48 + random() * 0.34);
+        const lobeDepth = depth * (0.48 + random() * 0.34);
         matrix.compose(
-          new THREE.Vector3(center.x + offset, center.y + (lobe === 0 ? 0.22 : 0), center.z + (lobe - 1) * depth * 0.18),
+          new THREE.Vector3(center.x + Math.cos(angle) * radius, center.y + random() * 0.72, center.z + Math.sin(angle) * radius),
           new THREE.Quaternion(),
-          new THREE.Vector3(width * (lobe === 0 ? 0.72 : 0.46), 0.55 + random() * 0.45, depth * (lobe === 0 ? 0.72 : 0.5)),
+          new THREE.Vector3(lobeWidth, 0.55 + random() * 0.56, lobeDepth),
         );
         clouds.setMatrixAt(cloudIndex * cloudLobes + lobe, matrix);
       }
@@ -1031,15 +1152,34 @@ export function createVoxelRenderer(
     if (rainCount > 0) {
       const rainMaterial = new THREE.MeshBasicMaterial({ color: 0xa8c5cf, transparent: true, opacity: 0.62 });
       const rain = new THREE.InstancedMesh(new THREE.BoxGeometry(0.035, 1.5, 0.035), rainMaterial, rainCount);
-      for (let index = 0; index < rainCount; index += 1) {
-        matrix.makeTranslation((random() - 0.5) * spanX, 1 + random() * 12, (random() - 0.5) * spanZ);
+      const drops = Array.from({ length: rainCount }, () => ({ x: (random() - 0.5) * spanX, z: (random() - 0.5) * spanZ, phase: random() }));
+      for (let index = 0; index < drops.length; index += 1) {
+        const drop = drops[index]!;
+        matrix.makeTranslation(drop.x, -2 + drop.phase * 17, drop.z);
         rain.setMatrixAt(index, matrix);
       }
       rain.instanceMatrix.needsUpdate = true;
       rain.userData.ownedMaterial = rainMaterial;
       atmosphereGroup.add(rain);
+      rainAnimation = { mesh: rain, drops, baseY: -2, spanY: 17, elapsedMs: 0, lastUpdateMs: performance.now() };
     }
     applyAtmosphere();
+  }
+
+  function updateRainAnimation(nowMs: number): void {
+    const rain = rainAnimation;
+    if (!rain || interacting || reducedMotion || document.hidden || nowMs - rain.lastUpdateMs < 80) return;
+    rain.elapsedMs += nowMs - rain.lastUpdateMs;
+    const fall = rain.elapsedMs * 0.00078;
+    const matrix = new THREE.Matrix4();
+    rain.drops.forEach((drop, index) => {
+      const phase = (drop.phase - fall + 1) % 1;
+      matrix.makeTranslation(drop.x, rain.baseY + phase * rain.spanY, drop.z);
+      rain.mesh.setMatrixAt(index, matrix);
+    });
+    rain.mesh.instanceMatrix.needsUpdate = true;
+    rain.lastUpdateMs = nowMs;
+    requestRender();
   }
 
   function applyAtmosphere(): void {
@@ -1087,12 +1227,20 @@ export function createVoxelRenderer(
     worlds: readonly PositionedWorldSnapshot[],
     importedDecorations: readonly ImportedDecorationPlacement[],
     terrain: MergedGeometryData,
+    framePreview: boolean,
   ): void {
-    contentBounds = new THREE.Box3(
-      new THREE.Vector3(terrain.bounds.minX, -2.5, terrain.bounds.minZ),
-      new THREE.Vector3(terrain.bounds.maxX, 4, terrain.bounds.maxZ),
-    );
+    contentBounds = framePreview
+      ? new THREE.Box3(new THREE.Vector3(-9, -2.5, -9), new THREE.Vector3(9, 4, 9))
+      : new THREE.Box3(
+        new THREE.Vector3(terrain.bounds.minX, -2.5, terrain.bounds.minZ),
+        new THREE.Vector3(terrain.bounds.maxX, 4, terrain.bounds.maxZ),
+      );
     for (const world of worlds) {
+      if (framePreview) {
+        const radius = Math.max(9, world.footprint.width * 0.8, world.footprint.depth * 0.8);
+        contentBounds.expandByPoint(new THREE.Vector3(world.worldPosition.x - radius, -2.5, world.worldPosition.z - radius));
+        contentBounds.expandByPoint(new THREE.Vector3(world.worldPosition.x + radius, world.worldPosition.y + world.blueprint.bounds.maxY + 0.5, world.worldPosition.z + radius));
+      }
       contentBounds.expandByPoint(new THREE.Vector3(world.worldPosition.x, world.worldPosition.y + world.blueprint.bounds.maxY + 0.5, world.worldPosition.z));
       for (const decoration of decorationsForProject(world.projectId, world.decorationDates ?? [], world.blueprint)) {
         const cos = Math.cos(world.rotationY); const sin = Math.sin(world.rotationY);
@@ -1137,8 +1285,11 @@ export function createVoxelRenderer(
 
   function updateCamera(): void {
     const horizontal = Math.cos(cameraPitch) * cameraDistance;
-    const diagonal = horizontal / Math.sqrt(2);
-    camera.position.set(cameraTarget.x + diagonal, cameraTarget.y + Math.sin(cameraPitch) * cameraDistance, cameraTarget.z + diagonal);
+    camera.position.set(
+      cameraTarget.x + Math.cos(cameraAzimuth) * horizontal,
+      cameraTarget.y + Math.sin(cameraPitch) * cameraDistance,
+      cameraTarget.z + Math.sin(cameraAzimuth) * horizontal,
+    );
     skyGroup.position.copy(camera.position);
     const radius = Math.max(6, contentBounds.getSize(new THREE.Vector3()).length() / 2);
     camera.near = Math.max(0.1, cameraDistance - radius * 1.65);
@@ -1148,7 +1299,28 @@ export function createVoxelRenderer(
     updateFogDistances();
   }
 
+  function applyPendingCameraUpdate(nowMs: number): boolean {
+    const elapsedMs = Math.min(64, Math.max(0, nowMs - lastCameraUpdateMs));
+    lastCameraUpdateMs = nowMs;
+    const blend = 1 - Math.exp(-elapsedMs / 42);
+    const azimuthDelta = targetCameraAzimuth - cameraAzimuth;
+    const pitchDelta = targetCameraPitch - cameraPitch;
+    if (Math.abs(azimuthDelta) < 0.00005 && Math.abs(pitchDelta) < 0.00005) {
+      if (azimuthDelta !== 0 || pitchDelta !== 0) {
+        cameraAzimuth = targetCameraAzimuth;
+        cameraPitch = targetCameraPitch;
+        updateCamera();
+      }
+      return false;
+    }
+    cameraAzimuth += azimuthDelta * blend;
+    cameraPitch += pitchDelta * blend;
+    updateCamera();
+    return true;
+  }
+
   function resize(): void {
+    resizeCount += 1;
     const rect = canvas.getBoundingClientRect();
     renderer.setSize(Math.max(1, rect.width), Math.max(1, rect.height), false);
     camera.aspect = Math.max(1, rect.width) / Math.max(1, rect.height);
@@ -1158,21 +1330,25 @@ export function createVoxelRenderer(
   }
 
   const pointerDown = (event: PointerEvent): void => {
+    if (pointers.size === 0) {
+      pointerMoveCount = 0;
+    }
     interacting = true;
     pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
     try { canvas.setPointerCapture(event.pointerId); } catch { /* Synthetic QA events do not own native capture. */ }
     if (pointers.size === 2) updatePinchReference();
+    requestRender();
   };
   const pointerMove = (event: PointerEvent): void => {
+    pointerMoveCount += 1;
     const previous = pointers.get(event.pointerId);
     if (!previous) return;
     const next = { x: event.clientX, y: event.clientY };
     pointers.set(event.pointerId, next);
+    if (options.subscribeNativeInput && pointers.size === 1) { requestRender(); return; }
     if (pointers.size === 1) {
-      rotatableWorldRoot.rotation.y += (next.x - previous.x) * 0.011;
-      syncCachedShadowTransform();
-      cameraPitch = THREE.MathUtils.clamp(cameraPitch + (next.y - previous.y) * 0.0045, THREE.MathUtils.degToRad(24), THREE.MathUtils.degToRad(64));
-      updateCamera();
+      targetCameraAzimuth += (next.x - previous.x) * 0.011;
+      targetCameraPitch = THREE.MathUtils.clamp(targetCameraPitch + (next.y - previous.y) * 0.0045, THREE.MathUtils.degToRad(24), THREE.MathUtils.degToRad(64));
     } else if (pointers.size === 2) {
       const [first, second] = [...pointers.values()];
       const distance = Math.hypot(first!.x - second!.x, first!.y - second!.y);
@@ -1181,7 +1357,7 @@ export function createVoxelRenderer(
         cameraDistance = THREE.MathUtils.clamp(cameraDistance * (previousPinchDistance / distance), fittedDistance * 0.65, fittedDistance * 1.35);
       }
       if (previousPinchCenterY !== null) {
-        cameraPitch = THREE.MathUtils.clamp(cameraPitch + (centerY - previousPinchCenterY) * 0.0025, THREE.MathUtils.degToRad(24), THREE.MathUtils.degToRad(64));
+        targetCameraPitch = THREE.MathUtils.clamp(targetCameraPitch + (centerY - previousPinchCenterY) * 0.0025, THREE.MathUtils.degToRad(24), THREE.MathUtils.degToRad(64));
       }
       previousPinchDistance = distance;
       previousPinchCenterY = centerY;
@@ -1192,7 +1368,11 @@ export function createVoxelRenderer(
   const pointerUp = (event: PointerEvent): void => {
     pointers.delete(event.pointerId);
     if (pointers.size < 2) { previousPinchDistance = null; previousPinchCenterY = null; }
-    if (pointers.size === 0) interacting = false;
+    if (pointers.size === 0) {
+      interacting = false;
+      updateDiagnosticsDataset();
+      requestRender();
+    }
   };
   const wheel = (event: WheelEvent): void => {
     event.preventDefault();
@@ -1210,9 +1390,11 @@ export function createVoxelRenderer(
   }
 
   function resetView(): void {
-    rotatableWorldRoot.rotation.y = 0;
-    syncCachedShadowTransform();
+    cameraAzimuth = defaultCameraAzimuth;
     cameraPitch = defaultCameraPitch;
+    targetCameraAzimuth = defaultCameraAzimuth;
+    targetCameraPitch = defaultCameraPitch;
+    lastCameraUpdateMs = performance.now();
     frameScene(true);
     requestRender();
   }
@@ -1243,6 +1425,7 @@ export function createVoxelRenderer(
     experimentGroup.visible = tier === "high" && requestedVisualExperiment !== "none";
     if (atmosphereGroup.children.length > 0) updateWeather(currentWeather.localDate, true);
     canvas.dataset.qualityTier = tier;
+    updateDiagnosticsDataset();
   }
 
   function maybeDowngradeQuality(): void {
@@ -1250,7 +1433,7 @@ export function createVoxelRenderer(
     const p95 = interactionP95();
     const render = renderer.info.render;
     const sustainedSlow = interactionFrameDurations.length >= 24 && p95 !== null && p95 > 22;
-    const sceneHeavy = render.calls > 120 || render.triangles > 220_000;
+    const sceneHeavy = render.calls > 180 || render.triangles > 340_000;
     if (!sustainedSlow && !sceneHeavy) return;
     applyQuality(lowerQualityTier(qualityTier));
     interactionFrameDurations = [];
@@ -1268,6 +1451,14 @@ export function createVoxelRenderer(
       render: { ...renderer.info.render },
       memory: { ...renderer.info.memory },
       interactionP95Ms: interactionP95(),
+      interactionTotalP95Ms: percentile(interactionTotalDurations, 0.95),
+      interactionTotalMaxMs,
+      pointerMoveCount,
+      resizeCount,
+      shadowToggleCount,
+      shadowTransformSyncCount: cachedShadowTransformSyncs,
+      shadowTransformSyncTotalMs,
+      shadowTransformSyncMaxMs,
       activeResourcePackId: activeResourcePack?.id ?? null,
       atlasPageCount: activeResourcePack?.atlas.pages.length ?? 0,
       texturedBatchCount,
@@ -1315,6 +1506,10 @@ export function createVoxelRenderer(
       experimentMeshCount: experimentGroup.visible ? experimentGroup.children.length : 0,
       fullscreenPassCount: 0,
       continuousRendering: false,
+      lowLatencyWebGl,
+      nativeInputReceivedCount,
+      nativeInputLastSequence,
+      nativeInputRenderedSequence,
     };
   }
 
@@ -1329,6 +1524,14 @@ export function createVoxelRenderer(
     canvas.dataset.worldRootMembers = rotatableWorldRoot.children.map((child) => child.name).join(",");
     canvas.dataset.shadowAutoUpdate = String(renderer.shadowMap.autoUpdate);
     canvas.dataset.cachedShadowTransformSyncs = String(cachedShadowTransformSyncs);
+    canvas.dataset.interactionTotalP95Ms = String(diagnostics.interactionTotalP95Ms ?? "");
+    canvas.dataset.interactionTotalMaxMs = diagnostics.interactionTotalMaxMs.toFixed(2);
+    canvas.dataset.pointerMoveCount = String(diagnostics.pointerMoveCount);
+    canvas.dataset.resizeCount = String(diagnostics.resizeCount);
+    canvas.dataset.shadowToggleCount = String(diagnostics.shadowToggleCount);
+    canvas.dataset.shadowTransformSyncTotalMs = diagnostics.shadowTransformSyncTotalMs.toFixed(2);
+    canvas.dataset.shadowTransformSyncMaxMs = diagnostics.shadowTransformSyncMaxMs.toFixed(2);
+    canvas.setAttribute("aria-label", `项目建筑世界。诊断：draw calls ${diagnostics.render.calls}，triangles ${diagnostics.render.triangles}，完整交互 p95 ${diagnostics.interactionTotalP95Ms?.toFixed(2) ?? "无"} ms，阴影同步 ${diagnostics.shadowTransformSyncCount} 次，resize ${diagnostics.resizeCount} 次，低延迟 WebGL ${diagnostics.lowLatencyWebGl ? "已启用" : "未启用"}。`);
     canvas.dataset.localLightCount = String(localLights.length);
     canvas.dataset.activeResourcePackId = diagnostics.activeResourcePackId ?? "";
     canvas.dataset.atlasPageCount = String(diagnostics.atlasPageCount);
@@ -1377,12 +1580,20 @@ export function createVoxelRenderer(
     canvas.dataset.experimentMeshCount = String(diagnostics.experimentMeshCount);
     canvas.dataset.fullscreenPassCount = String(diagnostics.fullscreenPassCount);
     canvas.dataset.continuousRendering = String(diagnostics.continuousRendering);
+    canvas.dataset.lowLatencyWebGl = String(diagnostics.lowLatencyWebGl);
+    canvas.dataset.nativeInputReceivedCount = String(diagnostics.nativeInputReceivedCount);
+    canvas.dataset.nativeInputLastSequence = String(diagnostics.nativeInputLastSequence);
+    canvas.dataset.nativeInputRenderedSequence = String(diagnostics.nativeInputRenderedSequence);
   }
 
   function interactionP95(): number | null {
-    if (interactionFrameDurations.length === 0) return null;
-    const sorted = [...interactionFrameDurations].sort((left, right) => left - right);
-    return sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * 0.95) - 1)]!;
+    return percentile(interactionFrameDurations, 0.95);
+  }
+
+  function percentile(values: readonly number[], fraction: number): number | null {
+    if (values.length === 0) return null;
+    const sorted = [...values].sort((left, right) => left - right);
+    return sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * fraction) - 1)]!;
   }
 
   function clearLights(): void {
@@ -1436,6 +1647,20 @@ export function createVoxelRenderer(
   canvas.addEventListener("pointerup", pointerUp);
   canvas.addEventListener("pointercancel", pointerUp);
   canvas.addEventListener("wheel", wheel, { passive: false });
+  if (options.subscribeNativeInput) {
+    void options.subscribeNativeInput((sample) => {
+      if (disposed || sample.sequence <= nativeInputLastSequence) return;
+      nativeInputLastSequence = sample.sequence;
+      nativeInputActive = sample.active;
+      nativeInputDeltaX += sample.dx;
+      nativeInputDeltaY += sample.dy;
+      nativeInputReceivedCount += 1;
+      requestRender();
+    }).then((unsubscribe) => {
+      if (disposed) void unsubscribe();
+      else nativeInputUnsubscribe = unsubscribe;
+    }).catch(() => undefined);
+  }
   document.addEventListener("visibilitychange", visibilityChange);
   applyQuality(qualityTier);
   updateLighting(new Date(), true);
@@ -1446,6 +1671,7 @@ export function createVoxelRenderer(
     updateLighting(now);
     updateWeather(localDateForDate(now));
   }, 120_000);
+  const weatherMotionTimer = window.setInterval(() => updateRainAnimation(performance.now()), 80);
   resize();
 
   return {
@@ -1502,11 +1728,13 @@ export function createVoxelRenderer(
     getDiagnostics,
     dispose() {
       disposed = true;
+      if (nativeInputUnsubscribe) void nativeInputUnsubscribe();
       resourcePackGeneration += 1;
       cancelAnimationFrame(frame);
       for (const controller of atlasAnimationControllers) controller?.dispose();
       atlasAnimationControllers = [];
       window.clearInterval(lightingTimer);
+      window.clearInterval(weatherMotionTimer);
       observer.disconnect();
       document.removeEventListener("visibilitychange", visibilityChange);
       canvas.removeEventListener("webglcontextlost", contextLost);

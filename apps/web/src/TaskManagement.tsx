@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ApplicationCommand, ApplicationResult, ApplicationService } from '@tomato-clock/application';
 import { localDateOf } from '@tomato-clock/domain';
 import { ArrowDown, ArrowUp, Check, LockKeyhole, Pencil, Plus, Save, Trash2, X } from 'lucide-react';
+import { ChoiceMenu } from './ChoiceMenu';
 
 type ActiveProject = NonNullable<ReturnType<ApplicationService['activeProjectProjection']>>;
 type AppState = ReturnType<ApplicationService['snapshot']>;
@@ -74,7 +75,7 @@ export function TasksScreen({ active, state, run, onCreateProject }: { active: A
   return <section className="page tasks-page">
     <span className="eyebrow">大型任务</span>
     <div className="project-switcher">
-      <label>当前大型任务<select aria-label="当前大型任务" value={active.project.id} disabled={pending || switchBlocked} onChange={event => void perform({ type: 'SwitchActiveProject', projectId: event.target.value })}>{unfinishedProjects.map(project => <option key={project.id} value={project.id}>{project.title} · {Math.round(project.subtasks.reduce((sum, subtask) => sum + subtask.progressBasisPoints, 0) / project.subtasks.length / 100)}%</option>)}</select></label>
+      <ChoiceMenu label="当前大型任务" value={active.project.id} disabled={pending || switchBlocked} onChange={projectId=>void perform({ type: 'SwitchActiveProject', projectId })} options={unfinishedProjects.map(project=>({id:project.id,label:project.title,detail:`${Math.round(project.subtasks.reduce((sum, subtask) => sum + subtask.progressBasisPoints, 0) / project.subtasks.length / 100)}%`}))}/>
       <button type="button" disabled={pending || switchBlocked} title={switchBlocked ? '请先结束或汇报当前专注' : '新增大型任务'} onClick={onCreateProject}><Plus/>新增大型任务</button>
     </div>
     <div className="task-project-title">

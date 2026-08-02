@@ -16,6 +16,7 @@ const APP_STATE_STORE = "appState";
 const ROLLBACK_STORE = "rollbackBackups";
 const METADATA_STORE = "metadata";
 const CURRENT_KEY = "current";
+const MAX_ROLLBACK_BACKUPS = 2;
 
 interface CurrentStateRecord { id: typeof CURRENT_KEY; revision: number; state: DomainState | null }
 interface MetadataRecord { id: "schema"; version: 1 }
@@ -101,7 +102,9 @@ export class IndexedDbStateRepository implements StateRepository {
       const actualRevision = current?.revision ?? 0;
       assertMatchingRevision(expectedRevision, actualRevision);
       const rollback = this.newRollback(current?.state ?? null, { reason: "before-import", sourceChecksum: incoming.checksum });
-      tx.objectStore(ROLLBACK_STORE).add(rollback);
+      const rollbackStore = tx.objectStore(ROLLBACK_STORE);
+      await requestResult(rollbackStore.add(rollback));
+      await pruneRollbackBackups(rollbackStore);
       if (options.injectFailureAfterRollbackWrite) throw new Error("Injected import replacement failure");
       const nextRevision = actualRevision + 1;
       tx.objectStore(APP_STATE_STORE).put({ id: CURRENT_KEY, revision: nextRevision, state: cloneAndParseState(incoming.payload) } satisfies CurrentStateRecord);
@@ -146,7 +149,9 @@ export class IndexedDbStateRepository implements StateRepository {
       const currentState = current?.state == null ? null : cloneAndParseState(current.state);
       if (currentState?.activeProjectId !== reason.projectId) throw new Error("Rollback deletion target must be the active project");
       const rollback = this.newRollback(currentState, { reason: "before-delete-active-project", projectId: reason.projectId });
-      tx.objectStore(ROLLBACK_STORE).add(rollback);
+      const rollbackStore = tx.objectStore(ROLLBACK_STORE);
+      await requestResult(rollbackStore.add(rollback));
+      await pruneRollbackBackups(rollbackStore);
       const nextRevision = actualRevision + 1;
       store.put({ id: CURRENT_KEY, revision: nextRevision, state: safeState } satisfies CurrentStateRecord);
       await done;
@@ -172,7 +177,9 @@ export class IndexedDbStateRepository implements StateRepository {
       const actualRevision = current?.revision ?? 0;
       assertMatchingRevision(expectedRevision, actualRevision);
       const beforeRestore = this.newRollback(current?.state ?? null, { reason: "before-restore", sourceRollbackBackupId: backup.id });
-      tx.objectStore(ROLLBACK_STORE).add(beforeRestore);
+      const rollbackStore = tx.objectStore(ROLLBACK_STORE);
+      await requestResult(rollbackStore.add(beforeRestore));
+      await pruneRollbackBackups(rollbackStore);
       const nextRevision = actualRevision + 1;
       const state = backup.state === null ? null : cloneAndParseState(backup.state);
       tx.objectStore(APP_STATE_STORE).put({ id: CURRENT_KEY, revision: nextRevision, state } satisfies CurrentStateRecord);
@@ -205,6 +212,14 @@ export class IndexedDbStateRepository implements StateRepository {
     const base = { id: this.newId(), createdAt: this.now().toISOString(), state: state === null ? null : cloneAndParseState(state) };
     return { ...base, ...reason } as RollbackBackup;
   }
+}
+
+async function pruneRollbackBackups(store: IDBObjectStore): Promise<void> {
+  const records = await requestResult<RollbackBackup[]>(store.getAll());
+  records
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt) || right.id.localeCompare(left.id))
+    .slice(MAX_ROLLBACK_BACKUPS)
+    .forEach((record) => store.delete(record.id));
 }
 
 function assertExpectedRevision(value: number): void {
@@ -298,9 +313,11 @@ function requestResult<T>(request: IDBRequest<T>): Promise<T> {
 }
 
 function transactionDone(transaction: IDBTransaction): Promise<void> {
-  return new Promise((resolve, reject) => {
+  const completion = new Promise<void>((resolve, reject) => {
     transaction.oncomplete = () => resolve();
     transaction.onabort = () => reject(transaction.error ?? new Error("IndexedDB transaction aborted"));
     transaction.onerror = () => reject(transaction.error ?? new Error("IndexedDB transaction failed"));
   });
+  void completion.catch(() => undefined);
+  return completion;
 }

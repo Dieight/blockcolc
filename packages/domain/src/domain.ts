@@ -23,7 +23,7 @@ import type {
 export function createInitialState(timeZone = "UTC", restWeekdays: number[] = [0, 6]): DomainState {
   assertCalendar(timeZone, restWeekdays);
   return {
-    schemaVersion: 2,
+    schemaVersion: 4,
     projects: [],
     activeProjectId: null,
     retiredSubtaskIds: [],
@@ -42,6 +42,7 @@ export function createInitialState(timeZone = "UTC", restWeekdays: number[] = [0
     focusIntegrityPolicy: { enabled: true, maxEffectiveExcursions: 3 },
     decorationBlueprintResources: [],
     decorationRewards: [],
+    buildingBlueprintResources: [],
   };
 }
 
@@ -226,13 +227,58 @@ function handle(state: DomainState, command: DomainCommand, clock: Clock): Comma
       if (Date.parse(now) < Date.parse(active.endsAt)) return fail(state, "FOCUS_NOT_ELAPSED", "Focus session has not reached its end time");
       return ok(state, completeActiveFocus(state, active));
     }
+    case "CompleteFocusEarly": {
+      const active = state.activeFocusSession;
+      if (!active) return fail(state, "FOCUS_NOT_ACTIVE", "No focus session is active");
+      if (Date.parse(now) >= Date.parse(active.endsAt)) return fail(state, "FOCUS_ALREADY_ELAPSED", "Elapsed focus must be completed normally");
+      requireNonBlank(command.reportId, "reportId");
+      if (state.progressReports.some((report) => report.id === command.reportId)) return fail(state, "DUPLICATE_ID", "Progress report ID already exists");
+      const project = activeProject(state);
+      const subtask = project.subtasks.find((item) => item.id === active.subtaskId);
+      if (!subtask) return fail(state, "SUBTASK_NOT_FOUND", "Subtask does not exist");
+      const actualDurationMs = Math.max(0, Date.parse(now) - Date.parse(active.startedAt));
+      const session: FocusSession = {
+        ...focusSessionBase(active), status: "completed-early", completedAt: now,
+        completedLocalDate: localDateOf(now, active.timeZoneAtStart), actualDurationMs,
+      };
+      state.focusHistory.push(session);
+      state.activeFocusSession = null;
+      subtask.progressBasisPoints = 10_000;
+      state.progressReports.push({
+        id: command.reportId, projectId: project.id, subtaskId: subtask.id,
+        focusSessionIds: [session.id], progressBasisPoints: 10_000, reportedAt: now,
+      });
+      const events: DomainEvent[] = [
+        { type: "FocusCompletedEarly", sessionId: session.id, subtaskId: subtask.id, actualDurationMs },
+        { type: "SubtaskProgressReported", subtaskId: subtask.id, progressBasisPoints: 10_000 },
+      ];
+      if (!project.subtaskStructureLocked) {
+        project.subtaskStructureLocked = true;
+        events.push({ type: "SubtaskStructureLocked" });
+      }
+      applyRepair(state, project.id, now, events);
+      if (project.subtasks.every((item) => item.progressBasisPoints === 10_000)) {
+        project.status = "monument";
+        state.activeProjectId = null;
+        events.push({ type: "ProjectSealedAsMonument", projectId: project.id });
+      }
+      return ok(state, events);
+    }
     case "CancelFocus": {
       const active = state.activeFocusSession;
       if (!active) return fail(state, "FOCUS_NOT_ACTIVE", "No focus session is active");
       if (Date.parse(now) >= Date.parse(active.endsAt)) return fail(state, "FOCUS_ALREADY_ELAPSED", "Elapsed focus must be completed, not interrupted");
-      state.focusHistory.push({ ...focusSessionBase(active), status: "interrupted", interruptedAt: now, interruptionReason: "user-cancelled" });
+      const interruptionCategory = command.interruptionCategory ?? null;
+      if (interruptionCategory !== null && !["external-interruption", "task-blocked", "fatigue", "priority-changed", "device-or-app", "other"].includes(interruptionCategory)) {
+        throw new Error("Invalid interruption category");
+      }
+      state.focusHistory.push({
+        ...focusSessionBase(active), status: "interrupted", interruptedAt: now,
+        interruptionReason: "user-cancelled", interruptionCategory,
+        actualDurationMs: Math.max(0, Date.parse(now) - Date.parse(active.startedAt)),
+      });
       state.activeFocusSession = null;
-      return ok(state, [{ type: "FocusInterrupted", sessionId: active.id, reason: "user-cancelled" }]);
+      return ok(state, [{ type: "FocusInterrupted", sessionId: active.id, reason: "user-cancelled", category: interruptionCategory }]);
     }
     case "ConfigureFocusIntegrity": {
       if (typeof command.enabled !== "boolean") throw new Error("enabled must be boolean");
@@ -283,9 +329,10 @@ function handle(state: DomainState, command: DomainCommand, clock: Clock): Comma
       if (active.integrity.effectiveExcursions < state.focusIntegrityPolicy.maxEffectiveExcursions) return ok(state, events);
       state.focusHistory.push({
         ...focusSessionBase(active), status: "interrupted", interruptedAt: now, interruptionReason: "app-switch-limit",
+        interruptionCategory: null, actualDurationMs: Math.max(0, Date.parse(now) - Date.parse(active.startedAt)),
       });
       state.activeFocusSession = null;
-      events.push({ type: "FocusInterrupted", sessionId: active.id, reason: "app-switch-limit" });
+      events.push({ type: "FocusInterrupted", sessionId: active.id, reason: "app-switch-limit", category: null });
       return ok(state, events);
     }
     case "ReportSubtaskProgress": {
@@ -393,6 +440,26 @@ function handle(state: DomainState, command: DomainCommand, clock: Clock): Comma
       state.decorationBlueprintResources.push({ id: blueprint.id, blueprint, importedAt: now });
       return ok(state, [{ type: "DecorationBlueprintImported", resourceId: blueprint.id }]);
     }
+    case "ImportBuildingBlueprint": {
+      const blueprint = parseImportedBlueprint(command.blueprint, "$.command.blueprint");
+      const existing = state.buildingBlueprintResources.find((resource) => resource.id === blueprint.id);
+      if (existing) {
+        if (JSON.stringify(existing.blueprint) === JSON.stringify(blueprint)) return ok(state, []);
+        if (!isSourceBlockStateEnrichment(existing.blueprint, blueprint)) throw new Error("Building blueprint ID conflicts with different content");
+        existing.blueprint = blueprint;
+        return ok(state, [{ type: "BuildingBlueprintImported", resourceId: blueprint.id }]);
+      }
+      if (state.buildingBlueprintResources.length >= 12) throw new Error("Building blueprint library is limited to 12 entries");
+      state.buildingBlueprintResources.push({ id: blueprint.id, blueprint, importedAt: now });
+      return ok(state, [{ type: "BuildingBlueprintImported", resourceId: blueprint.id }]);
+    }
+    case "DeleteBuildingBlueprint": {
+      requireNonBlank(command.blueprintId, "blueprintId");
+      const index = state.buildingBlueprintResources.findIndex((resource) => resource.id === command.blueprintId);
+      if (index < 0) return ok(state, []);
+      state.buildingBlueprintResources.splice(index, 1);
+      return ok(state, [{ type: "BuildingBlueprintDeleted", resourceId: command.blueprintId }]);
+    }
   }
 }
 
@@ -421,6 +488,7 @@ function completeActiveFocus(state: DomainState, active: NonNullable<DomainState
     status: "completed",
     completedAt: active.endsAt,
     completedLocalDate: localDateOf(active.endsAt, active.timeZoneAtStart),
+    actualDurationMs: active.plannedDurationMs,
   };
   state.focusHistory.push(session);
   state.activeFocusSession = null;

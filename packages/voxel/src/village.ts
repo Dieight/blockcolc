@@ -183,9 +183,12 @@ export function placeImportedDecorations(
 
 export function terrainHeightAt(x: number, z: number): number {
   const distance = Math.hypot(x * 0.92, z);
-  const perturbation = (stableHash(`height:${Math.round(x / 3)}:${Math.round(z / 3)}`) % 5) - 2;
-  const adjusted = distance + perturbation * 0.55;
-  return adjusted < 11 ? 2 : adjusted < 25 ? 1 : 0;
+  const broadHill = Math.sin(x * 0.075 + z * 0.032) * 1.25 + Math.cos(z * 0.09 - x * 0.022) * 0.9;
+  const localHill = ((stableHash(`hill:${Math.round(x / 7)}:${Math.round(z / 7)}`) % 7) - 3) * 0.22;
+  const riverAxis = Math.sin(x * 0.065) * 5.5 + Math.cos(x * 0.018) * 2.5;
+  const riverCut = Math.abs(z - riverAxis) < 1.15 && distance > 13 ? 1.35 : 0;
+  const adjusted = distance + broadHill + localHill - riverCut;
+  return adjusted < 10 ? 3 : adjusted < 20 ? 2 : adjusted < 34 ? 1 : 0;
 }
 
 function spiralCandidate(index: number): { x: number; z: number } {

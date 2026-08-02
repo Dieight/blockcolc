@@ -56,8 +56,8 @@ export function sunStateForLocalTime(date: Date): SunState {
   const sunVisibility = smoothstep(-0.06, 0.08, elevation);
   const moonVisibility = smoothstep(-0.08, 0.12, -elevation);
   const starVisibility = smoothstep(0.12, 0.5, -elevation);
-  const skyColor = mixColor(mixColor(0x111a2b, 0xb9cddd, dayFactor), 0xd98969, horizonWarmth * 0.62);
-  const skyZenithColor = mixColor(mixColor(0x07101f, 0x669cc3, dayFactor), 0x765f83, horizonWarmth * 0.2);
+  const skyColor = mixColor(mixColor(0x17243a, 0xb9cddd, dayFactor), 0xd98969, horizonWarmth * 0.62);
+  const skyZenithColor = mixColor(mixColor(0x0d1930, 0x669cc3, dayFactor), 0x765f83, horizonWarmth * 0.2);
   const skyHorizonColor = mixColor(skyColor, 0xe49a75, horizonWarmth * 0.42);
   const skyLowerColor = mixColor(mixColor(0x182536, 0xc8d5d2, dayFactor), 0xc77b68, horizonWarmth * 0.3);
   const cloudColor = mixColor(mixColor(0x344256, 0xe7ece8, dayFactor), 0xf0b28e, horizonWarmth * 0.3);
@@ -70,7 +70,7 @@ export function sunStateForLocalTime(date: Date): SunState {
     sunVisibility,
     moonVisibility,
     starVisibility,
-    intensity: mix(0.36, 1.35 + Math.max(0, elevation) * 0.85, dayFactor),
+    intensity: mix(0.48, 1.35 + Math.max(0, elevation) * 0.85, dayFactor),
     color: mixColor(mixColor(0x9db7d9, 0xfff1ce, dayFactor), 0xffae68, horizonWarmth * 0.72),
     skyColor,
     skyZenithColor,
@@ -78,10 +78,10 @@ export function sunStateForLocalTime(date: Date): SunState {
     skyLowerColor,
     cloudColor,
     fogColor: mixColor(mixColor(0x263444, 0xadc1b8, dayFactor), 0xc98269, horizonWarmth * 0.42),
-    hemisphereSkyColor: mixColor(0x5d7899, 0xf4f0dc, dayFactor),
-    hemisphereGroundColor: mixColor(0x17231e, 0x4d6659, dayFactor),
-    hemisphereIntensity: mix(0.5, 0.72, dayFactor),
-    exposure: mix(0.92, 0.98, dayFactor),
+    hemisphereSkyColor: mixColor(0x7895b5, 0xf4f0dc, dayFactor),
+    hemisphereGroundColor: mixColor(0x24382d, 0x4d6659, dayFactor),
+    hemisphereIntensity: mix(0.62, 0.72, dayFactor),
+    exposure: mix(1.04, 1.06, dayFactor),
     nightFactor,
   };
 }

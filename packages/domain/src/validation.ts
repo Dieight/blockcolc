@@ -11,6 +11,7 @@ import type {
   Project,
   ProjectCondition,
   ImportedBlueprintV1,
+  BuildingBlueprintResource,
   DecorationBlueprintResource,
   DecorationReward,
   Subtask,
@@ -25,15 +26,15 @@ export class DomainStateValidationError extends Error {
 }
 
 export function parseDomainState(raw: unknown): DomainState {
-  const migrated = withDecorationDefaults(migrateV1State(raw));
+  const migrated = withBuildingBlueprintDefaults(migrateV2State(withDecorationDefaults(migrateV1State(raw))));
   const root = object(migrated, "$", [
     "schemaVersion", "projects", "activeProjectId", "retiredSubtaskIds", "activeFocusSession",
     "focusHistory", "progressReports", "dailyGoals", "calendar", "decayPolicy", "projectConditions", "focusIntegrityPolicy",
-    "decorationBlueprintResources", "decorationRewards",
+    "decorationBlueprintResources", "decorationRewards", "buildingBlueprintResources",
   ]);
-  if (root.schemaVersion !== 2) invalid("$.schemaVersion", "must equal 2");
+  if (root.schemaVersion !== 4) invalid("$.schemaVersion", "must equal 4");
   const state: DomainState = {
-    schemaVersion: 2,
+    schemaVersion: 4,
     projects: array(root.projects, "$.projects", parseProject),
     activeProjectId: nullableString(root.activeProjectId, "$.activeProjectId"),
     retiredSubtaskIds: array(root.retiredSubtaskIds, "$.retiredSubtaskIds", nonBlankString),
@@ -47,6 +48,7 @@ export function parseDomainState(raw: unknown): DomainState {
     focusIntegrityPolicy: parseFocusIntegrityPolicy(root.focusIntegrityPolicy, "$.focusIntegrityPolicy"),
     decorationBlueprintResources: array(root.decorationBlueprintResources, "$.decorationBlueprintResources", parseDecorationResource),
     decorationRewards: array(root.decorationRewards, "$.decorationRewards", parseDecorationReward),
+    buildingBlueprintResources: array(root.buildingBlueprintResources, "$.buildingBlueprintResources", parseBuildingResource),
   };
   validateReferences(state);
   return state;
@@ -198,6 +200,14 @@ function parseDecorationResource(raw: unknown, path: string): DecorationBlueprin
   return { id, blueprint, importedAt: instant(x.importedAt, path + ".importedAt") };
 }
 
+function parseBuildingResource(raw: unknown, path: string): BuildingBlueprintResource {
+  const x = object(raw, path, ["id", "blueprint", "importedAt"]);
+  const blueprint = parseImportedBlueprint(x.blueprint, path + ".blueprint");
+  const id = nonBlankString(x.id, path + ".id");
+  if (blueprint.id !== id) invalid(path + ".id", "must match blueprint.id");
+  return { id, blueprint, importedAt: instant(x.importedAt, path + ".importedAt") };
+}
+
 function parseDecorationReward(raw: unknown, path: string): DecorationReward {
   const x = object(raw, path, ["date", "projectId", "resourceId", "awardedAt", "position", "rotationQuarterTurns"]);
   const position = object(x.position, path + ".position", ["x", "z"]);
@@ -246,23 +256,34 @@ function parseActiveSession(raw: unknown, path: string): ActiveFocusSession {
 
 function parseFocusSession(raw: unknown, path: string): FocusSession {
   const base = record(raw, path);
-  const status = enumeration(base.status, path + ".status", ["completed", "interrupted"] as const);
-  const keys = status === "completed"
-    ? ["id", "projectId", "subtaskId", "startedAt", "endsAt", "plannedDurationMs", "timeZoneAtStart", "status", "completedAt", "completedLocalDate"]
-    : ["id", "projectId", "subtaskId", "startedAt", "endsAt", "plannedDurationMs", "timeZoneAtStart", "status", "interruptedAt", "interruptionReason"];
+  const status = enumeration(base.status, path + ".status", ["completed", "completed-early", "interrupted"] as const);
+  const keys = status === "interrupted"
+    ? ["id", "projectId", "subtaskId", "startedAt", "endsAt", "plannedDurationMs", "timeZoneAtStart", "status", "interruptedAt", "interruptionReason", "interruptionCategory", "actualDurationMs"]
+    : ["id", "projectId", "subtaskId", "startedAt", "endsAt", "plannedDurationMs", "timeZoneAtStart", "status", "completedAt", "completedLocalDate", "actualDurationMs"];
   const x = object(raw, path, keys);
   const active = parseActiveSessionFields(x, path);
-  if (status === "completed") {
+  if (status === "completed" || status === "completed-early") {
     const completedAt = instant(x.completedAt, path + ".completedAt");
     const completedLocalDate = isoDate(x.completedLocalDate, path + ".completedLocalDate");
-    if (completedAt !== active.endsAt) invalid(path + ".completedAt", "must equal endsAt");
+    if (status === "completed" && completedAt !== active.endsAt) invalid(path + ".completedAt", "must equal endsAt");
+    if (status === "completed-early" && (completedAt < active.startedAt || completedAt >= active.endsAt)) invalid(path + ".completedAt", "must be within the scheduled interval before endsAt");
     if (completedLocalDate !== localDateOf(completedAt, active.timeZoneAtStart)) invalid(path + ".completedLocalDate", "does not match completion instant and start timezone");
-    return { ...active, status, completedAt, completedLocalDate };
+    const actualDurationMs = integer(x.actualDurationMs, path + ".actualDurationMs", 0, active.plannedDurationMs);
+    const expectedActual = status === "completed" ? active.plannedDurationMs : Date.parse(completedAt) - Date.parse(active.startedAt);
+    if (actualDurationMs !== expectedActual) invalid(path + ".actualDurationMs", "does not match the actual focus interval");
+    return { ...active, status, completedAt, completedLocalDate, actualDurationMs };
   }
   const interruptedAt = instant(x.interruptedAt, path + ".interruptedAt");
   if (interruptedAt < active.startedAt || interruptedAt >= active.endsAt) invalid(path + ".interruptedAt", "must be within the scheduled interval before endsAt");
   const interruptionReason = enumeration(x.interruptionReason, path + ".interruptionReason", ["user-cancelled", "app-switch-limit"] as const);
-  return { ...active, status, interruptedAt, interruptionReason };
+  const interruptionCategory = x.interruptionCategory === null ? null : enumeration(
+    x.interruptionCategory, path + ".interruptionCategory",
+    ["external-interruption", "task-blocked", "fatigue", "priority-changed", "device-or-app", "other"] as const,
+  );
+  if (interruptionReason === "app-switch-limit" && interruptionCategory !== null) invalid(path + ".interruptionCategory", "must be null for automatic integrity failures");
+  const actualDurationMs = integer(x.actualDurationMs, path + ".actualDurationMs", 0, active.plannedDurationMs);
+  if (actualDurationMs !== Date.parse(interruptedAt) - Date.parse(active.startedAt)) invalid(path + ".actualDurationMs", "does not match the actual focus interval");
+  return { ...active, status, interruptedAt, interruptionReason, interruptionCategory, actualDurationMs };
 }
 
 function parseActiveSessionFields(x: Record<string, unknown>, path: string): FocusSessionBase {
@@ -392,7 +413,7 @@ function validateReferences(state: DomainState): void {
     unique(report.focusSessionIds, path + ".focusSessionIds");
     for (const id of report.focusSessionIds) {
       const session = sessions.get(id);
-      if (!session || session.status !== "completed") invalid(path + ".focusSessionIds", `unknown or incomplete session ${id}`);
+      if (!session || (session.status !== "completed" && session.status !== "completed-early")) invalid(path + ".focusSessionIds", `unknown or incomplete session ${id}`);
       if (session.projectId !== report.projectId || session.subtaskId !== report.subtaskId) invalid(path + ".focusSessionIds", `session ${id} has inconsistent ownership`);
       if (session.completedAt > report.reportedAt) invalid(path + ".reportedAt", `precedes session ${id} completion`);
       if (usedSessions.has(id)) invalid(path + ".focusSessionIds", `session ${id} is reused`);
@@ -425,6 +446,8 @@ function validateReferences(state: DomainState): void {
     }
   }
   unique(state.decorationBlueprintResources.map((item) => item.id), "$.decorationBlueprintResources[].id");
+  if (state.buildingBlueprintResources.length > 12) invalid("$.buildingBlueprintResources", "must contain at most 12 entries");
+  unique(state.buildingBlueprintResources.map((item) => item.id), "$.buildingBlueprintResources[].id");
   const decorationResources = new Set(state.decorationBlueprintResources.map((item) => item.id));
   unique(state.decorationRewards.map((item) => item.date), "$.decorationRewards[].date");
   for (const [index, reward] of state.decorationRewards.entries()) {
@@ -452,7 +475,9 @@ function validateFocusTimeline(state: DomainState): void {
 }
 
 function effectiveFocusEnd(session: FocusSessionBase | FocusSession): string {
-  return "status" in session && session.status === "interrupted" ? session.interruptedAt : session.endsAt;
+  if (!("status" in session)) return session.endsAt;
+  if (session.status === "interrupted") return session.interruptedAt;
+  return session.completedAt;
 }
 
 function validateOwnership(projectId: string, subtaskId: string, projects: Map<string, Project>, subtasks: Map<string, { projectId: string }>, path: string): void {
@@ -467,10 +492,11 @@ function validateScheduledTimes(session: FocusSessionBase, path: string): void {
 function migrateV1State(raw: unknown): unknown {
   const candidate = record(raw, "$");
   if (candidate.schemaVersion !== 1) return raw;
-  const v1 = object(raw, "$", [
+  const v1 = objectWithOptional(raw, "$", [
     "schemaVersion", "projects", "activeProjectId", "retiredSubtaskIds", "activeFocusSession",
     "focusHistory", "progressReports", "dailyGoals", "calendar", "decayPolicy", "projectConditions",
-  ]);
+    "buildingBlueprintResources",
+  ], ["buildingBlueprintResources"]);
   const projects = array(v1.projects, "$.projects", (project, path) => {
     const value = objectWithOptional(project, path, [
       "id", "title", "blueprintId", "importedBlueprint", "createdAt", "status", "subtaskStructureLocked", "subtasks",
@@ -496,6 +522,34 @@ function withDecorationDefaults(raw: unknown): unknown {
     ...candidate,
     decorationBlueprintResources: Object.hasOwn(candidate, "decorationBlueprintResources") ? candidate.decorationBlueprintResources : [],
     decorationRewards: Object.hasOwn(candidate, "decorationRewards") ? candidate.decorationRewards : [],
+  };
+}
+
+function migrateV2State(raw: unknown): unknown {
+  const candidate = record(raw, "$");
+  if (candidate.schemaVersion !== 2) return raw;
+  const focusHistory = array(candidate.focusHistory, "$.focusHistory", (session, path) => {
+    const value = record(session, path);
+    const status = enumeration(value.status, path + ".status", ["completed", "interrupted"] as const);
+    if (status === "completed") return { ...value, actualDurationMs: value.plannedDurationMs };
+    const startedAt = instant(value.startedAt, path + ".startedAt");
+    const interruptedAt = instant(value.interruptedAt, path + ".interruptedAt");
+    return {
+      ...value,
+      interruptionCategory: null,
+      actualDurationMs: Date.parse(interruptedAt) - Date.parse(startedAt),
+    };
+  });
+  return { ...candidate, schemaVersion: 3, focusHistory };
+}
+
+function withBuildingBlueprintDefaults(raw: unknown): unknown {
+  const candidate = record(raw, "$");
+  if (candidate.schemaVersion !== 3) return raw;
+  return {
+    ...candidate,
+    schemaVersion: 4,
+    buildingBlueprintResources: Object.hasOwn(candidate, "buildingBlueprintResources") ? candidate.buildingBlueprintResources : [],
   };
 }
 
