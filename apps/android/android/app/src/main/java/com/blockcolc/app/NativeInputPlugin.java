@@ -6,6 +6,7 @@ import android.view.MotionEvent;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.annotation.CapacitorPlugin;
+import java.util.Locale;
 
 @CapacitorPlugin(name = "NativeInput")
 public class NativeInputPlugin extends Plugin {
@@ -18,6 +19,13 @@ public class NativeInputPlugin extends Plugin {
     private static long sequence;
     private static long lastInputEventUptimeMs;
     private static NativeInputPlugin instance;
+    private static boolean directBridgeAttached;
+    private static float latestDx;
+    private static float latestDy;
+    private static boolean latestActive;
+    private static long latestSequence;
+    private static long latestInputUptimeMs;
+    private static long latestDispatchUptimeMs;
 
     private static final Choreographer.FrameCallback FRAME_CALLBACK = frameTimeNanos -> dispatchFrame();
 
@@ -29,6 +37,9 @@ public class NativeInputPlugin extends Plugin {
     }
 
     static synchronized void record(MotionEvent event) {
+        // Keep the WebView's standard pointer path completely idle unless the
+        // synchronous native snapshot transport was explicitly selected.
+        if (!directBridgeAttached) return;
         int action = event.getActionMasked();
         lastInputEventUptimeMs = event.getEventTime();
         if (event.getPointerCount() != 1) {
@@ -50,6 +61,24 @@ public class NativeInputPlugin extends Plugin {
         scheduleFrameLocked();
     }
 
+    static synchronized String readSnapshotJson() {
+        directBridgeAttached = true;
+        float snapshotDx = latestDx;
+        float snapshotDy = latestDy;
+        latestDx = 0;
+        latestDy = 0;
+        return String.format(
+            Locale.US,
+            "{\"active\":%s,\"dx\":%.4f,\"dy\":%.4f,\"sequence\":%d,\"nativeInputUptimeMs\":%d,\"nativeDispatchUptimeMs\":%d}",
+            latestActive,
+            snapshotDx,
+            snapshotDy,
+            latestSequence,
+            latestInputUptimeMs,
+            latestDispatchUptimeMs
+        );
+    }
+
     private static void scheduleFrameLocked() {
         if (frameScheduled || instance == null) return;
         frameScheduled = true;
@@ -58,22 +87,42 @@ public class NativeInputPlugin extends Plugin {
 
     private static void dispatchFrame() {
         NativeInputPlugin plugin;
-        JSObject result = new JSObject();
+        boolean notifyCapacitor;
+        boolean frameActive;
+        float frameDx;
+        float frameDy;
+        long frameSequence;
+        long frameInputUptimeMs;
+        long frameDispatchUptimeMs;
         synchronized (NativeInputPlugin.class) {
             frameScheduled = false;
             plugin = instance;
-            if (plugin == null) return;
-            float density = plugin.getContext().getResources().getDisplayMetrics().density;
-            result.put("active", active);
-            result.put("dx", pendingDx / density);
-            result.put("dy", pendingDy / density);
-            result.put("sequence", ++sequence);
-            result.put("nativeInputUptimeMs", lastInputEventUptimeMs);
-            long dispatchUptimeMs = SystemClock.uptimeMillis();
-            result.put("nativeDispatchUptimeMs", dispatchUptimeMs);
+            float density = plugin == null ? 1f : plugin.getContext().getResources().getDisplayMetrics().density;
+            frameActive = active;
+            frameDx = pendingDx / density;
+            frameDy = pendingDy / density;
+            frameDispatchUptimeMs = SystemClock.uptimeMillis();
+            latestActive = active;
+            latestDx += frameDx;
+            latestDy += frameDy;
+            frameSequence = ++sequence;
+            frameInputUptimeMs = lastInputEventUptimeMs;
+            latestSequence = frameSequence;
+            latestInputUptimeMs = frameInputUptimeMs;
+            latestDispatchUptimeMs = frameDispatchUptimeMs;
             pendingDx = 0; pendingDy = 0;
             if (active) scheduleFrameLocked();
+            notifyCapacitor = !directBridgeAttached;
         }
-        plugin.notifyListeners("inputFrame", result, false);
+        if (notifyCapacitor && plugin != null) {
+            JSObject result = new JSObject();
+            result.put("active", frameActive);
+            result.put("dx", frameDx);
+            result.put("dy", frameDy);
+            result.put("sequence", frameSequence);
+            result.put("nativeInputUptimeMs", frameInputUptimeMs);
+            result.put("nativeDispatchUptimeMs", frameDispatchUptimeMs);
+            plugin.notifyListeners("inputFrame", result, false);
+        }
     }
 }

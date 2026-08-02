@@ -39,6 +39,7 @@ public class MainActivity extends BridgeActivity {
         content.setBackgroundColor(0xFFF3F5F2);
         WebView webView = getBridge().getWebView();
         webView.setBackgroundColor(0xFFF3F5F2);
+        webView.addJavascriptInterface(new NativeInputBridge(), "BlockcolcNativeInput");
         webView.setOnTouchListener((view, event) -> { NativeInputPlugin.record(event); return false; });
         ViewCompat.setOnApplyWindowInsetsListener(content, (view, windowInsets) -> {
             Insets bars = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars());

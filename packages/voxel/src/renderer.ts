@@ -87,6 +87,15 @@ export interface PositionedWorldSnapshot extends WorldSnapshot {
   blueprint: BlueprintV1;
 }
 
+export interface NativeInputSample {
+  active: boolean;
+  dx: number;
+  dy: number;
+  sequence: number;
+  nativeInputUptimeMs: number;
+  nativeDispatchUptimeMs: number;
+}
+
 export interface RendererDiagnostics {
   qualityTier: QualityTier;
   pixelRatio: number;
@@ -95,6 +104,13 @@ export interface RendererDiagnostics {
   interactionP95Ms: number | null;
   interactionTotalP95Ms: number | null;
   interactionTotalMaxMs: number;
+  interactionAnimationFrameP95Ms: number | null;
+  interactionAnimationFrameMaxMs: number;
+  interactionDelayedFrameCount: number;
+  gpuTimerAvailable: boolean;
+  gpuRenderP95Ms: number | null;
+  gpuRenderMaxMs: number;
+  gpuRenderSampleCount: number;
   pointerMoveCount: number;
   resizeCount: number;
   shadowToggleCount: number;
@@ -152,6 +168,7 @@ export interface RendererDiagnostics {
   nativeInputReceivedCount: number;
   nativeInputLastSequence: number;
   nativeInputRenderedSequence: number;
+  nativeInputTransport: "none" | "capacitor-event" | "direct-snapshot";
 }
 
 export interface VoxelResourcePack {
@@ -208,6 +225,11 @@ interface TrackedGlowSprite {
   sprite: THREE.Sprite;
 }
 
+interface DisjointTimerQueryWebGl2 {
+  TIME_ELAPSED_EXT: number;
+  GPU_DISJOINT_EXT: number;
+}
+
 export function layoutWorlds(
   worlds: readonly WorldSnapshot[],
   resolveBlueprint: BlueprintResolver = resolveBuiltinBlueprint,
@@ -235,14 +257,8 @@ export function createVoxelRenderer(
     visualExperiment?: VoxelVisualExperiment;
     /** Previews keep the camera fitted to the building while terrain extends past the viewport. */
     previewMode?: boolean;
-    subscribeNativeInput?: (listener: (sample: {
-      active: boolean;
-      dx: number;
-      dy: number;
-      sequence: number;
-      nativeInputUptimeMs: number;
-      nativeDispatchUptimeMs: number;
-    }) => void) => Promise<() => Promise<void>>;
+    readNativeInput?: () => NativeInputSample | null;
+    subscribeNativeInput?: (listener: (sample: NativeInputSample) => void) => Promise<() => Promise<void>>;
   } = {},
 ): VoxelRenderer {
   const previewBlueprint = options.blueprint ? validateBlueprint(options.blueprint) : null;
@@ -267,6 +283,13 @@ export function createVoxelRenderer(
     alpha: false,
     powerPreference: "high-performance",
   });
+  const webGlContext = renderer.getContext();
+  const webGl2Context = typeof WebGL2RenderingContext !== "undefined" && webGlContext instanceof WebGL2RenderingContext
+    ? webGlContext
+    : null;
+  const gpuTimerExtension = webGl2Context
+    ? webGl2Context.getExtension("EXT_disjoint_timer_query_webgl2") as DisjointTimerQueryWebGl2 | null
+    : null;
   const lowLatencyWebGl = renderer.getContext().getContextAttributes()?.desynchronized === true;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -366,6 +389,15 @@ export function createVoxelRenderer(
   let interactionFrameDurations: number[] = [];
   let interactionTotalDurations: number[] = [];
   let interactionTotalMaxMs = 0;
+  let interactionAnimationFrameIntervals: number[] = [];
+  let interactionAnimationFrameMaxMs = 0;
+  let interactionDelayedFrameCount = 0;
+  let lastInteractionAnimationFrameMs: number | null = null;
+  let gpuTimerAvailable = webGl2Context !== null && gpuTimerExtension !== null;
+  let gpuTimerQuery: WebGLQuery | null = null;
+  let gpuTimerQueryInteracting = false;
+  let gpuRenderDurations: number[] = [];
+  let gpuRenderMaxMs = 0;
   let pointerMoveCount = 0;
   let resizeCount = 0;
   let shadowToggleCount = 0;
@@ -379,6 +411,25 @@ export function createVoxelRenderer(
   let nativeInputRenderedSequence = 0;
   let nativeInputUnsubscribe: (() => Promise<void>) | null = null;
   let nativeInputReceivedCount = 0;
+  const nativeInputTransport: RendererDiagnostics["nativeInputTransport"] = options.readNativeInput
+    ? "direct-snapshot"
+    : options.subscribeNativeInput
+      ? "capacitor-event"
+      : "none";
+
+  function consumeNativeInput(sample: NativeInputSample | null): void {
+    if (disposed || !sample || sample.sequence <= nativeInputLastSequence) return;
+    nativeInputLastSequence = sample.sequence;
+    nativeInputActive = sample.active;
+    nativeInputDeltaX += sample.dx;
+    nativeInputDeltaY += sample.dy;
+    nativeInputReceivedCount += 1;
+  }
+
+  function pollNativeInput(): void {
+    if (!options.readNativeInput) return;
+    try { consumeNativeInput(options.readNativeInput()); } catch { /* A missing native bridge falls back to DOM input. */ }
+  }
   let sceneVoxelCount = 0;
   let fittedDistance = 24;
   let cameraDistance = 24;
@@ -444,31 +495,98 @@ export function createVoxelRenderer(
     return found;
   }
 
+  function pollGpuTimer(): void {
+    if (!gpuTimerQuery || !webGl2Context || !gpuTimerExtension) return;
+    try {
+      const available = webGl2Context.getQueryParameter(gpuTimerQuery, webGl2Context.QUERY_RESULT_AVAILABLE) === true;
+      if (!available) return;
+      const disjoint = webGl2Context.getParameter(gpuTimerExtension.GPU_DISJOINT_EXT) === true;
+      const elapsedNanoseconds = Number(webGl2Context.getQueryParameter(gpuTimerQuery, webGl2Context.QUERY_RESULT));
+      if (!disjoint && gpuTimerQueryInteracting && Number.isFinite(elapsedNanoseconds)) {
+        const elapsedMs = elapsedNanoseconds / 1_000_000;
+        gpuRenderDurations.push(elapsedMs);
+        if (gpuRenderDurations.length > 120) gpuRenderDurations.shift();
+        gpuRenderMaxMs = Math.max(gpuRenderMaxMs, elapsedMs);
+      }
+      webGl2Context.deleteQuery(gpuTimerQuery);
+      gpuTimerQuery = null;
+    } catch {
+      if (gpuTimerQuery) webGl2Context.deleteQuery(gpuTimerQuery);
+      gpuTimerQuery = null;
+      gpuTimerAvailable = false;
+    }
+  }
+
+  function beginGpuTimer(): void {
+    if (!gpuTimerAvailable || gpuTimerQuery || !webGl2Context || !gpuTimerExtension) return;
+    try {
+      const query = webGl2Context.createQuery();
+      if (!query) return;
+      webGl2Context.beginQuery(gpuTimerExtension.TIME_ELAPSED_EXT, query);
+      gpuTimerQuery = query;
+      gpuTimerQueryInteracting = interacting;
+    } catch {
+      if (gpuTimerQuery) webGl2Context.deleteQuery(gpuTimerQuery);
+      gpuTimerQuery = null;
+      gpuTimerAvailable = false;
+    }
+  }
+
+  function endGpuTimer(): void {
+    if (!gpuTimerQuery || !webGl2Context || !gpuTimerExtension) return;
+    try {
+      webGl2Context.endQuery(gpuTimerExtension.TIME_ELAPSED_EXT);
+    } catch {
+      webGl2Context.deleteQuery(gpuTimerQuery);
+      gpuTimerQuery = null;
+      gpuTimerAvailable = false;
+    }
+  }
+
+  function renderFrame(frameStarted: number): boolean {
+    pollNativeInput();
+    if ((options.readNativeInput || options.subscribeNativeInput) && (nativeInputDeltaX !== 0 || nativeInputDeltaY !== 0)) {
+      targetCameraAzimuth += nativeInputDeltaX * 0.011;
+      targetCameraPitch = THREE.MathUtils.clamp(targetCameraPitch + nativeInputDeltaY * 0.0045, THREE.MathUtils.degToRad(24), THREE.MathUtils.degToRad(64));
+      nativeInputDeltaX = 0;
+      nativeInputDeltaY = 0;
+      nativeInputRenderedSequence = nativeInputLastSequence;
+    }
+    const cameraStillMoving = applyPendingCameraUpdate(frameStarted);
+    pollGpuTimer();
+    beginGpuTimer();
+    const started = performance.now();
+    try {
+      renderer.render(scene, camera);
+    } finally {
+      endGpuTimer();
+    }
+    const elapsed = performance.now() - started;
+    if (interacting) {
+      if (lastInteractionAnimationFrameMs !== null) {
+        const interval = frameStarted - lastInteractionAnimationFrameMs;
+        interactionAnimationFrameIntervals.push(interval);
+        if (interactionAnimationFrameIntervals.length > 120) interactionAnimationFrameIntervals.shift();
+        interactionAnimationFrameMaxMs = Math.max(interactionAnimationFrameMaxMs, interval);
+        if (interval > 12.5) interactionDelayedFrameCount += 1;
+      }
+      lastInteractionAnimationFrameMs = frameStarted;
+      interactionFrameDurations.push(elapsed);
+      if (interactionFrameDurations.length > 60) interactionFrameDurations.shift();
+      const totalElapsed = performance.now() - frameStarted;
+      interactionTotalDurations.push(totalElapsed);
+      if (interactionTotalDurations.length > 60) interactionTotalDurations.shift();
+      interactionTotalMaxMs = Math.max(interactionTotalMaxMs, totalElapsed);
+    } else lastInteractionAnimationFrameMs = null;
+    maybeDowngradeQuality();
+    return cameraStillMoving;
+  }
+
   function requestRender(): void {
     if (disposed || frame !== 0) return;
     frame = requestAnimationFrame(() => {
       frame = 0;
-      const frameStarted = performance.now();
-      if (options.subscribeNativeInput && (nativeInputDeltaX !== 0 || nativeInputDeltaY !== 0)) {
-        targetCameraAzimuth += nativeInputDeltaX * 0.011;
-        targetCameraPitch = THREE.MathUtils.clamp(targetCameraPitch + nativeInputDeltaY * 0.0045, THREE.MathUtils.degToRad(24), THREE.MathUtils.degToRad(64));
-        nativeInputDeltaX = 0;
-        nativeInputDeltaY = 0;
-        nativeInputRenderedSequence = nativeInputLastSequence;
-      }
-      const cameraStillMoving = applyPendingCameraUpdate(frameStarted);
-      const started = performance.now();
-      renderer.render(scene, camera);
-      const elapsed = performance.now() - started;
-      if (interacting) {
-        interactionFrameDurations.push(elapsed);
-        if (interactionFrameDurations.length > 60) interactionFrameDurations.shift();
-        const totalElapsed = performance.now() - frameStarted;
-        interactionTotalDurations.push(totalElapsed);
-        if (interactionTotalDurations.length > 60) interactionTotalDurations.shift();
-        interactionTotalMaxMs = Math.max(interactionTotalMaxMs, totalElapsed);
-      }
-      maybeDowngradeQuality();
+      const cameraStillMoving = renderFrame(performance.now());
       if (interacting || nativeInputActive || cameraStillMoving) requestRender();
     });
   }
@@ -561,8 +679,31 @@ export function createVoxelRenderer(
     updateWeather(localDateForDate(new Date()), true);
     updateLighting(new Date(), true);
     frameScene(true);
+    cacheStaticWorldTransforms();
     updateDiagnosticsDataset();
     requestRender();
+  }
+
+  function cacheStaticWorldTransforms(): void {
+    cacheStaticTransformNode(scene);
+    cacheStaticTransformNode(rotatableWorldRoot);
+    cacheStaticTransformTree(terrainGroup);
+    cacheStaticTransformTree(roadGroup);
+    cacheStaticTransformTree(buildingGroup);
+    cacheStaticTransformTree(experimentGroup);
+    cacheStaticTransformTree(atmosphereGroup);
+    cacheStaticTransformTree(skyGroup);
+    scene.updateMatrixWorld(true);
+  }
+
+  function cacheStaticTransformNode(object: THREE.Object3D): void {
+    object.updateMatrix();
+    object.matrixAutoUpdate = false;
+    object.matrixWorldNeedsUpdate = true;
+  }
+
+  function cacheStaticTransformTree(root: THREE.Object3D): void {
+    root.traverse((object) => cacheStaticTransformNode(object));
   }
 
   function addTerrain(data: MergedGeometryData): void {
@@ -1164,6 +1305,7 @@ export function createVoxelRenderer(
       rainAnimation = { mesh: rain, drops, baseY: -2, spanY: 17, elapsedMs: 0, lastUpdateMs: performance.now() };
     }
     applyAtmosphere();
+    cacheStaticTransformTree(atmosphereGroup);
   }
 
   function updateRainAnimation(nowMs: number): void {
@@ -1332,6 +1474,10 @@ export function createVoxelRenderer(
   const pointerDown = (event: PointerEvent): void => {
     if (pointers.size === 0) {
       pointerMoveCount = 0;
+      interactionAnimationFrameIntervals = [];
+      interactionAnimationFrameMaxMs = 0;
+      interactionDelayedFrameCount = 0;
+      lastInteractionAnimationFrameMs = null;
     }
     interacting = true;
     pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
@@ -1345,7 +1491,7 @@ export function createVoxelRenderer(
     if (!previous) return;
     const next = { x: event.clientX, y: event.clientY };
     pointers.set(event.pointerId, next);
-    if (options.subscribeNativeInput && pointers.size === 1) { requestRender(); return; }
+    if ((options.readNativeInput || options.subscribeNativeInput) && pointers.size === 1) { requestRender(); return; }
     if (pointers.size === 1) {
       targetCameraAzimuth += (next.x - previous.x) * 0.011;
       targetCameraPitch = THREE.MathUtils.clamp(targetCameraPitch + (next.y - previous.y) * 0.0045, THREE.MathUtils.degToRad(24), THREE.MathUtils.degToRad(64));
@@ -1371,6 +1517,7 @@ export function createVoxelRenderer(
     if (pointers.size === 0) {
       interacting = false;
       updateDiagnosticsDataset();
+      logInteractionDiagnostics();
       requestRender();
     }
   };
@@ -1453,6 +1600,13 @@ export function createVoxelRenderer(
       interactionP95Ms: interactionP95(),
       interactionTotalP95Ms: percentile(interactionTotalDurations, 0.95),
       interactionTotalMaxMs,
+      interactionAnimationFrameP95Ms: percentile(interactionAnimationFrameIntervals, 0.95),
+      interactionAnimationFrameMaxMs,
+      interactionDelayedFrameCount,
+      gpuTimerAvailable,
+      gpuRenderP95Ms: percentile(gpuRenderDurations, 0.95),
+      gpuRenderMaxMs,
+      gpuRenderSampleCount: gpuRenderDurations.length,
       pointerMoveCount,
       resizeCount,
       shadowToggleCount,
@@ -1510,6 +1664,7 @@ export function createVoxelRenderer(
       nativeInputReceivedCount,
       nativeInputLastSequence,
       nativeInputRenderedSequence,
+      nativeInputTransport,
     };
   }
 
@@ -1526,12 +1681,19 @@ export function createVoxelRenderer(
     canvas.dataset.cachedShadowTransformSyncs = String(cachedShadowTransformSyncs);
     canvas.dataset.interactionTotalP95Ms = String(diagnostics.interactionTotalP95Ms ?? "");
     canvas.dataset.interactionTotalMaxMs = diagnostics.interactionTotalMaxMs.toFixed(2);
+    canvas.dataset.interactionAnimationFrameP95Ms = String(diagnostics.interactionAnimationFrameP95Ms ?? "");
+    canvas.dataset.interactionAnimationFrameMaxMs = diagnostics.interactionAnimationFrameMaxMs.toFixed(2);
+    canvas.dataset.interactionDelayedFrameCount = String(diagnostics.interactionDelayedFrameCount);
+    canvas.dataset.gpuTimerAvailable = String(diagnostics.gpuTimerAvailable);
+    canvas.dataset.gpuRenderP95Ms = String(diagnostics.gpuRenderP95Ms ?? "");
+    canvas.dataset.gpuRenderMaxMs = diagnostics.gpuRenderMaxMs.toFixed(2);
+    canvas.dataset.gpuRenderSampleCount = String(diagnostics.gpuRenderSampleCount);
     canvas.dataset.pointerMoveCount = String(diagnostics.pointerMoveCount);
     canvas.dataset.resizeCount = String(diagnostics.resizeCount);
     canvas.dataset.shadowToggleCount = String(diagnostics.shadowToggleCount);
     canvas.dataset.shadowTransformSyncTotalMs = diagnostics.shadowTransformSyncTotalMs.toFixed(2);
     canvas.dataset.shadowTransformSyncMaxMs = diagnostics.shadowTransformSyncMaxMs.toFixed(2);
-    canvas.setAttribute("aria-label", `项目建筑世界。诊断：draw calls ${diagnostics.render.calls}，triangles ${diagnostics.render.triangles}，完整交互 p95 ${diagnostics.interactionTotalP95Ms?.toFixed(2) ?? "无"} ms，阴影同步 ${diagnostics.shadowTransformSyncCount} 次，resize ${diagnostics.resizeCount} 次，低延迟 WebGL ${diagnostics.lowLatencyWebGl ? "已启用" : "未启用"}。`);
+    if (!canvas.getAttribute("aria-label")) canvas.setAttribute("aria-label", `项目建筑世界。诊断：draw calls ${diagnostics.render.calls}，triangles ${diagnostics.render.triangles}，完整交互 p95 ${diagnostics.interactionTotalP95Ms?.toFixed(2) ?? "无"} ms，阴影同步 ${diagnostics.shadowTransformSyncCount} 次，resize ${diagnostics.resizeCount} 次，低延迟 WebGL ${diagnostics.lowLatencyWebGl ? "已启用" : "未启用"}。`);
     canvas.dataset.localLightCount = String(localLights.length);
     canvas.dataset.activeResourcePackId = diagnostics.activeResourcePackId ?? "";
     canvas.dataset.atlasPageCount = String(diagnostics.atlasPageCount);
@@ -1584,6 +1746,41 @@ export function createVoxelRenderer(
     canvas.dataset.nativeInputReceivedCount = String(diagnostics.nativeInputReceivedCount);
     canvas.dataset.nativeInputLastSequence = String(diagnostics.nativeInputLastSequence);
     canvas.dataset.nativeInputRenderedSequence = String(diagnostics.nativeInputRenderedSequence);
+    canvas.dataset.nativeInputTransport = diagnostics.nativeInputTransport;
+  }
+
+  function logInteractionDiagnostics(): void {
+    const diagnostics = getDiagnostics();
+    const payload = JSON.stringify({
+      cpuRenderP95Ms: diagnostics.interactionP95Ms,
+      totalFrameP95Ms: diagnostics.interactionTotalP95Ms,
+      totalFrameMaxMs: diagnostics.interactionTotalMaxMs,
+      animationFrameP95Ms: diagnostics.interactionAnimationFrameP95Ms,
+      animationFrameMaxMs: diagnostics.interactionAnimationFrameMaxMs,
+      delayedFrameCount: diagnostics.interactionDelayedFrameCount,
+      gpuTimerAvailable: diagnostics.gpuTimerAvailable,
+      gpuRenderP95Ms: diagnostics.gpuRenderP95Ms,
+      gpuRenderMaxMs: diagnostics.gpuRenderMaxMs,
+      gpuRenderSampleCount: diagnostics.gpuRenderSampleCount,
+      drawCalls: diagnostics.render.calls,
+      triangles: diagnostics.render.triangles,
+      pixelRatio: diagnostics.pixelRatio,
+      qualityTier: diagnostics.qualityTier,
+      pointerMoveCount: diagnostics.pointerMoveCount,
+      nativeInputReceivedCount: diagnostics.nativeInputReceivedCount,
+      nativeInputLastSequence: diagnostics.nativeInputLastSequence,
+      nativeInputRenderedSequence: diagnostics.nativeInputRenderedSequence,
+      shadowRefreshCount: diagnostics.shadowRefreshCount,
+      shadowTransformSyncCount: diagnostics.shadowTransformSyncCount,
+      nativeInputTransport: diagnostics.nativeInputTransport,
+    });
+    console.info("[blockcolc-render-diagnostic]", payload);
+    try {
+      const bridge = (window as unknown as {
+        BlockcolcNativeInput?: { logRenderDiagnostic?: (message: string) => void };
+      }).BlockcolcNativeInput;
+      bridge?.logRenderDiagnostic?.(`[blockcolc-render-diagnostic] ${payload}`);
+    } catch { /* The native diagnostic bridge is optional on web. */ }
   }
 
   function interactionP95(): number | null {
@@ -1649,12 +1846,7 @@ export function createVoxelRenderer(
   canvas.addEventListener("wheel", wheel, { passive: false });
   if (options.subscribeNativeInput) {
     void options.subscribeNativeInput((sample) => {
-      if (disposed || sample.sequence <= nativeInputLastSequence) return;
-      nativeInputLastSequence = sample.sequence;
-      nativeInputActive = sample.active;
-      nativeInputDeltaX += sample.dx;
-      nativeInputDeltaY += sample.dy;
-      nativeInputReceivedCount += 1;
+      consumeNativeInput(sample);
       requestRender();
     }).then((unsubscribe) => {
       if (disposed) void unsubscribe();
@@ -1758,6 +1950,11 @@ export function createVoxelRenderer(
       glowMaterial.dispose();
       glowTexture.dispose();
       clearLights();
+      if (gpuTimerQuery && webGl2Context && gpuTimerExtension) {
+        try { webGl2Context.endQuery(gpuTimerExtension.TIME_ELAPSED_EXT); } catch { /* The context may already be lost. */ }
+        webGl2Context.deleteQuery(gpuTimerQuery);
+        gpuTimerQuery = null;
+      }
       renderer.dispose();
       materials.forEach((entry) => entry.dispose());
       activeResourcePack?.atlas.dispose();
