@@ -181,6 +181,8 @@ export type VoxelVisualExperiment = "none" | "water" | "mist-beam";
 export interface VoxelRenderer {
   setWorld(world: WorldSnapshot | null): void;
   setWorlds(worlds: readonly WorldSnapshot[]): void;
+  /** Frames one existing building without rebuilding scene geometry or lighting. */
+  focusProject(projectId: string | null): void;
   setResourcePack(pack: VoxelResourcePack | null): Promise<void>;
   setReducedMotion(value: boolean): void;
   resetCamera(): void;
@@ -433,6 +435,10 @@ export function createVoxelRenderer(
   let sceneVoxelCount = 0;
   let fittedDistance = 24;
   let cameraDistance = 24;
+  let minimumCameraDistance = fittedDistance * 0.65;
+  let maximumCameraDistance = fittedDistance * 1.35;
+  let positionedWorlds: readonly PositionedWorldSnapshot[] = [];
+  let focusedProjectId: string | null = null;
   let cameraPitch = THREE.MathUtils.degToRad(38);
   const defaultCameraPitch = THREE.MathUtils.degToRad(38);
   let cameraAzimuth = Math.PI / 4;
@@ -561,6 +567,9 @@ export function createVoxelRenderer(
     } finally {
       endGpuTimer();
     }
+    canvas.dataset.renderCalls = String(renderer.info.render.calls);
+    canvas.dataset.renderTriangles = String(renderer.info.render.triangles);
+    canvas.dataset.pixelRatio = renderer.getPixelRatio().toFixed(2);
     const elapsed = performance.now() - started;
     if (interacting) {
       if (lastInteractionAnimationFrameMs !== null) {
@@ -640,6 +649,7 @@ export function createVoxelRenderer(
       buildingPads.push({ x: raised.worldPosition.x, z: raised.worldPosition.z, width: raised.footprint.width, depth: raised.footprint.depth, groundLevel: raised.worldPosition.y });
       return raised;
     });
+    positionedWorlds = positioned;
     const voxelCount = positioned.reduce((sum, world) => sum + world.blueprint.voxels.length, 0);
     sceneVoxelCount = voxelCount;
     qualityTier = selectQualityTier(deviceSignals(renderer, voxelCount));
@@ -692,7 +702,14 @@ export function createVoxelRenderer(
     cacheStaticTransformTree(buildingGroup);
     cacheStaticTransformTree(experimentGroup);
     cacheStaticTransformTree(atmosphereGroup);
-    cacheStaticTransformTree(skyGroup);
+    // The sky follows the camera's position. Cache its contents, but leave the
+    // group itself under explicit camera control so focused framing cannot leave
+    // stars and the dome at the previous camera anchor.
+    cacheStaticTransformTree(skyDome);
+    cacheStaticTransformTree(starField);
+    skyGroup.matrixAutoUpdate = false;
+    skyGroup.updateMatrix();
+    skyGroup.matrixWorldNeedsUpdate = true;
     scene.updateMatrixWorld(true);
   }
 
@@ -1412,16 +1429,30 @@ export function createVoxelRenderer(
     requestShadowRefresh(new Date(), true);
   }
 
+  function focusBoundsFor(world: PositionedWorldSnapshot): THREE.Box3 {
+    const horizontalRadius = Math.max(8, world.footprint.width * 0.78, world.footprint.depth * 0.78);
+    const height = Math.max(5, world.blueprint.bounds.maxY - world.blueprint.bounds.minY + 1);
+    return new THREE.Box3(
+      new THREE.Vector3(world.worldPosition.x - horizontalRadius, world.worldPosition.y - 1, world.worldPosition.z - horizontalRadius),
+      new THREE.Vector3(world.worldPosition.x + horizontalRadius, world.worldPosition.y + height + 1, world.worldPosition.z + horizontalRadius),
+    );
+  }
+
   function frameScene(resetDistance: boolean): void {
-    const size = contentBounds.getSize(new THREE.Vector3());
-    const center = contentBounds.getCenter(new THREE.Vector3());
+    const focused = focusedProjectId === null ? undefined : positionedWorlds.find((world) => world.projectId === focusedProjectId);
+    if (!focused) focusedProjectId = null;
+    const bounds = focused ? focusBoundsFor(focused) : contentBounds;
+    const size = bounds.getSize(new THREE.Vector3());
+    const center = bounds.getCenter(new THREE.Vector3());
     const radius = Math.max(6, size.length() / 2);
     const verticalFov = THREE.MathUtils.degToRad(camera.fov);
     const horizontalFov = 2 * Math.atan(Math.tan(verticalFov / 2) * Math.max(0.1, camera.aspect));
     fittedDistance = (radius / Math.sin(Math.max(0.1, Math.min(verticalFov, horizontalFov)) / 2)) * 1.04;
     cameraTarget.set(center.x, Math.max(1.5, center.y * 0.68), center.z);
+    minimumCameraDistance = fittedDistance * (focused ? 0.9 : 0.65);
+    maximumCameraDistance = fittedDistance * 1.35;
     if (resetDistance) cameraDistance = fittedDistance;
-    cameraDistance = THREE.MathUtils.clamp(cameraDistance, fittedDistance * 0.65, fittedDistance * 1.35);
+    cameraDistance = THREE.MathUtils.clamp(cameraDistance, minimumCameraDistance, maximumCameraDistance);
     updateCamera();
   }
 
@@ -1433,12 +1464,19 @@ export function createVoxelRenderer(
       cameraTarget.z + Math.sin(cameraAzimuth) * horizontal,
     );
     skyGroup.position.copy(camera.position);
+    skyGroup.updateMatrix();
+    skyGroup.updateMatrixWorld();
     const radius = Math.max(6, contentBounds.getSize(new THREE.Vector3()).length() / 2);
     camera.near = Math.max(0.1, cameraDistance - radius * 1.65);
     camera.far = cameraDistance + radius * 3 + 60;
     camera.updateProjectionMatrix();
     camera.lookAt(cameraTarget);
     updateFogDistances();
+    // Keep interaction diagnostics truthful while the camera eases after a drag.
+    canvas.dataset.cameraAzimuth = cameraAzimuth.toFixed(4);
+    canvas.dataset.cameraPitchDegrees = THREE.MathUtils.radToDeg(cameraPitch).toFixed(2);
+    canvas.dataset.cameraDistanceRatio = (cameraDistance / fittedDistance).toFixed(4);
+    canvas.dataset.skyCameraWorldOffset = new THREE.Vector3().setFromMatrixPosition(skyGroup.matrixWorld).distanceTo(camera.position).toFixed(4);
   }
 
   function applyPendingCameraUpdate(nowMs: number): boolean {
@@ -1500,7 +1538,7 @@ export function createVoxelRenderer(
       const distance = Math.hypot(first!.x - second!.x, first!.y - second!.y);
       const centerY = (first!.y + second!.y) / 2;
       if (previousPinchDistance && distance > 1) {
-        cameraDistance = THREE.MathUtils.clamp(cameraDistance * (previousPinchDistance / distance), fittedDistance * 0.65, fittedDistance * 1.35);
+        cameraDistance = THREE.MathUtils.clamp(cameraDistance * (previousPinchDistance / distance), minimumCameraDistance, maximumCameraDistance);
       }
       if (previousPinchCenterY !== null) {
         targetCameraPitch = THREE.MathUtils.clamp(targetCameraPitch + (centerY - previousPinchCenterY) * 0.0025, THREE.MathUtils.degToRad(24), THREE.MathUtils.degToRad(64));
@@ -1524,7 +1562,7 @@ export function createVoxelRenderer(
   const wheel = (event: WheelEvent): void => {
     event.preventDefault();
     interacting = true;
-    cameraDistance = THREE.MathUtils.clamp(cameraDistance * Math.exp(event.deltaY * 0.0012), fittedDistance * 0.65, fittedDistance * 1.35);
+    cameraDistance = THREE.MathUtils.clamp(cameraDistance * Math.exp(event.deltaY * 0.0012), minimumCameraDistance, maximumCameraDistance);
     updateCamera();
     requestRender();
     interacting = false;
@@ -1674,8 +1712,10 @@ export function createVoxelRenderer(
     canvas.dataset.renderTriangles = String(diagnostics.render.triangles);
     canvas.dataset.pixelRatio = diagnostics.pixelRatio.toFixed(2);
     canvas.dataset.worldRotation = rotatableWorldRoot.rotation.y.toFixed(4);
+    canvas.dataset.cameraAzimuth = cameraAzimuth.toFixed(4);
     canvas.dataset.cameraDistanceRatio = (cameraDistance / fittedDistance).toFixed(4);
     canvas.dataset.cameraPitchDegrees = THREE.MathUtils.radToDeg(cameraPitch).toFixed(2);
+    canvas.dataset.skyCameraWorldOffset = new THREE.Vector3().setFromMatrixPosition(skyGroup.matrixWorld).distanceTo(camera.position).toFixed(4);
     canvas.dataset.worldRootMembers = rotatableWorldRoot.children.map((child) => child.name).join(",");
     canvas.dataset.shadowAutoUpdate = String(renderer.shadowMap.autoUpdate);
     canvas.dataset.cachedShadowTransformSyncs = String(cachedShadowTransformSyncs);
@@ -1874,6 +1914,11 @@ export function createVoxelRenderer(
     setWorlds(worlds) {
       lastWorlds = [...worlds];
       rebuild(lastWorlds);
+    },
+    focusProject(projectId) {
+      focusedProjectId = projectId;
+      frameScene(true);
+      requestRender();
     },
     async setResourcePack(pack) {
       const generation = ++resourcePackGeneration;
