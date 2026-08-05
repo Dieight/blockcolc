@@ -12,15 +12,16 @@ import { ResourcePackPanel } from './ResourcePackPanel';
 import { ChoiceMenu } from './ChoiceMenu';
 import { LITEMATIC_MAX_COMPRESSED_BYTES, readBrowserFileBytes, saveBackupFile } from './browser-adapters';
 import { APPLICATION_STATE_CHANGED_EVENT } from './bootstrap';
+import { effectiveFocusMillisecondsByDate, focusSessionEndedAt, focusSessionLocalDate } from './focus-stats';
+import { parseRoundPlan, reconcileRoundPlan, roundPlansEqual, type RoundPlan } from './round-plan';
 
 type Tab = 'world' | 'tasks' | 'stats' | 'settings';
 interface FocusPreferences { focusMinutes: number; breakMinutes: number; visualExperiment: VoxelVisualExperiment }
-interface RoundPlan { projectId: string; subtaskId: string; totalRounds: number; completedRounds: number; status: 'focus' | 'break' | 'ready'; breakEndsAt?: string; endAfterBreak?: boolean }
 type ImportRole = 'building' | 'decoration';
 interface ProjectSetupDraft { title: string; subtasksText: string; blueprintId: string; imported: LitematicImportResult | null; packCompatibility: { name: string; textured: number; fallback: number; total: number } | null; importRole: ImportRole }
 const PREFERENCES_KEY = 'blockcolc-focus-preferences-v1';
 const ROUND_PLAN_KEY = 'blockcolc-round-plan-v1';
-const APP_VERSION = '1.0.4';
+const APP_VERSION = '1.0.5';
 const REPOSITORY_URL = 'https://github.com/Dieight/blockcolc';
 const INITIAL_PROJECT_SETUP_DRAFT: ProjectSetupDraft = { title: '我的第一座工坊', subtasksText: '确定目标\n完成核心工作\n检查并收尾', blueprintId: 'builtin-small-workshop', imported: null, packCompatibility: null, importRole: 'building' };
 let voxelModulePromise:Promise<typeof import('@tomato-clock/voxel')>|null=null;
@@ -45,7 +46,7 @@ export function App({ service, resourcePacks }: { service: ApplicationService; r
   const [ceremony,setCeremony]=useState<{projectId:string;title:string}|null>(null);
   const [preferences, setPreferences] = useState<FocusPreferences>(loadPreferences);
   const refresh = useCallback(() => setVersion(v => v + 1), []);
-  const run = useCallback(async (command: ApplicationCommand) => { try { const result = await service.dispatch(command); if (!result.ok) setMessage(result.message); else {if(result.events.some(event=>event.type==='FocusInterrupted'&&event.reason==='app-switch-limit'))setMessage('本轮专注因达到离开应用次数上限而结束。下次可以从这里继续。'); else if(result.events.some(event=>event.type==='FocusInterrupted'))setMessage('本轮已记录。休息一下，下次继续建造。'); else if(result.events.some(event=>event.type==='FocusCompletedEarly'))setMessage('小任务已提前完成，实际专注时间已记录。'); else if (result.warnings.length) setMessage('计时已开始；系统通知当前不可用，回到应用时仍会正确恢复。'); else if (result.events.some(event => event.type === 'ProjectDeleted')) setMessage('大型任务已删除，可在设置的本地备份中恢复。'); else setMessage(''); const sealed=result.events.find(event=>event.type==='ProjectSealedAsMonument');if(sealed){const project=result.state.projects.find(item=>item.id===sealed.projectId);if(project)setCeremony({projectId:project.id,title:project.title});}} refresh(); return result; } catch (error) { setMessage(error instanceof Error ? error.message : '操作失败，请重试。'); throw error; } }, [service, refresh]);
+  const run = useCallback(async (command: ApplicationCommand) => { try { const result = await service.dispatch(command); if (!result.ok) setMessage(result.message); else {if(result.events.some(event=>event.type==='FocusInterrupted'&&event.reason==='app-switch-limit'))setMessage('本轮专注因达到离开应用次数上限而结束。下次可以从这里继续。'); else if(result.events.some(event=>event.type==='FocusInterrupted'))setMessage('本轮已记录，有效专注时间已计入统计。'); else if(result.events.some(event=>event.type==='FocusCompletedEarly'))setMessage('小任务已提前完成，实际专注时间已记录。'); else if(result.warnings.some(warning=>warning.code==='NOTIFICATION_INEXACT'))setMessage('系统提醒已开启，但未获精准闹钟权限，锁屏时可能略有延迟。'); else if (result.warnings.length) setMessage('计时已开始；系统通知当前不可用，回到应用时仍会正确恢复。'); else if (result.events.some(event => event.type === 'ProjectDeleted')) setMessage('大型任务已删除，可在设置的本地备份中恢复。'); else setMessage(''); const sealed=result.events.find(event=>event.type==='ProjectSealedAsMonument');if(sealed){const project=result.state.projects.find(item=>item.id===sealed.projectId);if(project)setCeremony({projectId:project.id,title:project.title});}} refresh(); return result; } catch (error) { setMessage(error instanceof Error ? error.message : '操作失败，请重试。'); throw error; } }, [service, refresh]);
   useEffect(() => { const resumeFromPageCache = (event:PageTransitionEvent) => { if(event.persisted)void service.resume().then(refresh); }; window.addEventListener('pageshow',resumeFromPageCache);return()=>window.removeEventListener('pageshow',resumeFromPageCache);},[service,refresh]);
   useEffect(() => { const refreshAfterLifecycle = () => refresh(); window.addEventListener(APPLICATION_STATE_CHANGED_EVENT,refreshAfterLifecycle);return()=>window.removeEventListener(APPLICATION_STATE_CHANGED_EVENT,refreshAfterLifecycle);},[refresh]);
   useEffect(()=>{if(!message)return;const timeout=window.setTimeout(()=>setMessage(''),5000);return()=>window.clearTimeout(timeout);},[message]);
@@ -114,7 +115,7 @@ function WorldScreen({service,resourcePacks,run,refresh,preferences}:{service:Ap
   useEffect(()=>{if(latestSuccess&&latestSuccess.id!==latestSuccessRef.current){latestSuccessRef.current=latestSuccess.id;setConstructionFeedback(value=>value+1);const timer=window.setTimeout(()=>setConstructionFeedback(0),1800);return()=>clearTimeout(timer);}},[latestSuccess?.id]);
   const session=state.activeFocusSession; const lastFocus=state.focusHistory[state.focusHistory.length-1];const integrityFailure=!session&&lastFocus?.status==='interrupted'&&lastFocus.interruptionReason==='app-switch-limit'; const isBreak=plan?.status==='break'&&!!plan.breakEndsAt; const timerEndsAt=session?.endsAt??(isBreak?plan?.breakEndsAt:undefined); const pending=active.unreportedCompletedSessions; const selectedId=plan?.subtaskId??selected; const subtask=active.project.subtasks.find(s=>s.id===selectedId) ?? active.project.subtasks[0]!;
   useEffect(()=>{if(integrityFailure&&plan?.status==='focus')setPlan(null);},[integrityFailure,plan,setPlan]);
-  const startFocus=async(total=plan?.totalRounds??rounds)=>{const next=plan??{projectId:active.project.id,subtaskId:subtask.id,totalRounds:total,completedRounds:0,status:'focus' as const};const result=await run({type:'StartFocus',subtaskId:next.subtaskId,plannedDurationMs:preferences.focusMinutes*60000});if(result?.ok){const {breakEndsAt:_breakEndsAt,...withoutBreak}=next;setPlan({...withoutBreak,status:'focus'});}};
+  const startFocus=async(total=plan?.totalRounds??rounds)=>{const next:RoundPlan=plan??{projectId:active.project.id,subtaskId:subtask.id,totalRounds:total,completedRounds:0,status:'focus',reportedSessionIds:[]};const result=await run({type:'StartFocus',subtaskId:next.subtaskId,plannedDurationMs:preferences.focusMinutes*60000});if(result?.ok){const {breakEndsAt:_breakEndsAt,...withoutBreak}=next;setPlan({...withoutBreak,status:'focus'});}};
   const interruptFocus=async(interruptionCategory:FocusInterruptionCategory|null)=>{const current=service.snapshot().activeFocusSession;if(current&&Date.parse(current.endsAt)<=Date.now()){setEnding(false);await reconcile();return;}const result=await run({type:'CancelFocus',interruptionCategory});if(result?.ok){setPlan(null);setEnding(false);}};
   const completeEarly=async()=>{const current=service.snapshot().activeFocusSession;if(current&&Date.parse(current.endsAt)<=Date.now()){setEnding(false);await reconcile();return;}const result=await run({type:'CompleteFocusEarly'});if(!result?.ok)return;setEnding(false);const sealed=result.events.some((event:{type:string})=>event.type==='ProjectSealedAsMonument');if(sealed){setPlan(null);return;}const currentPlan=plan;if(currentPlan&&currentPlan.totalRounds>1&&preferences.breakMinutes>0)setPlan({...currentPlan,completedRounds:currentPlan.completedRounds+1,status:'break',endAfterBreak:true,breakEndsAt:new Date(Date.now()+preferences.breakMinutes*60000).toISOString()});else setPlan(null);};
   const afterReport=()=>{if(!plan)return;const completed=plan.completedRounds+1;if(completed>=plan.totalRounds){setPlan(null);return;}if(preferences.breakMinutes===0){const {breakEndsAt:_breakEndsAt,endAfterBreak:_endAfterBreak,...withoutBreak}=plan;setPlan({...withoutBreak,completedRounds:completed,status:'ready'});return;}setPlan({...plan,completedRounds:completed,status:'break',breakEndsAt:new Date(Date.now()+preferences.breakMinutes*60000).toISOString()});};
@@ -170,9 +171,9 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
 
   useEffect(() => {
     setSelected(active.project.subtasks.find((subtask) => subtask.progressBasisPoints < 10000)?.id ?? active.project.subtasks[0]!.id);
-    setPlanState(loadRoundPlan(active.project.id));
+    setPlan(loadRoundPlan(active.project.id));
     setPlanOpen(false);
-  }, [active.project.id]);
+  }, [active.project.id, setPlan]);
   useEffect(() => {
     if (!latestSuccess || latestSuccess.id === latestSuccessRef.current) return;
     latestSuccessRef.current = latestSuccess.id;
@@ -184,26 +185,40 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
   const session = state.activeFocusSession;
   const lastFocus = state.focusHistory[state.focusHistory.length - 1];
   const integrityFailure = !session && lastFocus?.status === 'interrupted' && lastFocus.interruptionReason === 'app-switch-limit';
-  const isBreak = plan?.status === 'break' && !!plan.breakEndsAt;
   const pending = active.unreportedCompletedSessions;
-  const selectedId = plan?.subtaskId ?? selected;
+  const reconciledPlan = reconcileRoundPlan(plan, state, active.project.id);
+  const isBreak = reconciledPlan?.status === 'break' && !!reconciledPlan.breakEndsAt;
+  useEffect(() => {
+    if (!roundPlansEqual(plan, reconciledPlan)) setPlan(reconciledPlan);
+  }, [plan, reconciledPlan, setPlan]);
+  const selectedId = reconciledPlan?.subtaskId ?? selected;
   const subtask = active.project.subtasks.find((item) => item.id === selectedId) ?? active.project.subtasks[0]!;
-  const timerEndsAt = session?.endsAt ?? (isBreak ? plan?.breakEndsAt : undefined);
+  const timerEndsAt = session?.endsAt ?? (isBreak ? reconciledPlan?.breakEndsAt : undefined);
   const today = localDateOf(new Date(), state.calendar.timeZone);
   const dailyGoal = state.dailyGoals.find((goal) => goal.date === today);
   const completedToday = state.focusHistory.filter((item) => item.status === 'completed' && item.completedLocalDate === today).length;
   const dailySummary = dailyGoal?.enabled ? `今日 ${completedToday} / ${dailyGoal.targetPomodoros} 轮` : `今日已完成 ${completedToday} 轮`;
 
   useEffect(() => {
-    if (integrityFailure && plan?.status === 'focus') setPlan(null);
-  }, [integrityFailure, plan, setPlan]);
+    const operation = reconciledPlan?.status === 'break' && reconciledPlan.breakEndsAt
+      ? service.scheduleBreakCompletion({ endsAt: reconciledPlan.breakEndsAt })
+      : service.cancelBreakCompletion();
+    void operation.then((warnings) => {
+      for (const warning of warnings) console.warn(warning.message, warning.cause);
+    });
+  }, [service, reconciledPlan?.status, reconciledPlan?.breakEndsAt]);
 
-  const startFocus = async (total = plan?.totalRounds ?? rounds) => {
-    const next = plan ?? { projectId: active.project.id, subtaskId: subtask.id, totalRounds: total, completedRounds: 0, status: 'focus' as const };
+  useEffect(() => {
+    if (integrityFailure && reconciledPlan?.status === 'focus') setPlan(null);
+  }, [integrityFailure, reconciledPlan, setPlan]);
+
+  const startFocus = async (total = reconciledPlan?.totalRounds ?? rounds) => {
+    const next: RoundPlan = reconciledPlan ?? { projectId: active.project.id, subtaskId: subtask.id, totalRounds: total, completedRounds: 0, status: 'focus', reportedSessionIds: [] };
     const result = await run({ type: 'StartFocus', subtaskId: next.subtaskId, plannedDurationMs: preferences.focusMinutes * 60000 });
     if (result?.ok) {
       const { breakEndsAt: _breakEndsAt, ...withoutBreak } = next;
-      setPlan({ ...withoutBreak, status: 'focus' });
+      const started = result.events.find((event: { type: string; sessionId?: string }) => event.type === 'FocusStarted');
+      setPlan({ ...withoutBreak, status: 'focus', currentSessionId: started?.sessionId });
     }
   };
   const interruptFocus = async (interruptionCategory: FocusInterruptionCategory | null) => {
@@ -230,28 +245,30 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
     if (!result?.ok) return;
     setEnding(false);
     const sealed = result.events.some((event: { type: string }) => event.type === 'ProjectSealedAsMonument');
-    const currentPlan = plan;
+    const currentPlan = reconciledPlan;
     if (sealed || !currentPlan || currentPlan.totalRounds === 1 || preferences.breakMinutes === 0) {
       setPlan(null);
       return;
     }
-    setPlan({ ...currentPlan, completedRounds: currentPlan.completedRounds + 1, status: 'break', endAfterBreak: true, breakEndsAt: new Date(Date.now() + preferences.breakMinutes * 60000).toISOString() });
+    const completedSession = result.events.find((event: { type: string; sessionId?: string }) => event.type === 'FocusCompletedEarly');
+    setPlan({ ...currentPlan, completedRounds: currentPlan.completedRounds + 1, status: 'break', endAfterBreak: true, breakEndsAt: new Date(Date.now() + preferences.breakMinutes * 60000).toISOString(), currentSessionId: undefined, reportedSessionIds: completedSession?.sessionId ? [...currentPlan.reportedSessionIds, completedSession.sessionId] : currentPlan.reportedSessionIds });
   };
-  const afterReport = () => {
-    if (!plan) return;
-    const completed = plan.completedRounds + 1;
-    if (completed >= plan.totalRounds) {
+  const afterReport = (sessionId: string) => {
+    if (!reconciledPlan) return;
+    const completed = reconciledPlan.completedRounds + 1;
+    const reportedSessionIds = reconciledPlan.reportedSessionIds.includes(sessionId) ? reconciledPlan.reportedSessionIds : [...reconciledPlan.reportedSessionIds, sessionId];
+    if (completed >= reconciledPlan.totalRounds) {
       setPlan(null);
       return;
     }
     if (preferences.breakMinutes === 0) {
-      const { breakEndsAt: _breakEndsAt, endAfterBreak: _endAfterBreak, ...withoutBreak } = plan;
-      setPlan({ ...withoutBreak, completedRounds: completed, status: 'ready' });
+      const { breakEndsAt: _breakEndsAt, endAfterBreak: _endAfterBreak, ...withoutBreak } = reconciledPlan;
+      setPlan({ ...withoutBreak, completedRounds: completed, status: 'ready', currentSessionId: undefined, reportedSessionIds });
       return;
     }
-    setPlan({ ...plan, completedRounds: completed, status: 'break', breakEndsAt: new Date(Date.now() + preferences.breakMinutes * 60000).toISOString() });
+    setPlan({ ...reconciledPlan, completedRounds: completed, status: 'break', breakEndsAt: new Date(Date.now() + preferences.breakMinutes * 60000).toISOString(), currentSessionId: undefined, reportedSessionIds });
   };
-  const planSummary = `${plan?.totalRounds ?? rounds} 轮 · 每轮 ${preferences.focusMinutes} 分钟${preferences.breakMinutes > 0 ? ` · 休息 ${preferences.breakMinutes} 分钟` : ''}`;
+  const planSummary = `${reconciledPlan?.totalRounds ?? rounds} 轮 · 每轮 ${preferences.focusMinutes} 分钟${preferences.breakMinutes > 0 ? ` · 休息 ${preferences.breakMinutes} 分钟` : ''}`;
 
   return <div className={session ? 'world-screen is-focusing' : pending.length > 0 ? 'world-screen has-report' : 'world-screen'}>
     <WorldCanvasV7 service={service} resourcePacks={resourcePacks} visualExperiment={preferences.visualExperiment} constructionFeedback={constructionFeedback} focusedProjectId={focusedProjectId} onClearWorldFocus={onClearWorldFocus}/>
@@ -266,20 +283,20 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
       </>}
       {pending.length > 0 ? <ProgressReportV7 active={active} run={run} onSubmitted={afterReport}/> : <>
         {session && <div className="focus-task-context"><span>本轮任务</span><strong>{subtask.title}</strong></div>}
-        {isBreak && <div className="rest-summary"><span>休息时间</span><strong>{plan?.endAfterBreak ? '小任务已完成' : '下一轮准备中'}</strong><small>{dailySummary}</small></div>}
-        {(isBreak || session || plan?.status === 'ready') && <div className={isBreak ? 'session-kind rest' : 'session-kind'}>{isBreak ? '放松一下，结束后会回到下一步。' : session ? `第 ${(plan?.completedRounds ?? 0) + 1} / ${plan?.totalRounds ?? 1} 轮专注` : `准备第 ${plan!.completedRounds + 1} / ${plan!.totalRounds} 轮`}</div>}
+        {isBreak && <div className="rest-summary"><span>休息时间</span><strong>{reconciledPlan?.endAfterBreak ? '小任务已完成' : '下一轮准备中'}</strong><small>{dailySummary}</small></div>}
+        {(isBreak || session || reconciledPlan?.status === 'ready') && <div className={isBreak ? 'session-kind rest' : 'session-kind'}>{isBreak ? '放松一下，结束后会回到下一步。' : session ? `第 ${(reconciledPlan?.completedRounds ?? 0) + 1} / ${reconciledPlan?.totalRounds ?? 1} 轮专注` : `准备第 ${reconciledPlan!.completedRounds + 1} / ${reconciledPlan!.totalRounds} 轮`}</div>}
         {session && state.focusIntegrityPolicy.enabled && <div className={session.integrity.effectiveExcursions > 0 ? 'focus-integrity-warning active' : 'focus-integrity-warning'}><AlertTriangle/>有效离开 {session.integrity.effectiveExcursions} / {state.focusIntegrityPolicy.maxEffectiveExcursions} 次</div>}
         {integrityFailure && <div className="focus-integrity-ended" role="alert"><AlertTriangle/>本轮专注因达到离开应用次数上限而结束。下次可以从这里继续。</div>}
         <FocusTimer endsAt={timerEndsAt} fallbackMs={preferences.focusMinutes * 60000} onElapsed={session ? reconcile : finishBreak}/>
-        {isBreak ? <button className="primary secondary-action" onClick={() => { if (plan?.endAfterBreak) setPlan(null); else { const { breakEndsAt: _breakEndsAt, ...withoutBreak } = plan!; setPlan({ ...withoutBreak, status: 'ready' }); } }}>跳过休息</button>
-          : plan?.status === 'ready' ? <button className="primary" onClick={() => void startFocus()}><Clock3/>开始下一轮</button>
-            : <button className={session ? 'destructive primary' : 'primary'} onClick={() => void (session ? setEnding(true) : startFocus())}>{session ? <><Square/>结束本次专注</> : <><Clock3/>开始 {plan?.totalRounds ?? rounds} 轮</>}</button>}
+        {isBreak ? <button className="primary secondary-action" onClick={() => { if (reconciledPlan?.endAfterBreak) setPlan(null); else { const { breakEndsAt: _breakEndsAt, ...withoutBreak } = reconciledPlan!; setPlan({ ...withoutBreak, status: 'ready' }); } }}>跳过休息</button>
+          : reconciledPlan?.status === 'ready' ? <button className="primary" onClick={() => void startFocus()}><Clock3/>开始下一轮</button>
+            : <button className={session ? 'destructive primary' : 'primary'} onClick={() => void (session ? setEnding(true) : startFocus())}>{session ? <><Square/>结束本次专注</> : <><Clock3/>开始 {reconciledPlan?.totalRounds ?? rounds} 轮</>}</button>}
       </>}
       {ending && session && (
         <EndFocusDialog taskTitle={subtask.title} onClose={() => setEnding(false)} onInterrupt={interruptFocus} onCompleteEarly={completeEarly}/>
       )}
       {planOpen && !session && (
-        <FocusPlanSheet subtasks={active.project.subtasks} selectedId={selected} rounds={rounds} focusMinutes={preferences.focusMinutes} breakMinutes={preferences.breakMinutes} locked={Boolean(plan)} onSelect={setSelected} onRoundsChange={setRounds} onClose={() => setPlanOpen(false)}/>
+        <FocusPlanSheet subtasks={active.project.subtasks} selectedId={reconciledPlan?.subtaskId ?? selected} rounds={rounds} focusMinutes={preferences.focusMinutes} breakMinutes={preferences.breakMinutes} locked={Boolean(reconciledPlan)} onSelect={setSelected} onRoundsChange={setRounds} onClose={() => setPlanOpen(false)}/>
       )}
     </section>
   </div>;
@@ -307,11 +324,11 @@ function FocusPlanSheet({ subtasks, selectedId, rounds, focusMinutes, breakMinut
   </div>;
 }
 
-function ProgressReportV7({active,run,onSubmitted}:{active:NonNullable<ReturnType<ApplicationService['activeProjectProjection']>>;run:(c:ApplicationCommand)=>Promise<any>;onSubmitted:()=>void}) {
+function ProgressReportV7({active,run,onSubmitted}:{active:NonNullable<ReturnType<ApplicationService['activeProjectProjection']>>;run:(c:ApplicationCommand)=>Promise<any>;onSubmitted:(sessionId:string)=>void}) {
   const session=active.unreportedCompletedSessions[0]!;
   const task=active.project.subtasks.find((subtask)=>subtask.id===session.subtaskId)!;
   const options=[task.progressBasisPoints,2500,5000,7500,10000].filter((value,index,all)=>value>=task.progressBasisPoints&&all.indexOf(value)===index);
-  const submit=async(value:number)=>{const result=await run({type:'ReportSubtaskProgress',subtaskId:task.id,focusSessionIds:[session.id],progressBasisPoints:value});if(result?.ok)onSubmitted();};
+  const submit=async(value:number)=>{const result=await run({type:'ReportSubtaskProgress',subtaskId:task.id,focusSessionIds:[session.id],progressBasisPoints:value});if(result?.ok)onSubmitted(session.id);};
   return <div className="report v7-progress-report"><Check/><span className="eyebrow">本轮已记录</span><h2>这次工作推进到哪里？</h2><p><strong>{task.title}</strong><br/>当前总进度 {Math.round(task.progressBasisPoints/100)}%。提交后会更新建筑的永久施工阶段。</p><div className="report-options">{options.map((value)=><button key={value} onClick={()=>void submit(value)}>{value===task.progressBasisPoints?`保持 ${value/100}%`:value===10000?'完成小任务':`推进至 ${value/100}%`}</button>)}</div></div>;
 }
 
@@ -461,15 +478,10 @@ function focusHeatmapStats(state:ReturnType<ApplicationService['snapshot']>) {
   const today=localDateOf(new Date(),state.calendar.timeZone);
   const weekday=(new Date(`${today}T12:00:00Z`).getUTCDay()+6)%7;
   const firstDate=addLocalDays(today,-weekday-25*7);
-  const minutesByDate=new Map<string,number>();
-  for(const session of state.focusHistory){
-    if(session.status==='interrupted')continue;
-    const minutes=Math.round(session.actualDurationMs/60000);
-    minutesByDate.set(session.completedLocalDate,(minutesByDate.get(session.completedLocalDate)??0)+minutes);
-  }
+  const millisecondsByDate=effectiveFocusMillisecondsByDate(state.focusHistory);
   const weeks=Array.from({length:26},(_,weekIndex)=>({days:Array.from({length:7},(_,dayIndex)=>{
     const date=addLocalDays(firstDate,weekIndex*7+dayIndex);
-    const minutes=minutesByDate.get(date)??0;
+    const minutes=Math.round((millisecondsByDate.get(date)??0)/60000);
     return {date,minutes,future:date>today,level:minutes===0?0:minutes<30?1:minutes<60?2:minutes<120?3:4};
   })}));
   const months=weeks.flatMap((week,index)=>{
@@ -486,10 +498,10 @@ function formatFocusMinutes(minutes:number){return minutes>=60?`${Math.floor(min
 function heatmapDateLabel(date:string){const [year,month,day]=date.split('-');return `${year}年${Number(month)}月${Number(day)}日`;}
 
 function loadPreferences():FocusPreferences { try{const value=JSON.parse(localStorage.getItem(PREFERENCES_KEY)??'null');if(value&&Number.isFinite(value.focusMinutes)&&Number.isFinite(value.breakMinutes)){const visualExperiment:VoxelVisualExperiment=value.visualExperiment==='water'||value.visualExperiment==='mist-beam'?value.visualExperiment:'none';return{focusMinutes:clamp(value.focusMinutes,1,180),breakMinutes:clamp(value.breakMinutes,0,60),visualExperiment};}}catch{}return{focusMinutes:45,breakMinutes:5,visualExperiment:'none'}; }
-function loadRoundPlan(projectId:string):RoundPlan|null { try{const value=JSON.parse(localStorage.getItem(ROUND_PLAN_KEY)??'null') as RoundPlan|null;return value?.projectId===projectId?value:null;}catch{return null;} }
+function loadRoundPlan(projectId:string):RoundPlan|null { try{return parseRoundPlan(JSON.parse(localStorage.getItem(ROUND_PLAN_KEY)??'null'),projectId);}catch{return null;} }
 function clamp(value:number,min:number,max:number){return Math.min(max,Math.max(min,Math.round(value)));}
 function constructionStage(progress:number){if(progress<=0)return'施工阶段：场地准备';if(progress<1800)return'施工阶段：地基';if(progress<3800)return'施工阶段：框架与地板';if(progress<6500)return'施工阶段：墙体';if(progress<8800)return'施工阶段：屋顶';return progress<10000?'施工阶段：门窗与收尾':'建筑已完成';}
-function periodStats(state:ReturnType<ApplicationService['snapshot']>,period:'week'|'month'|'year'){const now=new Date();const start=new Date(now);let count=7;let label='本周';if(period==='week'){const day=(now.getDay()+6)%7;start.setDate(now.getDate()-day);start.setHours(0,0,0,0);}else if(period==='month'){start.setDate(1);start.setHours(0,0,0,0);count=new Date(now.getFullYear(),now.getMonth()+1,0).getDate();label='本月';}else{start.setMonth(0,1);start.setHours(0,0,0,0);count=12;label='本年';}const at=(session:ReturnType<ApplicationService['snapshot']>['focusHistory'][number])=>session.status==='interrupted'?session.interruptedAt:session.completedAt;const relevant=state.focusHistory.filter(session=>Date.parse(at(session))>=start.getTime());const completed=relevant.filter(session=>session.status==='completed');const early=relevant.filter(session=>session.status==='completed-early');const successful=[...completed,...early];const interrupted=relevant.filter(session=>session.status==='interrupted');const minutes=Math.round(successful.reduce((sum,session)=>sum+session.actualDurationMs,0)/60000);const days=new Set(successful.map(session=>localDateOf(session.completedAt,state.calendar.timeZone)));const buckets=Array.from({length:count},()=>0);for(const session of successful){const date=new Date(session.completedAt);const index=period==='year'?date.getMonth():period==='month'?date.getDate()-1:Math.floor((date.getTime()-start.getTime())/86400000);if(index>=0&&index<buckets.length)buckets[index]!+=Math.round(session.actualDurationMs/60000);}const reasonCounts=new Map<string,number>();for(const session of interrupted){const key=session.interruptionReason==='app-switch-limit'?'integrity-limit':session.interruptionCategory??'unclassified';reasonCounts.set(key,(reasonCounts.get(key)??0)+1);}const labels=new Map([...INTERRUPTION_OPTIONS.filter(item=>item.value!==null).map(item=>[item.value!,item.label] as const),['integrity-limit','切屏次数上限'],['unclassified','未记录']]);const reasons=[...reasonCounts].map(([value,countValue])=>({value,label:labels.get(value)??value,count:countValue})).sort((a,b)=>b.count-a.count||a.label.localeCompare(b.label,'zh-CN'));return{completed:completed.length,early:early.length,interrupted:interrupted.length,minutes,activeDays:days.size,streak:plannedFocusStreak(state),rate:relevant.length?Math.round(successful.length/relevant.length*100):0,buckets,max:Math.max(1,...buckets),label,reasons};}
+function periodStats(state:ReturnType<ApplicationService['snapshot']>,period:'week'|'month'|'year'){const now=new Date();const start=new Date(now);let count=7;let label='本周';if(period==='week'){const day=(now.getDay()+6)%7;start.setDate(now.getDate()-day);start.setHours(0,0,0,0);}else if(period==='month'){start.setDate(1);start.setHours(0,0,0,0);count=new Date(now.getFullYear(),now.getMonth()+1,0).getDate();label='本月';}else{start.setMonth(0,1);start.setHours(0,0,0,0);count=12;label='本年';}const relevant=state.focusHistory.filter(session=>Date.parse(focusSessionEndedAt(session))>=start.getTime());const completed=relevant.filter(session=>session.status==='completed');const early=relevant.filter(session=>session.status==='completed-early');const successful=[...completed,...early];const interrupted=relevant.filter(session=>session.status==='interrupted');const minutes=Math.round(relevant.reduce((sum,session)=>sum+session.actualDurationMs,0)/60000);const days=new Set(relevant.filter(session=>session.actualDurationMs>0).map(focusSessionLocalDate));const bucketMilliseconds=Array.from({length:count},()=>0);for(const session of relevant){const date=new Date(focusSessionEndedAt(session));const index=period==='year'?date.getMonth():period==='month'?date.getDate()-1:Math.floor((date.getTime()-start.getTime())/86400000);if(index>=0&&index<bucketMilliseconds.length)bucketMilliseconds[index]!+=session.actualDurationMs;}const buckets=bucketMilliseconds.map(value=>Math.round(value/60000));const reasonCounts=new Map<string,number>();for(const session of interrupted){const key=session.interruptionReason==='app-switch-limit'?'integrity-limit':session.interruptionCategory??'unclassified';reasonCounts.set(key,(reasonCounts.get(key)??0)+1);}const labels=new Map([...INTERRUPTION_OPTIONS.filter(item=>item.value!==null).map(item=>[item.value!,item.label] as const),['integrity-limit','切屏次数上限'],['unclassified','未记录']]);const reasons=[...reasonCounts].map(([value,countValue])=>({value,label:labels.get(value)??value,count:countValue})).sort((a,b)=>b.count-a.count||a.label.localeCompare(b.label,'zh-CN'));return{completed:completed.length,early:early.length,interrupted:interrupted.length,minutes,activeDays:days.size,streak:plannedFocusStreak(state),rate:relevant.length?Math.round(successful.length/relevant.length*100):0,buckets,max:Math.max(1,...buckets),label,reasons};}
 
 function plannedFocusStreak(state:ReturnType<ApplicationService['snapshot']>):number {
   const successfulDates=new Set(state.focusHistory.filter(session=>session.status!=='interrupted').map(session=>localDateOf(session.completedAt,state.calendar.timeZone)));

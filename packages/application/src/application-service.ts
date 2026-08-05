@@ -15,6 +15,7 @@ import {
 import type {
   BackupImportPreview,
   BackupRepository,
+  BreakCompletionNotification,
   Clock,
   FocusLifecycleEvent,
   IdGenerator,
@@ -79,6 +80,37 @@ export class ApplicationService {
 
   dispatch(command: ApplicationCommand): Promise<ApplicationResult> {
     return this.serial(() => this.dispatchInternal(materialize(command, this.dependencies.ids), "user"));
+  }
+
+  scheduleBreakCompletion(notification: BreakCompletionNotification): Promise<ApplicationWarning[]> {
+    return this.serial(async () => {
+      if (Date.parse(notification.endsAt) <= nowMs(this.dependencies.clock)) {
+        return this.cancelBreakCompletionInternal();
+      }
+      const warnings: ApplicationWarning[] = [];
+      let capability: NotificationCapability;
+      try {
+        capability = await this.dependencies.notifications.refreshCapability();
+      } catch (cause) {
+        return [warning("NOTIFICATION_CAPABILITY_REFRESH_FAILED", "Could not determine break notification capability", cause)];
+      }
+      if (!capability.canSchedule) {
+        return [warning("NOTIFICATION_PERMISSION_DENIED", "Break continues, but its completion notification is unavailable")];
+      }
+      if (capability.precision === "inexact") {
+        warnings.push(warning("NOTIFICATION_INEXACT", "Break notification may be delayed because exact alarms are unavailable"));
+      }
+      try {
+        await this.dependencies.notifications.scheduleBreakCompletion(notification);
+      } catch (cause) {
+        warnings.push(warning("NOTIFICATION_SCHEDULE_FAILED", "Break continues, but its completion notification could not be scheduled", cause));
+      }
+      return warnings;
+    });
+  }
+
+  cancelBreakCompletion(): Promise<ApplicationWarning[]> {
+    return this.serial(() => this.cancelBreakCompletionInternal());
   }
 
   handleLifecycleEvent(event: FocusLifecycleEvent): Promise<ApplicationResult> {
@@ -175,6 +207,9 @@ export class ApplicationService {
         warnings.push(warning("NOTIFICATION_PERMISSION_DENIED", "Focus continues, but completion notifications are unavailable"));
         return success(this.state, [], warnings);
       }
+      if (capability.precision === "inexact") {
+        warnings.push(warning("NOTIFICATION_INEXACT", "Focus completion notification may be delayed because exact alarms are unavailable"));
+      }
 
       try {
         await this.dependencies.notifications.scheduleFocusCompletion({
@@ -227,6 +262,15 @@ export class ApplicationService {
       return [];
     } catch (cause) {
       return [warning("NOTIFICATION_CANCEL_FAILED", "Persisted timer truth changed, but its stale notification could not be cancelled", cause)];
+    }
+  }
+
+  private async cancelBreakCompletionInternal(): Promise<ApplicationWarning[]> {
+    try {
+      await this.dependencies.notifications.cancelBreakCompletion();
+      return [];
+    } catch (cause) {
+      return [warning("NOTIFICATION_CANCEL_FAILED", "The stale break notification could not be cancelled", cause)];
     }
   }
 
@@ -299,6 +343,9 @@ export class ApplicationService {
         if (!capability.canSchedule) {
           warnings.push(warning("NOTIFICATION_PERMISSION_DENIED", "Focus started, but completion notifications are unavailable"));
           continue;
+        }
+        if (capability.precision === "inexact") {
+          warnings.push(warning("NOTIFICATION_INEXACT", "Focus completion notification may be delayed because exact alarms are unavailable"));
         }
         try {
           await this.dependencies.notifications.scheduleFocusCompletion({ sessionId: active.id, endsAt: active.endsAt });

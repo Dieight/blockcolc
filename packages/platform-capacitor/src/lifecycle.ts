@@ -1,8 +1,7 @@
 import { App } from '@capacitor/app';
-import { registerPlugin } from '@capacitor/core';
+import { Capacitor, registerPlugin } from '@capacitor/core';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import type { FocusLifecycleEvent, FocusLifecyclePort } from '@tomato-clock/application';
-import { isCapacitorNative } from './notification-port';
 
 export interface NativeBackgroundContext {
   screenInteractive: boolean;
@@ -13,9 +12,15 @@ export interface NativeBackgroundContext {
 
 interface FocusIntegrityPlugin {
   getLastBackgroundContext(): Promise<NativeBackgroundContext>;
+  setProductSystemUiOpen(options: { open: boolean }): Promise<void>;
 }
 
 const FocusIntegrity = registerPlugin<FocusIntegrityPlugin>('FocusIntegrity');
+
+export async function setNativeProductSystemUiOpen(open: boolean): Promise<void> {
+  if (!Capacitor.isNativePlatform()) return;
+  await FocusIntegrity.setProductSystemUiOpen({ open });
+}
 
 export function mapNativeBackgroundContext(context: NativeBackgroundContext): FocusLifecycleEvent {
   return {
@@ -51,7 +56,7 @@ export function createOrderedLifecycleDispatcher(
 
 export class CapacitorFocusLifecyclePort implements FocusLifecyclePort {
   async subscribe(listener: (event: FocusLifecycleEvent) => void | Promise<void>): Promise<() => Promise<void>> {
-    if (!isCapacitorNative()) return async () => undefined;
+    if (!Capacitor.isNativePlatform()) return async () => undefined;
     const dispatcher = createOrderedLifecycleDispatcher(
       listener,
       () => FocusIntegrity.getLastBackgroundContext(),
@@ -71,7 +76,7 @@ export class CapacitorFocusLifecyclePort implements FocusLifecyclePort {
 }
 
 export async function registerNativeResume(onResume: () => void | Promise<void>): Promise<() => Promise<void>> {
-  if (!isCapacitorNative()) return async () => undefined;
+  if (!Capacitor.isNativePlatform()) return async () => undefined;
   const appState = await App.addListener('appStateChange', ({ isActive }) => { if (isActive) void onResume(); });
   const notification = await LocalNotifications.addListener('localNotificationActionPerformed', () => { void onResume(); });
   return async () => { await appState.remove(); await notification.remove(); };

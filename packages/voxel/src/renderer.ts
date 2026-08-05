@@ -107,6 +107,8 @@ export interface RendererDiagnostics {
   interactionAnimationFrameP95Ms: number | null;
   interactionAnimationFrameMaxMs: number;
   interactionDelayedFrameCount: number;
+  nearDetailLevel: "far" | "near";
+  edgeDetailStrength: number;
   gpuTimerAvailable: boolean;
   gpuRenderP95Ms: number | null;
   gpuRenderMaxMs: number;
@@ -468,6 +470,8 @@ export function createVoxelRenderer(
   let translucentGeometryVoxelCount = 0;
   let tintedVoxelCount = 0;
   const materialEffectPatches = new Map<THREE.MeshStandardMaterial, MaterialEffectsPatch>();
+  const materialEdgeStrengths = new Map<THREE.MeshStandardMaterial, number>();
+  let nearDetailFactor = 0;
   const cutoutShadowMeshes = new Set<THREE.Mesh>();
   let sceneRevision = 0;
   let shadowRefreshCount = 0;
@@ -488,14 +492,16 @@ export function createVoxelRenderer(
       const response = materialResponse(materialResponseForMaterialId(id));
       found = new THREE.MeshStandardMaterial({
         color: colors[id] ?? 0xffffff,
-        roughness: id === "glass" ? 0.16 : response.roughness,
-        metalness: response.metalness,
+        roughness: id === "glass" ? 0.1 : response.roughness,
+        metalness: id === "glass" ? 0.08 : response.metalness,
         transparent: id === "glass",
-        opacity: id === "glass" ? 0.5 : 1,
+        opacity: id === "glass" ? 0.44 : 1,
+        depthWrite: id !== "glass",
         emissive: id === "glass" ? 0x315c72 : 0x000000,
-        emissiveIntensity: id === "glass" ? 0.18 : 0,
+        emissiveIntensity: id === "glass" ? 0.13 : 0,
       });
-      trackMaterialEffects(found);
+      const voxelEdgeStrength = id === "glass" ? 0.22 : ["stone", "wood", "plank", "roof", "accent"].includes(id) ? 0.12 : 0;
+      trackMaterialEffects(found, voxelEdgeStrength);
       materials.set(id, found);
     }
     return found;
@@ -869,7 +875,7 @@ export function createVoxelRenderer(
       const level = levelText === "" ? 0 : Number(levelText);
       const owned = conditionVisual.weathering > 0 || emissiveKind !== "" || level > 0;
       const meshMaterial = owned ? material(materialId!).clone() : material(materialId!);
-      trackMaterialEffects(meshMaterial);
+      trackMaterialEffects(meshMaterial, materialId === "glass" ? 0.22 : 0.12);
       if (conditionVisual.weathering > 0) {
         meshMaterial.color.multiplyScalar(1 - conditionVisual.weathering * 0.28);
         meshMaterial.roughness = Math.min(1, meshMaterial.roughness + conditionVisual.weathering * 0.1);
@@ -882,8 +888,9 @@ export function createVoxelRenderer(
       voxels.forEach((voxel, index) => { matrix.makeTranslation(voxel.x, voxel.y, voxel.z); mesh.setMatrixAt(index, matrix); });
       mesh.instanceMatrix.needsUpdate = true;
       applyFallbackOcclusion(mesh, voxels, occlusionField);
-      mesh.castShadow = true;
+      mesh.castShadow = materialId !== "glass";
       mesh.receiveShadow = true;
+      if (materialId === "glass") mesh.renderOrder = 10;
       if (owned) mesh.userData.ownedMaterial = meshMaterial;
       structure.add(mesh);
     }
@@ -931,15 +938,16 @@ export function createVoxelRenderer(
       const level = levelText === "" ? 0 : Number(levelText);
       const owned = emissiveKind !== "" || level > 0;
       const meshMaterial = owned ? material(materialId!).clone() : material(materialId!);
-      trackMaterialEffects(meshMaterial);
+      trackMaterialEffects(meshMaterial, materialId === "glass" ? 0.22 : 0.12);
       if (owned) emissiveMaterials.push({ material: meshMaterial, level: level || 15, kind: emissiveKind || "light" });
       const mesh = new THREE.InstancedMesh(new THREE.BoxGeometry(0.97, 0.97, 0.97), meshMaterial, voxels.length);
       const matrix = new THREE.Matrix4();
       voxels.forEach((voxel, index) => { matrix.makeTranslation(voxel.x, voxel.y, voxel.z); mesh.setMatrixAt(index, matrix); });
       mesh.instanceMatrix.needsUpdate = true;
       applyFallbackOcclusion(mesh, voxels, occlusionField);
-      mesh.castShadow = true;
+      mesh.castShadow = materialId !== "glass";
       mesh.receiveShadow = true;
+      if (materialId === "glass") mesh.renderOrder = 10;
       if (owned) mesh.userData.ownedMaterial = meshMaterial;
       structure.add(mesh);
     }
@@ -950,7 +958,7 @@ export function createVoxelRenderer(
       const page = activeResourcePack?.atlas.pages[batch.page];
       if (!page) continue;
       const meshMaterial = createAtlasMaterial(page, batch.alphaMode);
-      trackMaterialEffects(meshMaterial);
+      trackMaterialEffects(meshMaterial, 0.09);
       if (weathering > 0) {
         meshMaterial.color.multiplyScalar(1 - weathering * 0.28);
         meshMaterial.roughness = Math.min(1, meshMaterial.roughness + weathering * 0.1);
@@ -1018,7 +1026,7 @@ export function createVoxelRenderer(
       const page = activeResourcePack?.atlas.pages[batch.page];
       if (!page) continue;
       const meshMaterial = createAtlasGeometryMaterial(page, batch.alphaMode);
-      trackMaterialEffects(meshMaterial);
+      trackMaterialEffects(meshMaterial, 0.045);
       if (weathering > 0) {
         meshMaterial.color.multiplyScalar(1 - weathering * 0.28);
         meshMaterial.roughness = Math.min(1, meshMaterial.roughness + weathering * 0.1);
@@ -1208,13 +1216,15 @@ export function createVoxelRenderer(
     requestRender();
   }
 
-  function trackMaterialEffects(meshMaterial: THREE.MeshStandardMaterial): void {
+  function trackMaterialEffects(meshMaterial: THREE.MeshStandardMaterial, edgeStrength = 0): void {
     const profile = LIGHTWEIGHT_SHADING_PROFILES[qualityTier];
+    materialEdgeStrengths.set(meshMaterial, edgeStrength);
     materialEffectPatches.set(meshMaterial, applyMaterialEffects(meshMaterial, {
       lightDirection: currentLighting.position,
       lightTint: currentLighting.color,
       shadowTint: profile.coolColor,
       strength: profile.faceContrast,
+      edgeStrength: edgeStrength * (0.35 + nearDetailFactor * 0.65),
     }));
   }
 
@@ -1227,6 +1237,17 @@ export function createVoxelRenderer(
         shadowTint: profile.coolColor,
         strength: profile.faceContrast,
       });
+    }
+  }
+
+  function updateNearDetailEffects(): void {
+    const distanceRatio = cameraDistance / Math.max(0.001, fittedDistance);
+    const next = focusedProjectId !== null ? 1 : THREE.MathUtils.clamp((1.04 - distanceRatio) / 0.3, 0, 1);
+    if (Math.abs(next - nearDetailFactor) < 0.015) return;
+    nearDetailFactor = next;
+    for (const [meshMaterial, patch] of materialEffectPatches) {
+      const base = materialEdgeStrengths.get(meshMaterial) ?? 0;
+      patch.update({ edgeStrength: base * (0.35 + nearDetailFactor * 0.65) });
     }
   }
 
@@ -1472,6 +1493,7 @@ export function createVoxelRenderer(
     camera.updateProjectionMatrix();
     camera.lookAt(cameraTarget);
     updateFogDistances();
+    updateNearDetailEffects();
     // Keep interaction diagnostics truthful while the camera eases after a drag.
     canvas.dataset.cameraAzimuth = cameraAzimuth.toFixed(4);
     canvas.dataset.cameraPitchDegrees = THREE.MathUtils.radToDeg(cameraPitch).toFixed(2);
@@ -1641,6 +1663,8 @@ export function createVoxelRenderer(
       interactionAnimationFrameP95Ms: percentile(interactionAnimationFrameIntervals, 0.95),
       interactionAnimationFrameMaxMs,
       interactionDelayedFrameCount,
+      nearDetailLevel: nearDetailFactor >= 0.55 ? "near" : "far",
+      edgeDetailStrength: nearDetailFactor,
       gpuTimerAvailable,
       gpuRenderP95Ms: percentile(gpuRenderDurations, 0.95),
       gpuRenderMaxMs,
@@ -1724,6 +1748,8 @@ export function createVoxelRenderer(
     canvas.dataset.interactionAnimationFrameP95Ms = String(diagnostics.interactionAnimationFrameP95Ms ?? "");
     canvas.dataset.interactionAnimationFrameMaxMs = diagnostics.interactionAnimationFrameMaxMs.toFixed(2);
     canvas.dataset.interactionDelayedFrameCount = String(diagnostics.interactionDelayedFrameCount);
+    canvas.dataset.nearDetailLevel = diagnostics.nearDetailLevel;
+    canvas.dataset.edgeDetailStrength = diagnostics.edgeDetailStrength.toFixed(3);
     canvas.dataset.gpuTimerAvailable = String(diagnostics.gpuTimerAvailable);
     canvas.dataset.gpuRenderP95Ms = String(diagnostics.gpuRenderP95Ms ?? "");
     canvas.dataset.gpuRenderMaxMs = diagnostics.gpuRenderMaxMs.toFixed(2);
@@ -1806,6 +1832,10 @@ export function createVoxelRenderer(
       triangles: diagnostics.render.triangles,
       pixelRatio: diagnostics.pixelRatio,
       qualityTier: diagnostics.qualityTier,
+      nearDetailLevel: diagnostics.nearDetailLevel,
+      edgeDetailStrength: diagnostics.edgeDetailStrength,
+      memoryGeometries: diagnostics.memory.geometries,
+      memoryTextures: diagnostics.memory.textures,
       pointerMoveCount: diagnostics.pointerMoveCount,
       nativeInputReceivedCount: diagnostics.nativeInputReceivedCount,
       nativeInputLastSequence: diagnostics.nativeInputLastSequence,
@@ -1846,7 +1876,10 @@ export function createVoxelRenderer(
         if (!(object instanceof THREE.Mesh)) return;
         if (object.userData.geometrySignature) {
           const owned = object.userData.ownedMaterial as THREE.MeshStandardMaterial | undefined;
-          if (owned) materialEffectPatches.delete(owned);
+          if (owned) {
+            materialEffectPatches.delete(owned);
+            materialEdgeStrengths.delete(owned);
+          }
           disposeAtlasGeometryMeshResources(object);
           cutoutShadowMeshes.delete(object);
           return;
@@ -1859,6 +1892,7 @@ export function createVoxelRenderer(
         const owned = object.userData.ownedMaterial as THREE.Material | undefined;
         if (owned) {
           materialEffectPatches.delete(owned as THREE.MeshStandardMaterial);
+          materialEdgeStrengths.delete(owned as THREE.MeshStandardMaterial);
           owned.dispose();
         }
         const ownedDepth = object.userData.ownedDepthMaterial as THREE.MeshDepthMaterial | undefined;

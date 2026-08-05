@@ -8,6 +8,8 @@ export interface MaterialEffectsOptions {
   lightTint: THREE.ColorRepresentation;
   shadowTint: THREE.ColorRepresentation;
   strength: number;
+  /** Low-cost cube-edge contrast. Set to zero for distant or irregular geometry. */
+  edgeStrength: number;
 }
 
 export interface MaterialEffectsUniforms {
@@ -15,6 +17,7 @@ export interface MaterialEffectsUniforms {
   blockcolcEffectLightTint: THREE.IUniform<THREE.Color>;
   blockcolcEffectShadowTint: THREE.IUniform<THREE.Color>;
   blockcolcEffectStrength: THREE.IUniform<number>;
+  blockcolcEffectEdgeStrength: THREE.IUniform<number>;
 }
 
 export interface MaterialEffectsPatch {
@@ -47,6 +50,7 @@ export function applyMaterialEffects(
     blockcolcEffectLightTint: { value: new THREE.Color(0xffedcf) },
     blockcolcEffectShadowTint: { value: new THREE.Color(0xaebed3) },
     blockcolcEffectStrength: { value: 0.18 },
+    blockcolcEffectEdgeStrength: { value: 0 },
   };
   const previousOnBeforeCompile = material.onBeforeCompile;
   const previousCacheKey = material.customProgramCacheKey();
@@ -59,6 +63,7 @@ export function applyMaterialEffects(
       if (next.lightTint !== undefined) uniforms.blockcolcEffectLightTint.value.set(next.lightTint);
       if (next.shadowTint !== undefined) uniforms.blockcolcEffectShadowTint.value.set(next.shadowTint);
       if (next.strength !== undefined) uniforms.blockcolcEffectStrength.value = THREE.MathUtils.clamp(next.strength, 0, 1);
+      if (next.edgeStrength !== undefined) uniforms.blockcolcEffectEdgeStrength.value = THREE.MathUtils.clamp(next.edgeStrength, 0, 0.35);
     },
   };
 
@@ -84,17 +89,18 @@ function installUniforms(
   target.blockcolcEffectLightTint = uniforms.blockcolcEffectLightTint;
   target.blockcolcEffectShadowTint = uniforms.blockcolcEffectShadowTint;
   target.blockcolcEffectStrength = uniforms.blockcolcEffectStrength;
+  target.blockcolcEffectEdgeStrength = uniforms.blockcolcEffectEdgeStrength;
 }
 
 function patchVertexShader(source: string): string {
   return source
     .replace(
       "#include <common>",
-      `#include <common>\n${PATCH_MARKER}\nvarying vec3 vBlockcolcEffectNormal;`,
+      `#include <common>\n${PATCH_MARKER}\nvarying vec3 vBlockcolcEffectNormal;\nvarying vec3 vBlockcolcEffectPosition;`,
     )
     .replace(
       "#include <beginnormal_vertex>",
-      "#include <beginnormal_vertex>\nvBlockcolcEffectNormal = normalize( objectNormal );",
+      "#include <beginnormal_vertex>\nvBlockcolcEffectNormal = normalize( objectNormal );\nvBlockcolcEffectPosition = position;",
     );
 }
 
@@ -102,7 +108,7 @@ function patchFragmentShader(source: string): string {
   return source
     .replace(
       "#include <common>",
-      `#include <common>\n${PATCH_MARKER}\nvarying vec3 vBlockcolcEffectNormal;\nuniform vec3 blockcolcEffectLightDirection;\nuniform vec3 blockcolcEffectLightTint;\nuniform vec3 blockcolcEffectShadowTint;\nuniform float blockcolcEffectStrength;`,
+      `#include <common>\n${PATCH_MARKER}\nvarying vec3 vBlockcolcEffectNormal;\nvarying vec3 vBlockcolcEffectPosition;\nuniform vec3 blockcolcEffectLightDirection;\nuniform vec3 blockcolcEffectLightTint;\nuniform vec3 blockcolcEffectShadowTint;\nuniform float blockcolcEffectStrength;\nuniform float blockcolcEffectEdgeStrength;`,
     )
     .replace(
       "#include <opaque_fragment>",
@@ -110,6 +116,12 @@ function patchFragmentShader(source: string): string {
 vec3 blockcolcEffectTint = mix( blockcolcEffectShadowTint, blockcolcEffectLightTint, blockcolcEffectFacing );
 float blockcolcEffectBrightness = mix( 0.84, 1.05, blockcolcEffectFacing );
 outgoingLight *= mix( vec3( 1.0 ), blockcolcEffectTint * blockcolcEffectBrightness, blockcolcEffectStrength );
+vec3 blockcolcEffectAxis = abs( vBlockcolcEffectPosition );
+float blockcolcEffectSecondAxis = blockcolcEffectAxis.x + blockcolcEffectAxis.y + blockcolcEffectAxis.z
+  - min( blockcolcEffectAxis.x, min( blockcolcEffectAxis.y, blockcolcEffectAxis.z ) )
+  - max( blockcolcEffectAxis.x, max( blockcolcEffectAxis.y, blockcolcEffectAxis.z ) );
+float blockcolcEffectEdge = smoothstep( 0.39, 0.475, blockcolcEffectSecondAxis );
+outgoingLight *= 1.0 - blockcolcEffectEdge * blockcolcEffectEdgeStrength;
 #include <opaque_fragment>`,
     );
 }

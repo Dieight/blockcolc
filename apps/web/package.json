@@ -1,6 +1,6 @@
 {
   "name": "@tomato-clock/web",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "private": true,
   "type": "module",
   "scripts": { "dev": "vite --host 0.0.0.0", "build": "tsc --noEmit && vite build", "typecheck": "tsc --noEmit", "test": "vitest run --passWithNoTests --exclude tests/**", "test:e2e": "playwright test" },

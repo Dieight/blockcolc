@@ -72,6 +72,10 @@ export interface FocusCompletionNotification {
   endsAt: ISOInstant;
 }
 
+export interface BreakCompletionNotification {
+  endsAt: ISOInstant;
+}
+
 export interface NotificationPort {
   /** May show a system prompt. Called only after an explicit user StartFocus command. */
   requestPermission(): Promise<NotificationCapability>;
@@ -79,6 +83,8 @@ export interface NotificationPort {
   refreshCapability(): Promise<NotificationCapability>;
   scheduleFocusCompletion(notification: FocusCompletionNotification): Promise<void>;
   cancelFocusCompletion(sessionId: string): Promise<void>;
+  scheduleBreakCompletion(notification: BreakCompletionNotification): Promise<void>;
+  cancelBreakCompletion(): Promise<void>;
 }
 
 export type FocusLifecycleEvent =

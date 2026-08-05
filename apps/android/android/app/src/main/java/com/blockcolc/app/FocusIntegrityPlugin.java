@@ -39,4 +39,10 @@ public class FocusIntegrityPlugin extends Plugin {
         result.put("productSystemUi", lastBackgroundWasProductSystemUi);
         call.resolve(result);
     }
+
+    @PluginMethod
+    public void setProductSystemUiOpen(PluginCall call) {
+        setProductSystemUiOpen(call.getBoolean("open", false));
+        call.resolve();
+    }
 }
