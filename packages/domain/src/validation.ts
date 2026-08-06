@@ -14,6 +14,7 @@ import type {
   BuildingBlueprintResource,
   DecorationBlueprintResource,
   DecorationReward,
+  HabitBuildingMonument,
   Subtask,
 } from "./model.js";
 
@@ -26,16 +27,17 @@ export class DomainStateValidationError extends Error {
 }
 
 export function parseDomainState(raw: unknown): DomainState {
-  const migrated = withBuildingBlueprintDefaults(migrateV2State(withDecorationDefaults(migrateV1State(raw))));
+  const migrated = migrateV4State(withBuildingBlueprintDefaults(migrateV2State(withDecorationDefaults(migrateV1State(raw)))));
   const root = object(migrated, "$", [
-    "schemaVersion", "projects", "activeProjectId", "retiredSubtaskIds", "activeFocusSession",
+    "schemaVersion", "projects", "habitBuildings", "activeProjectId", "retiredSubtaskIds", "activeFocusSession",
     "focusHistory", "progressReports", "dailyGoals", "calendar", "decayPolicy", "projectConditions", "focusIntegrityPolicy",
     "decorationBlueprintResources", "decorationRewards", "buildingBlueprintResources",
   ]);
-  if (root.schemaVersion !== 4) invalid("$.schemaVersion", "must equal 4");
+  if (root.schemaVersion !== 5) invalid("$.schemaVersion", "must equal 5");
   const state: DomainState = {
-    schemaVersion: 4,
+    schemaVersion: 5,
     projects: array(root.projects, "$.projects", parseProject),
+    habitBuildings: array(root.habitBuildings, "$.habitBuildings", parseHabitBuilding),
     activeProjectId: nullableString(root.activeProjectId, "$.activeProjectId"),
     retiredSubtaskIds: array(root.retiredSubtaskIds, "$.retiredSubtaskIds", nonBlankString),
     activeFocusSession: root.activeFocusSession === null ? null : parseActiveSession(root.activeFocusSession, "$.activeFocusSession"),
@@ -55,7 +57,8 @@ export function parseDomainState(raw: unknown): DomainState {
 }
 
 function parseProject(raw: unknown, path: string): Project {
-  const x = object(raw, path, ["id", "title", "blueprintId", "importedBlueprint", "createdAt", "status", "subtaskStructureLocked", "subtasks"]);
+  const x = object(raw, path, ["id", "title", "kind", "settlementIndex", "blueprintId", "importedBlueprint", "createdAt", "status", "subtaskStructureLocked", "subtasks", "habit"]);
+  const kind = enumeration(x.kind, path + ".kind", ["finite", "habit"] as const);
   const status = enumeration(x.status, path + ".status", ["active", "paused", "monument", "deleted"] as const);
   const importedBlueprint = x.importedBlueprint !== null
     ? parseImportedBlueprint(x.importedBlueprint, path + ".importedBlueprint")
@@ -63,23 +66,73 @@ function parseProject(raw: unknown, path: string): Project {
   const project: Project = {
     id: nonBlankString(x.id, path + ".id"),
     title: nonBlankString(x.title, path + ".title"),
+    kind,
+    settlementIndex: integer(x.settlementIndex, path + ".settlementIndex", 0),
     blueprintId: nonBlankString(x.blueprintId, path + ".blueprintId"),
     importedBlueprint,
     createdAt: instant(x.createdAt, path + ".createdAt"),
     status,
     subtaskStructureLocked: boolean(x.subtaskStructureLocked, path + ".subtaskStructureLocked"),
     subtasks: array(x.subtasks, path + ".subtasks", parseSubtask),
+    habit: x.habit === null ? null : parseHabitState(x.habit, path + ".habit"),
   };
   if (project.importedBlueprint !== null && project.importedBlueprint.id !== project.blueprintId) invalid(path + ".importedBlueprint.id", "must match blueprintId");
-  if (project.subtasks.length === 0) invalid(path + ".subtasks", "must not be empty");
   project.subtasks.forEach((item, index) => {
     if (item.order !== index) invalid(`${path}.subtasks[${index}].order`, "must match array order");
   });
+  if (kind === "habit") {
+    if (project.habit === null) invalid(path + ".habit", "must be present for a habit project");
+    if (project.subtasks.length !== 0) invalid(path + ".subtasks", "habit projects must not contain subtasks");
+    if (!project.subtaskStructureLocked) invalid(path + ".subtaskStructureLocked", "habit projects keep subtask structure locked");
+    if (project.status === "monument") invalid(path + ".status", "habit projects do not become monuments");
+    return project;
+  }
+  if (project.habit !== null) invalid(path + ".habit", "must be null for a finite project");
+  if (project.subtasks.length === 0) invalid(path + ".subtasks", "must not be empty");
   const hasPositiveProgress = project.subtasks.some((item) => item.progressBasisPoints > 0);
   if (project.subtaskStructureLocked !== hasPositiveProgress) invalid(path + ".subtaskStructureLocked", "must be true exactly when the project has positive progress");
   const complete = project.subtasks.every((item) => item.progressBasisPoints === 10_000);
   if ((project.status === "monument") !== complete) invalid(path + ".status", "must be monument exactly when every subtask is complete");
   return project;
+}
+
+function parseHabitState(raw: unknown, path: string): NonNullable<Project["habit"]> {
+  const x = object(raw, path, ["cycleNumber", "targetRounds", "completedFocusSessionIds", "awaitingNextBuilding"]);
+  const targetRounds = integer(x.targetRounds, path + ".targetRounds", 10, 30);
+  const completedFocusSessionIds = array(x.completedFocusSessionIds, path + ".completedFocusSessionIds", nonBlankString);
+  unique(completedFocusSessionIds, path + ".completedFocusSessionIds");
+  const awaitingNextBuilding = boolean(x.awaitingNextBuilding, path + ".awaitingNextBuilding");
+  if (awaitingNextBuilding && completedFocusSessionIds.length !== 0) invalid(path + ".completedFocusSessionIds", "must be empty while awaiting the next building");
+  if (!awaitingNextBuilding && completedFocusSessionIds.length >= targetRounds) invalid(path + ".completedFocusSessionIds", "must remain below targetRounds");
+  return {
+    cycleNumber: integer(x.cycleNumber, path + ".cycleNumber", 1),
+    targetRounds,
+    completedFocusSessionIds,
+    awaitingNextBuilding,
+  };
+}
+
+function parseHabitBuilding(raw: unknown, path: string): HabitBuildingMonument {
+  const x = object(raw, path, ["id", "habitProjectId", "habitTitle", "cycleNumber", "settlementIndex", "blueprintId", "importedBlueprint", "targetRounds", "focusSessionIds", "completedAt"]);
+  const importedBlueprint = x.importedBlueprint === null ? null : parseImportedBlueprint(x.importedBlueprint, path + ".importedBlueprint");
+  const blueprintId = nonBlankString(x.blueprintId, path + ".blueprintId");
+  if (importedBlueprint !== null && importedBlueprint.id !== blueprintId) invalid(path + ".importedBlueprint.id", "must match blueprintId");
+  const targetRounds = integer(x.targetRounds, path + ".targetRounds", 10, 30);
+  const focusSessionIds = array(x.focusSessionIds, path + ".focusSessionIds", nonBlankString);
+  unique(focusSessionIds, path + ".focusSessionIds");
+  if (focusSessionIds.length !== targetRounds) invalid(path + ".focusSessionIds", "must contain exactly targetRounds sessions");
+  return {
+    id: nonBlankString(x.id, path + ".id"),
+    habitProjectId: nonBlankString(x.habitProjectId, path + ".habitProjectId"),
+    habitTitle: nonBlankString(x.habitTitle, path + ".habitTitle"),
+    cycleNumber: integer(x.cycleNumber, path + ".cycleNumber", 1),
+    settlementIndex: integer(x.settlementIndex, path + ".settlementIndex", 0),
+    blueprintId,
+    importedBlueprint,
+    targetRounds,
+    focusSessionIds,
+    completedAt: instant(x.completedAt, path + ".completedAt"),
+  };
 }
 
 const IMPORTED_BLUEPRINT_MATERIALS = ["stone", "wood", "plank", "roof", "glass", "accent"] as const;
@@ -239,7 +292,7 @@ function parseActiveSession(raw: unknown, path: string): ActiveFocusSession {
   const session: ActiveFocusSession = {
     id: nonBlankString(x.id, path + ".id"),
     projectId: nonBlankString(x.projectId, path + ".projectId"),
-    subtaskId: nonBlankString(x.subtaskId, path + ".subtaskId"),
+    subtaskId: x.subtaskId === null ? null : nonBlankString(x.subtaskId, path + ".subtaskId"),
     startedAt: instant(x.startedAt, path + ".startedAt"),
     endsAt: instant(x.endsAt, path + ".endsAt"),
     plannedDurationMs: integer(x.plannedDurationMs, path + ".plannedDurationMs", 1),
@@ -289,7 +342,7 @@ function parseFocusSession(raw: unknown, path: string): FocusSession {
 function parseActiveSessionFields(x: Record<string, unknown>, path: string): FocusSessionBase {
   const session: FocusSessionBase = {
     id: nonBlankString(x.id, path + ".id"), projectId: nonBlankString(x.projectId, path + ".projectId"),
-    subtaskId: nonBlankString(x.subtaskId, path + ".subtaskId"), startedAt: instant(x.startedAt, path + ".startedAt"),
+    subtaskId: x.subtaskId === null ? null : nonBlankString(x.subtaskId, path + ".subtaskId"), startedAt: instant(x.startedAt, path + ".startedAt"),
     endsAt: instant(x.endsAt, path + ".endsAt"), plannedDurationMs: integer(x.plannedDurationMs, path + ".plannedDurationMs", 1),
     timeZoneAtStart: timeZone(x.timeZoneAtStart, path + ".timeZoneAtStart"),
   };
@@ -382,7 +435,9 @@ function validateReferences(state: DomainState): void {
     if (!project) invalid("$.projectConditions[].projectId", `unknown project ${runtime.projectId}`);
     if (runtime.inactivityAnchorAt !== null && runtime.inactivityAnchorAt < project.createdAt) invalid("$.projectConditions[].inactivityAnchorAt", "precedes project creation");
     if (runtime.inactivityAnchorAt === null && runtime.assessedMissedPlannedDays !== 0) invalid("$.projectConditions[].assessedMissedPlannedDays", "must be zero without an inactivity anchor");
-    if ((project.status === "active" || project.status === "paused") && state.decayPolicy.enabled && runtime.inactivityAnchorAt === null) invalid("$.projectConditions[].inactivityAnchorAt", "unfinished project needs an anchor while decay is enabled");
+    const awaitingHabitBuilding = project.kind === "habit" && project.habit?.awaitingNextBuilding === true;
+    if ((project.status === "active" || project.status === "paused") && state.decayPolicy.enabled && !awaitingHabitBuilding && runtime.inactivityAnchorAt === null) invalid("$.projectConditions[].inactivityAnchorAt", "unfinished project needs an anchor while decay is enabled");
+    if (awaitingHabitBuilding && (runtime.inactivityAnchorAt !== null || runtime.assessedMissedPlannedDays !== 0)) invalid("$.projectConditions[]", "habit project awaiting a building must not decay");
     if (project.status === "deleted" && (runtime.inactivityAnchorAt !== null || runtime.assessedMissedPlannedDays !== 0)) invalid("$.projectConditions[]", "deleted project decay runtime must be reset");
     if (!state.decayPolicy.enabled && (runtime.inactivityAnchorAt !== null || runtime.assessedMissedPlannedDays !== 0)) invalid("$.projectConditions[]", "all decay runtime must be reset while decay is disabled");
   }
@@ -434,6 +489,44 @@ function validateReferences(state: DomainState): void {
     }
     if (owner.subtask.progressBasisPoints !== previous) invalid("$.projects[].subtasks[].progressBasisPoints", `does not match latest report for ${subtaskId}`);
   }
+  unique(state.habitBuildings.map((building) => building.id), "$.habitBuildings[].id");
+  unique([
+    ...state.projects.map((project) => project.settlementIndex),
+    ...state.habitBuildings.map((building) => building.settlementIndex),
+  ], "$.projects[].settlementIndex");
+  const habitSessionIds = new Set<string>();
+  for (const [index, building] of state.habitBuildings.entries()) {
+    const path = `$.habitBuildings[${index}]`;
+    const project = projects.get(building.habitProjectId);
+    if (!project || project.kind !== "habit") invalid(path + ".habitProjectId", "must reference a habit project");
+    if (building.cycleNumber >= project.habit!.cycleNumber) invalid(path + ".cycleNumber", "must precede the current habit cycle");
+    let latestCompletion = "";
+    for (const id of building.focusSessionIds) {
+      const session = sessions.get(id);
+      if (!session || (session.status !== "completed" && session.status !== "completed-early")) invalid(path + ".focusSessionIds", `unknown or incomplete session ${id}`);
+      if (session.projectId !== building.habitProjectId || session.subtaskId !== null) invalid(path + ".focusSessionIds", `session ${id} has inconsistent habit ownership`);
+      if (usedSessions.has(id) || habitSessionIds.has(id)) invalid(path + ".focusSessionIds", `session ${id} is reused`);
+      habitSessionIds.add(id);
+      if (session.completedAt > latestCompletion) latestCompletion = session.completedAt;
+    }
+    if (building.completedAt !== latestCompletion) invalid(path + ".completedAt", "must match the final supporting session completion");
+  }
+  for (const project of state.projects) {
+    if (project.kind !== "habit") continue;
+    for (const id of project.habit!.completedFocusSessionIds) {
+      const session = sessions.get(id);
+      if (!session || (session.status !== "completed" && session.status !== "completed-early")) invalid("$.projects[].habit.completedFocusSessionIds", `unknown or incomplete session ${id}`);
+      if (session.projectId !== project.id || session.subtaskId !== null) invalid("$.projects[].habit.completedFocusSessionIds", `session ${id} has inconsistent habit ownership`);
+      if (usedSessions.has(id) || habitSessionIds.has(id)) invalid("$.projects[].habit.completedFocusSessionIds", `session ${id} is reused`);
+      habitSessionIds.add(id);
+    }
+  }
+  for (const session of state.focusHistory) {
+    const project = projects.get(session.projectId)!;
+    if (project.kind === "habit" && (session.status === "completed" || session.status === "completed-early") && !habitSessionIds.has(session.id)) {
+      invalid("$.focusHistory", `habit completion ${session.id} is not assigned to a building cycle`);
+    }
+  }
   unique(state.dailyGoals.map((item) => item.date), "$.dailyGoals[].date");
   for (const [index, goal] of state.dailyGoals.entries()) {
     const completions = state.focusHistory
@@ -480,9 +573,14 @@ function effectiveFocusEnd(session: FocusSessionBase | FocusSession): string {
   return session.completedAt;
 }
 
-function validateOwnership(projectId: string, subtaskId: string, projects: Map<string, Project>, subtasks: Map<string, { projectId: string }>, path: string): void {
-  if (!projects.has(projectId)) invalid(path + ".projectId", `unknown project ${projectId}`);
-  if (subtasks.get(subtaskId)?.projectId !== projectId) invalid(path + ".subtaskId", `does not belong to project ${projectId}`);
+function validateOwnership(projectId: string, subtaskId: string | null, projects: Map<string, Project>, subtasks: Map<string, { projectId: string }>, path: string): void {
+  const project = projects.get(projectId);
+  if (!project) invalid(path + ".projectId", `unknown project ${projectId}`);
+  if (project.kind === "habit") {
+    if (subtaskId !== null) invalid(path + ".subtaskId", "must be null for a habit project");
+    return;
+  }
+  if (subtaskId === null || subtasks.get(subtaskId)?.projectId !== projectId) invalid(path + ".subtaskId", `does not belong to project ${projectId}`);
 }
 
 function validateScheduledTimes(session: FocusSessionBase, path: string): void {
@@ -550,6 +648,19 @@ function withBuildingBlueprintDefaults(raw: unknown): unknown {
     ...candidate,
     schemaVersion: 4,
     buildingBlueprintResources: Object.hasOwn(candidate, "buildingBlueprintResources") ? candidate.buildingBlueprintResources : [],
+  };
+}
+
+function migrateV4State(raw: unknown): unknown {
+  const candidate = record(raw, "$" );
+  if (candidate.schemaVersion !== 4) return raw;
+  const legacyProjects = array(candidate.projects, "$.projects", record);
+  const projects = legacyProjects.map((value, settlementIndex) => ({ ...value, kind: "finite", habit: null, settlementIndex }));
+  return {
+    ...candidate,
+    schemaVersion: 5,
+    projects,
+    habitBuildings: [],
   };
 }
 

@@ -23,8 +23,9 @@ import type {
 export function createInitialState(timeZone = "UTC", restWeekdays: number[] = [0, 6]): DomainState {
   assertCalendar(timeZone, restWeekdays);
   return {
-    schemaVersion: 4,
+    schemaVersion: 5,
     projects: [],
+    habitBuildings: [],
     activeProjectId: null,
     retiredSubtaskIds: [],
     activeFocusSession: null,
@@ -57,6 +58,11 @@ export function execute(state: DomainState, command: DomainCommand, clock: Clock
 }
 
 export function projectProgressBasisPoints(project: Project): number {
+  if (project.kind === "habit") {
+    const habit = requireHabit(project);
+    if (habit.awaitingNextBuilding) return 10_000;
+    return Math.floor((habit.completedFocusSessionIds.length * 10_000) / habit.targetRounds);
+  }
   if (project.subtasks.length === 0) return 0;
   return Math.floor(project.subtasks.reduce((sum, item) => sum + item.progressBasisPoints, 0) / project.subtasks.length);
 }
@@ -90,12 +96,15 @@ function handle(state: DomainState, command: DomainCommand, clock: Clock): Comma
       const project: Project = {
         id: command.projectId,
         title: command.title.trim(),
+        kind: "finite",
+        settlementIndex: nextSettlementIndex(state),
         blueprintId: command.blueprintId,
         importedBlueprint,
         createdAt: now,
         status: "active",
         subtaskStructureLocked: false,
         subtasks: command.subtasks.map((item, order) => ({ id: item.id, title: item.title.trim(), order, progressBasisPoints: 0 })),
+        habit: null,
       };
       state.projects.push(project);
       const events: DomainEvent[] = [];
@@ -113,6 +122,67 @@ function handle(state: DomainState, command: DomainCommand, clock: Clock): Comma
       });
       events.push({ type: "ProjectCreated", projectId: project.id });
       return ok(state, events);
+    }
+    case "CreateHabitProject": {
+      if (state.activeFocusSession !== null) return fail(state, "ACTIVE_FOCUS_PREVENTS_PROJECT_SWITCH", "Cancel or complete active focus before creating another project");
+      if (activeProjectHasUnreportedFocus(state)) return fail(state, "UNREPORTED_FOCUS_PREVENTS_PROJECT_SWITCH", "Report completed focus progress before creating another project");
+      requireNonBlank(command.projectId, "projectId");
+      requireNonBlank(command.title, "title");
+      requireNonBlank(command.blueprintId, "blueprintId");
+      requireHabitTargetRounds(command.targetRounds);
+      const importedBlueprint = command.importedBlueprint == null ? null : parseImportedBlueprint(command.importedBlueprint, "$.command.importedBlueprint");
+      if (importedBlueprint !== null && importedBlueprint.id !== command.blueprintId) throw new Error("Imported blueprint ID must match blueprintId");
+      if (state.projects.some((item) => item.id === command.projectId)) return fail(state, "DUPLICATE_ID", "Project ID already exists");
+      const project: Project = {
+        id: command.projectId,
+        title: command.title.trim(),
+        kind: "habit",
+        settlementIndex: nextSettlementIndex(state),
+        blueprintId: command.blueprintId,
+        importedBlueprint,
+        createdAt: now,
+        status: "active",
+        subtaskStructureLocked: true,
+        subtasks: [],
+        habit: { cycleNumber: 1, targetRounds: command.targetRounds, completedFocusSessionIds: [], awaitingNextBuilding: false },
+      };
+      state.projects.push(project);
+      const events: DomainEvent[] = [];
+      if (state.activeProjectId !== null) {
+        const previous = activeProject(state);
+        previous.status = "paused";
+        events.push({ type: "ProjectPaused", projectId: previous.id });
+      }
+      state.activeProjectId = project.id;
+      state.projectConditions.push({
+        projectId: project.id,
+        conditionBasisPoints: 10_000,
+        inactivityAnchorAt: state.decayPolicy.enabled ? now : null,
+        assessedMissedPlannedDays: 0,
+      });
+      events.push({ type: "ProjectCreated", projectId: project.id });
+      events.push({ type: "HabitBuildingSelected", projectId: project.id, cycleNumber: 1, targetRounds: command.targetRounds });
+      return ok(state, events);
+    }
+    case "SelectNextHabitBuilding": {
+      const project = activeProject(state);
+      const habit = requireHabit(project);
+      if (!habit.awaitingNextBuilding) throw new Error("The current habit building must be completed before selecting another");
+      if (state.activeFocusSession !== null) return fail(state, "FOCUS_ALREADY_ACTIVE", "A focus session is already active");
+      requireNonBlank(command.blueprintId, "blueprintId");
+      requireHabitTargetRounds(command.targetRounds);
+      const importedBlueprint = command.importedBlueprint == null ? null : parseImportedBlueprint(command.importedBlueprint, "$.command.importedBlueprint");
+      if (importedBlueprint !== null && importedBlueprint.id !== command.blueprintId) throw new Error("Imported blueprint ID must match blueprintId");
+      project.blueprintId = command.blueprintId;
+      project.importedBlueprint = importedBlueprint;
+      habit.targetRounds = command.targetRounds;
+      habit.completedFocusSessionIds = [];
+      habit.awaitingNextBuilding = false;
+      const runtime = projectCondition(state, project.id);
+      runtime.conditionBasisPoints = 10_000;
+      runtime.inactivityAnchorAt = state.decayPolicy.enabled ? now : null;
+      runtime.assessedMissedPlannedDays = 0;
+      return ok(state, [{ type: "HabitBuildingSelected", projectId: project.id, cycleNumber: habit.cycleNumber, targetRounds: habit.targetRounds }]);
     }
     case "SwitchActiveProject": {
       requireNonBlank(command.projectId, "projectId");
@@ -156,6 +226,7 @@ function handle(state: DomainState, command: DomainCommand, clock: Clock): Comma
     }
     case "AddSubtask": {
       const project = activeProject(state);
+      if (project.kind !== "finite") return fail(state, "SUBTASK_STRUCTURE_LOCKED", "Habit projects do not have subtasks");
       if (project.subtaskStructureLocked) return fail(state, "SUBTASK_STRUCTURE_LOCKED", "Subtask structure is locked");
       requireNonBlank(command.subtaskId, "subtaskId");
       requireNonBlank(command.title, "title");
@@ -165,6 +236,7 @@ function handle(state: DomainState, command: DomainCommand, clock: Clock): Comma
     }
     case "RemoveSubtask": {
       const project = activeProject(state);
+      if (project.kind !== "finite") return fail(state, "SUBTASK_STRUCTURE_LOCKED", "Habit projects do not have subtasks");
       if (project.subtaskStructureLocked) return fail(state, "SUBTASK_STRUCTURE_LOCKED", "Subtask structure is locked");
       const index = project.subtasks.findIndex((item) => item.id === command.subtaskId);
       if (index < 0) return fail(state, "SUBTASK_NOT_FOUND", "Subtask does not exist");
@@ -180,6 +252,7 @@ function handle(state: DomainState, command: DomainCommand, clock: Clock): Comma
     }
     case "RenameSubtask": {
       const project = activeProject(state);
+      if (project.kind !== "finite") return fail(state, "SUBTASK_NOT_FOUND", "Habit projects do not have subtasks");
       requireNonBlank(command.title, "title");
       const subtask = project.subtasks.find((item) => item.id === command.subtaskId);
       if (!subtask) return fail(state, "SUBTASK_NOT_FOUND", "Subtask does not exist");
@@ -188,6 +261,7 @@ function handle(state: DomainState, command: DomainCommand, clock: Clock): Comma
     }
     case "ReorderSubtasks": {
       const project = activeProject(state);
+      if (project.kind !== "finite") return fail(state, "SUBTASK_STRUCTURE_LOCKED", "Habit projects do not have subtasks");
       const current = new Set(project.subtasks.map((item) => item.id));
       if (command.orderedSubtaskIds.length !== current.size || new Set(command.orderedSubtaskIds).size !== current.size || command.orderedSubtaskIds.some((id) => !current.has(id))) {
         throw new Error("Reorder must contain every subtask ID exactly once");
@@ -201,7 +275,12 @@ function handle(state: DomainState, command: DomainCommand, clock: Clock): Comma
       if (state.activeFocusSession) return fail(state, "FOCUS_ALREADY_ACTIVE", "A focus session is already active");
       requireNonBlank(command.sessionId, "sessionId");
       if (state.focusHistory.some((item) => item.id === command.sessionId)) return fail(state, "DUPLICATE_ID", "Session ID already exists");
-      if (!project.subtasks.some((item) => item.id === command.subtaskId)) return fail(state, "SUBTASK_NOT_FOUND", "Subtask does not exist");
+      if (project.kind === "habit") {
+        if (command.subtaskId !== null) return fail(state, "SUBTASK_NOT_FOUND", "Habit focus cannot target a subtask");
+        if (requireHabit(project).awaitingNextBuilding) return fail(state, "HABIT_BUILDING_SELECTION_REQUIRED", "Select the next habit building before focusing");
+      } else if (command.subtaskId === null || !project.subtasks.some((item) => item.id === command.subtaskId)) {
+        return fail(state, "SUBTASK_NOT_FOUND", "Subtask does not exist");
+      }
       if (!Number.isInteger(command.plannedDurationMs) || command.plannedDurationMs <= 0) throw new Error("plannedDurationMs must be a positive integer");
       const endsAt = new Date(Date.parse(now) + command.plannedDurationMs).toISOString();
       state.activeFocusSession = {
@@ -232,8 +311,21 @@ function handle(state: DomainState, command: DomainCommand, clock: Clock): Comma
       if (!active) return fail(state, "FOCUS_NOT_ACTIVE", "No focus session is active");
       if (Date.parse(now) >= Date.parse(active.endsAt)) return fail(state, "FOCUS_ALREADY_ELAPSED", "Elapsed focus must be completed normally");
       requireNonBlank(command.reportId, "reportId");
-      if (state.progressReports.some((report) => report.id === command.reportId)) return fail(state, "DUPLICATE_ID", "Progress report ID already exists");
       const project = activeProject(state);
+      if (project.kind === "habit") {
+        const actualDurationMs = Math.max(0, Date.parse(now) - Date.parse(active.startedAt));
+        const session: FocusSession = {
+          ...focusSessionBase(active), status: "completed-early", completedAt: now,
+          completedLocalDate: localDateOf(now, active.timeZoneAtStart), actualDurationMs,
+        };
+        state.focusHistory.push(session);
+        state.activeFocusSession = null;
+        const events: DomainEvent[] = [{ type: "FocusCompletedEarly", sessionId: session.id, subtaskId: null, actualDurationMs }];
+        applyRepair(state, project.id, now, events);
+        advanceHabitBuilding(state, project, session, events);
+        return ok(state, events);
+      }
+      if (state.progressReports.some((report) => report.id === command.reportId)) return fail(state, "DUPLICATE_ID", "Progress report ID already exists");
       const subtask = project.subtasks.find((item) => item.id === active.subtaskId);
       if (!subtask) return fail(state, "SUBTASK_NOT_FOUND", "Subtask does not exist");
       const actualDurationMs = Math.max(0, Date.parse(now) - Date.parse(active.startedAt));
@@ -416,6 +508,7 @@ function handle(state: DomainState, command: DomainCommand, clock: Clock): Comma
       const events: DomainEvent[] = [];
       for (const project of state.projects) {
         if (project.status !== "active" && project.status !== "paused") continue;
+        if (project.kind === "habit" && requireHabit(project).awaitingNextBuilding) continue;
         const runtime = projectCondition(state, project.id);
         if (!runtime.inactivityAnchorAt) throw new Error("Enabled decay is missing an inactivity anchor");
         const plannedDays = countPlannedFocusDaysAfter(localDateOf(runtime.inactivityAnchorAt, state.calendar.timeZone), localDateOf(now, state.calendar.timeZone), state.calendar);
@@ -494,8 +587,53 @@ function completeActiveFocus(state: DomainState, active: NonNullable<DomainState
   state.activeFocusSession = null;
   const events: DomainEvent[] = [{ type: "FocusCompleted", sessionId: session.id }];
   applyRepair(state, session.projectId, session.completedAt, events);
+  const project = state.projects.find((candidate) => candidate.id === session.projectId);
+  if (!project) throw new Error("Completed focus references a missing project");
+  if (project.kind === "habit") advanceHabitBuilding(state, project, session, events);
   reachGoalForDate(state, session.completedLocalDate, session.completedAt, events, session.projectId);
   return events;
+}
+
+function advanceHabitBuilding(state: DomainState, project: Project, session: FocusSession, events: DomainEvent[]): void {
+  const habit = requireHabit(project);
+  if (habit.awaitingNextBuilding) throw new Error("Habit focus completed without a selected building");
+  if (habit.completedFocusSessionIds.includes(session.id)
+    || state.habitBuildings.some((building) => building.focusSessionIds.includes(session.id))) {
+    throw new Error("Habit focus session was already applied to a building");
+  }
+  habit.completedFocusSessionIds.push(session.id);
+  events.push({
+    type: "HabitBuildingProgressed",
+    projectId: project.id,
+    completedRounds: habit.completedFocusSessionIds.length,
+    targetRounds: habit.targetRounds,
+  });
+  if (habit.completedFocusSessionIds.length < habit.targetRounds) return;
+  if (habit.completedFocusSessionIds.length > habit.targetRounds) throw new Error("Habit building progress exceeded its target");
+  const buildingId = `habit-building:${project.id}:${habit.cycleNumber}`;
+  if (state.habitBuildings.some((building) => building.id === buildingId)) throw new Error("Habit building ID already exists");
+  const completedSettlementIndex = project.settlementIndex;
+  project.settlementIndex = nextSettlementIndex(state);
+  state.habitBuildings.push({
+    id: buildingId,
+    habitProjectId: project.id,
+    habitTitle: project.title,
+    cycleNumber: habit.cycleNumber,
+    settlementIndex: completedSettlementIndex,
+    blueprintId: project.blueprintId,
+    importedBlueprint: structuredClone(project.importedBlueprint),
+    targetRounds: habit.targetRounds,
+    focusSessionIds: [...habit.completedFocusSessionIds],
+    completedAt: session.status === "interrupted" ? session.interruptedAt : session.completedAt,
+  });
+  habit.cycleNumber += 1;
+  habit.completedFocusSessionIds = [];
+  habit.awaitingNextBuilding = true;
+  const runtime = projectCondition(state, project.id);
+  runtime.conditionBasisPoints = 10_000;
+  runtime.inactivityAnchorAt = null;
+  runtime.assessedMissedPlannedDays = 0;
+  events.push({ type: "HabitBuildingCompleted", projectId: project.id, buildingId, cycleNumber: habit.cycleNumber - 1 });
 }
 
 function focusSessionBase(active: NonNullable<DomainState["activeFocusSession"]>): FocusSessionBase {
@@ -576,8 +714,18 @@ function allKnownSubtaskIds(state: DomainState): Set<string> {
   return new Set([...state.retiredSubtaskIds, ...state.projects.flatMap((project) => project.subtasks.map((item) => item.id))]);
 }
 
+function nextSettlementIndex(state: DomainState): number {
+  const indices = [
+    ...state.projects.map((project) => project.settlementIndex),
+    ...state.habitBuildings.map((building) => building.settlementIndex),
+  ];
+  return indices.length === 0 ? 0 : Math.max(...indices) + 1;
+}
+
 function activeProjectHasUnreportedFocus(state: DomainState): boolean {
   if (state.activeProjectId === null) return false;
+  const project = state.projects.find((candidate) => candidate.id === state.activeProjectId);
+  if (project?.kind === "habit") return false;
   const reported = new Set(state.progressReports.flatMap((report) => report.focusSessionIds));
   return state.focusHistory.some((session) =>
     session.status === "completed" && session.projectId === state.activeProjectId && !reported.has(session.id));
@@ -587,6 +735,7 @@ function resetActiveDecayAnchors(state: DomainState, at: string): void {
   if (!state.decayPolicy.enabled) return;
   for (const project of state.projects) {
     if (project.status !== "active" && project.status !== "paused") continue;
+    if (project.kind === "habit" && requireHabit(project).awaitingNextBuilding) continue;
     const runtime = projectCondition(state, project.id);
     runtime.inactivityAnchorAt = at;
     runtime.assessedMissedPlannedDays = 0;
@@ -601,6 +750,15 @@ function assertCalendar(timeZone: string, restWeekdays: number[]): void {
 
 function normalizeOrder(project: Project): void {
   project.subtasks.forEach((item, order) => { item.order = order; });
+}
+
+function requireHabit(project: Project) {
+  if (project.kind !== "habit" || project.habit === null) throw new Error("Project is not a habit project");
+  return project.habit;
+}
+
+function requireHabitTargetRounds(value: number): void {
+  if (!Number.isInteger(value) || value < 10 || value > 30) throw new Error("Habit target rounds must be an integer from 10 through 30");
 }
 
 function requireNonBlank(value: string, name: string): void {

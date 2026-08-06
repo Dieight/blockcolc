@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ApplicationCommand, ApplicationResult, ApplicationService } from '@tomato-clock/application';
 import { localDateOf } from '@tomato-clock/domain';
-import { Check, ChevronDown, GripVertical, LockKeyhole, MapPinned, Pencil, Plus, Save, Trash2, X } from 'lucide-react';
+import { Check, ChevronDown, GripVertical, LockKeyhole, MapPinned, Pencil, Plus, Repeat2, Save, Trash2, X } from 'lucide-react';
 import { ChoiceMenu } from './ChoiceMenu';
 
 type ActiveProject = NonNullable<ReturnType<ApplicationService['activeProjectProjection']>>;
@@ -23,6 +23,9 @@ export function TasksScreen({ active, state, run, onCreateProject, onViewProject
   const [dropTarget, setDropTarget] = useState<DropTarget | null>(null);
   const dragState = useRef<{ id: string; pointerId: number; startX: number; startY: number; handle: HTMLButtonElement; active: boolean; target: DropTarget | null; timer: number | null } | null>(null);
   const locked = active.project.subtaskStructureLocked;
+  const isHabit = active.project.kind === 'habit';
+  const habit = active.project.habit;
+  const completedHabitBuildings = state.habitBuildings.filter(building => building.habitProjectId === active.project.id).length;
   const hasActiveFocus = state.activeFocusSession !== null;
   const unfinishedProjects = state.projects.filter(project => project.status === 'active' || project.status === 'paused');
   const switchBlocked = hasActiveFocus || active.unreportedCompletedSessions.length > 0;
@@ -191,46 +194,52 @@ export function TasksScreen({ active, state, run, onCreateProject, onViewProject
 
     <span className="eyebrow task-queue-label">建造队列</span>
     <div className="project-switcher">
-      <ChoiceMenu label="当前大型任务" value={active.project.id} disabled={pending || switchBlocked} onChange={projectId=>void perform({ type: 'SwitchActiveProject', projectId })} options={unfinishedProjects.map(project=>({id:project.id,label:project.title,detail:`${Math.round(project.subtasks.reduce((sum, subtask) => sum + subtask.progressBasisPoints, 0) / project.subtasks.length / 100)}%`}))}/>
-      <div className="project-switcher-actions"><button type="button" disabled={pending} onClick={() => onViewProject(active.project.id)}><MapPinned/>查看建筑</button><button type="button" disabled={pending || switchBlocked} title={switchBlocked ? '请先结束或汇报当前专注' : '新增大型任务'} onClick={onCreateProject}><Plus/>新增大型任务</button></div>
+      <ChoiceMenu label="当前任务" value={active.project.id} disabled={pending || switchBlocked} onChange={projectId=>void perform({ type: 'SwitchActiveProject', projectId })} options={unfinishedProjects.map(project=>({id:project.id,label:project.title,detail:project.kind==='habit'?(project.habit?.awaitingNextBuilding?'习惯 · 等待选择建筑':`习惯 · ${project.habit?.completedFocusSessionIds.length??0} / ${project.habit?.targetRounds??10} 轮`):`${Math.round(project.subtasks.reduce((sum, subtask) => sum + subtask.progressBasisPoints, 0) / project.subtasks.length / 100)}%`}))}/>
+      <div className="project-switcher-actions"><button type="button" disabled={pending} onClick={() => onViewProject(active.project.id)}><MapPinned/>{isHabit&&habit?.awaitingNextBuilding?'查看聚落':'查看建筑'}</button><button type="button" disabled={pending || switchBlocked} title={switchBlocked ? '请先结束或汇报当前专注' : '新增任务'} onClick={onCreateProject}><Plus/>新增任务</button></div>
     </div>
 
     <div className="task-project-title">
       {editingProject ? <>
-        <label className="sr-only" htmlFor="project-title">大型任务名称</label>
+        <label className="sr-only" htmlFor="project-title">任务名称</label>
         <input id="project-title" autoFocus value={projectTitle} disabled={pending} onChange={event => setProjectTitle(event.target.value)} onKeyDown={event => {
           if (event.key === 'Enter') void renameProject();
           if (event.key === 'Escape') { setProjectTitle(active.project.title); setEditingProject(false); }
         }}/>
-        <IconButton label="保存大型任务名称" disabled={pending || !projectTitle.trim()} onClick={() => void renameProject()}><Check/></IconButton>
+        <IconButton label="保存任务名称" disabled={pending || !projectTitle.trim()} onClick={() => void renameProject()}><Check/></IconButton>
         <IconButton label="取消修改" disabled={pending} onClick={() => { setProjectTitle(active.project.title); setEditingProject(false); }}><X/></IconButton>
       </> : <>
         <h1>{active.project.title}</h1>
-        <IconButton label="修改大型任务名称" disabled={pending} onClick={() => setEditingProject(true)}><Pencil/></IconButton>
+        <IconButton label="修改任务名称" disabled={pending} onClick={() => setEditingProject(true)}><Pencil/></IconButton>
       </>}
     </div>
 
-    <div className="task-section-heading">
-      <div><h2>施工清单</h2><p>{active.project.subtasks.length} 项 · 等分建筑进度</p></div>
-      <div className="task-section-actions">{locked && <div className="structure-lock"><LockKeyhole/><span>已有进度后不能增删，可继续改名和排序。</span></div>}<IconButton label={managingTasks ? '结束编辑施工清单' : '编辑施工清单'} disabled={pending} onClick={() => setManagingTasks(value => !value)}>{managingTasks ? <Check/> : <Pencil/>}</IconButton></div>
-    </div>
+    {isHabit ? <section className="habit-cycle-panel" aria-labelledby="habit-cycle-title">
+      <div className="habit-cycle-heading"><Repeat2/><div><h2 id="habit-cycle-title">习惯周期</h2><p>每次完整或提前完成的专注都会推进当前建筑。</p></div></div>
+      <div className="habit-cycle-progress"><div><span>{habit?.awaitingNextBuilding?'等待下一座建筑':`第 ${habit?.cycleNumber??1} 座建筑`}</span><strong>{habit?.awaitingNextBuilding?'待选择':`${habit?.completedFocusSessionIds.length??0} / ${habit?.targetRounds??10} 轮`}</strong></div><progress max={habit?.targetRounds??10} value={habit?.awaitingNextBuilding?habit?.targetRounds??10:habit?.completedFocusSessionIds.length??0}/></div>
+      <dl><div><dt>已完成建筑</dt><dd>{completedHabitBuildings} 座</dd></div><div><dt>当前蓝图</dt><dd>{habit?.awaitingNextBuilding?'前往计时页选择':'本周期内锁定'}</dd></div></dl>
+    </section> : <>
+      <div className="task-section-heading">
+        <div><h2>施工清单</h2><p>{active.project.subtasks.length} 项 · 等分建筑进度</p></div>
+        <div className="task-section-actions">{locked && <div className="structure-lock"><LockKeyhole/><span>已有进度后不能增删，可继续改名和排序。</span></div>}<IconButton label={managingTasks ? '结束编辑施工清单' : '编辑施工清单'} disabled={pending} onClick={() => setManagingTasks(value => !value)}>{managingTasks ? <Check/> : <Pencil/>}</IconButton></div>
+      </div>
 
-    <div className="task-editor-list">
-      {managingTasks ? active.project.subtasks.map(renderSubtask) : <>
-        {nextSubtask && <div className="subtask-group current-subtask-group"><span className="subtask-group-label">当前</span>{renderSubtask(nextSubtask, active.project.subtasks.indexOf(nextSubtask))}</div>}
-        {futureSubtasks.length > 0 && <SubtaskGroup label="后续任务" count={futureSubtasks.length} expanded={futureExpanded} onToggle={() => setFutureExpanded(value => !value)}>{futureSubtasks.map(subtask => renderSubtask(subtask, active.project.subtasks.indexOf(subtask)))}</SubtaskGroup>}
-        {completedSubtasks.length > 0 && <SubtaskGroup label="已完成" count={completedSubtasks.length} expanded={completedExpanded} onToggle={() => setCompletedExpanded(value => !value)}>{completedSubtasks.map(subtask => renderSubtask(subtask, active.project.subtasks.indexOf(subtask)))}</SubtaskGroup>}
-      </>}
-    </div>
+      <div className="task-editor-list">
+        {managingTasks ? active.project.subtasks.map(renderSubtask) : <>
+          {nextSubtask && <div className="subtask-group current-subtask-group"><span className="subtask-group-label">当前</span>{renderSubtask(nextSubtask, active.project.subtasks.indexOf(nextSubtask))}</div>}
+          {futureSubtasks.length > 0 && <SubtaskGroup label="后续任务" count={futureSubtasks.length} expanded={futureExpanded} onToggle={() => setFutureExpanded(value => !value)}>{futureSubtasks.map(subtask => renderSubtask(subtask, active.project.subtasks.indexOf(subtask)))}</SubtaskGroup>}
+          {completedSubtasks.length > 0 && <SubtaskGroup label="已完成" count={completedSubtasks.length} expanded={completedExpanded} onToggle={() => setCompletedExpanded(value => !value)}>{completedSubtasks.map(subtask => renderSubtask(subtask, active.project.subtasks.indexOf(subtask)))}</SubtaskGroup>}
+        </>}
+      </div>
 
-    {!locked && managingTasks && <div className="add-subtask">
-      <label htmlFor="new-subtask">新增小任务</label>
-      <div><input id="new-subtask" value={newSubtask} disabled={pending} placeholder="例如：整理验证结果" onChange={event => setNewSubtask(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') void addSubtask(); }}/><button type="button" disabled={pending || !newSubtask.trim()} onClick={() => void addSubtask()}><Plus/>添加</button></div>
-    </div>}
+      {!locked && managingTasks && <div className="add-subtask">
+        <label htmlFor="new-subtask">新增小任务</label>
+        <div><input id="new-subtask" value={newSubtask} disabled={pending} placeholder="例如：整理验证结果" onChange={event => setNewSubtask(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') void addSubtask(); }}/><button type="button" disabled={pending || !newSubtask.trim()} onClick={() => void addSubtask()}><Plus/>添加</button></div>
+      </div>}
+    </>}
 
     <section className="project-delete-zone" aria-labelledby="delete-project-title">
-      <div><h2 id="delete-project-title">删除大型任务</h2><p>{hasActiveFocus ? '请先结束当前专注，才能删除大型任务。' : '删除前会自动创建本地回滚备份，可在设置中恢复。'}</p></div>
-      <button type="button" className="danger-outline" title={hasActiveFocus ? '请先结束当前专注后再删除大型任务' : undefined} disabled={pending || hasActiveFocus} onClick={() => setDeleteProjectOpen(true)}><Trash2/>删除当前任务</button>
+      <div><h2 id="delete-project-title">删除任务</h2><p>{hasActiveFocus ? '请先结束当前专注，才能删除任务。' : isHabit ? `当前未完成建筑会移除，已完成的 ${completedHabitBuildings} 座建筑会保留。删除前仍会创建回滚备份。` : '删除前会自动创建本地回滚备份，可在设置中恢复。'}</p></div>
+      <button type="button" className="danger-outline" title={hasActiveFocus ? '请先结束当前专注后再删除任务' : undefined} disabled={pending || hasActiveFocus} onClick={() => setDeleteProjectOpen(true)}><Trash2/>删除当前任务</button>
     </section>
 
     {deleteTarget && <ConfirmDialog
@@ -243,13 +252,13 @@ export function TasksScreen({ active, state, run, onCreateProject, onViewProject
       <p>“{deleteTarget.title}”将被永久删除，剩余小任务会重新等分建筑进度。此操作无法撤销。</p>
     </ConfirmDialog>}
     {deleteProjectOpen && <ConfirmDialog
-      title="删除这项大型任务？"
-      confirmLabel="删除大型任务"
+      title="删除这项任务？"
+      confirmLabel="删除任务"
       pending={pending}
       onCancel={() => setDeleteProjectOpen(false)}
       onConfirm={() => void removeProject()}
     >
-      <p>“{active.project.title}”会从当前世界中移除。删除前会自动创建本地回滚备份，可在设置中恢复。</p>
+      <p>{isHabit?`“${active.project.title}”的当前未完成建筑会被移除，已完成的 ${completedHabitBuildings} 座建筑仍留在聚落中。`:`“${active.project.title}”会从当前世界中移除。`}删除前会自动创建本地回滚备份，可在设置中恢复。</p>
     </ConfirmDialog>}
   </section>;
 }

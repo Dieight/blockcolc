@@ -2,7 +2,7 @@ import type { DomainState } from '@tomato-clock/domain';
 
 export interface RoundPlan {
   projectId: string;
-  subtaskId: string;
+  subtaskId: string | null;
   totalRounds: number;
   completedRounds: number;
   status: 'focus' | 'break' | 'ready';
@@ -16,7 +16,7 @@ export interface RoundPlan {
 export function parseRoundPlan(value: unknown, projectId: string): RoundPlan | null {
   if (!value || typeof value !== 'object') return null;
   const candidate = value as Partial<RoundPlan>;
-  if (candidate.projectId !== projectId || typeof candidate.subtaskId !== 'string') return null;
+  if (candidate.projectId !== projectId || (candidate.subtaskId !== null && typeof candidate.subtaskId !== 'string')) return null;
   const totalRounds = candidate.totalRounds;
   const completedRounds = candidate.completedRounds;
   if (typeof totalRounds !== 'number' || !Number.isInteger(totalRounds) || totalRounds < 1 || totalRounds > 4) return null;
@@ -45,6 +45,7 @@ export function reconcileRoundPlan(
   state: DomainState,
   activeProjectId: string,
   nowMs = Date.now(),
+  habitBreakDurationMs = 0,
 ): RoundPlan | null {
   const active = state.activeFocusSession;
   if (!plan) {
@@ -70,8 +71,10 @@ export function reconcileRoundPlan(
     return plan;
   }
 
+  const project = state.projects.find((candidate) => candidate.id === plan.projectId);
+  if (project?.kind === 'habit' && project.habit?.awaitingNextBuilding) return null;
   const reported = new Set(state.progressReports.flatMap((report) => report.focusSessionIds));
-  const pending = state.focusHistory.some((session) =>
+  const pending = project?.kind !== 'habit' && state.focusHistory.some((session) =>
     session.projectId === plan.projectId && session.subtaskId === plan.subtaskId
       && session.status === 'completed' && !reported.has(session.id),
   );
@@ -100,6 +103,21 @@ export function reconcileRoundPlan(
     ? Math.max(plan.completedRounds, plan.reportedSessionIds.length)
     : plan.completedRounds + 1;
   if (nextCompletedRounds >= plan.totalRounds) return null;
+  const reportedSessionIds = alreadyRecorded ? plan.reportedSessionIds : [...plan.reportedSessionIds, latest.id];
+  if (project?.kind === 'habit' && habitBreakDurationMs > 0) {
+    const breakEndsAt = new Date(Date.parse(latest.completedAt) + habitBreakDurationMs).toISOString();
+    if (Date.parse(breakEndsAt) > nowMs) {
+      return {
+        ...plan,
+        completedRounds: nextCompletedRounds,
+        status: 'break',
+        breakEndsAt,
+        endAfterBreak: undefined,
+        currentSessionId: undefined,
+        reportedSessionIds,
+      };
+    }
+  }
   return {
     ...plan,
     completedRounds: nextCompletedRounds,
@@ -107,7 +125,7 @@ export function reconcileRoundPlan(
     breakEndsAt: undefined,
     endAfterBreak: undefined,
     currentSessionId: undefined,
-    reportedSessionIds: alreadyRecorded ? plan.reportedSessionIds : [...plan.reportedSessionIds, latest.id],
+    reportedSessionIds,
   };
 }
 

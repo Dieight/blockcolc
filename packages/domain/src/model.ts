@@ -46,18 +46,41 @@ export interface ImportedBlueprintV1 {
 export interface Project {
   id: string;
   title: string;
+  kind: "finite" | "habit";
+  settlementIndex: number;
   blueprintId: string;
   importedBlueprint: ImportedBlueprintV1 | null;
   createdAt: ISOInstant;
   status: "active" | "paused" | "monument" | "deleted";
   subtaskStructureLocked: boolean;
   subtasks: Subtask[];
+  habit: HabitProjectState | null;
+}
+
+export interface HabitProjectState {
+  cycleNumber: number;
+  targetRounds: number;
+  completedFocusSessionIds: string[];
+  awaitingNextBuilding: boolean;
+}
+
+export interface HabitBuildingMonument {
+  id: string;
+  habitProjectId: string;
+  habitTitle: string;
+  cycleNumber: number;
+  settlementIndex: number;
+  blueprintId: string;
+  importedBlueprint: ImportedBlueprintV1 | null;
+  targetRounds: number;
+  focusSessionIds: string[];
+  completedAt: ISOInstant;
 }
 
 export interface FocusSessionBase {
   id: string;
   projectId: string;
-  subtaskId: string;
+  subtaskId: string | null;
   startedAt: ISOInstant;
   endsAt: ISOInstant;
   plannedDurationMs: number;
@@ -157,8 +180,9 @@ export interface FocusIntegrityPolicy {
 }
 
 export interface DomainState {
-  schemaVersion: 4;
+  schemaVersion: 5;
   projects: Project[];
+  habitBuildings: HabitBuildingMonument[];
   activeProjectId: string | null;
   retiredSubtaskIds: string[];
   activeFocusSession: ActiveFocusSession | null;
@@ -176,6 +200,8 @@ export interface DomainState {
 
 export type DomainCommand =
   | { type: "CreateProject"; projectId: string; title: string; blueprintId: string; importedBlueprint?: ImportedBlueprintV1 | null; subtasks: Array<{ id: string; title: string }> }
+  | { type: "CreateHabitProject"; projectId: string; title: string; blueprintId: string; importedBlueprint?: ImportedBlueprintV1 | null; targetRounds: number }
+  | { type: "SelectNextHabitBuilding"; blueprintId: string; importedBlueprint?: ImportedBlueprintV1 | null; targetRounds: number }
   | { type: "SwitchActiveProject"; projectId: string }
   | { type: "RenameProject"; title: string }
   | { type: "DeleteActiveProject"; projectId: string }
@@ -183,7 +209,7 @@ export type DomainCommand =
   | { type: "RemoveSubtask"; subtaskId: string }
   | { type: "RenameSubtask"; subtaskId: string; title: string }
   | { type: "ReorderSubtasks"; orderedSubtaskIds: string[] }
-  | { type: "StartFocus"; sessionId: string; subtaskId: string; plannedDurationMs: number }
+  | { type: "StartFocus"; sessionId: string; subtaskId: string | null; plannedDurationMs: number }
   | { type: "CompleteFocus" }
   | { type: "CompleteFocusEarly"; reportId: string }
   | { type: "CancelFocus"; interruptionCategory?: FocusInterruptionCategory | null }
@@ -204,6 +230,9 @@ export type DomainCommand =
 
 export type DomainEvent =
   | { type: "ProjectCreated"; projectId: string }
+  | { type: "HabitBuildingSelected"; projectId: string; cycleNumber: number; targetRounds: number }
+  | { type: "HabitBuildingProgressed"; projectId: string; completedRounds: number; targetRounds: number }
+  | { type: "HabitBuildingCompleted"; projectId: string; buildingId: string; cycleNumber: number }
   | { type: "ProjectPaused"; projectId: string }
   | { type: "ProjectActivated"; projectId: string }
   | { type: "ProjectRenamed"; projectId: string }
@@ -214,7 +243,7 @@ export type DomainEvent =
   | { type: "SubtasksReordered" }
   | { type: "FocusStarted"; sessionId: string; endsAt: ISOInstant }
   | { type: "FocusCompleted"; sessionId: string }
-  | { type: "FocusCompletedEarly"; sessionId: string; subtaskId: string; actualDurationMs: number }
+  | { type: "FocusCompletedEarly"; sessionId: string; subtaskId: string | null; actualDurationMs: number }
   | { type: "FocusInterrupted"; sessionId: string; reason: FocusInterruptionReason; category: FocusInterruptionCategory | null }
   | { type: "FocusIntegrityConfigured"; enabled: boolean; maxEffectiveExcursions: number }
   | { type: "FocusLifecycleExemptionGranted"; sessionId: string }
@@ -257,6 +286,7 @@ export type DomainErrorCode =
   | "ACTIVE_FOCUS_PREVENTS_PROJECT_DELETION"
   | "ACTIVE_FOCUS_PREVENTS_PROJECT_SWITCH"
   | "UNREPORTED_FOCUS_PREVENTS_PROJECT_SWITCH"
+  | "HABIT_BUILDING_SELECTION_REQUIRED"
   | "SUBTASK_HAS_HISTORY"
   | "DECAY_DISABLED";
 

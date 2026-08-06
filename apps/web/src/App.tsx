@@ -16,14 +16,14 @@ import { effectiveFocusMillisecondsByDate, focusSessionEndedAt, focusSessionLoca
 import { parseRoundPlan, reconcileRoundPlan, roundPlansEqual, type RoundPlan } from './round-plan';
 
 type Tab = 'world' | 'tasks' | 'stats' | 'settings';
-interface FocusPreferences { focusMinutes: number; breakMinutes: number; visualExperiment: VoxelVisualExperiment }
+interface FocusPreferences { focusMinutes: number; habitFocusMinutes: number; habitTargetRounds: number; breakMinutes: number; visualExperiment: VoxelVisualExperiment }
 type ImportRole = 'building' | 'decoration';
-interface ProjectSetupDraft { title: string; subtasksText: string; blueprintId: string; imported: LitematicImportResult | null; packCompatibility: { name: string; textured: number; fallback: number; total: number } | null; importRole: ImportRole }
+interface ProjectSetupDraft { kind: 'finite' | 'habit'; title: string; subtasksText: string; blueprintId: string; habitTargetRounds: number; imported: LitematicImportResult | null; packCompatibility: { name: string; textured: number; fallback: number; total: number } | null; importRole: ImportRole }
 const PREFERENCES_KEY = 'blockcolc-focus-preferences-v1';
 const ROUND_PLAN_KEY = 'blockcolc-round-plan-v1';
-const APP_VERSION = '1.0.5';
+const APP_VERSION = '1.0.6';
 const REPOSITORY_URL = 'https://github.com/Dieight/blockcolc';
-const INITIAL_PROJECT_SETUP_DRAFT: ProjectSetupDraft = { title: '我的第一座工坊', subtasksText: '确定目标\n完成核心工作\n检查并收尾', blueprintId: 'builtin-small-workshop', imported: null, packCompatibility: null, importRole: 'building' };
+const INITIAL_PROJECT_SETUP_DRAFT: ProjectSetupDraft = { kind: 'finite', title: '我的第一座工坊', subtasksText: '确定目标\n完成核心工作\n检查并收尾', blueprintId: 'builtin-small-workshop', habitTargetRounds: 10, imported: null, packCompatibility: null, importRole: 'building' };
 let voxelModulePromise:Promise<typeof import('@tomato-clock/voxel')>|null=null;
 function loadVoxelModule(){voxelModulePromise??=import('@tomato-clock/voxel');return voxelModulePromise;}
 function resourcePackAtlasMaximumSizeForTest():number|undefined{if(!import.meta.env.DEV)return undefined;const value=Number(new URLSearchParams(location.search).get('__atlasPageSize'));return Number.isSafeInteger(value)&&value>=32&&value<=2048?value:undefined;}
@@ -46,15 +46,15 @@ export function App({ service, resourcePacks }: { service: ApplicationService; r
   const [ceremony,setCeremony]=useState<{projectId:string;title:string}|null>(null);
   const [preferences, setPreferences] = useState<FocusPreferences>(loadPreferences);
   const refresh = useCallback(() => setVersion(v => v + 1), []);
-  const run = useCallback(async (command: ApplicationCommand) => { try { const result = await service.dispatch(command); if (!result.ok) setMessage(result.message); else {if(result.events.some(event=>event.type==='FocusInterrupted'&&event.reason==='app-switch-limit'))setMessage('本轮专注因达到离开应用次数上限而结束。下次可以从这里继续。'); else if(result.events.some(event=>event.type==='FocusInterrupted'))setMessage('本轮已记录，有效专注时间已计入统计。'); else if(result.events.some(event=>event.type==='FocusCompletedEarly'))setMessage('小任务已提前完成，实际专注时间已记录。'); else if(result.warnings.some(warning=>warning.code==='NOTIFICATION_INEXACT'))setMessage('系统提醒已开启，但未获精准闹钟权限，锁屏时可能略有延迟。'); else if (result.warnings.length) setMessage('计时已开始；系统通知当前不可用，回到应用时仍会正确恢复。'); else if (result.events.some(event => event.type === 'ProjectDeleted')) setMessage('大型任务已删除，可在设置的本地备份中恢复。'); else setMessage(''); const sealed=result.events.find(event=>event.type==='ProjectSealedAsMonument');if(sealed){const project=result.state.projects.find(item=>item.id===sealed.projectId);if(project)setCeremony({projectId:project.id,title:project.title});}} refresh(); return result; } catch (error) { setMessage(error instanceof Error ? error.message : '操作失败，请重试。'); throw error; } }, [service, refresh]);
+  const run = useCallback(async (command: ApplicationCommand) => { try { const result = await service.dispatch(command); if (!result.ok) setMessage(result.message); else {if(result.events.some(event=>event.type==='FocusInterrupted'&&event.reason==='app-switch-limit'))setMessage('本轮专注因达到离开应用次数上限而结束。下次可以从这里继续。'); else if(result.events.some(event=>event.type==='FocusInterrupted'))setMessage('本轮已记录，有效专注时间已计入统计。'); else if(result.events.some(event=>event.type==='HabitBuildingCompleted'))setMessage('这座习惯建筑已完成，请选择下一座建筑。'); else if(result.events.some(event=>event.type==='FocusCompletedEarly'))setMessage(result.events.some(event=>event.type==='HabitBuildingProgressed')?'习惯专注已推进一轮，实际专注时间已记录。':'小任务已提前完成，实际专注时间已记录。'); else if(result.warnings.some(warning=>warning.code==='NOTIFICATION_INEXACT'))setMessage('系统提醒已开启，但未获精准闹钟权限，锁屏时可能略有延迟。'); else if (result.warnings.length) setMessage('计时已开始；系统通知当前不可用，回到应用时仍会正确恢复。'); else if (result.events.some(event => event.type === 'ProjectDeleted')) setMessage('任务已删除，已完成的习惯建筑仍保留在聚落中。'); else setMessage(''); const sealed=result.events.find(event=>event.type==='ProjectSealedAsMonument');if(sealed){const project=result.state.projects.find(item=>item.id===sealed.projectId);if(project)setCeremony({projectId:project.id,title:project.title});}} refresh(); return result; } catch (error) { setMessage(error instanceof Error ? error.message : '操作失败，请重试。'); throw error; } }, [service, refresh]);
   useEffect(() => { const resumeFromPageCache = (event:PageTransitionEvent) => { if(event.persisted)void service.resume().then(refresh); }; window.addEventListener('pageshow',resumeFromPageCache);return()=>window.removeEventListener('pageshow',resumeFromPageCache);},[service,refresh]);
   useEffect(() => { const refreshAfterLifecycle = () => refresh(); window.addEventListener(APPLICATION_STATE_CHANGED_EVENT,refreshAfterLifecycle);return()=>window.removeEventListener(APPLICATION_STATE_CHANGED_EVENT,refreshAfterLifecycle);},[refresh]);
   useEffect(()=>{if(!message)return;const timeout=window.setTimeout(()=>setMessage(''),5000);return()=>window.clearTimeout(timeout);},[message]);
   useLayoutEffect(() => { window.scrollTo(0, 0); }, [tab, creatingProject]);
   const state = useMemo(() => service.snapshot(), [service, version]); const active = useMemo(() => service.activeProjectProjection(), [service, version]);
-  const setupDraft=projectDraft??INITIAL_PROJECT_SETUP_DRAFT;
+  const setupDraft=projectDraft??{...INITIAL_PROJECT_SETUP_DRAFT,habitTargetRounds:preferences.habitTargetRounds};
   const updateSetupDraft=useCallback((patch:Partial<ProjectSetupDraft>)=>setProjectDraft(current=>({...current??INITIAL_PROJECT_SETUP_DRAFT,...patch})),[]);
-  const beginProjectSetup=useCallback(()=>{setProjectDraft(current=>current??INITIAL_PROJECT_SETUP_DRAFT);setCreatingProject(true);},[]);
+  const beginProjectSetup=useCallback(()=>{setProjectDraft(current=>current??{...INITIAL_PROJECT_SETUP_DRAFT,habitTargetRounds:preferences.habitTargetRounds});setCreatingProject(true);},[preferences.habitTargetRounds]);
   const discardProjectSetup=useCallback(()=>{setCreatingProject(false);setProjectDraft(null);},[]);
   const completeProjectSetup=useCallback(()=>{setCreatingProject(false);setProjectDraft(null);setTab('world');},[]);
   const viewProjectInWorld=useCallback((projectId:string)=>{setCreatingProject(false);setWorldFocusProjectId(projectId);setTab('world');},[]);
@@ -78,14 +78,14 @@ export function App({ service, resourcePacks }: { service: ApplicationService; r
 function NavButton({active,icon,label,onClick}:{active:boolean;icon:ReactNode;label:string;onClick:()=>void}) { return <button className={active?'nav-active':''} onClick={onClick}>{icon}<span>{label}</span></button>; }
 
 function ProjectSetup({run,resourcePacks,buildingBlueprints,existingProjects,draft,onDraftChange,onCancel,onCreated}:{run:(c:ApplicationCommand)=>Promise<any>;resourcePacks:ResourcePackRepository;buildingBlueprints:ReturnType<ApplicationService['snapshot']>['buildingBlueprintResources'];existingProjects:ReturnType<ApplicationService['snapshot']>['projects'];draft:ProjectSetupDraft;onDraftChange:(patch:Partial<ProjectSetupDraft>)=>void;onCancel?:()=>void;onCreated?:()=>void}) {
-  const catalog=useBlueprintCatalog(); const {blueprintId,imported,packCompatibility,importRole}=draft; const [importing,setImporting]=useState(false); const [importError,setImportError]=useState(''); const [importNotice,setImportNotice]=useState(''); const [nativePicker,setNativePicker]=useState(false);
+  const catalog=useBlueprintCatalog(); const {kind,blueprintId,habitTargetRounds,imported,packCompatibility,importRole}=draft; const [importing,setImporting]=useState(false); const [importError,setImportError]=useState(''); const [importNotice,setImportNotice]=useState(''); const [nativePicker,setNativePicker]=useState(false);
   const titleInput=useRef<HTMLInputElement>(null);const tasksInput=useRef<HTMLTextAreaElement>(null);
   useEffect(()=>{let active=true;void import('@tomato-clock/platform-capacitor').then(platform=>{if(active)setNativePicker(platform.isCapacitorNative());});return()=>{active=false;};},[]);
   const importedEntry:BlueprintCatalogEntry|undefined=imported?{id:imported.blueprint.id,displayName:imported.preview.name,description:`本地 Litematic · Minecraft 数据版本 ${imported.preview.minecraftDataVersion}`,footprint:{width:imported.preview.dimensions.width,depth:imported.preview.dimensions.depth},complexity:imported.preview.nonAirBlockCount>3000?'detailed':'moderate',blueprint:imported.blueprint}:undefined;
   const libraryEntries:BlueprintCatalogEntry[]=buildingBlueprints.map(resource=>({id:resource.id,displayName:resource.blueprint.title,description:`本地建筑蓝图 · ${new Date(resource.importedAt).toLocaleDateString('zh-CN')} 导入`,footprint:{width:resource.blueprint.bounds.maxX-resource.blueprint.bounds.minX+1,depth:resource.blueprint.bounds.maxZ-resource.blueprint.bounds.minZ+1},complexity:resource.blueprint.voxels.length>3000?'detailed':'moderate',blueprint:resource.blueprint as BlueprintV1}));
   const options=importedEntry?[...catalog,...libraryEntries,importedEntry]:[...catalog,...libraryEntries];
   const selected=options.find(option=>option.id===blueprintId)??options[0];
-  const submit=async(e:FormEvent)=>{e.preventDefault();if(importRole==='decoration')return;const currentTitle=titleInput.current?.value??'';const subtasks=(tasksInput.current?.value??'').split('\n').map(x=>x.trim()).filter(Boolean).map(title=>({title}));if(currentTitle.trim()&&subtasks.length&&selected){const importedBlueprint=selected.blueprint.id.startsWith('builtin-')?null:toImportedBlueprint(selected.blueprint);const result=await run({type:'CreateProject',title:currentTitle.trim(),blueprintId:selected.blueprint.id,importedBlueprint,subtasks});if(result?.ok)onCreated?.();}};
+  const submit=async(e:FormEvent)=>{e.preventDefault();if(importRole==='decoration')return;const currentTitle=titleInput.current?.value??'';if(!currentTitle.trim()||!selected||!Number.isInteger(habitTargetRounds)||habitTargetRounds<10||habitTargetRounds>30)return;const importedBlueprint=selected.blueprint.id.startsWith('builtin-')?null:toImportedBlueprint(selected.blueprint);const subtasks=(tasksInput.current?.value??'').split('\n').map(x=>x.trim()).filter(Boolean).map(title=>({title}));const command:ApplicationCommand=kind==='habit'?{type:'CreateHabitProject',title:currentTitle.trim(),blueprintId:selected.blueprint.id,importedBlueprint,targetRounds:habitTargetRounds}:{type:'CreateProject',title:currentTitle.trim(),blueprintId:selected.blueprint.id,importedBlueprint,subtasks};const result=await run(command);if(result?.ok)onCreated?.();};
   const parseImportedBytes=async(bytes:Uint8Array)=>{const {parseLitematic}=await loadLitematicModule();const result=await parseLitematic(bytes);const activePack=await resourcePacks.getActive();let nextCompatibility:ProjectSetupDraft['packCompatibility']=null;if(activePack){const {summarizeBlueprintCompatibility}=await import('@tomato-clock/resource-pack');const summary=summarizeBlueprintCompatibility(result.blueprint,activePack.manifest);nextCompatibility={name:activePack.name,textured:summary.texturedVoxelCount,fallback:summary.fallbackVoxelCount,total:summary.totalVoxelCount};}onDraftChange({imported:result,packCompatibility:nextCompatibility,importRole:'building',blueprintId:result.blueprint.id});setImportNotice('');};
   const importBrowserLitematic=async(file:File|undefined)=>{if(!file)return;setImporting(true);setImportError('');try{await parseImportedBytes(await readBrowserFileBytes(file));}catch(error){onDraftChange({imported:null,packCompatibility:null});setImportError(litematicErrorMessage(error));}finally{setImporting(false);}};
   const importNativeLitematic=async()=>{setImporting(true);setImportError('');try{const {pickNativeLitematicFile}=await import('@tomato-clock/platform-capacitor');const selected=await pickNativeLitematicFile(LITEMATIC_MAX_COMPRESSED_BYTES);if(selected)await parseImportedBytes(selected.bytes);}catch(error){onDraftChange({imported:null,packCompatibility:null});setImportError(litematicErrorMessage(error));}finally{setImporting(false);}};
@@ -95,7 +95,22 @@ function ProjectSetup({run,resourcePacks,buildingBlueprints,existingProjects,dra
   const addDecoration=async()=>{if(!imported)return;if(decorationLimitError){setImportError(decorationLimitError);return;}setImporting(true);setImportError('');setImportNotice('');try{const result=await run({type:'ImportDecorationBlueprint',blueprint:toImportedBlueprint(imported.blueprint)});if(result?.ok)setImportNotice(result.events.some((event:{type:string})=>event.type==='DecorationBlueprintImported')?'已加入本地装饰池。':'这份装饰蓝图已在本地装饰池中。');else setImportError(result?.message??'无法加入装饰池。');}finally{setImporting(false);}};
   const ignoredFeatures=imported?imported.preview.compatibility.ignoredEntities+imported.preview.compatibility.ignoredTileEntities+imported.preview.compatibility.ignoredPendingTicks:0;
   const importControl=<div className="litematic-import">{nativePicker?<button className="litematic-file" type="button" disabled={importing} onClick={()=>void importNativeLitematic()}><FileUp/><span>{importing?'正在解析...':'导入 .litematic'}</span></button>:<label className="litematic-file"><FileUp/><span>{importing?'正在解析...':'导入 .litematic'}</span><input className="sr-only" type="file" accept=".litematic,application/octet-stream" disabled={importing} onChange={event=>void importBrowserLitematic(event.target.files?.[0])}/></label>}{imported&&<><div className="litematic-summary"><strong>{imported.preview.dimensions.width} x {imported.preview.dimensions.height} x {imported.preview.dimensions.depth}</strong><span>{imported.preview.nonAirBlockCount.toLocaleString('zh-CN')} 个方块 · {imported.preview.regionCount} 个区域</span>{packCompatibility&&<span className={packCompatibility.fallback>0?'import-warning':''}>{packCompatibility.name}：{packCompatibility.textured.toLocaleString('zh-CN')}/{packCompatibility.total.toLocaleString('zh-CN')} 个方块使用资源包，{packCompatibility.fallback.toLocaleString('zh-CN')} 个原创回退</span>}{imported.preview.compatibility.placeholderVoxelCount>0&&<span className="import-warning">{imported.preview.compatibility.placeholderVoxelCount} 个方块使用占位材质</span>}{ignoredFeatures>0&&<span className="import-warning">忽略 {ignoredFeatures} 个实体、方块实体或计划刻</span>}</div><div className="import-role" role="group" aria-label="蓝图用途"><button type="button" aria-pressed={importRole==='building'} onClick={()=>chooseImportRole('building')}>主任务建筑</button><button type="button" aria-pressed={importRole==='decoration'} onClick={()=>chooseImportRole('decoration')}>每日奖励装饰</button></div>{importRole==='decoration'&&<p className={decorationLimitError?'import-error':'import-role-note'}>{decorationLimitError||'装饰上限 12 x 12 x 16、2,000 个非空气方块；达成每日目标后自动选取。'}</p>}</>}{importError&&<p className="import-error" role="alert">{importError}</p>}{importNotice&&<p className="import-notice" role="status">{importNotice}</p>}</div>;
-  return <section className="setup">{existingProjects.length>0&&<div className="resume-projects"><span className="eyebrow">继续建造</span><h2>已有大型任务</h2>{existingProjects.map(project=><button type="button" key={project.id} onClick={()=>void resume(project.id)}><span><strong>{project.title}</strong><small>{Math.round(projectProgressBasisPoints(project)/100)}% · {project.subtasks.length} 个小任务</small></span><span>切换</span></button>)}</div>}<form onSubmit={submit}><header className="setup-heading"><span className="eyebrow">新的建筑</span><h1>{onCancel?'新增大型任务':'建立你的第一项任务'}</h1><p>每项大型任务会在村落中留下自己的一栋建筑。</p></header><div className="setup-fields"><label>大型任务<NativeImeTextEntry targetRef={titleInput} name="projectTitle" defaultValue={draft.title} onValueChange={title=>onDraftChange({title})}/></label><label>拆成小任务，每行一项<NativeImeTextEntry targetRef={tasksInput} name="subtasks" rows={5} defaultValue={draft.subtasksText} onValueChange={subtasksText=>onDraftChange({subtasksText})}/></label></div>{selected?<BlueprintPicker resourcePacks={resourcePacks} options={options} selected={selected} onSelect={id=>onDraftChange({blueprintId:id,...(!imported||id!==imported.blueprint.id?{importRole:'building'}:{})})} importControl={importControl}/>:<div className="blueprint-loading" role="status">正在准备建筑预览...</div>}<div className="setup-actions">{onCancel&&<button type="button" onClick={onCancel}>取消</button>}{importRole==='decoration'&&imported?<button className="primary setup-submit" type="button" disabled={importing||Boolean(decorationLimitError)} onClick={()=>void addDecoration()}>加入装饰池</button>:<button className="primary setup-submit" type="submit" disabled={!selected||importing}>开始建造</button>}</div></form></section>;
+  return <section className="setup">
+    {existingProjects.length > 0 && <div className="resume-projects">
+      <span className="eyebrow">继续建造</span><h2>已有任务</h2>
+      {existingProjects.map(project => <button type="button" key={project.id} onClick={() => void resume(project.id)}><span><strong>{project.title}</strong><small>{project.kind === 'habit' ? `习惯 · ${project.habit?.awaitingNextBuilding ? '等待选择下一建筑' : `${project.habit?.completedFocusSessionIds.length ?? 0} / ${project.habit?.targetRounds ?? 10} 轮`}` : `${Math.round(projectProgressBasisPoints(project) / 100)}% · ${project.subtasks.length} 个小任务`}</small></span><span>切换</span></button>)}
+    </div>}
+    <form onSubmit={submit}>
+      <header className="setup-heading"><span className="eyebrow">新的建筑</span><h1>{onCancel ? '新增任务' : '建立你的第一项任务'}</h1><p>{kind === 'habit' ? '每次专注都会推进习惯建筑，完成后继续选择下一座。' : '每项大型任务会在村落中留下自己的一栋建筑。'}</p></header>
+      <div className="setup-kind" role="group" aria-label="任务类型"><button type="button" aria-pressed={kind === 'finite'} onClick={() => onDraftChange({ kind: 'finite' })}>普通大型任务</button><button type="button" aria-pressed={kind === 'habit'} onClick={() => onDraftChange({ kind: 'habit' })}>习惯任务</button></div>
+      <div className="setup-fields">
+        <label>{kind === 'habit' ? '习惯名称' : '大型任务'}<NativeImeTextEntry targetRef={titleInput} name="projectTitle" defaultValue={draft.title} onValueChange={title => onDraftChange({ title })}/></label>
+        {kind === 'finite' ? <label>拆成小任务，每行一项<NativeImeTextEntry targetRef={tasksInput} name="subtasks" rows={5} defaultValue={draft.subtasksText} onValueChange={subtasksText => onDraftChange({ subtasksText })}/></label> : <div className="habit-target-summary"><span>每座建筑</span><strong>{habitTargetRounds} 轮专注</strong><small>统一在设置中调整；创建后，本周期内不会改变。</small></div>}
+      </div>
+      {selected ? <BlueprintPicker resourcePacks={resourcePacks} options={options} selected={selected} onSelect={id => onDraftChange({ blueprintId: id, ...(!imported || id !== imported.blueprint.id ? { importRole: 'building' } : {}) })} importControl={importControl}/> : <div className="blueprint-loading" role="status">正在准备建筑预览...</div>}
+      <div className="setup-actions">{onCancel && <button type="button" onClick={onCancel}>取消</button>}{importRole === 'decoration' && imported ? <button className="primary setup-submit" type="button" disabled={importing || Boolean(decorationLimitError)} onClick={() => void addDecoration()}>加入装饰池</button> : <button className="primary setup-submit" type="submit" disabled={!selected || importing || !Number.isInteger(habitTargetRounds) || habitTargetRounds < 10 || habitTargetRounds > 30}>开始建造</button>}</div>
+    </form>
+  </section>;
 }
 
 function NativeImeTextEntry({targetRef,name,defaultValue,rows,onValueChange}:{targetRef:{current:HTMLInputElement|null}|{current:HTMLTextAreaElement|null};name:string;defaultValue:string;rows?:number;onValueChange?:(value:string)=>void}) { const host=useRef<HTMLSpanElement>(null);const initialValue=useRef(defaultValue);const valueChangeRef=useRef(onValueChange);valueChangeRef.current=onValueChange;useLayoutEffect(()=>{const element=rows===undefined?document.createElement('input'):document.createElement('textarea');element.name=name;element.required=true;element.value=initialValue.current;element.dataset.imeDiagnostic=name;if(element instanceof HTMLTextAreaElement)element.rows=rows??5;targetRef.current=element as never;host.current?.append(element);const report=(event:Event)=>{const input=event as InputEvent & {isComposing?:boolean;data?:string};const current=element as HTMLInputElement|HTMLTextAreaElement;console.info('[tomato-ime]',JSON.stringify({field:name,type:event.type,inputType:input.inputType??null,isComposing:input.isComposing??false,dataLength:input.data?.length??0,valueLength:current.value.length,selectionStart:current.selectionStart,selectionEnd:current.selectionEnd,time:performance.now()}));};const retain=()=>valueChangeRef.current?.(element.value);const events=['compositionstart','compositionupdate','compositionend','beforeinput','input','focus','blur','select','keyup'];events.forEach(type=>element.addEventListener(type,report));element.addEventListener('input',retain);return()=>{retain();element.removeEventListener('input',retain);events.forEach(type=>element.removeEventListener(type,report));if(targetRef.current===element)targetRef.current=null;element.remove();};},[name,rows,targetRef]);return <span className="native-ime-entry" ref={host}/>; }
@@ -138,7 +153,10 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
 }) {
   const active = service.activeProjectProjection()!;
   const state = service.snapshot();
-  const [selected, setSelected] = useState(active.project.subtasks.find((subtask) => subtask.progressBasisPoints < 10000)?.id ?? active.project.subtasks[0]!.id);
+  const blueprintCatalog = useBlueprintCatalog();
+  const isHabit = active.project.kind === 'habit';
+  const habit = active.project.habit;
+  const [selected, setSelected] = useState<string | null>(isHabit ? null : active.project.subtasks.find((subtask) => subtask.progressBasisPoints < 10000)?.id ?? active.project.subtasks[0]!.id);
   const [rounds, setRounds] = useState(1);
   const [plan, setPlanState] = useState<RoundPlan | null>(() => loadRoundPlan(active.project.id));
   const [ending, setEnding] = useState(false);
@@ -170,7 +188,7 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
   }, [plan, setPlan]);
 
   useEffect(() => {
-    setSelected(active.project.subtasks.find((subtask) => subtask.progressBasisPoints < 10000)?.id ?? active.project.subtasks[0]!.id);
+    setSelected(active.project.kind === 'habit' ? null : active.project.subtasks.find((subtask) => subtask.progressBasisPoints < 10000)?.id ?? active.project.subtasks[0]!.id);
     setPlan(loadRoundPlan(active.project.id));
     setPlanOpen(false);
   }, [active.project.id, setPlan]);
@@ -186,7 +204,8 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
   const lastFocus = state.focusHistory[state.focusHistory.length - 1];
   const integrityFailure = !session && lastFocus?.status === 'interrupted' && lastFocus.interruptionReason === 'app-switch-limit';
   const pending = active.unreportedCompletedSessions;
-  const reconciledPlan = reconcileRoundPlan(plan, state, active.project.id);
+  const habitAwaiting = isHabit && habit?.awaitingNextBuilding === true;
+  const reconciledPlan = reconcileRoundPlan(plan, state, active.project.id, Date.now(), preferences.breakMinutes * 60_000);
   const isBreak = reconciledPlan?.status === 'break' && !!reconciledPlan.breakEndsAt;
   useEffect(() => {
     if (!roundPlansEqual(plan, reconciledPlan)) setPlan(reconciledPlan);
@@ -211,10 +230,15 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
   useEffect(() => {
     if (integrityFailure && reconciledPlan?.status === 'focus') setPlan(null);
   }, [integrityFailure, reconciledPlan, setPlan]);
+  useEffect(() => {
+    if (habitAwaiting && plan !== null) setPlan(null);
+  }, [habitAwaiting, plan, setPlan]);
 
   const startFocus = async (total = reconciledPlan?.totalRounds ?? rounds) => {
-    const next: RoundPlan = reconciledPlan ?? { projectId: active.project.id, subtaskId: subtask.id, totalRounds: total, completedRounds: 0, status: 'focus', reportedSessionIds: [] };
-    const result = await run({ type: 'StartFocus', subtaskId: next.subtaskId, plannedDurationMs: preferences.focusMinutes * 60000 });
+    if (habitAwaiting) return;
+    const next: RoundPlan = reconciledPlan ?? { projectId: active.project.id, subtaskId: isHabit ? null : subtask!.id, totalRounds: total, completedRounds: 0, status: 'focus', reportedSessionIds: [] };
+    const focusMinutes = isHabit ? preferences.habitFocusMinutes : preferences.focusMinutes;
+    const result = await run({ type: 'StartFocus', subtaskId: next.subtaskId, plannedDurationMs: focusMinutes * 60000 });
     if (result?.ok) {
       const { breakEndsAt: _breakEndsAt, ...withoutBreak } = next;
       const started = result.events.find((event: { type: string; sessionId?: string }) => event.type === 'FocusStarted');
@@ -244,7 +268,7 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
     const result = await run({ type: 'CompleteFocusEarly' });
     if (!result?.ok) return;
     setEnding(false);
-    const sealed = result.events.some((event: { type: string }) => event.type === 'ProjectSealedAsMonument');
+    const sealed = result.events.some((event: { type: string }) => event.type === 'ProjectSealedAsMonument' || event.type === 'HabitBuildingCompleted');
     const currentPlan = reconciledPlan;
     if (sealed || !currentPlan || currentPlan.totalRounds === 1 || preferences.breakMinutes === 0) {
       setPlan(null);
@@ -268,36 +292,37 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
     }
     setPlan({ ...reconciledPlan, completedRounds: completed, status: 'break', breakEndsAt: new Date(Date.now() + preferences.breakMinutes * 60000).toISOString(), currentSessionId: undefined, reportedSessionIds });
   };
-  const planSummary = `${reconciledPlan?.totalRounds ?? rounds} 轮 · 每轮 ${preferences.focusMinutes} 分钟${preferences.breakMinutes > 0 ? ` · 休息 ${preferences.breakMinutes} 分钟` : ''}`;
+  const focusMinutes = isHabit ? preferences.habitFocusMinutes : preferences.focusMinutes;
+  const planSummary = `${reconciledPlan?.totalRounds ?? rounds} 轮 · 每轮 ${focusMinutes} 分钟${preferences.breakMinutes > 0 ? ` · 休息 ${preferences.breakMinutes} 分钟` : ''}`;
 
-  return <div className={session ? 'world-screen is-focusing' : pending.length > 0 ? 'world-screen has-report' : 'world-screen'}>
+  return <div className={session ? 'world-screen is-focusing' : pending.length > 0 ? 'world-screen has-report' : habitAwaiting ? 'world-screen is-choosing-habit-building' : 'world-screen'}>
     <WorldCanvasV7 service={service} resourcePacks={resourcePacks} visualExperiment={preferences.visualExperiment} constructionFeedback={constructionFeedback} focusedProjectId={focusedProjectId} onClearWorldFocus={onClearWorldFocus}/>
     <section className="focus-panel v7-focus-panel">
       {!session && <div className="workbench-heading">
         <div><span className="eyebrow">今天继续建造</span><h1>{active.project.title}</h1></div>
         <button className="task-switch-action" type="button" aria-label="切换当前工作" onClick={onOpenTasks}><ListTodo/><span>切换任务</span></button>
       </div>}
-      {!session && !isBreak && pending.length === 0 && <>
-        <div className="workbench-context"><span>当前小任务</span><strong>{subtask.title}</strong><small>已完成 {Math.round(subtask.progressBasisPoints / 100)}% · {dailySummary}</small></div>
-        <button type="button" className="plan-summary" aria-label="调整本次计划" aria-expanded={planOpen} onClick={() => setPlanOpen(true)}><span>{planSummary}</span><span>调整</span></button>
-      </>}
-      {pending.length > 0 ? <ProgressReportV7 active={active} run={run} onSubmitted={afterReport}/> : <>
-        {session && <div className="focus-task-context"><span>本轮任务</span><strong>{subtask.title}</strong></div>}
+       {!session && !isBreak && pending.length === 0 && !habitAwaiting && <>
+         {isHabit ? <div className="workbench-context"><span>当前习惯建筑 · 第 {habit!.cycleNumber} 座</span><strong>{blueprintName(blueprintCatalog, active.project.blueprintId)}</strong><small>本周期 {habit!.completedFocusSessionIds.length} / {habit!.targetRounds} 轮 · {dailySummary}</small></div> : <div className="workbench-context"><span>当前小任务</span><strong>{subtask!.title}</strong><small>已完成 {Math.round(subtask!.progressBasisPoints / 100)}% · {dailySummary}</small></div>}
+         <button type="button" className="plan-summary" aria-label="调整本次计划" aria-expanded={planOpen} onClick={() => setPlanOpen(true)}><span>{planSummary}</span><span>调整</span></button>
+       </>}
+       {habitAwaiting ? <HabitBuildingSelection state={state} active={active} resourcePacks={resourcePacks} run={run} targetRounds={preferences.habitTargetRounds}/> : pending.length > 0 ? <ProgressReportV7 active={active} run={run} onSubmitted={afterReport}/> : <>
+         {session && <div className="focus-task-context"><span>{isHabit ? '本轮习惯' : '本轮任务'}</span><strong>{isHabit ? active.project.title : subtask!.title}</strong></div>}
         {isBreak && <div className="rest-summary"><span>休息时间</span><strong>{reconciledPlan?.endAfterBreak ? '小任务已完成' : '下一轮准备中'}</strong><small>{dailySummary}</small></div>}
         {(isBreak || session || reconciledPlan?.status === 'ready') && <div className={isBreak ? 'session-kind rest' : 'session-kind'}>{isBreak ? '放松一下，结束后会回到下一步。' : session ? `第 ${(reconciledPlan?.completedRounds ?? 0) + 1} / ${reconciledPlan?.totalRounds ?? 1} 轮专注` : `准备第 ${reconciledPlan!.completedRounds + 1} / ${reconciledPlan!.totalRounds} 轮`}</div>}
         {session && state.focusIntegrityPolicy.enabled && <div className={session.integrity.effectiveExcursions > 0 ? 'focus-integrity-warning active' : 'focus-integrity-warning'}><AlertTriangle/>有效离开 {session.integrity.effectiveExcursions} / {state.focusIntegrityPolicy.maxEffectiveExcursions} 次</div>}
         {integrityFailure && <div className="focus-integrity-ended" role="alert"><AlertTriangle/>本轮专注因达到离开应用次数上限而结束。下次可以从这里继续。</div>}
-        <FocusTimer endsAt={timerEndsAt} fallbackMs={preferences.focusMinutes * 60000} onElapsed={session ? reconcile : finishBreak}/>
+         <FocusTimer endsAt={timerEndsAt} fallbackMs={focusMinutes * 60000} onElapsed={session ? reconcile : finishBreak}/>
         {isBreak ? <button className="primary secondary-action" onClick={() => { if (reconciledPlan?.endAfterBreak) setPlan(null); else { const { breakEndsAt: _breakEndsAt, ...withoutBreak } = reconciledPlan!; setPlan({ ...withoutBreak, status: 'ready' }); } }}>跳过休息</button>
           : reconciledPlan?.status === 'ready' ? <button className="primary" onClick={() => void startFocus()}><Clock3/>开始下一轮</button>
             : <button className={session ? 'destructive primary' : 'primary'} onClick={() => void (session ? setEnding(true) : startFocus())}>{session ? <><Square/>结束本次专注</> : <><Clock3/>开始 {reconciledPlan?.totalRounds ?? rounds} 轮</>}</button>}
       </>}
       {ending && session && (
-        <EndFocusDialog taskTitle={subtask.title} onClose={() => setEnding(false)} onInterrupt={interruptFocus} onCompleteEarly={completeEarly}/>
+         <EndFocusDialog taskTitle={isHabit ? active.project.title : subtask!.title} habit={isHabit} onClose={() => setEnding(false)} onInterrupt={interruptFocus} onCompleteEarly={completeEarly}/>
       )}
-      {planOpen && !session && (
-        <FocusPlanSheet subtasks={active.project.subtasks} selectedId={reconciledPlan?.subtaskId ?? selected} rounds={rounds} focusMinutes={preferences.focusMinutes} breakMinutes={preferences.breakMinutes} locked={Boolean(reconciledPlan)} onSelect={setSelected} onRoundsChange={setRounds} onClose={() => setPlanOpen(false)}/>
-      )}
+      {planOpen && !session && (isHabit
+        ? <HabitFocusPlanSheet rounds={rounds} focusMinutes={preferences.habitFocusMinutes} breakMinutes={preferences.breakMinutes} locked={Boolean(reconciledPlan)} onRoundsChange={setRounds} onClose={() => setPlanOpen(false)}/>
+        : <FocusPlanSheet subtasks={active.project.subtasks} selectedId={reconciledPlan?.subtaskId ?? selected!} rounds={rounds} focusMinutes={preferences.focusMinutes} breakMinutes={preferences.breakMinutes} locked={Boolean(reconciledPlan)} onSelect={setSelected} onRoundsChange={setRounds} onClose={() => setPlanOpen(false)}/>)}
     </section>
   </div>;
 }
@@ -321,6 +346,67 @@ function FocusPlanSheet({ subtasks, selectedId, rounds, focusMinutes, breakMinut
       <p className="plan-sheet-note">每轮 {focusMinutes} 分钟专注{breakMinutes > 0 ? `；多轮之间休息 ${breakMinutes} 分钟。` : '；休息已关闭。'}{locked ? ' 当前计划已开始，轮数和任务将在本轮计划结束后生效。' : ''}</p>
       <button type="button" className="primary" onClick={onClose}>确认计划</button>
     </section>
+  </div>;
+}
+
+function HabitFocusPlanSheet({ rounds, focusMinutes, breakMinutes, locked, onRoundsChange, onClose }: {
+  rounds: number;
+  focusMinutes: number;
+  breakMinutes: number;
+  locked: boolean;
+  onRoundsChange: (rounds: number) => void;
+  onClose: () => void;
+}) {
+  return <div className="dialog-backdrop plan-sheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+    <section className="focus-plan-sheet" role="dialog" aria-modal="true" aria-labelledby="habit-focus-plan-title">
+      <div className="sheet-heading"><div><span className="eyebrow">本次计划</span><h2 id="habit-focus-plan-title">安排习惯专注</h2></div><button type="button" className="dialog-close" aria-label="关闭本次计划" onClick={onClose}><X/></button></div>
+      <div className="round-picker" aria-label="习惯专注轮数"><span>计划轮数</span><div>{[1, 2, 3, 4].map((value) => <button key={value} type="button" aria-pressed={rounds === value} disabled={locked} onClick={() => onRoundsChange(value)}>{value} 轮</button>)}</div></div>
+      <p className="plan-sheet-note">每轮 {focusMinutes} 分钟专注{breakMinutes > 0 ? `；多轮之间休息 ${breakMinutes} 分钟。` : '；休息已关闭。'}每个完成或提前完成的轮次都会推进当前建筑。{locked ? ' 当前计划已开始，轮数将在本轮计划结束后生效。' : ''}</p>
+      <button type="button" className="primary" onClick={onClose}>确认计划</button>
+    </section>
+  </div>;
+}
+
+function HabitBuildingSelection({ state, active, resourcePacks, run, targetRounds }: {
+  state: ReturnType<ApplicationService['snapshot']>;
+  active: NonNullable<ReturnType<ApplicationService['activeProjectProjection']>>;
+  resourcePacks: ResourcePackRepository;
+  run: (command: ApplicationCommand) => Promise<any>;
+  targetRounds: number;
+}) {
+  const catalog = useBlueprintCatalog();
+  const libraryEntries: BlueprintCatalogEntry[] = state.buildingBlueprintResources.map((resource) => ({
+    id: resource.id,
+    displayName: resource.blueprint.title,
+    description: `本地建筑蓝图 · ${new Date(resource.importedAt).toLocaleDateString('zh-CN')} 导入`,
+    footprint: { width: resource.blueprint.bounds.maxX - resource.blueprint.bounds.minX + 1, depth: resource.blueprint.bounds.maxZ - resource.blueprint.bounds.minZ + 1 },
+    complexity: resource.blueprint.voxels.length > 3000 ? 'detailed' : 'moderate',
+    blueprint: resource.blueprint as BlueprintV1,
+  }));
+  const options = [...catalog, ...libraryEntries];
+  const [selectedId, setSelectedId] = useState<string>('');
+  const [pending, setPending] = useState(false);
+  const selected = options.find((option) => option.id === selectedId) ?? options[0];
+  const completedCount = state.habitBuildings.filter((building) => building.habitProjectId === active.project.id).length;
+  const choose = async () => {
+    if (!selected || pending) return;
+    setPending(true);
+    try {
+      await run({
+        type: 'SelectNextHabitBuilding',
+        blueprintId: selected.id,
+        importedBlueprint: selected.blueprint.id.startsWith('builtin-') ? null : toImportedBlueprint(selected.blueprint),
+        targetRounds,
+      });
+    } finally {
+      setPending(false);
+    }
+  };
+  if (!selected) return <div className="blueprint-loading" role="status">正在准备建筑预览...</div>;
+  return <div className="habit-building-selection">
+    <div className="habit-selection-heading"><span className="eyebrow">上一座已完成</span><h2>选择第 {active.project.habit!.cycleNumber} 座建筑</h2><p>已留下 {completedCount} 座建筑；下一座需要 {targetRounds} 轮专注。确认后，本周期内不能更换。</p></div>
+    <BlueprintPicker resourcePacks={resourcePacks} options={options} selected={selected} onSelect={setSelectedId}/>
+    <button type="button" className="primary habit-building-confirm" disabled={pending} onClick={() => void choose()}><Hammer/>{pending ? '正在确定...' : '开始建造这座建筑'}</button>
   </div>;
 }
 
@@ -366,12 +452,12 @@ const INTERRUPTION_OPTIONS:readonly {value:FocusInterruptionCategory|null;label:
   {value:'device-or-app',label:'设备或应用问题'}, {value:'other',label:'其他'}, {value:null,label:'不记录'},
 ];
 
-function EndFocusDialog({taskTitle,onClose,onInterrupt,onCompleteEarly}:{taskTitle:string;onClose:()=>void;onInterrupt:(reason:FocusInterruptionCategory|null)=>Promise<void>;onCompleteEarly:()=>Promise<void>}){
+function EndFocusDialog({taskTitle,habit=false,onClose,onInterrupt,onCompleteEarly}:{taskTitle:string;habit?:boolean;onClose:()=>void;onInterrupt:(reason:FocusInterruptionCategory|null)=>Promise<void>;onCompleteEarly:()=>Promise<void>}){
   const [mode,setMode]=useState<'choose'|'interrupt'>('choose');const [busy,setBusy]=useState(false);const closeRef=useRef<HTMLButtonElement>(null);
   useEffect(()=>{closeRef.current?.focus();const onKey=(event:KeyboardEvent)=>{if(event.key==='Escape'&&!busy)onClose();};window.addEventListener('keydown',onKey);return()=>window.removeEventListener('keydown',onKey);},[busy,onClose]);
   const early=async()=>{setBusy(true);try{await onCompleteEarly();}finally{setBusy(false);}};
   const interrupt=async(reason:FocusInterruptionCategory|null)=>{setBusy(true);try{await onInterrupt(reason);}finally{setBusy(false);}};
-  return <div className="dialog-backdrop" role="presentation"><div className="confirm-dialog end-focus-dialog" role="dialog" aria-modal="true" aria-labelledby="end-focus-title"><button ref={closeRef} className="dialog-close" aria-label="关闭结束专注窗口" disabled={busy} onClick={onClose}><X/></button><h2 id="end-focus-title">{mode==='choose'?'如何结束这次专注？':'这次为什么中断？'}</h2><p>{mode==='choose'?taskTitle:'选择一项便于以后复盘，也可以不记录。'}</p>{mode==='choose'?<div className="end-focus-choices"><button disabled={busy} onClick={()=>setMode('interrupt')}><Square/><span><strong>中断本轮</strong><small>保留已有任务进度，不计完整轮次</small></span></button><button disabled={busy} onClick={()=>void early()}><Check/><span><strong>提前完成任务</strong><small>将当前小任务标为完成并结束本轮计划</small></span></button></div>:<><div className="interruption-options">{INTERRUPTION_OPTIONS.map(option=><button key={option.value??'none'} disabled={busy} onClick={()=>void interrupt(option.value)}>{option.label}</button>)}</div><button className="dialog-back" disabled={busy} onClick={()=>setMode('choose')}>返回</button></>}</div></div>;
+  return <div className="dialog-backdrop" role="presentation"><div className="confirm-dialog end-focus-dialog" role="dialog" aria-modal="true" aria-labelledby="end-focus-title"><button ref={closeRef} className="dialog-close" aria-label="关闭结束专注窗口" disabled={busy} onClick={onClose}><X/></button><h2 id="end-focus-title">{mode==='choose'?'如何结束这次专注？':'这次为什么中断？'}</h2><p>{mode==='choose'?taskTitle:'选择一项便于以后复盘，也可以不记录。'}</p>{mode==='choose'?<div className="end-focus-choices"><button disabled={busy} onClick={()=>setMode('interrupt')}><Square/><span><strong>中断本轮</strong><small>保留已有任务进度，不计完整轮次</small></span></button><button disabled={busy} onClick={()=>void early()}><Check/><span><strong>{habit?'提前完成本轮':'提前完成任务'}</strong><small>{habit?'推进当前习惯建筑，并结束本轮计划':'将当前小任务标为完成并结束本轮计划'}</small></span></button></div>:<><div className="interruption-options">{INTERRUPTION_OPTIONS.map(option=><button key={option.value??'none'} disabled={busy} onClick={()=>void interrupt(option.value)}>{option.label}</button>)}</div><button className="dialog-back" disabled={busy} onClick={()=>setMode('choose')}>返回</button></>}</div></div>;
 }
 
 function StatsScreen({state}:{state:ReturnType<ApplicationService['snapshot']>}) {
@@ -391,7 +477,7 @@ function StatsScreen({state}:{state:ReturnType<ApplicationService['snapshot']>})
       <div className="stats-detail-line" aria-label="本周记录详情"><span><b>{week.streak}</b> 连续计划日</span><span><b>{week.interrupted}</b> 次中断</span><span><b>{week.rate}%</b> 完成率</span></div>
     </section>
     <section className="interruption-summary" aria-labelledby="interruption-summary-title"><h2 id="interruption-summary-title">本周中断原因</h2>{week.reasons.length===0?<p>这个周期没有已归类的中断。</p>:<ul>{week.reasons.map(reason=><li key={reason.value}><span>{reason.label}</span><strong>{reason.count}</strong></li>)}</ul>}</section>
-    <p className="muted stats-note">热力图只统计完整和提前完成专注的实际时长；中断不计入有效专注分钟。</p>
+    <p className="muted stats-note">热力图按实际专注时长统计，完整、提前完成和中断前的有效时间都会计入。</p>
   </section>;
 }
 
@@ -405,7 +491,7 @@ function FocusHeatmap({heatmap}:{heatmap:ReturnType<typeof focusHeatmapStats>}) 
     <div className="focus-heatmap-legend" aria-hidden="true"><span>少</span>{[0,1,2,3,4].map(level=><i key={level} className={`heat-level-${level}`}/>)}<span>多</span></div>
   </section>;
 }
-function SettingsScreen({service,resourcePacks,state,run,refresh,preferences,onPreferencesChange}:{service:ApplicationService;resourcePacks:ResourcePackRepository;state:ReturnType<ApplicationService['snapshot']>;run:(c:ApplicationCommand)=>Promise<unknown>;refresh:()=>void;preferences:FocusPreferences;onPreferencesChange:(value:FocusPreferences)=>void}) { const date=localDateOf(new Date(),state.calendar.timeZone); const goal=state.dailyGoals.find(g=>g.date===date); const update=(key:'focusMinutes'|'breakMinutes',value:number)=>onPreferencesChange({...preferences,[key]:value});return <section className="page"><span className="eyebrow">本地偏好</span><h1>设置</h1><div className="setting time-setting"><div><b>每轮专注</b><small>下一轮开始时生效</small></div><label><DeferredNumberInput ariaLabel="每轮专注分钟" min={1} max={180} value={preferences.focusMinutes} onCommit={value=>update('focusMinutes',value)}/> 分钟</label></div><div className="setting time-setting"><div><b>每轮休息</b><small>设为 0 可关闭休息</small></div><label><DeferredNumberInput ariaLabel="每轮休息分钟" min={0} max={60} value={preferences.breakMinutes} onCommit={value=>update('breakMinutes',value)}/> 分钟</label></div><FocusIntegritySetting policy={state.focusIntegrityPolicy} run={run}/><PlannedFocusDaysSetting state={state} run={run}/><div className="setting"><div><b>今日总目标</b><small>{goal?.enabled?`${goal.targetPomodoros} 次专注`:'未开启'} · 在任务页调整</small></div></div><div className="setting"><div><b>建筑腐败</b><small>{state.decayPolicy.enabled?'已开启':'默认关闭'}</small></div><button onClick={()=>void run(state.decayPolicy.enabled?{type:'DisableDecay'}:{type:'EnableDecay',damagePerMissedPlannedDayBasisPoints:500,gracePlannedDays:3})}>{state.decayPolicy.enabled?'关闭':'开启'}</button></div><div className="setting visual-experiment-setting"><div><b>高画质实验</b><small>仅高画质档显示，效果互斥</small></div><div className="visual-experiment-control" role="group" aria-label="高画质实验">{([['none','关闭'],['water','水面'],['mist-beam','薄雾']] as const).map(([value,label])=><button key={value} aria-pressed={preferences.visualExperiment===value} onClick={()=>onPreferencesChange({...preferences,visualExperiment:value})}>{label}</button>)}</div></div><BuildingBlueprintPanel resources={state.buildingBlueprintResources} run={run}/><ResourcePackPanel repository={resourcePacks}/><BackupPanel service={service} onChanged={refresh}/></section>; }
+function SettingsScreen({service,resourcePacks,state,run,refresh,preferences,onPreferencesChange}:{service:ApplicationService;resourcePacks:ResourcePackRepository;state:ReturnType<ApplicationService['snapshot']>;run:(c:ApplicationCommand)=>Promise<unknown>;refresh:()=>void;preferences:FocusPreferences;onPreferencesChange:(value:FocusPreferences)=>void}) { const date=localDateOf(new Date(),state.calendar.timeZone); const goal=state.dailyGoals.find(g=>g.date===date); const update=(key:'focusMinutes'|'habitFocusMinutes'|'habitTargetRounds'|'breakMinutes',value:number)=>onPreferencesChange({...preferences,[key]:value});return <section className="page"><span className="eyebrow">本地偏好</span><h1>设置</h1><div className="setting time-setting"><div><b>普通任务专注</b><small>下一轮普通任务开始时生效</small></div><label><DeferredNumberInput ariaLabel="普通任务专注分钟" min={1} max={180} value={preferences.focusMinutes} onCommit={value=>update('focusMinutes',value)}/> 分钟</label></div><div className="setting time-setting"><div><b>习惯任务专注</b><small>下一轮习惯任务开始时生效</small></div><label><DeferredNumberInput ariaLabel="习惯任务专注分钟" min={1} max={180} value={preferences.habitFocusMinutes} onCommit={value=>update('habitFocusMinutes',value)}/> 分钟</label></div><div className="setting time-setting"><div><b>每座习惯建筑轮数</b><small>当前建筑完成后，下一座建筑使用新值</small></div><label><DeferredNumberInput ariaLabel="每座习惯建筑轮数" min={10} max={30} value={preferences.habitTargetRounds} onCommit={value=>update('habitTargetRounds',value)}/> 轮</label></div><div className="setting time-setting"><div><b>每轮休息</b><small>两类任务共用；设为 0 可关闭休息</small></div><label><DeferredNumberInput ariaLabel="每轮休息分钟" min={0} max={60} value={preferences.breakMinutes} onCommit={value=>update('breakMinutes',value)}/> 分钟</label></div><FocusIntegritySetting policy={state.focusIntegrityPolicy} run={run}/><PlannedFocusDaysSetting state={state} run={run}/><div className="setting"><div><b>今日总目标</b><small>{goal?.enabled?`${goal.targetPomodoros} 次专注`:'未开启'} · 在任务页调整</small></div></div><div className="setting"><div><b>建筑腐败</b><small>{state.decayPolicy.enabled?'已开启':'默认关闭'}</small></div><button onClick={()=>void run(state.decayPolicy.enabled?{type:'DisableDecay'}:{type:'EnableDecay',damagePerMissedPlannedDayBasisPoints:500,gracePlannedDays:3})}>{state.decayPolicy.enabled?'关闭':'开启'}</button></div><div className="setting visual-experiment-setting"><div><b>高画质实验</b><small>仅高画质档显示，效果互斥</small></div><div className="visual-experiment-control" role="group" aria-label="高画质实验">{([['none','关闭'],['water','水面'],['mist-beam','薄雾']] as const).map(([value,label])=><button key={value} aria-pressed={preferences.visualExperiment===value} onClick={()=>onPreferencesChange({...preferences,visualExperiment:value})}>{label}</button>)}</div></div><BuildingBlueprintPanel resources={state.buildingBlueprintResources} run={run}/><ResourcePackPanel repository={resourcePacks}/><BackupPanel service={service} onChanged={refresh}/></section>; }
 
 function BuildingBlueprintPanel({resources,run}:{resources:ReturnType<ApplicationService['snapshot']>['buildingBlueprintResources'];run:(c:ApplicationCommand)=>Promise<unknown>}) {
   const [busy,setBusy]=useState(false);const [error,setError]=useState('');const [nativePicker,setNativePicker]=useState(false);const [remove,setRemove]=useState<string|null>(null);const [candidate,setCandidate]=useState<LitematicImportResult|null>(null);const [role,setRole]=useState<ImportRole>('building');
@@ -497,7 +583,7 @@ function focusHeatmapStats(state:ReturnType<ApplicationService['snapshot']>) {
 function formatFocusMinutes(minutes:number){return minutes>=60?`${Math.floor(minutes/60)} 小时${minutes%60?` ${minutes%60} 分`:''}`:`${minutes} 分钟`;}
 function heatmapDateLabel(date:string){const [year,month,day]=date.split('-');return `${year}年${Number(month)}月${Number(day)}日`;}
 
-function loadPreferences():FocusPreferences { try{const value=JSON.parse(localStorage.getItem(PREFERENCES_KEY)??'null');if(value&&Number.isFinite(value.focusMinutes)&&Number.isFinite(value.breakMinutes)){const visualExperiment:VoxelVisualExperiment=value.visualExperiment==='water'||value.visualExperiment==='mist-beam'?value.visualExperiment:'none';return{focusMinutes:clamp(value.focusMinutes,1,180),breakMinutes:clamp(value.breakMinutes,0,60),visualExperiment};}}catch{}return{focusMinutes:45,breakMinutes:5,visualExperiment:'none'}; }
+function loadPreferences():FocusPreferences { try{const value=JSON.parse(localStorage.getItem(PREFERENCES_KEY)??'null');if(value&&Number.isFinite(value.focusMinutes)&&Number.isFinite(value.breakMinutes)){const visualExperiment:VoxelVisualExperiment=value.visualExperiment==='water'||value.visualExperiment==='mist-beam'?value.visualExperiment:'none';return{focusMinutes:clamp(value.focusMinutes,1,180),habitFocusMinutes:clamp(value.habitFocusMinutes??value.focusMinutes,1,180),habitTargetRounds:clamp(value.habitTargetRounds??10,10,30),breakMinutes:clamp(value.breakMinutes,0,60),visualExperiment};}}catch{}return{focusMinutes:45,habitFocusMinutes:45,habitTargetRounds:10,breakMinutes:5,visualExperiment:'none'}; }
 function loadRoundPlan(projectId:string):RoundPlan|null { try{return parseRoundPlan(JSON.parse(localStorage.getItem(ROUND_PLAN_KEY)??'null'),projectId);}catch{return null;} }
 function clamp(value:number,min:number,max:number){return Math.min(max,Math.max(min,Math.round(value)));}
 function constructionStage(progress:number){if(progress<=0)return'施工阶段：场地准备';if(progress<1800)return'施工阶段：地基';if(progress<3800)return'施工阶段：框架与地板';if(progress<6500)return'施工阶段：墙体';if(progress<8800)return'施工阶段：屋顶';return progress<10000?'施工阶段：门窗与收尾':'建筑已完成';}

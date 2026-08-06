@@ -352,7 +352,7 @@ export class ApplicationService {
         } catch (cause) {
           warnings.push(warning("NOTIFICATION_SCHEDULE_FAILED", "Focus started, but its completion notification could not be scheduled", cause));
         }
-      } else if (event.type === "FocusCompleted" || event.type === "FocusInterrupted") {
+      } else if (event.type === "FocusCompleted" || event.type === "FocusCompletedEarly" || event.type === "FocusInterrupted") {
         try {
           await this.dependencies.notifications.cancelFocusCompletion(event.sessionId);
         } catch (cause) {
@@ -378,6 +378,8 @@ function materialize(command: ApplicationCommand, ids: IdGenerator): DomainComma
         projectId: ids.next("project"),
         subtasks: command.subtasks.map((subtask) => ({ ...subtask, id: ids.next("subtask") })),
       };
+    case "CreateHabitProject":
+      return { ...command, projectId: ids.next("project") };
     case "AddSubtask":
       return { ...command, subtaskId: ids.next("subtask") };
     case "StartFocus":

@@ -8,12 +8,14 @@ import type {
 } from "@tomato-clock/domain";
 import { projectProgressBasisPoints } from "@tomato-clock/domain";
 
-type GeneratedCommandType = "CreateProject" | "AddSubtask" | "StartFocus" | "ReportSubtaskProgress" | "CompleteFocusEarly";
+type GeneratedCommandType = "CreateProject" | "CreateHabitProject" | "AddSubtask" | "StartFocus" | "ReportSubtaskProgress" | "CompleteFocusEarly";
 
 export type ApplicationCommand =
   | { type: "CreateProject"; title: string; blueprintId: string; importedBlueprint?: Project["importedBlueprint"]; subtasks: Array<{ title: string }> }
+  | { type: "CreateHabitProject"; title: string; blueprintId: string; importedBlueprint?: Project["importedBlueprint"]; targetRounds: number }
+  | { type: "SelectNextHabitBuilding"; blueprintId: string; importedBlueprint?: Project["importedBlueprint"]; targetRounds: number }
   | { type: "AddSubtask"; title: string }
-  | { type: "StartFocus"; subtaskId: string; plannedDurationMs: number }
+  | { type: "StartFocus"; subtaskId: string | null; plannedDurationMs: number }
   | { type: "ReportSubtaskProgress"; subtaskId: string; focusSessionIds: string[]; progressBasisPoints: number }
   | { type: "CompleteFocusEarly" }
   | Exclude<DomainCommand, { type: GeneratedCommandType }>;
@@ -47,13 +49,13 @@ export interface ActiveProjectProjection {
   };
   unreportedCompletedSessions: Array<{
     id: string;
-    subtaskId: string;
+    subtaskId: string | null;
     completedAt: string;
   }>;
 }
 
 export interface ProjectWorldProjection {
-  project: Project;
+  project: Pick<Project, "id" | "title" | "status" | "kind" | "blueprintId">;
   isActive: boolean;
   /** Stable derived plot slot based on the project's position in retained history. */
   settlementIndex: number;
@@ -85,7 +87,7 @@ export function projectActiveState(state: DomainState): ActiveProjectProjection 
   if (!project || project.status !== "active") return null;
   const condition = conditionFor(state, project.id);
   const reported = new Set(state.progressReports.flatMap((report) => report.focusSessionIds));
-  const unreportedCompletedSessions = state.focusHistory
+  const unreportedCompletedSessions = project.kind === "habit" ? [] : state.focusHistory
     .flatMap((session) => session.status === "completed" && session.projectId === project.id && !reported.has(session.id)
       ? [{ id: session.id, subtaskId: session.subtaskId, completedAt: session.completedAt }]
       : []);
@@ -106,12 +108,12 @@ export function projectActiveState(state: DomainState): ActiveProjectProjection 
 }
 
 export function projectWorldState(state: DomainState): WorldProjection {
-  return {
-    activeProjectId: state.activeProjectId,
-    projects: state.projects.flatMap((project, settlementIndex) => project.status === "deleted" ? [] : [{
-      project: structuredClone(project),
+  const projects: ProjectWorldProjection[] = state.projects.flatMap((project) => {
+    if (project.status === "deleted" || (project.kind === "habit" && project.habit?.awaitingNextBuilding)) return [];
+    return [{
+      project: { id: project.id, title: project.title, status: project.status, kind: project.kind, blueprintId: project.blueprintId },
       isActive: project.id === state.activeProjectId,
-      settlementIndex,
+      settlementIndex: project.settlementIndex,
       building: {
         projectId: project.id,
         blueprintId: project.blueprintId,
@@ -131,7 +133,26 @@ export function projectWorldState(state: DomainState): WorldProjection {
           rotationQuarterTurns: reward.rotationQuarterTurns,
         }] : [];
       }),
-    }]),
+    }];
+  });
+  for (const building of state.habitBuildings) {
+    projects.push({
+      project: { id: building.id, title: `${building.habitTitle} · 第 ${building.cycleNumber} 座`, status: "monument", kind: "habit", blueprintId: building.blueprintId },
+      isActive: false,
+      settlementIndex: building.settlementIndex,
+      building: {
+        projectId: building.id,
+        blueprintId: building.blueprintId,
+        importedBlueprint: structuredClone(building.importedBlueprint),
+        completionBasisPoints: 10_000,
+        conditionBasisPoints: 10_000,
+      },
+      importedDecorations: [],
+    });
+  }
+  return {
+    activeProjectId: state.activeProjectId,
+    projects,
   };
 }
 
