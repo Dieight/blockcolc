@@ -23,7 +23,7 @@ import type {
 export function createInitialState(timeZone = "UTC", restWeekdays: number[] = [0, 6]): DomainState {
   assertCalendar(timeZone, restWeekdays);
   return {
-    schemaVersion: 5,
+    schemaVersion: 6,
     projects: [],
     habitBuildings: [],
     activeProjectId: null,
@@ -44,6 +44,7 @@ export function createInitialState(timeZone = "UTC", restWeekdays: number[] = [0
     decorationBlueprintResources: [],
     decorationRewards: [],
     buildingBlueprintResources: [],
+    worldSettings: { worldSeed: "world-default", terrainGenerationVersion: 1, environmentStyle: "natural-valley" },
   };
 }
 
@@ -106,6 +107,9 @@ function handle(state: DomainState, command: DomainCommand, clock: Clock): Comma
         subtasks: command.subtasks.map((item, order) => ({ id: item.id, title: item.title.trim(), order, progressBasisPoints: 0 })),
         habit: null,
       };
+      if (state.projects.length === 0 && state.worldSettings.worldSeed === "world-default") {
+        state.worldSettings.worldSeed = `world-${project.id}`;
+      }
       state.projects.push(project);
       const events: DomainEvent[] = [];
       if (state.activeProjectId !== null) {
@@ -146,6 +150,9 @@ function handle(state: DomainState, command: DomainCommand, clock: Clock): Comma
         subtasks: [],
         habit: { cycleNumber: 1, targetRounds: command.targetRounds, completedFocusSessionIds: [], awaitingNextBuilding: false },
       };
+      if (state.projects.length === 0 && state.worldSettings.worldSeed === "world-default") {
+        state.worldSettings.worldSeed = `world-${project.id}`;
+      }
       state.projects.push(project);
       const events: DomainEvent[] = [];
       if (state.activeProjectId !== null) {
@@ -482,6 +489,14 @@ function handle(state: DomainState, command: DomainCommand, clock: Clock): Comma
       state.calendar = { timeZone: command.timeZone, restWeekdays: [...command.restWeekdays].sort() };
       resetActiveDecayAnchors(state, now);
       return ok(state, [{ type: "CalendarConfigured" }]);
+    }
+    case "ConfigureWorldEnvironment": {
+      if (command.environmentStyle !== "natural-valley" && command.environmentStyle !== "classic-island") {
+        throw new Error("Invalid world environment style");
+      }
+      if (state.worldSettings.environmentStyle === command.environmentStyle) return ok(state, []);
+      state.worldSettings.environmentStyle = command.environmentStyle;
+      return ok(state, [{ type: "WorldEnvironmentConfigured", environmentStyle: command.environmentStyle }]);
     }
     case "EnableDecay": {
       if (!Number.isInteger(command.damagePerMissedPlannedDayBasisPoints) || command.damagePerMissedPlannedDayBasisPoints <= 0 || command.damagePerMissedPlannedDayBasisPoints > 10_000) throw new Error("damagePerMissedPlannedDayBasisPoints must be an integer from 1 through 10000");

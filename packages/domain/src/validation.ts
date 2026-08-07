@@ -27,15 +27,15 @@ export class DomainStateValidationError extends Error {
 }
 
 export function parseDomainState(raw: unknown): DomainState {
-  const migrated = migrateV4State(withBuildingBlueprintDefaults(migrateV2State(withDecorationDefaults(migrateV1State(raw)))));
+  const migrated = migrateV5State(migrateV4State(withBuildingBlueprintDefaults(migrateV2State(withDecorationDefaults(migrateV1State(raw))))));
   const root = object(migrated, "$", [
     "schemaVersion", "projects", "habitBuildings", "activeProjectId", "retiredSubtaskIds", "activeFocusSession",
     "focusHistory", "progressReports", "dailyGoals", "calendar", "decayPolicy", "projectConditions", "focusIntegrityPolicy",
-    "decorationBlueprintResources", "decorationRewards", "buildingBlueprintResources",
+    "decorationBlueprintResources", "decorationRewards", "buildingBlueprintResources", "worldSettings",
   ]);
-  if (root.schemaVersion !== 5) invalid("$.schemaVersion", "must equal 5");
+  if (root.schemaVersion !== 6) invalid("$.schemaVersion", "must equal 6");
   const state: DomainState = {
-    schemaVersion: 5,
+    schemaVersion: 6,
     projects: array(root.projects, "$.projects", parseProject),
     habitBuildings: array(root.habitBuildings, "$.habitBuildings", parseHabitBuilding),
     activeProjectId: nullableString(root.activeProjectId, "$.activeProjectId"),
@@ -51,6 +51,7 @@ export function parseDomainState(raw: unknown): DomainState {
     decorationBlueprintResources: array(root.decorationBlueprintResources, "$.decorationBlueprintResources", parseDecorationResource),
     decorationRewards: array(root.decorationRewards, "$.decorationRewards", parseDecorationReward),
     buildingBlueprintResources: array(root.buildingBlueprintResources, "$.buildingBlueprintResources", parseBuildingResource),
+    worldSettings: parseWorldSettings(root.worldSettings, "$.worldSettings"),
   };
   validateReferences(state);
   return state;
@@ -397,6 +398,15 @@ function parseFocusIntegrityPolicy(raw: unknown, path: string): DomainState["foc
   };
 }
 
+function parseWorldSettings(raw: unknown, path: string): DomainState["worldSettings"] {
+  const x = object(raw, path, ["worldSeed", "terrainGenerationVersion", "environmentStyle"]);
+  return {
+    worldSeed: nonBlankString(x.worldSeed, path + ".worldSeed"),
+    terrainGenerationVersion: integer(x.terrainGenerationVersion, path + ".terrainGenerationVersion", 1, 1) as 1,
+    environmentStyle: enumeration(x.environmentStyle, path + ".environmentStyle", ["natural-valley", "classic-island"] as const),
+  };
+}
+
 function parseActiveFocusIntegrity(raw: unknown, path: string): ActiveFocusSession["integrity"] {
   const x = object(raw, path, ["effectiveExcursions", "backgroundedAt", "backgroundReason", "exemptionPending"]);
   const backgroundedAt = x.backgroundedAt === null ? null : instant(x.backgroundedAt, path + ".backgroundedAt");
@@ -661,6 +671,28 @@ function migrateV4State(raw: unknown): unknown {
     schemaVersion: 5,
     projects,
     habitBuildings: [],
+  };
+}
+
+function migrateV5State(raw: unknown): unknown {
+  const candidate = record(raw, "$");
+  if (candidate.schemaVersion !== 5) return raw;
+  const projects = Array.isArray(candidate.projects) ? candidate.projects : [];
+  const firstProject = projects.find((value) =>
+    typeof value === "object"
+      && value !== null
+      && !Array.isArray(value)
+      && typeof (value as Record<string, unknown>).id === "string"
+  ) as Record<string, unknown> | undefined;
+  const firstProjectId = typeof firstProject?.id === "string" ? firstProject.id : undefined;
+  return {
+    ...candidate,
+    schemaVersion: 6,
+    worldSettings: {
+      worldSeed: firstProjectId && firstProjectId.trim() !== "" ? `legacy-${firstProjectId}` : "world-default",
+      terrainGenerationVersion: 1,
+      environmentStyle: "natural-valley",
+    },
   };
 }
 

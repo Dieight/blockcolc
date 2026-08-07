@@ -23,7 +23,13 @@ import {
   type ImportedDecorationPlacement,
   type VillagePlacement,
 } from "./village";
-import { createRoadGeometryData, createSteppedTerrainData, type MergedGeometryData, type TerrainPad } from "./terrain";
+import {
+  createRoadGeometryData,
+  createSteppedTerrainData,
+  type MergedGeometryData,
+  type TerrainEnvironmentStyle,
+  type TerrainPad,
+} from "./terrain";
 import { lowerQualityTier, QUALITY_PROFILES, selectQualityTier, type QualityProfile, type QualityTier } from "./quality";
 import {
   buildResourcePackAtlas,
@@ -205,6 +211,7 @@ const colors: Record<string, number> = {
   grass: 0x718365,
   dirt: 0x665846,
   terrainStone: 0x69736e,
+  terrainWater: 0x4d7f86,
   leaves: 0x47704a,
   path: 0x9a8b72,
   vine: 0x3f7044,
@@ -259,6 +266,9 @@ export function createVoxelRenderer(
     resolveBlueprint?: BlueprintResolver;
     resourcePackAtlasMaximumSize?: number;
     visualExperiment?: VoxelVisualExperiment;
+    environmentStyle?: TerrainEnvironmentStyle;
+    worldSeed?: string;
+    onSelectProject?: (projectId: string) => void;
     /** Previews keep the camera fitted to the building while terrain extends past the viewport. */
     previewMode?: boolean;
     readNativeInput?: () => NativeInputSample | null;
@@ -450,6 +460,7 @@ export function createVoxelRenderer(
   let lastCameraUpdateMs = performance.now();
   const cameraTarget = new THREE.Vector3(0, 3, 0);
   const pointers = new Map<number, { x: number; y: number }>();
+  const pointerStarts = new Map<number, { x: number; y: number }>();
   let previousPinchDistance: number | null = null;
   let previousPinchCenterY: number | null = null;
   let cachedShadowTransformSyncs = 0;
@@ -484,18 +495,20 @@ export function createVoxelRenderer(
   const previewMode = options.previewMode === true;
   let experimentWaterMaterial: THREE.MeshPhysicalMaterial | null = null;
   let experimentBeamMaterial: THREE.MeshBasicMaterial | null = null;
+  let naturalTreeMeshes: { trunks: THREE.InstancedMesh; crowns: THREE.InstancedMesh; total: number } | null = null;
   let rainAnimation: { mesh: THREE.InstancedMesh; drops: readonly { x: number; z: number; phase: number }[]; baseY: number; spanY: number; elapsedMs: number; lastUpdateMs: number } | null = null;
 
   function material(id: string): THREE.MeshStandardMaterial {
     let found = materials.get(id);
     if (!found) {
       const response = materialResponse(materialResponseForMaterialId(id));
+      const terrainWater = id === "terrainWater";
       found = new THREE.MeshStandardMaterial({
         color: colors[id] ?? 0xffffff,
-        roughness: id === "glass" ? 0.1 : response.roughness,
-        metalness: id === "glass" ? 0.08 : response.metalness,
-        transparent: id === "glass",
-        opacity: id === "glass" ? 0.44 : 1,
+        roughness: id === "glass" ? 0.1 : terrainWater ? 0.34 : response.roughness,
+        metalness: id === "glass" ? 0.08 : terrainWater ? 0.05 : response.metalness,
+        transparent: id === "glass" || terrainWater,
+        opacity: id === "glass" ? 0.44 : terrainWater ? 0.88 : 1,
         depthWrite: id !== "glass",
         emissive: id === "glass" ? 0x315c72 : 0x000000,
         emissiveIntensity: id === "glass" ? 0.13 : 0,
@@ -630,6 +643,7 @@ export function createVoxelRenderer(
     clearGroup(terrainGroup);
     clearGroup(roadGroup);
     clearGroup(experimentGroup, true);
+    naturalTreeMeshes = null;
     experimentWaterMaterial = null;
     experimentBeamMaterial = null;
     clearLights();
@@ -678,7 +692,20 @@ export function createVoxelRenderer(
       depth: decoration.footprint.depth,
       groundLevel: decoration.worldPosition.y,
     }));
-    const terrainData = createSteppedTerrainData(positioned, roads, [...buildingPads, ...decorationPads], previewMode ? { x: 64, z: 64 } : undefined);
+    const terrainData = createSteppedTerrainData(
+      positioned,
+      roads,
+      [...buildingPads, ...decorationPads],
+      previewMode ? { x: 64, z: 64 } : undefined,
+      {
+        environmentStyle: previewMode ? "classic-island" : options.environmentStyle ?? "classic-island",
+        worldSeed: options.worldSeed,
+      },
+    );
+    canvas.dataset.environmentStyle = previewMode ? "classic-island" : options.environmentStyle ?? "classic-island";
+    canvas.dataset.terrainCellCount = String(terrainData.cellCount);
+    canvas.dataset.naturalTreeCount = String(terrainData.naturalTrees.length);
+    canvas.dataset.terrainWaterTriangles = String(terrainData.indicesByMaterial.water.length / 3);
     addTerrain(terrainData);
     addHighQualityExperiment(terrainData);
     addRoads(roads, positioned, [...buildingPads, ...decorationPads]);
@@ -733,19 +760,73 @@ export function createVoxelRenderer(
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute("position", new THREE.Float32BufferAttribute(data.positions, 3));
     const combined: number[] = [];
-    const materialIds: readonly TerrainMaterialKey[] = ["grass", "dirt", "stone"];
+    const materialIds: readonly TerrainMaterialKey[] = ["grass", "dirt", "stone", "water"];
     materialIds.forEach((id, materialIndex) => {
       const indices = data.indicesByMaterial[id];
       geometry.addGroup(combined.length, indices.length, materialIndex);
-      combined.push(...indices);
+      for (const index of indices) combined.push(index);
     });
     geometry.setIndex(combined);
     geometry.computeVertexNormals();
-    const mesh = new THREE.Mesh(geometry, [material("grass"), material("dirt"), material("terrainStone")]);
+    const mesh = new THREE.Mesh(geometry, [material("grass"), material("dirt"), material("terrainStone"), material("terrainWater")]);
     mesh.receiveShadow = true;
     mesh.castShadow = false;
     mesh.userData.terrainTriangles = data.triangleCount;
     terrainGroup.add(mesh);
+    addNaturalBackdrop(data);
+    addNaturalTrees(data);
+  }
+
+  function addNaturalBackdrop(data: MergedGeometryData): void {
+    if (data.bounds.maxX <= data.framingBounds.maxX) return;
+    const size = Math.max(1_000, (data.bounds.maxX - data.bounds.minX) * 6);
+    const backdrop = new THREE.Mesh(new THREE.PlaneGeometry(size, size), material("grass"));
+    backdrop.name = "lowDetailNaturalBackdrop";
+    backdrop.rotation.x = -Math.PI / 2;
+    backdrop.position.y = -4;
+    backdrop.receiveShadow = false;
+    backdrop.castShadow = false;
+    backdrop.renderOrder = -2;
+    terrainGroup.add(backdrop);
+  }
+
+  function addNaturalTrees(data: MergedGeometryData): void {
+    if (data.naturalTrees.length === 0) return;
+    const trunks = new THREE.InstancedMesh(new THREE.BoxGeometry(0.72, 2.4, 0.72), material("wood"), data.naturalTrees.length);
+    const crowns = new THREE.InstancedMesh(new THREE.BoxGeometry(2.55, 2.35, 2.55), material("leaves"), data.naturalTrees.length);
+    const matrix = new THREE.Matrix4();
+    const rotation = new THREE.Quaternion();
+    data.naturalTrees.forEach((tree, index) => {
+      matrix.compose(
+        new THREE.Vector3(tree.x, tree.y + 1.2 * tree.scale, tree.z),
+        rotation,
+        new THREE.Vector3(tree.scale, tree.scale, tree.scale),
+      );
+      trunks.setMatrixAt(index, matrix);
+      matrix.compose(
+        new THREE.Vector3(tree.x, tree.y + 2.8 * tree.scale, tree.z),
+        rotation,
+        new THREE.Vector3(tree.scale, tree.scale, tree.scale),
+      );
+      crowns.setMatrixAt(index, matrix);
+    });
+    trunks.instanceMatrix.needsUpdate = true;
+    crowns.instanceMatrix.needsUpdate = true;
+    crowns.castShadow = false;
+    trunks.receiveShadow = true;
+    crowns.receiveShadow = true;
+    naturalTreeMeshes = { trunks, crowns, total: data.naturalTrees.length };
+    updateNaturalTreeDensity();
+    terrainGroup.add(trunks, crowns);
+  }
+
+  function updateNaturalTreeDensity(): void {
+    if (!naturalTreeMeshes) return;
+    const density = qualityTier === "low" ? 0.36 : qualityTier === "balanced" ? 0.68 : 1;
+    const visible = Math.max(1, Math.round(naturalTreeMeshes.total * density));
+    naturalTreeMeshes.trunks.count = visible;
+    naturalTreeMeshes.crowns.count = visible;
+    naturalTreeMeshes.trunks.castShadow = qualityTier === "high";
   }
 
   function addHighQualityExperiment(data: MergedGeometryData): void {
@@ -793,7 +874,7 @@ export function createVoxelRenderer(
     experimentGroup.visible = qualityTier === "high";
   }
 
-  type TerrainMaterialKey = "grass" | "dirt" | "stone";
+  type TerrainMaterialKey = "grass" | "dirt" | "stone" | "water";
 
   function addRoads(roads: ReturnType<typeof roadCellsForVillage>, placements: readonly VillagePlacement[], pads: readonly TerrainPad[]): void {
     const data = createRoadGeometryData(roads, placements, pads);
@@ -1409,11 +1490,14 @@ export function createVoxelRenderer(
     terrain: MergedGeometryData,
     framePreview: boolean,
   ): void {
-    contentBounds = framePreview
+      contentBounds = framePreview
       ? new THREE.Box3(new THREE.Vector3(-9, -2.5, -9), new THREE.Vector3(9, 4, 9))
       : new THREE.Box3(
-        new THREE.Vector3(terrain.bounds.minX, -2.5, terrain.bounds.minZ),
-        new THREE.Vector3(terrain.bounds.maxX, 4, terrain.bounds.maxZ),
+        // Keep the camera fit tied to the settlement core. The expanded
+        // natural ring is intentionally scenery, not a reason to shrink the
+        // buildings in the first frame.
+        new THREE.Vector3(terrain.framingBounds.minX, -2.5, terrain.framingBounds.minZ),
+        new THREE.Vector3(terrain.framingBounds.maxX, 4, terrain.framingBounds.maxZ),
       );
     for (const world of worlds) {
       if (framePreview) {
@@ -1470,8 +1554,11 @@ export function createVoxelRenderer(
     const horizontalFov = 2 * Math.atan(Math.tan(verticalFov / 2) * Math.max(0.1, camera.aspect));
     fittedDistance = (radius / Math.sin(Math.max(0.1, Math.min(verticalFov, horizontalFov)) / 2)) * 1.04;
     cameraTarget.set(center.x, Math.max(1.5, center.y * 0.68), center.z);
-    minimumCameraDistance = fittedDistance * (focused ? 0.9 : 0.65);
-    maximumCameraDistance = fittedDistance * 1.35;
+    // Keep building focus's close view available from the regular settlement
+    // view, while preventing the smallest overall framing from looking past
+    // the natural terrain ring into the sky.
+    minimumCameraDistance = fittedDistance * (focused ? 0.9 : previewMode ? 0.65 : 0.5);
+    maximumCameraDistance = fittedDistance * (focused || previewMode ? 1.35 : 1.14);
     if (resetDistance) cameraDistance = fittedDistance;
     cameraDistance = THREE.MathUtils.clamp(cameraDistance, minimumCameraDistance, maximumCameraDistance);
     updateCamera();
@@ -1498,6 +1585,8 @@ export function createVoxelRenderer(
     canvas.dataset.cameraAzimuth = cameraAzimuth.toFixed(4);
     canvas.dataset.cameraPitchDegrees = THREE.MathUtils.radToDeg(cameraPitch).toFixed(2);
     canvas.dataset.cameraDistanceRatio = (cameraDistance / fittedDistance).toFixed(4);
+    canvas.dataset.cameraMinimumDistanceRatio = (minimumCameraDistance / fittedDistance).toFixed(4);
+    canvas.dataset.cameraMaximumDistanceRatio = (maximumCameraDistance / fittedDistance).toFixed(4);
     canvas.dataset.skyCameraWorldOffset = new THREE.Vector3().setFromMatrixPosition(skyGroup.matrixWorld).distanceTo(camera.position).toFixed(4);
   }
 
@@ -1541,6 +1630,7 @@ export function createVoxelRenderer(
     }
     interacting = true;
     pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    pointerStarts.set(event.pointerId, { x: event.clientX, y: event.clientY });
     try { canvas.setPointerCapture(event.pointerId); } catch { /* Synthetic QA events do not own native capture. */ }
     if (pointers.size === 2) updatePinchReference();
     requestRender();
@@ -1572,6 +1662,9 @@ export function createVoxelRenderer(
     requestRender();
   };
   const pointerUp = (event: PointerEvent): void => {
+    const start = pointerStarts.get(event.pointerId);
+    const wasSinglePointer = pointers.size === 1;
+    pointerStarts.delete(event.pointerId);
     pointers.delete(event.pointerId);
     if (pointers.size < 2) { previousPinchDistance = null; previousPinchCenterY = null; }
     if (pointers.size === 0) {
@@ -1579,6 +1672,9 @@ export function createVoxelRenderer(
       updateDiagnosticsDataset();
       logInteractionDiagnostics();
       requestRender();
+    }
+    if (wasSinglePointer && start && Math.hypot(event.clientX - start.x, event.clientY - start.y) <= 8) {
+      selectProjectAt(event.clientX, event.clientY);
     }
   };
   const wheel = (event: WheelEvent): void => {
@@ -1594,6 +1690,35 @@ export function createVoxelRenderer(
     const [first, second] = [...pointers.values()];
     previousPinchDistance = Math.hypot(first!.x - second!.x, first!.y - second!.y);
     previousPinchCenterY = (first!.y + second!.y) / 2;
+  }
+
+  function selectProjectAt(clientX: number, clientY: number): void {
+    if (!options.onSelectProject || positionedWorlds.length === 0) return;
+    const rect = canvas.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return;
+    const pointer = new THREE.Vector2(
+      ((clientX - rect.left) / rect.width) * 2 - 1,
+      -((clientY - rect.top) / rect.height) * 2 + 1,
+    );
+    const raycaster = new THREE.Raycaster();
+    raycaster.setFromCamera(pointer, camera);
+    const hit = raycaster.intersectObject(buildingGroup, true).find((intersection) => {
+      let object: THREE.Object3D | null = intersection.object;
+      while (object && object !== buildingGroup) {
+        if (typeof object.userData.projectId === "string") return true;
+        object = object.parent;
+      }
+      return false;
+    });
+    if (!hit) return;
+    let object: THREE.Object3D | null = hit.object;
+    while (object && object !== buildingGroup) {
+      if (typeof object.userData.projectId === "string") {
+        options.onSelectProject(object.userData.projectId);
+        return;
+      }
+      object = object.parent;
+    }
   }
 
   function resetView(): void {
@@ -1630,6 +1755,7 @@ export function createVoxelRenderer(
       if (removed) localLightGroup.remove(removed.sprite);
     }
     experimentGroup.visible = tier === "high" && requestedVisualExperiment !== "none";
+    updateNaturalTreeDensity();
     if (atmosphereGroup.children.length > 0) updateWeather(currentWeather.localDate, true);
     canvas.dataset.qualityTier = tier;
     updateDiagnosticsDataset();

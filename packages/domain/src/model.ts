@@ -179,8 +179,16 @@ export interface FocusIntegrityPolicy {
   maxEffectiveExcursions: number;
 }
 
+export type WorldEnvironmentStyle = "natural-valley" | "classic-island";
+
+export interface WorldSettings {
+  worldSeed: string;
+  terrainGenerationVersion: 1;
+  environmentStyle: WorldEnvironmentStyle;
+}
+
 export interface DomainState {
-  schemaVersion: 5;
+  schemaVersion: 6;
   projects: Project[];
   habitBuildings: HabitBuildingMonument[];
   activeProjectId: string | null;
@@ -196,6 +204,7 @@ export interface DomainState {
   decorationBlueprintResources: DecorationBlueprintResource[];
   decorationRewards: DecorationReward[];
   buildingBlueprintResources: BuildingBlueprintResource[];
+  worldSettings: WorldSettings;
 }
 
 export type DomainCommand =
@@ -224,6 +233,7 @@ export type DomainCommand =
   | { type: "EnableDecay"; damagePerMissedPlannedDayBasisPoints: number; gracePlannedDays: number }
   | { type: "DisableDecay" }
   | { type: "AssessDecay" }
+  | { type: "ConfigureWorldEnvironment"; environmentStyle: WorldEnvironmentStyle }
   | { type: "ImportDecorationBlueprint"; blueprint: ImportedBlueprintV1 }
   | { type: "ImportBuildingBlueprint"; blueprint: ImportedBlueprintV1 }
   | { type: "DeleteBuildingBlueprint"; blueprintId: string };
@@ -263,6 +273,7 @@ export type DomainEvent =
   | { type: "DecorationBlueprintImported"; resourceId: string }
   | { type: "BuildingBlueprintImported"; resourceId: string }
   | { type: "BuildingBlueprintDeleted"; resourceId: string }
+  | { type: "WorldEnvironmentConfigured"; environmentStyle: WorldEnvironmentStyle }
   | { type: "DecorationRewardGranted"; date: ISODate; projectId: string; resourceId: string };
 
 export type DomainErrorCode =
