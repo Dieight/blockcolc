@@ -1,7 +1,6 @@
 import {
   resolveBlockGeometry,
   resolveBlockTextures,
-  isSupportedBlockGeometry,
   type BlockFace,
   type BlockTextureFallbackReason,
   type BlockTextureManifest,
@@ -151,10 +150,11 @@ function resolveGroup(key: string, group: PendingGroup, manifest: BlockTextureMa
     };
   }
 
-  const geometryEligible = isSupportedBlockGeometry(group.sourceBlockId, group.sourceBlockState);
-  const resolved = geometryEligible
-    ? resolveBlockGeometry(manifest, group.sourceBlockId, group.sourceBlockState)
-    : resolveBlockTextures(manifest, group.sourceBlockId, group.sourceBlockState);
+  const textured = resolveBlockTextures(manifest, group.sourceBlockId, group.sourceBlockState);
+  const geometry = textured.status === "resolved"
+    ? undefined
+    : resolveBlockGeometry(manifest, group.sourceBlockId, group.sourceBlockState);
+  const resolved = geometry?.status === "resolved_geometry" ? geometry : textured;
   if (resolved.status === "resolved") {
     return {
       key,
@@ -173,7 +173,7 @@ function resolveGroup(key: string, group: PendingGroup, manifest: BlockTextureMa
       ...group,
       id: { status: "supported" },
       state: { status: "supported", detail: stateIsRequired(blockState) ? "matching variant" : "default variant" },
-      model: { status: "supported", modelId: resolved.modelId, detail: "axis-aligned geometry" },
+      model: { status: "supported", modelId: resolved.modelId, detail: "bounded geometry" },
       texture: { status: "supported", detail: `${geometryFaceCount} declared geometry faces`, geometryFaceCount },
       render: "resource-pack",
     };

@@ -3,6 +3,25 @@ export type FaceRotation = 0 | 90 | 180 | 270;
 export type FaceUv = readonly [number, number, number, number];
 export type BlockElementVector = readonly [number, number, number];
 
+interface BlockElementRotationBase {
+  origin: BlockElementVector;
+  rescale: boolean;
+}
+
+export interface BlockElementAxisRotation extends BlockElementRotationBase {
+  axis: "x" | "y" | "z";
+  angle: number;
+  euler?: never;
+}
+
+export interface BlockElementEulerRotation extends BlockElementRotationBase {
+  euler: BlockElementVector;
+  axis?: never;
+  angle?: never;
+}
+
+export type BlockElementRotation = BlockElementAxisRotation | BlockElementEulerRotation;
+
 export interface NormalizedModelFace {
   texture: string;
   uv: FaceUv;
@@ -18,6 +37,7 @@ export interface ResolvedBlockFace {
   rotation: FaceRotation;
   tintIndex?: number;
   cullFace?: BlockFace;
+  forceTranslucent?: boolean;
 }
 
 export interface NormalizedBlockElement {
@@ -25,6 +45,7 @@ export interface NormalizedBlockElement {
   to: BlockElementVector;
   shade: boolean;
   faces: Partial<Record<BlockFace, NormalizedModelFace>>;
+  rotation?: BlockElementRotation;
 }
 
 export interface ResolvedBlockElement {
@@ -32,6 +53,10 @@ export interface ResolvedBlockElement {
   to: BlockElementVector;
   shade: boolean;
   faces: Partial<Record<BlockFace, ResolvedBlockFace>>;
+  /** Element-local rotation is retained for the geometry compiler. */
+  rotation?: BlockElementRotation;
+  /** Blockstate rotation applied after an element-local rotation. */
+  blockRotation?: { x: FaceRotation; y: FaceRotation };
 }
 
 export interface ResolvedBlockGeometry {
@@ -88,6 +113,8 @@ export interface NormalizedBlockModel {
   archivePath: string;
   parent?: string;
   textures: Record<string, string>;
+  /** Additive current-format metadata; absent on persisted schema-v1 manifests. */
+  forceTranslucentTextures?: Record<string, true>;
   /** Kept for schema-v1 manifests and existing atlas consumers. */
   faces?: Partial<Record<BlockFace, string>>;
   /** Additive V3 metadata; absent schema-v1 entries resolve to full UV and rotation 0. */
@@ -157,8 +184,11 @@ const MAX_MULTIPART_PARTS = 64;
 const MAX_MULTIPART_CLAUSES = 16;
 const MAX_MULTIPART_PROPERTIES = 16;
 const MAX_MULTIPART_VALUES = 16;
-const MAX_MULTIPART_APPLY_CHOICES = 1;
+const MAX_MULTIPART_APPLY_CHOICES = 8;
 const MAX_MULTIPART_MODEL_REFERENCES = 512;
+const MAX_MULTIPART_CONDITION_DEPTH = 8;
+const MIN_ELEMENT_COORDINATE = -16;
+const MAX_ELEMENT_COORDINATE = 32;
 const FULL_FACE_UV: FaceUv = Object.freeze([0, 0, 16, 16]);
 const FULL_CUBE_FROM: BlockElementVector = Object.freeze([0, 0, 0]);
 const FULL_CUBE_TO: BlockElementVector = Object.freeze([16, 16, 16]);
@@ -263,7 +293,7 @@ export function resolveBlockTextures(
   for (const face of faces) {
     const texture = resolved.faces[face];
     if (!texture) return { status: "fallback", reason: "MISSING_FACE", resourceId: choice.model };
-    const textureId = resolveTextureReference(texture, resolved.textures, [], 0);
+    const textureId = resolveTextureReference(texture, resolved.textures, resolved.forceTranslucentTextures, [], 0);
     if ("reason" in textureId) return { ...textureId, resourceId: choice.model };
     if (!textureIds.has(textureId.value)) return { status: "fallback", reason: "MISSING_TEXTURE", resourceId: textureId.value };
     const targetFace = rotateFace(face, choice.x, choice.y);
@@ -273,6 +303,7 @@ export function resolveBlockTextures(
       uv: metadata.uv,
       rotation: resolveFaceTextureRotation(face, choice.x, choice.y, choice.uvlock, metadata.rotation),
       ...(metadata.tintIndex === undefined ? {} : { tintIndex: metadata.tintIndex }),
+      ...(textureId.forceTranslucent ? { forceTranslucent: true } : {}),
     };
     output[targetFace] = textureId.value;
     outputMetadata[targetFace] = resolvedFace;
@@ -288,8 +319,8 @@ export function resolveBlockGeometry(
   const blockState = manifest.blockStates.find((entry) => entry.resourceId === sourceBlockId);
   if (!blockState) return { status: "fallback", reason: "UNKNOWN_BLOCKSTATE", resourceId: sourceBlockId };
   if (blockState.multipart !== undefined) {
-    if (!isP2BlockGeometry(sourceBlockId) || !validNormalizedMultipart(blockState.multipart)) {
-      return { status: "fallback", reason: isP2BlockGeometry(sourceBlockId) ? "INVALID_MULTIPART" : "UNSUPPORTED_MULTIPART", resourceId: sourceBlockId };
+    if (!validNormalizedMultipart(blockState.multipart)) {
+      return { status: "fallback", reason: "INVALID_MULTIPART", resourceId: sourceBlockId };
     }
     const requiredProperties = multipartRequiredProperties(blockState.multipart);
     if ([...requiredProperties].some((property) => sourceBlockState[property] === undefined)) {
@@ -299,7 +330,9 @@ export function resolveBlockGeometry(
     for (let partIndex = 0; partIndex < blockState.multipart.length; partIndex += 1) {
       const part = blockState.multipart[partIndex]!;
       if (!multipartConditionMatches(part.when, sourceBlockState)) continue;
-      choices.push(part.apply[0]!);
+      const choice = chooseModelReference(`${sourceBlockId}#multipart-${partIndex}`, sourceBlockState, part.apply);
+      if (!choice) return { status: "fallback", reason: "INVALID_MULTIPART", resourceId: sourceBlockId };
+      choices.push(choice);
     }
     if (choices.length === 0) return { status: "fallback", reason: "NO_MATCHING_VARIANT", resourceId: sourceBlockId };
     return resolveGeometryChoices(manifest, choices, sourceBlockId);
@@ -333,22 +366,32 @@ function resolveGeometryChoices(
       if (quadCount > MAX_RESOLVED_QUADS) {
         return { status: "fallback", reason: "GEOMETRY_LIMIT_EXCEEDED", resourceId: outputModelId };
       }
-      const transformed = rotateElementBounds(element.from, element.to, choice.x, choice.y);
+      const transformed = element.rotation === undefined ? rotateElementBounds(element.from, element.to, choice.x, choice.y) : undefined;
       const resolvedFaces: Partial<Record<BlockFace, ResolvedBlockFace>> = {};
       for (const [face, metadata] of Object.entries(element.faces) as Array<[BlockFace, NormalizedModelFace]>) {
-        const textureId = resolveTextureReference(metadata.texture, resolved.textures, [], 0);
+        const textureId = resolveTextureReference(metadata.texture, resolved.textures, resolved.forceTranslucentTextures, [], 0);
         if ("reason" in textureId) return { ...textureId, resourceId: choice.model };
         if (!textureIds.has(textureId.value)) return { status: "fallback", reason: "MISSING_TEXTURE", resourceId: textureId.value };
-        const targetFace = rotateFace(face, choice.x, choice.y);
+        const targetFace = element.rotation === undefined ? rotateFace(face, choice.x, choice.y) : face;
         resolvedFaces[targetFace] = {
           texture: textureId.value,
           uv: metadata.uv,
           rotation: resolveFaceTextureRotation(face, choice.x, choice.y, choice.uvlock, metadata.rotation),
           ...(metadata.tintIndex === undefined ? {} : { tintIndex: metadata.tintIndex }),
-          ...(metadata.cullFace === undefined ? {} : { cullFace: rotateFace(metadata.cullFace, choice.x, choice.y) }),
+          ...(textureId.forceTranslucent ? { forceTranslucent: true } : {}),
+          ...(metadata.cullFace === undefined || element.rotation !== undefined ? {} : { cullFace: rotateFace(metadata.cullFace, choice.x, choice.y) }),
         };
       }
-      output.push({ from: transformed.from, to: transformed.to, shade: element.shade, faces: resolvedFaces });
+      output.push({
+        from: transformed?.from ?? element.from,
+        to: transformed?.to ?? element.to,
+        shade: element.shade,
+        faces: resolvedFaces,
+        ...(element.rotation === undefined ? {} : {
+          rotation: element.rotation,
+          blockRotation: { x: choice.x, y: choice.y },
+        }),
+      });
     }
   }
   return { status: "resolved_geometry", modelId: outputModelId, elements: output };
@@ -356,8 +399,8 @@ function resolveGeometryChoices(
 
 function parseBlockState(raw: Record<string, unknown>, resourceId: string, archivePath: string): { value?: NormalizedBlockState; issue?: BlockModelIssue } {
   if ("multipart" in raw) {
-    if ("variants" in raw || !isP2BlockGeometry(resourceId)) {
-      return { issue: { path: archivePath, code: "UNSUPPORTED_MULTIPART", message: "Multipart is limited to Minecraft walls, fences, panes and iron bars." } };
+    if ("variants" in raw) {
+      return { issue: { path: archivePath, code: "UNSUPPORTED_MULTIPART", message: "A blockstate cannot mix variants and multipart." } };
     }
     const multipart = parseMultipart(raw.multipart);
     return { value: { resourceId, archivePath, variants: [], multipart } };
@@ -377,9 +420,7 @@ function parseMultipart(raw: unknown): NormalizedMultipartPart[] {
   let referenceCount = 0;
   return raw.map((part, index) => {
     const value = plainRecord(part, `multipart[${index}]`);
-    if (Array.isArray(value.apply)) throw new Error(`multipart[${index}].apply arrays are unsupported.`);
     const apply = parseModelChoices(value.apply, MAX_MULTIPART_APPLY_CHOICES, `multipart[${index}].apply`);
-    if (apply.length !== 1 || apply[0]?.weight !== 1) throw new Error(`multipart[${index}].apply must contain one unweighted model.`);
     referenceCount += apply.length;
     if (referenceCount > MAX_MULTIPART_MODEL_REFERENCES) throw new Error(`multipart exceeds ${MAX_MULTIPART_MODEL_REFERENCES} model references.`);
     return { when: parseMultipartCondition(value.when, index), apply };
@@ -388,21 +429,71 @@ function parseMultipart(raw: unknown): NormalizedMultipartPart[] {
 
 function parseMultipartCondition(raw: unknown, partIndex: number): NormalizedMultipartCondition {
   if (raw === undefined) return { clauses: [{}] };
-  const input = plainRecord(raw, `multipart[${partIndex}].when`);
-  const keys = Object.keys(input);
-  let clauses: Array<Record<string, readonly string[]>>;
-  if (keys.length === 1 && keys[0] === "OR") {
-    const rawClauses = input.OR;
-    if (!Array.isArray(rawClauses) || rawClauses.length === 0 || rawClauses.length > MAX_MULTIPART_CLAUSES) {
-      throw new Error(`multipart[${partIndex}].when.OR must contain 1-${MAX_MULTIPART_CLAUSES} clauses.`);
-    }
-    clauses = rawClauses.map((clause, clauseIndex) => parseMultipartClause(clause, `multipart[${partIndex}].when.OR[${clauseIndex}]`));
-  } else {
-    if (keys.includes("OR")) throw new Error(`multipart[${partIndex}].when cannot mix OR with properties.`);
-    clauses = [parseMultipartClause(input, `multipart[${partIndex}].when`)];
-  }
+  const clauses = parseMultipartExpression(raw, `multipart[${partIndex}].when`, 0);
   clauses.sort((left, right) => compareText(JSON.stringify(left), JSON.stringify(right)));
   return { clauses };
+}
+
+function parseMultipartExpression(
+  raw: unknown,
+  location: string,
+  depth: number,
+): Array<Record<string, readonly string[]>> {
+  if (depth >= MAX_MULTIPART_CONDITION_DEPTH) throw new Error(`${location} exceeds the condition nesting limit.`);
+  const input = plainRecord(raw, location);
+  const keys = Object.keys(input);
+  if (keys.length === 1 && (keys[0] === "OR" || keys[0] === "AND")) {
+    const operator = keys[0] as "OR" | "AND";
+    const operands = input[operator];
+    if (!Array.isArray(operands) || operands.length === 0 || operands.length > MAX_MULTIPART_CLAUSES) {
+      throw new Error(`${location}.${operator} must contain 1-${MAX_MULTIPART_CLAUSES} conditions.`);
+    }
+    const parsed = operands.map((operand, index) => parseMultipartExpression(operand, `${location}.${operator}[${index}]`, depth + 1));
+    if (operator === "OR") {
+      const clauses = parsed.flat();
+      if (clauses.length > MAX_MULTIPART_CLAUSES) throw new Error(`${location}.OR expands beyond ${MAX_MULTIPART_CLAUSES} clauses.`);
+      return canonicalMultipartClauses(clauses);
+    }
+    let clauses: Array<Record<string, readonly string[]>> = [{}];
+    for (const operandClauses of parsed) {
+      const combined: Array<Record<string, readonly string[]>> = [];
+      for (const left of clauses) {
+        for (const right of operandClauses) {
+          const merged = intersectMultipartClauses(left, right);
+          if (merged) combined.push(merged);
+          if (combined.length > MAX_MULTIPART_CLAUSES) throw new Error(`${location}.AND expands beyond ${MAX_MULTIPART_CLAUSES} clauses.`);
+        }
+      }
+      clauses = combined;
+    }
+    if (clauses.length === 0) throw new Error(`${location}.AND is contradictory.`);
+    return canonicalMultipartClauses(clauses);
+  }
+  if (keys.includes("OR") || keys.includes("AND")) throw new Error(`${location} cannot mix boolean operators with properties.`);
+  return [parseMultipartClause(input, location)];
+}
+
+function intersectMultipartClauses(
+  left: Record<string, readonly string[]>,
+  right: Record<string, readonly string[]>,
+): Record<string, readonly string[]> | undefined {
+  const output: Record<string, readonly string[]> = { ...left };
+  for (const [property, rightValues] of Object.entries(right)) {
+    const leftValues = output[property];
+    const values = leftValues === undefined ? [...rightValues] : leftValues.filter((value) => rightValues.includes(value));
+    if (values.length === 0) return undefined;
+    output[property] = [...new Set(values)].sort(compareText);
+  }
+  const sorted = Object.entries(output).sort(([leftKey], [rightKey]) => compareText(leftKey, rightKey));
+  if (sorted.length > MAX_MULTIPART_PROPERTIES) return undefined;
+  return Object.fromEntries(sorted);
+}
+
+function canonicalMultipartClauses(
+  clauses: Array<Record<string, readonly string[]>>,
+): Array<Record<string, readonly string[]>> {
+  const unique = new Map(clauses.map((clause) => [JSON.stringify(clause), clause]));
+  return [...unique.values()].sort((left, right) => compareText(JSON.stringify(left), JSON.stringify(right)));
 }
 
 function parseMultipartClause(raw: unknown, location: string): Record<string, readonly string[]> {
@@ -471,9 +562,12 @@ function parseModel(raw: Record<string, unknown>, resourceId: string, archivePat
   const textureEntries = Object.entries(texturesRaw);
   if (textureEntries.length > MAX_MODEL_TEXTURES) throw new Error(`textures exceeds ${MAX_MODEL_TEXTURES} entries.`);
   const textures: Record<string, string> = {};
+  const forceTranslucentTextures: Record<string, true> = {};
   for (const [key, value] of textureEntries.sort(([left], [right]) => compareText(left, right))) {
-    if (!safeName(key) || typeof value !== "string") throw new Error("Model texture variables must be safe string pairs.");
-    textures[key] = value.startsWith("#") ? textureVariable(value) : resourceLocation(value, "minecraft", false);
+    if (!safeName(key)) throw new Error("Model texture variable names must be safe.");
+    const normalized = parseModelTextureReference(value, `textures.${key}`);
+    textures[key] = normalized.reference;
+    if (normalized.forceTranslucent) forceTranslucentTextures[key] = true;
   }
 
   let modelFaces: Partial<Record<BlockFace, string>> | undefined;
@@ -484,22 +578,41 @@ function parseModel(raw: Record<string, unknown>, resourceId: string, archivePat
     if (!Array.isArray(raw.elements) || raw.elements.length === 0 || raw.elements.length > MAX_ELEMENTS_PER_MODEL) {
       throw new Error(`elements must contain 1-${MAX_ELEMENTS_PER_MODEL} entries.`);
     }
-    if (raw.elements.some((element) => isPlainRecord(element) && "rotation" in element)) {
-      unsupportedReason = "COMPLEX_GEOMETRY";
-    } else {
-      elements = raw.elements.map((element, index) => parseElement(element, index));
-      if (elements.length === 1 && isFullCubeElement(elements[0]!)) {
-        faceMetadata = elements[0]!.faces;
-        modelFaces = Object.fromEntries(
-          Object.entries(faceMetadata).map(([face, metadata]) => [face, metadata.texture]),
-        ) as Partial<Record<BlockFace, string>>;
-      }
+    elements = raw.elements.map((element, index) => parseElement(element, index));
+    if (elements.length === 1 && isFullCubeElement(elements[0]!) && elements[0]!.rotation === undefined) {
+      faceMetadata = elements[0]!.faces;
+      modelFaces = Object.fromEntries(
+        Object.entries(faceMetadata).map(([face, metadata]) => [face, metadata.texture]),
+      ) as Partial<Record<BlockFace, string>>;
     }
   }
-  const value: NormalizedBlockModel = { resourceId, archivePath, ...(parent ? { parent } : {}), textures, ...(modelFaces ? { faces: modelFaces } : {}), ...(faceMetadata ? { faceMetadata } : {}), ...(elements ? { elements } : {}), ...(unsupportedReason ? { unsupportedReason } : {}) };
+  const value: NormalizedBlockModel = {
+    resourceId, archivePath, ...(parent ? { parent } : {}), textures,
+    ...(Object.keys(forceTranslucentTextures).length > 0 ? { forceTranslucentTextures } : {}),
+    ...(modelFaces ? { faces: modelFaces } : {}), ...(faceMetadata ? { faceMetadata } : {}),
+    ...(elements ? { elements } : {}), ...(unsupportedReason ? { unsupportedReason } : {}),
+  };
   return unsupportedReason
-    ? { value, issue: { path: archivePath, code: "COMPLEX_MODEL_GEOMETRY", message: "Only one unrotated 0,0,0 to 16,16,16 element is supported." } }
+    ? { value, issue: { path: archivePath, code: "COMPLEX_MODEL_GEOMETRY", message: "Unsupported model geometry." } }
     : { value };
+}
+
+function parseModelTextureReference(raw: unknown, name: string): { reference: string; forceTranslucent: boolean } {
+  if (typeof raw === "string") {
+    return { reference: raw.startsWith("#") ? textureVariable(raw) : resourceLocation(raw, "minecraft", false), forceTranslucent: false };
+  }
+  const descriptor = plainRecord(raw, name);
+  const keys = Object.keys(descriptor);
+  if (!keys.every((key) => key === "sprite" || key === "force_translucent") || typeof descriptor.sprite !== "string") {
+    throw new Error(`${name} must be a sprite string or a supported texture descriptor.`);
+  }
+  const forceTranslucent = descriptor.force_translucent === undefined
+    ? false
+    : booleanValue(descriptor.force_translucent, `${name}.force_translucent`);
+  return {
+    reference: descriptor.sprite.startsWith("#") ? textureVariable(descriptor.sprite) : resourceLocation(descriptor.sprite, "minecraft", false),
+    forceTranslucent,
+  };
 }
 
 function isFullCubeElement(element: NormalizedBlockElement): boolean {
@@ -521,8 +634,9 @@ function parseElement(raw: unknown, index: number): NormalizedBlockElement {
   }
   if (zeroAxes.length > 1) throw new Error(`elements[${index}] may be zero-thickness on at most one axis.`);
   const shade = input.shade === undefined ? true : booleanValue(input.shade, `elements[${index}].shade`);
+  const rotation = input.rotation === undefined ? undefined : parseElementRotation(input.rotation, `elements[${index}].rotation`);
   const elementFaces = parseElementFaces(input.faces, from, to);
-  if (zeroAxes.length === 1) {
+  if (zeroAxes.length === 1 && rotation === undefined) {
     const allowed = zeroAxes[0] === 0 ? new Set<BlockFace>(["west", "east"])
       : zeroAxes[0] === 1 ? new Set<BlockFace>(["down", "up"])
         : new Set<BlockFace>(["north", "south"]);
@@ -530,7 +644,38 @@ function parseElement(raw: unknown, index: number): NormalizedBlockElement {
       throw new Error(`elements[${index}] plane faces must be perpendicular to its zero-thickness axis.`);
     }
   }
-  return { from, to, shade, faces: elementFaces };
+  return { from, to, shade, faces: elementFaces, ...(rotation ? { rotation } : {}) };
+}
+
+function parseElementRotation(raw: unknown, name: string): BlockElementRotation {
+  const input = plainRecord(raw, name);
+  const keys = Object.keys(input);
+  const axisFormat = "axis" in input || "angle" in input;
+  const eulerFormat = "x" in input || "y" in input || "z" in input;
+  if (axisFormat === eulerFormat) throw new Error(`${name} must use exactly one supported rotation format.`);
+  const allowed = axisFormat
+    ? new Set(["origin", "axis", "angle", "rescale"])
+    : new Set(["origin", "x", "y", "z", "rescale"]);
+  if (keys.some((key) => !allowed.has(key))) {
+    throw new Error(`${name} contains unsupported properties.`);
+  }
+  const origin = blockElementVector(input.origin, `${name}.origin`);
+  if (eulerFormat) {
+    const euler = [input.x, input.y, input.z];
+    if (euler.some((angle) => typeof angle !== "number" || !Number.isFinite(angle) || angle < -180 || angle > 180)) {
+      throw new Error(`${name} Euler angles must be finite and within -180..180 degrees.`);
+    }
+    const rescale = input.rescale === undefined ? false : booleanValue(input.rescale, `${name}.rescale`);
+    if (rescale) throw new Error(`${name} Euler rotations cannot use rescale.`);
+    return { origin, euler: euler as unknown as BlockElementVector, rescale: false };
+  }
+  if (input.axis !== "x" && input.axis !== "y" && input.axis !== "z") throw new Error(`${name}.axis must be x, y, or z.`);
+  if (typeof input.angle !== "number" || !Number.isFinite(input.angle) || input.angle < -90 || input.angle > 90) {
+    throw new Error(`${name}.angle must be finite and within -90..90 degrees.`);
+  }
+  const rescale = input.rescale === undefined ? false : booleanValue(input.rescale, `${name}.rescale`);
+  if (rescale && Math.abs(input.angle) > 45) throw new Error(`${name}.rescale is limited to rotations within 45 degrees.`);
+  return { origin, axis: input.axis, angle: input.angle, rescale };
 }
 
 function parseElementFaces(
@@ -548,7 +693,7 @@ function parseElementFaces(
     if (!(face in input)) continue;
     const definition = plainRecord(input[face], `element.faces.${face}`);
     output[face] = {
-      texture: textureVariable(definition.texture),
+      texture: parseFaceTextureReference(definition.texture, `element.faces.${face}.texture`),
       uv: definition.uv === undefined ? defaultFaceUv(face, from, to) : faceUv(definition.uv),
       rotation: faceRotation(definition.rotation),
       ...(definition.tintindex === undefined ? {} : { tintIndex: tintIndex(definition.tintindex) }),
@@ -556,6 +701,13 @@ function parseElementFaces(
     };
   }
   return output;
+}
+
+function parseFaceTextureReference(raw: unknown, name: string): string {
+  if (typeof raw !== "string") throw new Error(`${name} must be a texture variable or resource location.`);
+  if (raw.startsWith("#")) return textureVariable(raw);
+  if (!raw.includes(":") && !raw.includes("/")) return textureVariable(`#${raw}`);
+  return resourceLocation(raw, "minecraft", false);
 }
 
 function chooseVariant(variants: readonly NormalizedBlockStateVariant[], state: Readonly<Record<string, string>>): NormalizedBlockStateVariant | undefined {
@@ -588,9 +740,11 @@ function validNormalizedMultipart(parts: readonly NormalizedMultipartPart[]): bo
   if (!Array.isArray(parts) || parts.length === 0 || parts.length > MAX_MULTIPART_PARTS) return false;
   let references = 0;
   for (const part of parts) {
-    if (!part || typeof part !== "object" || !Array.isArray(part.apply) || part.apply.length !== 1) return false;
+    if (!part || typeof part !== "object" || !Array.isArray(part.apply)
+      || part.apply.length === 0 || part.apply.length > MAX_MULTIPART_APPLY_CHOICES) return false;
     references += part.apply.length;
-    if (references > MAX_MULTIPART_MODEL_REFERENCES || !validMultipartModelReference(part.apply[0])) return false;
+    if (references > MAX_MULTIPART_MODEL_REFERENCES
+      || part.apply.some((reference: NormalizedModelReference | undefined) => !validMultipartModelReference(reference))) return false;
     const clauses = part.when?.clauses;
     if (!Array.isArray(clauses) || clauses.length === 0 || clauses.length > MAX_MULTIPART_CLAUSES) return false;
     for (const clause of clauses) {
@@ -607,7 +761,8 @@ function validNormalizedMultipart(parts: readonly NormalizedMultipartPart[]): bo
 }
 
 function validMultipartModelReference(reference: NormalizedModelReference | undefined): boolean {
-  if (!reference || reference.weight !== 1 || typeof reference.uvlock !== "boolean") return false;
+  if (!reference || !Number.isSafeInteger(reference.weight) || reference.weight <= 0 || reference.weight > 10_000
+    || typeof reference.uvlock !== "boolean") return false;
   if (![0, 90, 180, 270].includes(reference.x) || ![0, 90, 180, 270].includes(reference.y)) return false;
   try {
     return resourceLocation(reference.model, "minecraft", true) === reference.model;
@@ -621,6 +776,7 @@ interface ResolvedModelData {
   faceMetadata: Partial<Record<BlockFace, NormalizedModelFace>>;
   elements?: NormalizedBlockElement[];
   textures: Record<string, string>;
+  forceTranslucentTextures: Record<string, true>;
 }
 
 function resolveModel(modelId: string, models: ReadonlyMap<string, NormalizedBlockModel>, chain: readonly string[], depth: number): ResolvedModelData | BlockTextureFallback {
@@ -631,7 +787,9 @@ function resolveModel(modelId: string, models: ReadonlyMap<string, NormalizedBlo
     return builtin ?? { status: "fallback", reason: "MISSING_MODEL", resourceId: modelId };
   }
   if (model.unsupportedReason) return { status: "fallback", reason: model.unsupportedReason, resourceId: modelId };
-  const parent = model.parent ? resolveModel(model.parent, models, [...chain, modelId], depth + 1) : { faces: {}, faceMetadata: {}, textures: {} };
+  const parent = model.parent
+    ? resolveModel(model.parent, models, [...chain, modelId], depth + 1)
+    : { faces: {}, faceMetadata: {}, textures: {}, forceTranslucentTextures: {} };
   if ("status" in parent) return parent;
   if (model.elements !== undefined) {
     return {
@@ -639,17 +797,23 @@ function resolveModel(modelId: string, models: ReadonlyMap<string, NormalizedBlo
       faceMetadata: { ...model.faceMetadata },
       elements: model.elements,
       textures: { ...parent.textures, ...model.textures },
+      forceTranslucentTextures: { ...parent.forceTranslucentTextures, ...model.forceTranslucentTextures },
     };
   }
   const faceMetadata = { ...parent.faceMetadata };
   for (const [face, texture] of Object.entries(model.faces ?? {}) as Array<[BlockFace, string]>) {
     faceMetadata[face] = model.faceMetadata?.[face] ?? defaultFaceMetadata(texture);
   }
-  return { faces: { ...parent.faces, ...model.faces }, faceMetadata, ...(parent.elements ? { elements: parent.elements } : {}), textures: { ...parent.textures, ...model.textures } };
+  return {
+    faces: { ...parent.faces, ...model.faces }, faceMetadata,
+    ...(parent.elements ? { elements: parent.elements } : {}),
+    textures: { ...parent.textures, ...model.textures },
+    forceTranslucentTextures: { ...parent.forceTranslucentTextures, ...model.forceTranslucentTextures },
+  };
 }
 
 function builtinModel(modelId: string): ResolvedModelData | undefined {
-  if (modelId === "minecraft:block/block") return { faces: {}, faceMetadata: {}, textures: {} };
+  if (modelId === "minecraft:block/block") return { faces: {}, faceMetadata: {}, textures: {}, forceTranslucentTextures: {} };
   if (modelId === "minecraft:block/cube") return builtinFaces({ down: "#down", up: "#up", north: "#north", south: "#south", west: "#west", east: "#east" });
   if (modelId === "minecraft:block/cube_all") return builtinFaces(allFaces("#all"));
   if (modelId === "minecraft:block/cube_column") return builtinFaces({ down: "#end", up: "#end", north: "#side", south: "#side", west: "#side", east: "#side" });
@@ -681,6 +845,7 @@ function builtinFaces(modelFaces: Record<BlockFace, string>): ResolvedModelData 
     faceMetadata,
     elements: [{ from: FULL_CUBE_FROM, to: FULL_CUBE_TO, shade: true, faces: faceMetadata }],
     textures: {},
+    forceTranslucentTextures: {},
   };
 }
 
@@ -699,6 +864,7 @@ function builtinFacesWithMetadata(
     faceMetadata,
     elements: [{ from: FULL_CUBE_FROM, to: FULL_CUBE_TO, shade: true, faces: faceMetadata }],
     textures: {},
+    forceTranslucentTextures: {},
   };
 }
 
@@ -736,13 +902,21 @@ function rotateElementPoint(point: BlockElementVector, x: FaceRotation, y: FaceR
   return [output.x + 8, output.y + 8, output.z + 8];
 }
 
-function resolveTextureReference(raw: string, textures: Readonly<Record<string, string>>, chain: readonly string[], depth: number): { value: string } | BlockTextureFallback {
-  if (!raw.startsWith("#")) return { value: raw };
+function resolveTextureReference(
+  raw: string,
+  textures: Readonly<Record<string, string>>,
+  forceTranslucentTextures: Readonly<Record<string, true>>,
+  chain: readonly string[],
+  depth: number,
+): { value: string; forceTranslucent: boolean } | BlockTextureFallback {
+  if (!raw.startsWith("#")) return { value: raw, forceTranslucent: false };
   const variable = raw.slice(1);
   if (depth >= MAX_TEXTURE_DEPTH || chain.includes(variable)) return { status: "fallback", reason: "TEXTURE_REFERENCE_CYCLE" };
   const next = textures[variable];
   if (!next) return { status: "fallback", reason: "MISSING_TEXTURE_VARIABLE" };
-  return resolveTextureReference(next, textures, [...chain, variable], depth + 1);
+  const resolved = resolveTextureReference(next, textures, forceTranslucentTextures, [...chain, variable], depth + 1);
+  if ("reason" in resolved) return resolved;
+  return { value: resolved.value, forceTranslucent: resolved.forceTranslucent || forceTranslucentTextures[variable] === true };
 }
 
 function rotateFace(face: BlockFace, x: number, y: number): BlockFace {
@@ -896,8 +1070,9 @@ function faceUv(raw: unknown): FaceUv {
 function blockElementVector(raw: unknown, name: string): BlockElementVector {
   if (!Array.isArray(raw) || raw.length !== 3) throw new Error(`${name} must contain exactly three numbers.`);
   const values = raw.map((value) => {
-    if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 16) {
-      throw new Error(`${name} coordinates must be finite numbers from 0 to 16.`);
+    if (typeof value !== "number" || !Number.isFinite(value)
+      || value < MIN_ELEMENT_COORDINATE || value > MAX_ELEMENT_COORDINATE) {
+      throw new Error(`${name} coordinates must be finite numbers from ${MIN_ELEMENT_COORDINATE} to ${MAX_ELEMENT_COORDINATE}.`);
     }
     return value;
   });

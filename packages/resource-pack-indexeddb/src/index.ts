@@ -343,9 +343,6 @@ function validateBlockState(value: unknown): void {
   if ((hasMultipart && value.variants.length !== 0) || (!hasMultipart && (value.variants.length < 1 || value.variants.length > 512))) {
     throw new Error("Invalid blockstate variants/multipart contract.");
   }
-  if (hasMultipart && !isP2MultipartBlockId(value.resourceId)) {
-    throw new Error("Multipart blockstate is outside the supported P2 scope.");
-  }
   for (const variant of value.variants) {
     if (
       !isRecord(variant) || typeof variant.key !== "string" || !stringRecord(variant.conditions) ||
@@ -354,7 +351,7 @@ function validateBlockState(value: unknown): void {
     ) {
       throw new Error("Invalid blockstate variant in normalized resource-pack manifest.");
     }
-    for (const choice of variant.choices) validateModelChoice(choice, false);
+    for (const choice of variant.choices) validateModelChoice(choice);
   }
   if (hasMultipart) validateMultipart(value.multipart);
 }
@@ -371,9 +368,9 @@ function validateMultipart(value: unknown): void {
     const clauses = part.when.clauses;
     if (clauses.length < 1 || clauses.length > 16) throw new Error("Invalid multipart condition clauses.");
     for (const clause of clauses) validateMultipartClause(clause, clauses.length === 1);
-    if (part.apply.length !== 1) throw new Error("Multipart apply must contain one model.");
-    validateModelChoice(part.apply[0], true);
-    modelReferenceCount += 1;
+    if (part.apply.length < 1 || part.apply.length > 8) throw new Error("Multipart apply must contain 1-8 models.");
+    for (const choice of part.apply) validateModelChoice(choice);
+    modelReferenceCount += part.apply.length;
     if (modelReferenceCount > 512) throw new Error("Multipart has too many model references.");
   }
 }
@@ -396,12 +393,11 @@ function validateMultipartClause(value: unknown, allowUnconditional: boolean): v
   }
 }
 
-function validateModelChoice(value: unknown, requireUnweighted: boolean): void {
+function validateModelChoice(value: unknown): void {
   if (
     !isRecord(value) || !normalizedResourceLocation(value.model) || ![0, 90, 180, 270].includes(value.x as number) ||
     ![0, 90, 180, 270].includes(value.y as number) || typeof value.uvlock !== "boolean" ||
-    !Number.isSafeInteger(value.weight) || (value.weight as number) <= 0 ||
-    (requireUnweighted && value.weight !== 1)
+    !Number.isSafeInteger(value.weight) || (value.weight as number) <= 0
   ) {
     throw new Error("Invalid model choice in normalized resource-pack manifest.");
   }
@@ -412,6 +408,13 @@ function validateBlockModel(value: unknown): void {
     throw new Error("Invalid block model in normalized resource-pack manifest.");
   }
   if (value.parent !== undefined && !safeText(value.parent)) throw new Error("Invalid block model parent.");
+  if (value.forceTranslucentTextures !== undefined) {
+    if (!isRecord(value.forceTranslucentTextures)
+      || Object.keys(value.forceTranslucentTextures).length > 128
+      || Object.entries(value.forceTranslucentTextures).some(([key, forced]) => !safeStateName(key) || forced !== true)) {
+      throw new Error("Invalid block model translucent texture metadata.");
+    }
+  }
   if (value.unsupportedReason !== undefined && value.unsupportedReason !== "COMPLEX_GEOMETRY") {
     throw new Error("Invalid block model compatibility reason.");
   }
@@ -434,7 +437,7 @@ function validateBlockModel(value: unknown): void {
       throw new Error("Invalid block model elements.");
     }
     for (const element of value.elements) {
-      if (!isRecord(element) || typeof element.shade !== "boolean" || element.rotation !== undefined) {
+      if (!isRecord(element) || typeof element.shade !== "boolean") {
         throw new Error("Invalid block model element.");
       }
       const from = validateElementVector(element.from);
@@ -444,12 +447,13 @@ function validateBlockModel(value: unknown): void {
       }
       const zeroAxes = from.flatMap((coordinate, axis) => coordinate === to[axis] ? [axis] : []);
       if (zeroAxes.length > 1) throw new Error("Invalid block model element bounds.");
+      if (element.rotation !== undefined) validateElementRotation(element.rotation);
       if (!isRecord(element.faces)) throw new Error("Invalid block model element faces.");
       const entries = Object.entries(element.faces);
       if (entries.length < 1 || entries.length > 6) throw new Error("Invalid block model element faces.");
       for (const [face, metadata] of entries) {
         validateModelFace(face, metadata);
-        if (zeroAxes.length === 1 && !facesPerpendicularToAxis[zeroAxes[0]!]!.has(face)) {
+        if (zeroAxes.length === 1 && element.rotation === undefined && !facesPerpendicularToAxis[zeroAxes[0]!]!.has(face)) {
           throw new Error("Invalid block model plane face.");
         }
       }
@@ -469,11 +473,33 @@ const unsafeStateNames = new Set(["__proto__", "prototype", "constructor"]);
 
 function validateElementVector(value: unknown): [number, number, number] {
   if (!Array.isArray(value) || value.length !== 3 || value.some((coordinate) => (
-    typeof coordinate !== "number" || !Number.isFinite(coordinate) || coordinate < 0 || coordinate > 16
+    typeof coordinate !== "number" || !Number.isFinite(coordinate) || coordinate < -16 || coordinate > 32
   ))) {
     throw new Error("Invalid block model element vector.");
   }
   return value as [number, number, number];
+}
+
+function validateElementRotation(value: unknown): void {
+  if (!isRecord(value) || !Array.isArray(value.origin) || value.origin.length !== 3
+    || value.origin.some((coordinate) => typeof coordinate !== "number" || !Number.isFinite(coordinate)
+      || coordinate < -16 || coordinate > 32)
+    || typeof value.rescale !== "boolean") {
+    throw new Error("Invalid block model element rotation.");
+  }
+  if (value.euler !== undefined) {
+    if (value.rescale || value.axis !== undefined || value.angle !== undefined
+      || !Array.isArray(value.euler) || value.euler.length !== 3
+      || value.euler.some((angle) => typeof angle !== "number" || !Number.isFinite(angle) || angle < -180 || angle > 180)) {
+      throw new Error("Invalid block model Euler rotation.");
+    }
+    return;
+  }
+  if ((value.axis !== "x" && value.axis !== "y" && value.axis !== "z")
+    || typeof value.angle !== "number" || !Number.isFinite(value.angle) || value.angle < -90 || value.angle > 90
+    || (value.rescale && Math.abs(value.angle) > 45)) {
+    throw new Error("Invalid block model axis rotation.");
+  }
 }
 
 function validateModelFace(face: string, value: unknown): void {
@@ -546,12 +572,6 @@ function safeStateName(value: string): boolean {
 
 function normalizedResourceLocation(value: unknown): value is string {
   return typeof value === "string" && value.length <= 512 && resourceLocationPattern.test(value);
-}
-
-function isP2MultipartBlockId(value: unknown): value is string {
-  if (typeof value !== "string" || !value.startsWith("minecraft:")) return false;
-  const path = value.slice("minecraft:".length);
-  return path.endsWith("_wall") || path.endsWith("_fence") || path.endsWith("_pane") || path === "iron_bars";
 }
 
 function toListItem(record: StoredResourcePack, activeId: string | null): ResourcePackListItem {

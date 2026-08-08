@@ -28,6 +28,7 @@ import {
   createSteppedTerrainData,
   type MergedGeometryData,
   type TerrainEnvironmentStyle,
+  type TerrainGenerationVersion,
   type TerrainPad,
 } from "./terrain";
 import { lowerQualityTier, QUALITY_PROFILES, selectQualityTier, type QualityProfile, type QualityTier } from "./quality";
@@ -62,6 +63,12 @@ import {
 } from "./lightweight-shading";
 import { blockOcclusionFor, createLocalOcclusionField, type LocalOcclusionField } from "./local-occlusion";
 import { materialResponse, materialResponseForMaterialId } from "./material-response";
+import {
+  fallbackVisualStyleForVoxel,
+  parseFallbackVisualKey,
+  staticFluidHeight,
+  staticFluidKind,
+} from "./fallback-visual";
 
 export interface WorldSnapshot {
   projectId: string;
@@ -209,9 +216,10 @@ const colors: Record<string, number> = {
   glass: 0x8eb4b7,
   accent: 0xc3b18d,
   grass: 0x718365,
-  dirt: 0x665846,
+  dirt: 0x746650,
   terrainStone: 0x69736e,
   terrainWater: 0x4d7f86,
+  terrainLava: 0xe96b23,
   leaves: 0x47704a,
   path: 0x9a8b72,
   vine: 0x3f7044,
@@ -268,6 +276,7 @@ export function createVoxelRenderer(
     visualExperiment?: VoxelVisualExperiment;
     environmentStyle?: TerrainEnvironmentStyle;
     worldSeed?: string;
+    terrainGenerationVersion?: TerrainGenerationVersion;
     onSelectProject?: (projectId: string) => void;
     /** Previews keep the camera fitted to the building while terrain extends past the viewport. */
     previewMode?: boolean;
@@ -501,19 +510,22 @@ export function createVoxelRenderer(
   function material(id: string): THREE.MeshStandardMaterial {
     let found = materials.get(id);
     if (!found) {
-      const response = materialResponse(materialResponseForMaterialId(id));
+      const fallbackVisual = parseFallbackVisualKey(id);
+      const response = materialResponse(fallbackVisual?.response ?? materialResponseForMaterialId(id));
       const terrainWater = id === "terrainWater";
+      const terrainLava = id === "terrainLava";
+      const transparent = fallbackVisual?.transparent === true || id === "glass" || terrainWater;
       found = new THREE.MeshStandardMaterial({
-        color: colors[id] ?? 0xffffff,
+        color: fallbackVisual?.color ?? colors[id] ?? 0xffffff,
         roughness: id === "glass" ? 0.1 : terrainWater ? 0.34 : response.roughness,
         metalness: id === "glass" ? 0.08 : terrainWater ? 0.05 : response.metalness,
-        transparent: id === "glass" || terrainWater,
-        opacity: id === "glass" ? 0.44 : terrainWater ? 0.88 : 1,
-        depthWrite: id !== "glass",
-        emissive: id === "glass" ? 0x315c72 : 0x000000,
-        emissiveIntensity: id === "glass" ? 0.13 : 0,
+        transparent,
+        opacity: fallbackVisual?.opacity ?? (id === "glass" ? 0.44 : terrainWater ? 0.78 : 1),
+        depthWrite: !transparent,
+        emissive: terrainLava ? 0x8f1f08 : id === "glass" ? 0x315c72 : 0x000000,
+        emissiveIntensity: terrainLava ? 0.68 : id === "glass" ? 0.13 : 0,
       });
-      const voxelEdgeStrength = id === "glass" ? 0.22 : ["stone", "wood", "plank", "roof", "accent"].includes(id) ? 0.12 : 0;
+      const voxelEdgeStrength = transparent ? 0.22 : fallbackVisual ? 0.12 : ["stone", "wood", "plank", "roof", "accent"].includes(id) ? 0.12 : 0;
       trackMaterialEffects(found, voxelEdgeStrength);
       materials.set(id, found);
     }
@@ -700,12 +712,20 @@ export function createVoxelRenderer(
       {
         environmentStyle: previewMode ? "classic-island" : options.environmentStyle ?? "classic-island",
         worldSeed: options.worldSeed,
+        terrainGenerationVersion: options.terrainGenerationVersion,
       },
     );
     canvas.dataset.environmentStyle = previewMode ? "classic-island" : options.environmentStyle ?? "classic-island";
+    canvas.dataset.terrainGenerationVersion = String(terrainData.terrainGenerationVersion);
     canvas.dataset.terrainCellCount = String(terrainData.cellCount);
     canvas.dataset.naturalTreeCount = String(terrainData.naturalTrees.length);
     canvas.dataset.terrainWaterTriangles = String(terrainData.indicesByMaterial.water.length / 3);
+    canvas.dataset.terrainNearCellCount = String(terrainData.lodCellCounts.near);
+    canvas.dataset.terrainMiddleCellCount = String(terrainData.lodCellCounts.middle);
+    canvas.dataset.terrainFarCellCount = String(terrainData.lodCellCounts.far);
+    canvas.dataset.terrainHydrologyNetworkCount = String(terrainData.hydrology.networkCount);
+    canvas.dataset.terrainHydrologyBasinCount = String(terrainData.hydrology.basinCount);
+    canvas.dataset.terrainFarExtent = String(terrainData.bounds.maxX);
     addTerrain(terrainData);
     addHighQualityExperiment(terrainData);
     addRoads(roads, positioned, [...buildingPads, ...decorationPads]);
@@ -778,6 +798,7 @@ export function createVoxelRenderer(
   }
 
   function addNaturalBackdrop(data: MergedGeometryData): void {
+    if (data.terrainGenerationVersion >= 2) return;
     if (data.bounds.maxX <= data.framingBounds.maxX) return;
     const size = Math.max(1_000, (data.bounds.maxX - data.bounds.minX) * 6);
     const backdrop = new THREE.Mesh(new THREE.PlaneGeometry(size, size), material("grass"));
@@ -950,13 +971,15 @@ export function createVoxelRenderer(
       : { batches: [], fallbackVoxels: texturePlan.fallbackVoxels };
     addGeometryBatches(structure, geometryPlan.batches, conditionVisual.weathering);
     if (activeResourcePack) fallbackVoxelCount += geometryPlan.fallbackVoxels.length;
-    const groups = groupFallbackVoxels(geometryPlan.fallbackVoxels);
+    addStaticFluidVoxels(structure, geometryPlan.fallbackVoxels);
+    const groups = groupFallbackVoxels(geometryPlan.fallbackVoxels.filter((voxel) => staticFluidKind(voxel) === undefined));
     for (const [key, voxels] of groups) {
       const [materialId, emissiveKind = "", levelText = ""] = key.split("|");
       const level = levelText === "" ? 0 : Number(levelText);
       const owned = conditionVisual.weathering > 0 || emissiveKind !== "" || level > 0;
       const meshMaterial = owned ? material(materialId!).clone() : material(materialId!);
-      trackMaterialEffects(meshMaterial, materialId === "glass" ? 0.22 : 0.12);
+      const translucent = materialId === "glass" || parseFallbackVisualKey(materialId!)?.transparent === true;
+      trackMaterialEffects(meshMaterial, translucent ? 0.22 : 0.12);
       if (conditionVisual.weathering > 0) {
         meshMaterial.color.multiplyScalar(1 - conditionVisual.weathering * 0.28);
         meshMaterial.roughness = Math.min(1, meshMaterial.roughness + conditionVisual.weathering * 0.1);
@@ -969,9 +992,9 @@ export function createVoxelRenderer(
       voxels.forEach((voxel, index) => { matrix.makeTranslation(voxel.x, voxel.y, voxel.z); mesh.setMatrixAt(index, matrix); });
       mesh.instanceMatrix.needsUpdate = true;
       applyFallbackOcclusion(mesh, voxels, occlusionField);
-      mesh.castShadow = materialId !== "glass";
+      mesh.castShadow = !translucent;
       mesh.receiveShadow = true;
-      if (materialId === "glass") mesh.renderOrder = 10;
+      if (translucent) mesh.renderOrder = 10;
       if (owned) mesh.userData.ownedMaterial = meshMaterial;
       structure.add(mesh);
     }
@@ -1013,22 +1036,24 @@ export function createVoxelRenderer(
       : { batches: [], fallbackVoxels: texturePlan.fallbackVoxels };
     addGeometryBatches(structure, geometryPlan.batches, 0);
     if (activeResourcePack) fallbackVoxelCount += geometryPlan.fallbackVoxels.length;
-    const groups = groupFallbackVoxels(geometryPlan.fallbackVoxels);
+    addStaticFluidVoxels(structure, geometryPlan.fallbackVoxels);
+    const groups = groupFallbackVoxels(geometryPlan.fallbackVoxels.filter((voxel) => staticFluidKind(voxel) === undefined));
     for (const [key, voxels] of groups) {
       const [materialId, emissiveKind = "", levelText = ""] = key.split("|");
       const level = levelText === "" ? 0 : Number(levelText);
       const owned = emissiveKind !== "" || level > 0;
       const meshMaterial = owned ? material(materialId!).clone() : material(materialId!);
-      trackMaterialEffects(meshMaterial, materialId === "glass" ? 0.22 : 0.12);
+      const translucent = materialId === "glass" || parseFallbackVisualKey(materialId!)?.transparent === true;
+      trackMaterialEffects(meshMaterial, translucent ? 0.22 : 0.12);
       if (owned) emissiveMaterials.push({ material: meshMaterial, level: level || 15, kind: emissiveKind || "light" });
       const mesh = new THREE.InstancedMesh(new THREE.BoxGeometry(0.97, 0.97, 0.97), meshMaterial, voxels.length);
       const matrix = new THREE.Matrix4();
       voxels.forEach((voxel, index) => { matrix.makeTranslation(voxel.x, voxel.y, voxel.z); mesh.setMatrixAt(index, matrix); });
       mesh.instanceMatrix.needsUpdate = true;
       applyFallbackOcclusion(mesh, voxels, occlusionField);
-      mesh.castShadow = materialId !== "glass";
+      mesh.castShadow = !translucent;
       mesh.receiveShadow = true;
-      if (materialId === "glass") mesh.renderOrder = 10;
+      if (translucent) mesh.renderOrder = 10;
       if (owned) mesh.userData.ownedMaterial = meshMaterial;
       structure.add(mesh);
     }
@@ -1160,12 +1185,45 @@ export function createVoxelRenderer(
   function groupFallbackVoxels(voxels: readonly BlueprintV1["voxels"][number][]): Map<string, BlueprintV1["voxels"]> {
     const groups = new Map<string, BlueprintV1["voxels"]>();
     for (const voxel of voxels) {
-      const key = `${voxel.materialId}|${voxel.emissiveKind ?? ""}|${voxel.emissiveLevel ?? ""}`;
+      const materialKey = voxel.sourceBlockId ? fallbackVisualStyleForVoxel(voxel).key : voxel.materialId;
+      const key = `${materialKey}|${voxel.emissiveKind ?? ""}|${voxel.emissiveLevel ?? ""}`;
       const list = groups.get(key) ?? [];
       list.push(voxel);
       groups.set(key, list);
     }
     return groups;
+  }
+
+  function addStaticFluidVoxels(root: THREE.Group, voxels: readonly BlueprintV1["voxels"][number][]): void {
+    const groups = new Map<string, BlueprintV1["voxels"]>();
+    for (const voxel of voxels) {
+      const kind = staticFluidKind(voxel);
+      if (!kind) continue;
+      const height = staticFluidHeight(voxel);
+      const key = `${kind}|${height}`;
+      const list = groups.get(key) ?? [];
+      list.push(voxel);
+      groups.set(key, list);
+    }
+    for (const [key, entries] of groups) {
+      const [kind, heightText] = key.split("|");
+      const height = Number(heightText);
+      const mesh = new THREE.InstancedMesh(
+        new THREE.BoxGeometry(0.97, height, 0.97),
+        material(kind === "lava" ? "terrainLava" : "terrainWater"),
+        entries.length,
+      );
+      const matrix = new THREE.Matrix4();
+      entries.forEach((voxel, index) => {
+        matrix.makeTranslation(voxel.x, voxel.y - (0.97 - height) / 2, voxel.z);
+        mesh.setMatrixAt(index, matrix);
+      });
+      mesh.instanceMatrix.needsUpdate = true;
+      mesh.castShadow = false;
+      mesh.receiveShadow = kind === "water";
+      mesh.renderOrder = kind === "water" ? 10 : 1;
+      root.add(mesh);
+    }
   }
 
   function addVines(root: THREE.Group, vines: ReturnType<typeof conditionVisualForVoxels>["vines"]): void {

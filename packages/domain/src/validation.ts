@@ -400,9 +400,10 @@ function parseFocusIntegrityPolicy(raw: unknown, path: string): DomainState["foc
 
 function parseWorldSettings(raw: unknown, path: string): DomainState["worldSettings"] {
   const x = object(raw, path, ["worldSeed", "terrainGenerationVersion", "environmentStyle"]);
+  integer(x.terrainGenerationVersion, path + ".terrainGenerationVersion", 1, 2);
   return {
     worldSeed: nonBlankString(x.worldSeed, path + ".worldSeed"),
-    terrainGenerationVersion: integer(x.terrainGenerationVersion, path + ".terrainGenerationVersion", 1, 1) as 1,
+    terrainGenerationVersion: 2,
     environmentStyle: enumeration(x.environmentStyle, path + ".environmentStyle", ["natural-valley", "classic-island"] as const),
   };
 }
@@ -690,7 +691,7 @@ function migrateV5State(raw: unknown): unknown {
     schemaVersion: 6,
     worldSettings: {
       worldSeed: firstProjectId && firstProjectId.trim() !== "" ? `legacy-${firstProjectId}` : "world-default",
-      terrainGenerationVersion: 1,
+      terrainGenerationVersion: 2,
       environmentStyle: "natural-valley",
     },
   };

@@ -10,13 +10,14 @@ export interface DecodedVisualBiomeColormap {
 export interface VisualBiomePalette {
   grass: number;
   foliage: number;
+  water: number;
   temperature: number;
   downfall: number;
   source: "original" | "resource-pack";
 }
 
 export const TEMPERATE_VILLAGE_CLIMATE = Object.freeze({ temperature: 0.8, downfall: 0.4 });
-export const ORIGINAL_VISUAL_BIOME_COLORS = Object.freeze({ grass: 0x78a95a, foliage: 0x619a52 });
+export const ORIGINAL_VISUAL_BIOME_COLORS = Object.freeze({ grass: 0x78a95a, foliage: 0x619a52, water: 0x3f76e4 });
 
 /**
  * V3 deliberately uses one calm temperate-village climate for the settlement.
@@ -34,6 +35,7 @@ export function createVisualBiomePalette(
   return {
     grass: grass ? sampleMinecraftColormap(grass, temperature, downfall) : ORIGINAL_VISUAL_BIOME_COLORS.grass,
     foliage: foliage ? sampleMinecraftColormap(foliage, temperature, downfall) : ORIGINAL_VISUAL_BIOME_COLORS.foliage,
+    water: ORIGINAL_VISUAL_BIOME_COLORS.water,
     temperature,
     downfall,
     source: grass || foliage ? "resource-pack" : "original",

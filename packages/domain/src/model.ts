@@ -183,7 +183,7 @@ export type WorldEnvironmentStyle = "natural-valley" | "classic-island";
 
 export interface WorldSettings {
   worldSeed: string;
-  terrainGenerationVersion: 1;
+  terrainGenerationVersion: 2;
   environmentStyle: WorldEnvironmentStyle;
 }
 

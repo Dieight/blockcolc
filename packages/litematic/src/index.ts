@@ -346,14 +346,14 @@ function mapBlock(entry: PaletteEntry): { materialId: MaterialId; placeholder: b
   if (/(?:^|_)(?:glass|glass_pane|ice|stained_glass)(?:$|_)/.test(path)) return { materialId: "glass", placeholder: false };
   if (/(?:log|wood|stem|hyphae|bamboo_block|fence|fence_gate)$/.test(path)) return { materialId: "wood", placeholder: false };
   if (/(?:stairs|slab|tile|terracotta|concrete|wool|copper|purpur|prismarine)$/.test(path)) return { materialId: "roof", placeholder: false };
-  if (/(?:planks|bookshelf|barrel|chest|crafting_table|lectern|door|trapdoor|sign|button|pressure_plate)$/.test(path)
-    || /^(?:oak|spruce|birch|jungle|acacia|dark_oak|mangrove|cherry|bamboo|crimson|warped)_/.test(path)) {
+  if (/(?:planks|shelf|bookshelf|barrel|chest|crafting_table|lectern|door|trapdoor|sign|button|pressure_plate)$/.test(path)
+    || /^(?:oak|spruce|birch|jungle|acacia|dark_oak|pale_oak|mangrove|cherry|bamboo|crimson|warped)_/.test(path)) {
     return { materialId: "plank", placeholder: false };
   }
-  if (/(?:stone|cobble|brick|deepslate|andesite|diorite|granite|calcite|tuff|basalt|blackstone|quartz|sandstone|obsidian|ore|bedrock|dirt|grass_block|sand|gravel|mud|clay|netherrack|end_stone|observer|piston)/.test(path)) {
+  if (/(?:stone|cobble|brick|deepslate|andesite|diorite|granite|calcite|tuff|basalt|blackstone|quartz|sandstone|obsidian|ore|bedrock|dirt|grass_block|sand|gravel|mud|clay|netherrack|end_stone|observer|piston|resin|sulfur|cinnabar)/.test(path)) {
     return { materialId: "stone", placeholder: false };
   }
-  if (/(?:torch|lantern|light|glowstone|campfire|end_rod|flower|plant|leaves|vine|banner|carpet|bed|rail|ladder|hopper|anvil|cauldron|chain|candle|pot|skull|head|bell|lever|iron_bars)/.test(path)) {
+  if (/(?:torch|lantern|light|glowstone|campfire|end_rod|flower|plant|leaves|vine|moss|grass|fern|bush|sapling|banner|carpet|bed|rail|ladder|hopper|anvil|cauldron|chain|candle|pot|skull|head|bell|lever|iron_bars|water|lava|bubble_column)/.test(path)) {
     return { materialId: "accent", placeholder: false };
   }
   return { materialId: "accent", placeholder: true };
@@ -426,11 +426,44 @@ function emissiveSemantics(state: PaletteEntry): Pick<BlueprintVoxel, "emissiveK
     case "minecraft:redstone_torch":
     case "minecraft:redstone_wall_torch":
       return lit ? { emissiveKind: "redstone_torch", emissiveLevel: 7 } : {};
+    case "minecraft:redstone_lamp":
+      return lit ? { emissiveKind: "redstone_lamp", emissiveLevel: 15 } : {};
+    case "minecraft:magma_block":
+      return { emissiveKind: "magma", emissiveLevel: 3 };
+    case "minecraft:crying_obsidian":
+      return { emissiveKind: "crying_obsidian", emissiveLevel: 10 };
+    case "minecraft:glow_lichen":
+      return { emissiveKind: "glow_lichen", emissiveLevel: 7 };
+    case "minecraft:fire":
+      return { emissiveKind: "fire", emissiveLevel: 15 };
+    case "minecraft:soul_fire":
+      return { emissiveKind: "soul_fire", emissiveLevel: 10 };
     case "minecraft:light": {
       const level = Number(state.properties.level ?? "15");
       return Number.isInteger(level) && level >= 1 && level <= 15 ? { emissiveKind: "light", emissiveLevel: level } : {};
     }
     default:
+      if (/(?:^|_)copper_torch$|(?:^|_)copper_wall_torch$/.test(path)) {
+        return { emissiveKind: "copper_torch", emissiveLevel: 14 };
+      }
+      if (/(?:^|_)copper_lantern$/.test(path)) {
+        return { emissiveKind: "copper_lantern", emissiveLevel: 15 };
+      }
+      if (/(?:^|_)copper_bulb$/.test(path) && lit) {
+        const level = path.includes("oxidized") ? 4 : path.includes("weathered") ? 8 : path.includes("exposed") ? 12 : 15;
+        return { emissiveKind: "copper_bulb", emissiveLevel: level };
+      }
+      if (state.name === "minecraft:sea_pickle" && state.properties.waterlogged !== "false") {
+        const rawPickles = Number(state.properties.pickles ?? "1");
+        const pickles = Number.isInteger(rawPickles) && rawPickles >= 1 && rawPickles <= 4 ? rawPickles : 1;
+        return { emissiveKind: "sea_pickle", emissiveLevel: 3 + pickles * 3 };
+      }
+      if (state.name === "minecraft:respawn_anchor") {
+        const rawCharges = Number(state.properties.charges ?? "0");
+        if (Number.isInteger(rawCharges) && rawCharges >= 1 && rawCharges <= 4) {
+          return { emissiveKind: "respawn_anchor", emissiveLevel: rawCharges * 4 - 1 };
+        }
+      }
       if (/(?:^|_)candle$/.test(path) && lit) {
         const rawCandles = Number(state.properties.candles ?? "1");
         const candles = Number.isInteger(rawCandles) && rawCandles >= 1 && rawCandles <= 4 ? rawCandles : 1;

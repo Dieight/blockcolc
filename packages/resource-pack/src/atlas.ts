@@ -1,4 +1,5 @@
 import type {
+  BlockElementRotation,
   BlockElementVector,
   BlockFace,
   BlockTextureFallback,
@@ -134,6 +135,8 @@ export interface AtlasGeometryElement {
   to: BlockElementVector;
   shade: boolean;
   faces: Partial<Record<BlockFace, AtlasGeometryFaceReference>>;
+  rotation?: BlockElementRotation;
+  blockRotation?: { x: 0 | 90 | 180 | 270; y: 0 | 90 | 180 | 270 };
 }
 
 export interface AtlasBlockGeometry {
@@ -338,7 +341,7 @@ export function mapBlockTexturesToAtlas(
       textureIndex: entry.pageTextureIndex,
       page: entry.page,
       uv: { ...entry.uv },
-      alphaMode: entry.alphaMode,
+      alphaMode: faceMetadata?.forceTranslucent ? "translucent" : entry.alphaMode,
       cropUv: normalizeFaceUv(faceMetadata?.uv),
       rotation: faceMetadata?.rotation ?? 0,
       ...(faceMetadata?.tintIndex === undefined ? {} : { tintIndex: faceMetadata.tintIndex }),
@@ -370,7 +373,7 @@ export function mapBlockGeometryToAtlas(
         textureIndex: entry.pageTextureIndex,
         page: entry.page,
         uv: { ...entry.uv },
-        alphaMode: entry.alphaMode,
+        alphaMode: metadata.forceTranslucent ? "translucent" : entry.alphaMode,
         cropUv: normalizeFaceUv(metadata.uv),
         rotation: metadata.rotation,
         ...(metadata.tintIndex === undefined ? {} : { tintIndex: metadata.tintIndex }),
@@ -383,6 +386,8 @@ export function mapBlockGeometryToAtlas(
       to: [...element.to] as unknown as BlockElementVector,
       shade: element.shade,
       faces: mappedFaces,
+      ...(element.rotation === undefined ? {} : { rotation: structuredClone(element.rotation) }),
+      ...(element.blockRotation === undefined ? {} : { blockRotation: { ...element.blockRotation } }),
     });
   }
   return { status: "resolved_geometry", modelId: resolution.modelId, elements };
@@ -396,6 +401,9 @@ function validGeometryElements(elements: readonly unknown[]): elements is Resolv
     const candidate = element as ResolvedBlockGeometry["elements"][number];
     if (!validElementVector(candidate.from) || !validElementVector(candidate.to) || typeof candidate.shade !== "boolean") return false;
     if (candidate.from.some((value, axis) => value > candidate.to[axis]!)) return false;
+    if (candidate.rotation !== undefined && !validElementRotation(candidate.rotation)) return false;
+    if (candidate.blockRotation !== undefined
+      && (![0, 90, 180, 270].includes(candidate.blockRotation.x) || ![0, 90, 180, 270].includes(candidate.blockRotation.y))) return false;
     if (!candidate.faces || typeof candidate.faces !== "object" || Array.isArray(candidate.faces)) return false;
     const faceKeys = Object.keys(candidate.faces);
     if (faceKeys.length === 0 || faceKeys.length > 6 || faceKeys.some((face) => !isBlockFace(face))) return false;
@@ -403,7 +411,7 @@ function validGeometryElements(elements: readonly unknown[]): elements is Resolv
     if (quadCount > 768) return false;
     const zeroAxes = candidate.from.map((value, axis) => value === candidate.to[axis]).flatMap((zero, axis) => zero ? [axis] : []);
     if (zeroAxes.length > 1) return false;
-    if (zeroAxes.length === 1) {
+    if (zeroAxes.length === 1 && candidate.rotation === undefined) {
       const allowed = zeroAxes[0] === 0 ? new Set(["west", "east"])
         : zeroAxes[0] === 1 ? new Set(["down", "up"])
           : new Set(["north", "south"]);
@@ -416,7 +424,22 @@ function validGeometryElements(elements: readonly unknown[]): elements is Resolv
 function validElementVector(vector: unknown): vector is BlockElementVector {
   return Array.isArray(vector)
     && vector.length === 3
-    && vector.every((value) => typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 16);
+    && vector.every((value) => typeof value === "number" && Number.isFinite(value) && value >= -16 && value <= 32);
+}
+
+function validElementRotation(rotation: unknown): rotation is BlockElementRotation {
+  if (!rotation || typeof rotation !== "object" || Array.isArray(rotation)) return false;
+  const candidate = rotation as BlockElementRotation;
+  if (!validElementVector(candidate.origin) || typeof candidate.rescale !== "boolean") return false;
+  if (candidate.euler !== undefined) {
+    return !candidate.rescale && Array.isArray(candidate.euler) && candidate.euler.length === 3
+      && candidate.euler.every((angle) => typeof angle === "number" && Number.isFinite(angle) && angle >= -180 && angle <= 180)
+      && candidate.axis === undefined && candidate.angle === undefined;
+  }
+  return (candidate.axis === "x" || candidate.axis === "y" || candidate.axis === "z")
+    && typeof candidate.angle === "number" && Number.isFinite(candidate.angle)
+    && candidate.angle >= -90 && candidate.angle <= 90
+    && (!candidate.rescale || Math.abs(candidate.angle) <= 45);
 }
 
 function isBlockFace(value: unknown): value is BlockFace {
@@ -427,6 +450,7 @@ function validFaceMetadata(metadata: ResolvedBlockFace, resourceId: string): boo
   if (!metadata || typeof metadata !== "object" || metadata.texture !== resourceId) return false;
   if (metadata.rotation !== 0 && metadata.rotation !== 90 && metadata.rotation !== 180 && metadata.rotation !== 270) return false;
   if (metadata.tintIndex !== undefined && (!Number.isSafeInteger(metadata.tintIndex) || metadata.tintIndex < 0 || metadata.tintIndex > 255)) return false;
+  if (metadata.forceTranslucent !== undefined && typeof metadata.forceTranslucent !== "boolean") return false;
   if (metadata.uv === undefined) return true;
   return Array.isArray(metadata.uv)
     && metadata.uv.length === 4

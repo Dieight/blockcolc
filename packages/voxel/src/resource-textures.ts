@@ -31,6 +31,7 @@ export const FULL_FACE_CROP_UV: NormalizedFaceCropUv = Object.freeze([0, 0, 1, 1
 export const NO_FACE_TINT: FaceTintKind = 0;
 export const FOLIAGE_FACE_TINT: FaceTintKind = 1;
 export const GRASS_FACE_TINT: FaceTintKind = 2;
+export const WATER_FACE_TINT: FaceTintKind = 3;
 
 export interface AtlasAnimationFrame {
   textureIndex: number;
@@ -327,6 +328,7 @@ export function createAtlasMaterial(
     const visualBiomePalette = page.visualBiomePalette ?? createVisualBiomePalette([]);
     shader.uniforms.blockcolcFoliageTint = { value: new THREE.Color(visualBiomePalette.foliage) };
     shader.uniforms.blockcolcGrassTint = { value: new THREE.Color(visualBiomePalette.grass) };
+    shader.uniforms.blockcolcWaterTint = { value: new THREE.Color(visualBiomePalette.water) };
     if (page.animationLookup) {
       shader.uniforms.blockcolcAnimationLookup = { value: page.animationLookup.texture };
       shader.uniforms.blockcolcAnimationBlendLookup = { value: page.animationLookup.blendTexture };
@@ -354,8 +356,13 @@ export function unpackFaceTintKinds(word: number): FaceTintKinds {
 
 export function faceTintKind(blockId: string, tintIndex: number | undefined): FaceTintKind | undefined {
   if (tintIndex === undefined) return NO_FACE_TINT;
-  if (tintIndex === 0 && blockId.startsWith("minecraft:") && blockId.endsWith("_leaves")) return FOLIAGE_FACE_TINT;
-  if (tintIndex === 0 && blockId === "minecraft:grass_block") return GRASS_FACE_TINT;
+  if (tintIndex !== 0 || !blockId.startsWith("minecraft:")) return undefined;
+  const path = blockId.slice("minecraft:".length);
+  if (path.endsWith("_leaves") || path === "vine") return FOLIAGE_FACE_TINT;
+  if (["grass_block", "short_grass", "tall_grass", "fern", "large_fern", "sugar_cane", "lily_pad"].includes(path)) {
+    return GRASS_FACE_TINT;
+  }
+  if (path === "water" || path === "bubble_column") return WATER_FACE_TINT;
   return undefined;
 }
 
@@ -405,7 +412,7 @@ export function patchAtlasUvVertexShader(vertexShader: string, animated = false)
   return vertexShader
     .replace(
       "#include <common>",
-      `#include <common>\nattribute float faceSlot;\nattribute vec3 instanceFaceTilesA;\nattribute vec3 instanceFaceTilesB;\nattribute vec3 instanceFaceUvWordA0;\nattribute vec3 instanceFaceUvWordA1;\nattribute vec3 instanceFaceUvWordB0;\nattribute vec3 instanceFaceUvWordB1;\nattribute float instanceFaceTintKinds;\nuniform vec2 blockcolcAtlasSize;\nuniform float blockcolcAtlasColumns;\nuniform float blockcolcAtlasCellSize;\nuniform float blockcolcAtlasPadding;\nuniform vec3 blockcolcFoliageTint;\nuniform vec3 blockcolcGrassTint;\nvarying vec3 vBlockcolcTint;\nvarying float vBlockcolcLocalOcclusion;${animationDeclarations}`,
+      `#include <common>\nattribute float faceSlot;\nattribute vec3 instanceFaceTilesA;\nattribute vec3 instanceFaceTilesB;\nattribute vec3 instanceFaceUvWordA0;\nattribute vec3 instanceFaceUvWordA1;\nattribute vec3 instanceFaceUvWordB0;\nattribute vec3 instanceFaceUvWordB1;\nattribute float instanceFaceTintKinds;\nuniform vec2 blockcolcAtlasSize;\nuniform float blockcolcAtlasColumns;\nuniform float blockcolcAtlasCellSize;\nuniform float blockcolcAtlasPadding;\nuniform vec3 blockcolcFoliageTint;\nuniform vec3 blockcolcGrassTint;\nuniform vec3 blockcolcWaterTint;\nvarying vec3 vBlockcolcTint;\nvarying float vBlockcolcLocalOcclusion;${animationDeclarations}`,
     )
     .replace(
       "#include <uv_vertex>",
@@ -417,7 +424,7 @@ export function patchAtlasUvVertexShader(vertexShader: string, animated = false)
     )
     .replace(
       "float blockcolcU0 =",
-      "float blockcolcTintDivisor = faceSlot < 0.5 ? 1.0 : faceSlot < 1.5 ? 4.0 : faceSlot < 2.5 ? 16.0 : faceSlot < 3.5 ? 64.0 : faceSlot < 4.5 ? 256.0 : 1024.0;\nfloat blockcolcTintKind = mod(floor(instanceFaceTintKinds / blockcolcTintDivisor), 4.0);\nvBlockcolcTint = blockcolcTintKind > 1.5 ? blockcolcGrassTint : blockcolcTintKind > 0.5 ? blockcolcFoliageTint : vec3(1.0);\nvBlockcolcLocalOcclusion = mod(floor(instanceFaceTintKinds / (4096.0 * blockcolcTintDivisor)), 4.0) / 3.0;\nfloat blockcolcU0 =",
+      "float blockcolcTintDivisor = faceSlot < 0.5 ? 1.0 : faceSlot < 1.5 ? 4.0 : faceSlot < 2.5 ? 16.0 : faceSlot < 3.5 ? 64.0 : faceSlot < 4.5 ? 256.0 : 1024.0;\nfloat blockcolcTintKind = mod(floor(instanceFaceTintKinds / blockcolcTintDivisor), 4.0);\nvBlockcolcTint = blockcolcTintKind > 2.5 ? blockcolcWaterTint : blockcolcTintKind > 1.5 ? blockcolcGrassTint : blockcolcTintKind > 0.5 ? blockcolcFoliageTint : vec3(1.0);\nvBlockcolcLocalOcclusion = mod(floor(instanceFaceTintKinds / (4096.0 * blockcolcTintDivisor)), 4.0) / 3.0;\nfloat blockcolcU0 =",
     )
     .replace("attribute float instanceFaceTintKinds;", "attribute float instanceFaceTintKinds;\nattribute float instanceMaterialResponse;")
     .replace("varying float vBlockcolcLocalOcclusion;", "varying float vBlockcolcLocalOcclusion;\nvarying float vBlockcolcMaterialResponse;")

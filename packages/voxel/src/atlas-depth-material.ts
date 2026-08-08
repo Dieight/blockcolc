@@ -47,6 +47,8 @@ export function createAtlasCutoutDepthMaterial(
     shader.uniforms.blockcolcAtlasCellSize = { value: page.cellSize };
     shader.uniforms.blockcolcAtlasPadding = { value: page.padding };
     shader.uniforms.blockcolcFoliageTint = { value: new THREE.Color(0x619a52) };
+    shader.uniforms.blockcolcGrassTint = { value: new THREE.Color(0x78a95a) };
+    shader.uniforms.blockcolcWaterTint = { value: new THREE.Color(0x3f76e4) };
     if (page.animationLookup) {
       shader.uniforms.blockcolcAnimationLookup = { value: page.animationLookup.texture };
       shader.uniforms.blockcolcAnimationBlendLookup = { value: page.animationLookup.blendTexture };
