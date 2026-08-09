@@ -27,15 +27,15 @@ export class DomainStateValidationError extends Error {
 }
 
 export function parseDomainState(raw: unknown): DomainState {
-  const migrated = migrateV5State(migrateV4State(withBuildingBlueprintDefaults(migrateV2State(withDecorationDefaults(migrateV1State(raw))))));
+  const migrated = migrateV6State(migrateV5State(migrateV4State(withBuildingBlueprintDefaults(migrateV2State(withDecorationDefaults(migrateV1State(raw)))))));
   const root = object(migrated, "$", [
     "schemaVersion", "projects", "habitBuildings", "activeProjectId", "retiredSubtaskIds", "activeFocusSession",
     "focusHistory", "progressReports", "dailyGoals", "calendar", "decayPolicy", "projectConditions", "focusIntegrityPolicy",
     "decorationBlueprintResources", "decorationRewards", "buildingBlueprintResources", "worldSettings",
   ]);
-  if (root.schemaVersion !== 6) invalid("$.schemaVersion", "must equal 6");
+  if (root.schemaVersion !== 7) invalid("$.schemaVersion", "must equal 7");
   const state: DomainState = {
-    schemaVersion: 6,
+    schemaVersion: 7,
     projects: array(root.projects, "$.projects", parseProject),
     habitBuildings: array(root.habitBuildings, "$.habitBuildings", parseHabitBuilding),
     activeProjectId: nullableString(root.activeProjectId, "$.activeProjectId"),
@@ -255,11 +255,14 @@ function parseDecorationResource(raw: unknown, path: string): DecorationBlueprin
 }
 
 function parseBuildingResource(raw: unknown, path: string): BuildingBlueprintResource {
-  const x = object(raw, path, ["id", "blueprint", "importedAt"]);
+  const x = object(raw, path, ["id", "displayName", "blueprint", "importedAt"]);
   const blueprint = parseImportedBlueprint(x.blueprint, path + ".blueprint");
   const id = nonBlankString(x.id, path + ".id");
   if (blueprint.id !== id) invalid(path + ".id", "must match blueprint.id");
-  return { id, blueprint, importedAt: instant(x.importedAt, path + ".importedAt") };
+  const displayName = nonBlankString(x.displayName, path + ".displayName");
+  if (displayName.trim() !== displayName) invalid(path + ".displayName", "must not contain leading or trailing whitespace");
+  if (displayName.length > 80) invalid(path + ".displayName", "must contain at most 80 characters");
+  return { id, displayName, blueprint, importedAt: instant(x.importedAt, path + ".importedAt") };
 }
 
 function parseDecorationReward(raw: unknown, path: string): DecorationReward {
@@ -400,10 +403,10 @@ function parseFocusIntegrityPolicy(raw: unknown, path: string): DomainState["foc
 
 function parseWorldSettings(raw: unknown, path: string): DomainState["worldSettings"] {
   const x = object(raw, path, ["worldSeed", "terrainGenerationVersion", "environmentStyle"]);
-  integer(x.terrainGenerationVersion, path + ".terrainGenerationVersion", 1, 2);
+  integer(x.terrainGenerationVersion, path + ".terrainGenerationVersion", 3, 3);
   return {
     worldSeed: nonBlankString(x.worldSeed, path + ".worldSeed"),
-    terrainGenerationVersion: 2,
+    terrainGenerationVersion: 3,
     environmentStyle: enumeration(x.environmentStyle, path + ".environmentStyle", ["natural-valley", "classic-island"] as const),
   };
 }
@@ -541,7 +544,7 @@ function validateReferences(state: DomainState): void {
   unique(state.dailyGoals.map((item) => item.date), "$.dailyGoals[].date");
   for (const [index, goal] of state.dailyGoals.entries()) {
     const completions = state.focusHistory
-      .filter((item): item is Extract<FocusSession, { status: "completed" }> => item.status === "completed" && item.completedLocalDate === goal.date)
+      .filter((item): item is Exclude<FocusSession, { status: "interrupted" }> => item.status !== "interrupted" && item.completedLocalDate === goal.date)
       .sort((left, right) => left.completedAt.localeCompare(right.completedAt));
     if (goal.enabled && goal.reachedAt === null && completions.length >= goal.targetPomodoros) invalid(`$.dailyGoals[${index}].reachedAt`, "enabled goal at or above target must be reached");
     if (goal.reachedAt !== null) {
@@ -694,6 +697,41 @@ function migrateV5State(raw: unknown): unknown {
       terrainGenerationVersion: 2,
       environmentStyle: "natural-valley",
     },
+  };
+}
+
+function migrateV6State(raw: unknown): unknown {
+  const candidate = record(raw, "$");
+  if (candidate.schemaVersion !== 6) return raw;
+  const resources = array(candidate.buildingBlueprintResources, "$.buildingBlueprintResources", (resource, path) => {
+    const value = object(resource, path, ["id", "blueprint", "importedAt"]);
+    const blueprint = record(value.blueprint, path + ".blueprint");
+    const displayName = nonBlankString(blueprint.title, path + ".blueprint.title").trim().slice(0, 80);
+    return { ...value, displayName };
+  });
+  const worldSettings = record(candidate.worldSettings, "$.worldSettings");
+  const completionsByDate = new Map<string, string[]>();
+  for (const session of array(candidate.focusHistory, "$.focusHistory", (value, path) => record(value, path))) {
+    if ((session.status !== "completed" && session.status !== "completed-early")
+      || typeof session.completedLocalDate !== "string" || typeof session.completedAt !== "string") continue;
+    const completions = completionsByDate.get(session.completedLocalDate) ?? [];
+    completions.push(session.completedAt);
+    completionsByDate.set(session.completedLocalDate, completions);
+  }
+  for (const completions of completionsByDate.values()) completions.sort();
+  const dailyGoals = array(candidate.dailyGoals, "$.dailyGoals", (goal, path) => {
+    const value = record(goal, path);
+    if (value.enabled !== true || value.reachedAt !== null || typeof value.date !== "string"
+      || !Number.isInteger(value.targetPomodoros) || (value.targetPomodoros as number) <= 0) return value;
+    const reachedAt = completionsByDate.get(value.date)?.[(value.targetPomodoros as number) - 1];
+    return reachedAt ? { ...value, reachedAt } : value;
+  });
+  return {
+    ...candidate,
+    schemaVersion: 7,
+    buildingBlueprintResources: resources,
+    dailyGoals,
+    worldSettings: { ...worldSettings, terrainGenerationVersion: 3 },
   };
 }
 

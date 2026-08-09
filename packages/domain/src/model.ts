@@ -160,6 +160,7 @@ export interface DecorationBlueprintResource {
 /** Locally stored building template available to future projects only. */
 export interface BuildingBlueprintResource {
   id: string;
+  displayName: string;
   blueprint: ImportedBlueprintV1;
   importedAt: ISOInstant;
 }
@@ -183,12 +184,12 @@ export type WorldEnvironmentStyle = "natural-valley" | "classic-island";
 
 export interface WorldSettings {
   worldSeed: string;
-  terrainGenerationVersion: 2;
+  terrainGenerationVersion: 3;
   environmentStyle: WorldEnvironmentStyle;
 }
 
 export interface DomainState {
-  schemaVersion: 6;
+  schemaVersion: 7;
   projects: Project[];
   habitBuildings: HabitBuildingMonument[];
   activeProjectId: string | null;
@@ -236,6 +237,7 @@ export type DomainCommand =
   | { type: "ConfigureWorldEnvironment"; environmentStyle: WorldEnvironmentStyle }
   | { type: "ImportDecorationBlueprint"; blueprint: ImportedBlueprintV1 }
   | { type: "ImportBuildingBlueprint"; blueprint: ImportedBlueprintV1 }
+  | { type: "RenameBuildingBlueprint"; blueprintId: string; displayName: string }
   | { type: "DeleteBuildingBlueprint"; blueprintId: string };
 
 export type DomainEvent =
@@ -272,6 +274,7 @@ export type DomainEvent =
   | { type: "BuildingConditionRepaired"; projectId: string; conditionBasisPoints: number }
   | { type: "DecorationBlueprintImported"; resourceId: string }
   | { type: "BuildingBlueprintImported"; resourceId: string }
+  | { type: "BuildingBlueprintRenamed"; resourceId: string; displayName: string }
   | { type: "BuildingBlueprintDeleted"; resourceId: string }
   | { type: "WorldEnvironmentConfigured"; environmentStyle: WorldEnvironmentStyle }
   | { type: "DecorationRewardGranted"; date: ISODate; projectId: string; resourceId: string };

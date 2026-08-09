@@ -149,3 +149,21 @@
 .habit-building-selection{display:grid;gap:14px}.habit-selection-heading h2{margin:4px 0 5px;font-size:19px}.habit-selection-heading p{margin:0;color:#58635d;font-size:13px;line-height:1.5}.habit-building-selection .blueprint-preview{height:clamp(190px,28dvh,260px)}.habit-building-selection .blueprint-options{max-height:180px;overflow:auto;overscroll-behavior:contain}.habit-building-confirm{width:100%;flex:0 0 auto}
 .habit-cycle-panel{display:grid;gap:16px;margin-top:2px;padding:18px 0;border-top:1px solid #c8d6cb;border-bottom:1px solid #c8d6cb}.habit-cycle-heading{display:flex;align-items:flex-start;gap:10px}.habit-cycle-heading>svg{width:21px;height:21px;flex:0 0 auto;color:#276749}.habit-cycle-heading h2{margin:0;font-size:17px}.habit-cycle-heading p{margin:4px 0 0;color:#58635d;font-size:13px}.habit-cycle-progress{display:grid;gap:8px}.habit-cycle-progress>div{display:flex;align-items:center;justify-content:space-between;gap:12px}.habit-cycle-progress span{color:#58635d;font-size:13px}.habit-cycle-progress strong{color:#276749}.habit-cycle-panel dl{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:0}.habit-cycle-panel dl>div{display:grid;gap:3px}.habit-cycle-panel dt{color:#58635d;font-size:12px}.habit-cycle-panel dd{margin:0;font-weight:700;overflow-wrap:anywhere}
 @media(max-width:699px){html:has(.world-screen.is-choosing-habit-building),body:has(.world-screen.is-choosing-habit-building),#root:has(.world-screen.is-choosing-habit-building){height:auto;overflow:auto}.world-screen.is-choosing-habit-building:not(.is-focusing):not(.has-report){display:block;height:auto;overflow:visible}.world-screen.is-choosing-habit-building:not(.is-focusing):not(.has-report) .world{height:clamp(190px,29dvh,240px);min-height:190px;max-height:240px}.world-screen.is-choosing-habit-building:not(.is-focusing):not(.has-report) .v7-focus-panel{display:grid;min-height:0;padding:14px 20px calc(92px + var(--safe-bottom));overflow:visible;gap:14px}.world-screen.is-choosing-habit-building .habit-building-selection{min-height:0}.world-screen.is-choosing-habit-building .blueprint-options{max-height:none}.habit-cycle-panel dl{grid-template-columns:1fr}.setup-kind button{min-height:48px}}
+
+/* V13: immediate daily-goal editing, explicit heatmap thresholds, and blueprint names. */
+.daily-goal-controls{grid-template-columns:auto minmax(180px,1fr)}
+.daily-goal-stepper{display:grid;grid-template-columns:44px minmax(64px,1fr) 44px;align-items:center;gap:6px}
+.daily-goal-stepper button{width:44px;min-height:44px;padding:0}
+.daily-goal-stepper input[type=number]{width:100%;min-height:44px;text-align:center}
+.daily-goal-stepper svg{width:17px}
+.heat-level-5{background:#0f4f2e}
+.focus-heatmap-legend{flex-wrap:wrap;gap:5px 9px}
+.heatmap-legend-item{display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
+.blueprint-library-copy{flex:1}
+.blueprint-library-copy input{width:100%;min-height:40px;padding:7px 9px;border:1px solid #7ba486;border-radius:5px;font:inherit;font-weight:700;color:#27342e}
+.building-blueprint-list .blueprint-library-actions{display:flex;align-items:center;gap:6px}
+.building-blueprint-list .blueprint-library-actions button{width:40px;min-width:40px;min-height:40px;padding:0;display:grid;place-items:center}
+.building-blueprint-list .blueprint-library-actions svg{width:17px}
+.building-blueprint-list .blueprint-rename,.building-blueprint-list .blueprint-rename-cancel{border-color:#7ba486;color:#276749}
+.building-blueprint-list .blueprint-delete{width:auto!important;padding:0 10px!important}
+@media(max-width:620px){.daily-goal-controls{grid-template-columns:1fr}.daily-goal-controls .switch-control{grid-column:auto}.building-blueprint-list li{align-items:flex-start}.building-blueprint-list .blueprint-library-actions{flex:0 0 auto}}

@@ -9,6 +9,7 @@ import { FOCUS_INTEGRITY_GRACE_MS } from "./model.js";
 import type {
   Clock,
   CommandResult,
+  DailyGoal,
   DomainCommand,
   DomainErrorCode,
   DomainEvent,
@@ -23,7 +24,7 @@ import type {
 export function createInitialState(timeZone = "UTC", restWeekdays: number[] = [0, 6]): DomainState {
   assertCalendar(timeZone, restWeekdays);
   return {
-    schemaVersion: 6,
+    schemaVersion: 7,
     projects: [],
     habitBuildings: [],
     activeProjectId: null,
@@ -44,7 +45,7 @@ export function createInitialState(timeZone = "UTC", restWeekdays: number[] = [0
     decorationBlueprintResources: [],
     decorationRewards: [],
     buildingBlueprintResources: [],
-    worldSettings: { worldSeed: "world-default", terrainGenerationVersion: 2, environmentStyle: "natural-valley" },
+    worldSettings: { worldSeed: "world-default", terrainGenerationVersion: 3, environmentStyle: "natural-valley" },
   };
 }
 
@@ -68,9 +69,19 @@ export function projectProgressBasisPoints(project: Project): number {
   return Math.floor(project.subtasks.reduce((sum, item) => sum + item.progressBasisPoints, 0) / project.subtasks.length);
 }
 
+export const DEFAULT_DAILY_GOAL_TARGET = 8;
+
+export function dailyGoalForDate(state: DomainState, date: string): DailyGoal {
+  assertISODate(date);
+  const stored = state.dailyGoals.find((goal) => goal.date === date);
+  return stored
+    ? { ...stored }
+    : { date, targetPomodoros: DEFAULT_DAILY_GOAL_TARGET, reachedAt: null, enabled: true };
+}
+
 export function completedPomodorosOn(state: DomainState, date: string): number {
   assertISODate(date);
-  return state.focusHistory.filter((session) => session.status === "completed" && session.completedLocalDate === date).length;
+  return state.focusHistory.filter((session) => session.status !== "interrupted" && session.completedLocalDate === date).length;
 }
 
 function handle(state: DomainState, command: DomainCommand, clock: Clock): CommandResult {
@@ -330,6 +341,7 @@ function handle(state: DomainState, command: DomainCommand, clock: Clock): Comma
         const events: DomainEvent[] = [{ type: "FocusCompletedEarly", sessionId: session.id, subtaskId: null, actualDurationMs }];
         applyRepair(state, project.id, now, events);
         advanceHabitBuilding(state, project, session, events);
+        reachGoalForDate(state, session.completedLocalDate, session.completedAt, events, session.projectId);
         return ok(state, events);
       }
       if (state.progressReports.some((report) => report.id === command.reportId)) return fail(state, "DUPLICATE_ID", "Progress report ID already exists");
@@ -361,6 +373,7 @@ function handle(state: DomainState, command: DomainCommand, clock: Clock): Comma
         state.activeProjectId = null;
         events.push({ type: "ProjectSealedAsMonument", projectId: project.id });
       }
+      reachGoalForDate(state, session.completedLocalDate, session.completedAt, events, session.projectId);
       return ok(state, events);
     }
     case "CancelFocus": {
@@ -479,8 +492,8 @@ function handle(state: DomainState, command: DomainCommand, clock: Clock): Comma
     }
     case "DisableDailyGoal": {
       assertISODate(command.date);
-      const goal = state.dailyGoals.find((item) => item.date === command.date);
-      if (!goal || !goal.enabled) return ok(state, []);
+      const goal = ensureDailyGoalForDate(state, command.date);
+      if (!goal.enabled) return ok(state, []);
       goal.enabled = false;
       return ok(state, [{ type: "DailyGoalDisabled", date: command.date }]);
     }
@@ -558,8 +571,19 @@ function handle(state: DomainState, command: DomainCommand, clock: Clock): Comma
         return ok(state, [{ type: "BuildingBlueprintImported", resourceId: blueprint.id }]);
       }
       if (state.buildingBlueprintResources.length >= 12) throw new Error("Building blueprint library is limited to 12 entries");
-      state.buildingBlueprintResources.push({ id: blueprint.id, blueprint, importedAt: now });
+      state.buildingBlueprintResources.push({ id: blueprint.id, displayName: blueprint.title, blueprint, importedAt: now });
       return ok(state, [{ type: "BuildingBlueprintImported", resourceId: blueprint.id }]);
+    }
+    case "RenameBuildingBlueprint": {
+      requireNonBlank(command.blueprintId, "blueprintId");
+      requireNonBlank(command.displayName, "displayName");
+      const displayName = command.displayName.trim();
+      if (displayName.length > 80) throw new Error("Building blueprint display name is limited to 80 characters");
+      const resource = state.buildingBlueprintResources.find((candidate) => candidate.id === command.blueprintId);
+      if (!resource) return fail(state, "INVALID_INPUT", "Building blueprint does not exist");
+      if (resource.displayName === displayName) return ok(state, []);
+      resource.displayName = displayName;
+      return ok(state, [{ type: "BuildingBlueprintRenamed", resourceId: resource.id, displayName }]);
     }
     case "DeleteBuildingBlueprint": {
       requireNonBlank(command.blueprintId, "blueprintId");
@@ -672,8 +696,8 @@ function applyRepair(state: DomainState, projectId: string, at: string, events: 
 }
 
 function reachGoalForDate(state: DomainState, date: string, at: string, events: DomainEvent[], completingProjectId?: string): void {
-  const goal = state.dailyGoals.find((item) => item.date === date);
-  if (!goal?.enabled || goal.reachedAt || completedPomodorosOn(state, date) < goal.targetPomodoros) return;
+  const goal = ensureDailyGoalForDate(state, date);
+  if (!goal.enabled || goal.reachedAt || completedPomodorosOn(state, date) < goal.targetPomodoros) return;
   goal.reachedAt = at;
   events.push({ type: "DailyGoalReached", date });
   grantDecorationReward(state, date, at, events, completingProjectId);
@@ -682,7 +706,7 @@ function reachGoalForDate(state: DomainState, date: string, at: string, events: 
 function grantDecorationReward(state: DomainState, date: string, at: string, events: DomainEvent[], completingProjectId?: string): void {
   if (state.decorationBlueprintResources.length === 0 || state.decorationRewards.some((reward) => reward.date === date)) return;
   const completions = state.focusHistory
-    .filter((session): session is Extract<FocusSession, { status: "completed" }> => session.status === "completed" && session.completedLocalDate === date)
+    .filter((session): session is Exclude<FocusSession, { status: "interrupted" }> => session.status !== "interrupted" && session.completedLocalDate === date)
     .sort((left, right) => left.completedAt.localeCompare(right.completedAt));
   const projectId = completingProjectId ?? completions.at(-1)?.projectId;
   if (!projectId) return;
@@ -700,6 +724,14 @@ function grantDecorationReward(state: DomainState, date: string, at: string, eve
         : { x: lateral, z: -offset };
   state.decorationRewards.push({ date, projectId, resourceId: resource.id, awardedAt: at, position, rotationQuarterTurns: angle });
   events.push({ type: "DecorationRewardGranted", date, projectId, resourceId: resource.id });
+}
+
+function ensureDailyGoalForDate(state: DomainState, date: string): DailyGoal {
+  const existing = state.dailyGoals.find((item) => item.date === date);
+  if (existing) return existing;
+  const goal: DailyGoal = { date, targetPomodoros: DEFAULT_DAILY_GOAL_TARGET, reachedAt: null, enabled: true };
+  state.dailyGoals.push(goal);
+  return goal;
 }
 
 function hash32(value: string): number {

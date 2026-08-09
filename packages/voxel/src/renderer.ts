@@ -744,6 +744,10 @@ export function createVoxelRenderer(
     canvas.dataset.terrainFarCellCount = String(terrainData.lodCellCounts.far);
     canvas.dataset.terrainHydrologyNetworkCount = String(terrainData.hydrology.networkCount);
     canvas.dataset.terrainHydrologyBasinCount = String(terrainData.hydrology.basinCount);
+    canvas.dataset.terrainHydrologySegmentCount = String(terrainData.hydrology.riverSegmentCount);
+    canvas.dataset.terrainHydrologyOutletCount = String(terrainData.hydrology.outletCount);
+    canvas.dataset.terrainHydrologyMaxUphill = String(terrainData.hydrology.maxUphillWaterStep);
+    canvas.dataset.terrainHydrologyProtectedWater = String(terrainData.hydrology.protectedWaterCellCount);
     canvas.dataset.terrainFarExtent = String(terrainData.bounds.maxX);
     addTerrain(terrainData);
     addHighQualityExperiment(terrainData);

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ApplicationCommand, ApplicationResult, ApplicationService } from '@tomato-clock/application';
-import { localDateOf } from '@tomato-clock/domain';
-import { Check, ChevronDown, GripVertical, LockKeyhole, MapPinned, Pencil, Plus, Repeat2, Save, Trash2, X } from 'lucide-react';
+import { completedPomodorosOn, dailyGoalForDate, localDateOf } from '@tomato-clock/domain';
+import { Check, ChevronDown, GripVertical, LockKeyhole, MapPinned, Minus, Pencil, Plus, Repeat2, Trash2, X } from 'lucide-react';
 import { ChoiceMenu } from './ChoiceMenu';
 
 type ActiveProject = NonNullable<ReturnType<ApplicationService['activeProjectProjection']>>;
@@ -324,16 +324,16 @@ function SubtaskGroup({ label, count, expanded, onToggle, children }: { label: s
 
 function DailyGoalControl({ state, run, onViewReward }: { state: AppState; run: (command: ApplicationCommand) => Promise<boolean>; onViewReward: (projectId: string) => void }) {
   const date = localDateOf(new Date(), state.calendar.timeZone);
-  const goal = state.dailyGoals.find(candidate => candidate.date === date);
-  const completed = useMemo(() => state.focusHistory.filter(session => session.status === 'completed' && session.completedLocalDate === date).length, [date, state.focusHistory]);
+  const goal = dailyGoalForDate(state, date);
+  const completed = useMemo(() => completedPomodorosOn(state, date), [date, state]);
   const reward = state.decorationRewards.find(candidate => candidate.date === date);
   const rewardName = reward ? state.decorationBlueprintResources.find(resource => resource.id === reward.resourceId)?.blueprint.title ?? '今日装饰' : null;
-  const [target, setTarget] = useState(String(goal?.targetPomodoros ?? 4));
+  const [target, setTarget] = useState(String(goal.targetPomodoros));
   const targetRef = useRef(target);
-  useEffect(() => { const value = String(goal?.targetPomodoros ?? 4); targetRef.current = value; setTarget(value); }, [date, goal?.targetPomodoros]);
+  useEffect(() => { const value = String(goal.targetPomodoros); targetRef.current = value; setTarget(value); }, [date, goal.targetPomodoros]);
   const parsedTarget = Number(target);
   const validTarget = Number.isInteger(parsedTarget) && parsedTarget > 0;
-  const enabled = goal?.enabled ?? false;
+  const enabled = goal.enabled;
   const [requestedEnabled, setRequestedEnabled] = useState<boolean | null>(null);
   useEffect(() => { setRequestedEnabled(null); }, [date, enabled]);
   const [pending, setPending] = useState(false);
@@ -343,7 +343,23 @@ function DailyGoalControl({ state, run, onViewReward }: { state: AppState; run: 
     setPending(true);
     try { return await run(command); } catch { return false; } finally { setPending(false); }
   };
-  const saveTarget = async () => { if (await perform({ type: 'SetDailyGoal', date, targetPomodoros: parsedTarget })) setOpen(false); };
+  const commitTarget = async () => {
+    const requestedTarget = Number(targetRef.current);
+    if (!Number.isInteger(requestedTarget) || requestedTarget < 1) {
+      const value = String(goal.targetPomodoros);
+      targetRef.current = value;
+      setTarget(value);
+      return;
+    }
+    if (requestedTarget !== goal.targetPomodoros || !enabled) await perform({ type: 'SetDailyGoal', date, targetPomodoros: requestedTarget });
+  };
+  const stepTarget = (offset: -1 | 1) => {
+    const draft = Number(targetRef.current);
+    const next = Math.max(1, (Number.isInteger(draft) && draft > 0 ? draft : goal.targetPomodoros) + offset);
+    targetRef.current = String(next);
+    setTarget(String(next));
+    void perform({ type: 'SetDailyGoal', date, targetPomodoros: next });
+  };
   const changeEnabled = (checked: boolean) => {
     const requestedTarget = Number(targetRef.current);
     setRequestedEnabled(checked);
@@ -353,10 +369,10 @@ function DailyGoalControl({ state, run, onViewReward }: { state: AppState; run: 
   };
   return <>
     <section className="daily-goal daily-goal-workbench" aria-labelledby="daily-goal-title">
-      <div className="daily-goal-summary"><div><span className="eyebrow">全局进度</span><h2 id="daily-goal-title">今日目标</h2><p>{enabled ? `今日 ${completed} / ${goal!.targetPomodoros} 轮` : `今日已完成 ${completed} 轮，目标未开启`}</p>{rewardName && <span className="daily-goal-reward"><Check/>今日装饰已入库 · {rewardName}</span>}</div><button type="button" className="daily-goal-adjust" aria-label="调整今日目标" onClick={() => setOpen(true)}><Pencil/><span>调整</span></button></div>
-      {goal?.reachedAt && <span className="goal-reached"><Check/>今日已达成</span>}
+      <div className="daily-goal-summary"><div><span className="eyebrow">全局进度</span><h2 id="daily-goal-title">今日目标</h2><p>{enabled ? `今日 ${completed} / ${goal.targetPomodoros} 轮` : `今日已完成 ${completed} 轮，目标未开启`}</p>{rewardName && <span className="daily-goal-reward"><Check/>今日装饰已入库 · {rewardName}</span>}</div><button type="button" className="daily-goal-adjust" aria-label="调整今日目标" onClick={() => setOpen(true)}><Pencil/><span>调整</span></button></div>
+      {goal.reachedAt && <span className="goal-reached"><Check/>今日已达成</span>}
     </section>
-    {open && <div className="dialog-backdrop daily-goal-sheet-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget && !pending) setOpen(false); }}><section className="daily-goal-sheet" role="dialog" aria-modal="true" aria-labelledby="daily-goal-sheet-title"><div className="sheet-heading"><div><span className="eyebrow">全局进度</span><h2 id="daily-goal-sheet-title">调整今日目标</h2></div><button type="button" className="dialog-close" aria-label="关闭今日目标" disabled={pending} onClick={() => setOpen(false)}><X/></button></div><p className="daily-goal-sheet-summary">{enabled ? `今日已完成 ${completed} / ${goal!.targetPomodoros} 轮` : `今日已完成 ${completed} 轮`}</p><div className="daily-goal-controls"><label className="switch-control"><input type="checkbox" role="switch" checked={requestedEnabled ?? enabled} disabled={pending} onChange={event => changeEnabled(event.target.checked)}/><span>{(requestedEnabled ?? enabled) ? '已开启' : '开启目标'}</span></label><label>目标次数<input aria-label="今日目标次数" type="number" min="1" step="1" inputMode="numeric" value={target} disabled={pending} onChange={event => { targetRef.current = event.target.value; setTarget(event.target.value); }}/></label><button type="button" className="daily-goal-save" disabled={pending || !validTarget || (enabled && parsedTarget === goal?.targetPomodoros)} onClick={() => void saveTarget()}><Save/>保存</button></div>{reward && <div className="daily-goal-reward-panel"><span><Check/><b>今日装饰已入库</b><small>{rewardName}</small></span><button type="button" disabled={pending} onClick={() => { setOpen(false); onViewReward(reward.projectId); }}>查看所在建筑</button></div>}</section></div>}
+    {open && <div className="dialog-backdrop daily-goal-sheet-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget && !pending) setOpen(false); }}><section className="daily-goal-sheet" role="dialog" aria-modal="true" aria-labelledby="daily-goal-sheet-title"><div className="sheet-heading"><div><span className="eyebrow">全局进度</span><h2 id="daily-goal-sheet-title">调整今日目标</h2></div><button type="button" className="dialog-close" aria-label="关闭今日目标" disabled={pending} onClick={() => setOpen(false)}><X/></button></div><p className="daily-goal-sheet-summary">{enabled ? `今日已完成 ${completed} / ${goal.targetPomodoros} 轮` : `今日已完成 ${completed} 轮`}</p><div className="daily-goal-controls"><label className="switch-control"><input type="checkbox" role="switch" checked={requestedEnabled ?? enabled} disabled={pending} onChange={event => changeEnabled(event.target.checked)}/><span>{(requestedEnabled ?? enabled) ? '已开启' : '开启目标'}</span></label><label>目标次数<div className="daily-goal-stepper"><button type="button" aria-label="减少目标轮数" disabled={pending || (validTarget && parsedTarget <= 1)} onClick={() => stepTarget(-1)}><Minus/></button><input aria-label="今日目标次数" type="number" min="1" step="1" inputMode="numeric" value={target} disabled={pending} onChange={event => { targetRef.current = event.target.value; setTarget(event.target.value); }} onBlur={() => void commitTarget()} onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur(); }}/><button type="button" aria-label="增加目标轮数" disabled={pending} onClick={() => stepTarget(1)}><Plus/></button></div></label></div>{reward && <div className="daily-goal-reward-panel"><span><Check/><b>今日装饰已入库</b><small>{rewardName}</small></span><button type="button" disabled={pending} onClick={() => { setOpen(false); onViewReward(reward.projectId); }}>查看所在建筑</button></div>}</section></div>}
   </>;
 }
 

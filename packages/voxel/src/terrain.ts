@@ -3,7 +3,7 @@ import { terrainHeightAt } from "./village";
 
 export type TerrainMaterial = "grass" | "dirt" | "stone" | "water";
 export type TerrainEnvironmentStyle = "natural-valley" | "classic-island";
-export type TerrainGenerationVersion = 1 | 2;
+export type TerrainGenerationVersion = 1 | 2 | 3;
 
 export interface NaturalTreePlacement {
   x: number;
@@ -22,7 +22,16 @@ export interface MergedGeometryData {
   naturalTrees: readonly NaturalTreePlacement[];
   terrainGenerationVersion: TerrainGenerationVersion;
   lodCellCounts: { near: number; middle: number; far: number };
-  hydrology: { networkCount: number; basinCount: number; riverCellCount: number; lakeCellCount: number };
+  hydrology: {
+    networkCount: number;
+    basinCount: number;
+    riverCellCount: number;
+    lakeCellCount: number;
+    riverSegmentCount: number;
+    outletCount: number;
+    maxUphillWaterStep: number;
+    protectedWaterCellCount: number;
+  };
 }
 
 export interface RoadGeometryData {
@@ -55,9 +64,9 @@ export function createSteppedTerrainData(
   const natural = options.environmentStyle === "natural-valley";
   const worldSeed = options.worldSeed ?? "world-default";
   const seedHash = stableHash(worldSeed);
-  const terrainGenerationVersion = options.terrainGenerationVersion ?? 2;
-  if (natural && terrainGenerationVersion === 2) {
-    return createNaturalTerrainDataV2(placements, roads, additionalPads, radius, seedHash);
+  const terrainGenerationVersion = options.terrainGenerationVersion ?? 3;
+  if (natural && (terrainGenerationVersion === 2 || terrainGenerationVersion === 3)) {
+    return createNaturalTerrainDataV2(placements, roads, additionalPads, radius, seedHash, terrainGenerationVersion);
   }
   const cells = new Map<string, number>();
   // The outer ring must still cover the farthest supported phone framing. Keep
@@ -139,6 +148,10 @@ export function createSteppedTerrainData(
       basinCount: natural && indicesByMaterial.water.length > 0 ? 2 : 0,
       riverCellCount: natural ? waterCells.size : 0,
       lakeCellCount: natural ? waterCells.size : 0,
+      riverSegmentCount: 0,
+      outletCount: natural && indicesByMaterial.water.length > 0 ? 1 : 0,
+      maxUphillWaterStep: 0,
+      protectedWaterCellCount: 0,
     },
   };
 }
@@ -179,6 +192,51 @@ interface V2Hydrology {
   rivers: readonly V2HydrologyRiver[];
 }
 
+interface V3HydrologyCell extends V2HydrologyPoint {
+  key: string;
+  gx: number;
+  gz: number;
+  moisture: number;
+  protectedInfluence: number;
+  filledHeight: number;
+  downstreamKey: string | null;
+  accumulation: number;
+}
+
+interface V3HydrologyLake {
+  id: number;
+  cells: ReadonlySet<string>;
+  waterLevel: number;
+  centerX: number;
+  centerZ: number;
+  area: number;
+}
+
+interface V3RiverSegment {
+  x1: number;
+  z1: number;
+  x2: number;
+  z2: number;
+  waterLevel1: number;
+  waterLevel2: number;
+  width1: number;
+  width2: number;
+  chainId: number;
+}
+
+interface V3Hydrology {
+  step: number;
+  extent: number;
+  cells: ReadonlyMap<string, V3HydrologyCell>;
+  lakes: readonly V3HydrologyLake[];
+  lakeByCell: ReadonlyMap<string, V3HydrologyLake>;
+  segments: readonly V3RiverSegment[];
+  segmentBuckets: ReadonlyMap<string, readonly number[]>;
+  networkCount: number;
+  outletCount: number;
+  maxUphillWaterStep: number;
+}
+
 interface V2TerrainSample {
   height: number;
   material: TerrainMaterial;
@@ -193,6 +251,7 @@ function createNaturalTerrainDataV2(
   additionalPads: readonly TerrainPad[],
   coreRadius: number,
   seedHash: number,
+  terrainGenerationVersion: 2 | 3,
 ): MergedGeometryData {
   const nearExtent = alignTo(Math.max(80, coreRadius + 28), 8);
   const middleExtent = alignTo(Math.max(160, nearExtent + 64), 8);
@@ -201,7 +260,9 @@ function createNaturalTerrainDataV2(
   // boundary never becomes the visual horizon.
   const farExtent = alignTo(Math.max(720, middleExtent + 80, coreRadius * 4.5), 16);
   const support = createV2SupportContext(placements, roads, additionalPads);
-  const hydrology = createV2Hydrology(Math.min(farExtent, 560), seedHash, support);
+  const hydrologyExtent = Math.min(farExtent, 560);
+  const hydrologyV2 = terrainGenerationVersion === 2 ? createV2Hydrology(hydrologyExtent, seedHash, support) : null;
+  const hydrologyV3 = terrainGenerationVersion === 3 ? createV3Hydrology(hydrologyExtent, seedHash, support) : null;
   const positions: number[] = [];
   const indicesByMaterial: Record<TerrainMaterial, number[]> = { grass: [], dirt: [], stone: [], water: [] };
   const naturalTrees: NaturalTreePlacement[] = [];
@@ -210,13 +271,16 @@ function createNaturalTerrainDataV2(
   let maxHeight = Number.NEGATIVE_INFINITY;
   let riverCellCount = 0;
   let lakeCellCount = 0;
+  let protectedWaterCellCount = 0;
   const sampleCache = new Map<string, V2TerrainSample>();
 
   const sampleAt = (x: number, z: number): V2TerrainSample => {
     const key = `${x}:${z}`;
     const cached = sampleCache.get(key);
     if (cached) return cached;
-    const sample = sampleNaturalTerrainV2(x, z, seedHash, support, hydrology);
+    const sample = hydrologyV3
+      ? sampleNaturalTerrainV3(x, z, seedHash, support, hydrologyV3)
+      : sampleNaturalTerrainV2(x, z, seedHash, support, hydrologyV2!);
     sampleCache.set(key, sample);
     return sample;
   };
@@ -244,6 +308,7 @@ function createNaturalTerrainDataV2(
     maxHeight = Math.max(maxHeight, sample.height);
     if (sample.waterKind === "river") riverCellCount += 1;
     if (sample.waterKind === "lake") lakeCellCount += 1;
+    if (sample.waterKind !== "none" && sample.supportInfluence >= 0.28) protectedWaterCellCount += 1;
     if (size <= 4 && sample.material === "grass" && sample.supportInfluence < 0.18 && sample.moisture > 0.06) {
       const treeHash = hash2d(seedHash, 0x771, Math.round(x), Math.round(z));
       const density = size === 2 ? 27 : 58;
@@ -266,13 +331,17 @@ function createNaturalTerrainDataV2(
     bounds: { minX: -farExtent, maxX: farExtent, minY: minHeight - 0.5, maxY: maxHeight + 0.5, minZ: -farExtent, maxZ: farExtent },
     framingBounds: { minX: -coreRadius, maxX: coreRadius, minZ: -coreRadius, maxZ: coreRadius },
     naturalTrees,
-    terrainGenerationVersion: 2,
+    terrainGenerationVersion,
     lodCellCounts,
     hydrology: {
-      networkCount: hydrology.rivers.length,
-      basinCount: hydrology.lakes.length,
+      networkCount: hydrologyV3?.networkCount ?? hydrologyV2!.rivers.length,
+      basinCount: hydrologyV3?.lakes.length ?? hydrologyV2!.lakes.length,
       riverCellCount,
       lakeCellCount,
+      riverSegmentCount: hydrologyV3?.segments.length ?? hydrologyV2!.rivers.reduce((sum, river) => sum + Math.max(0, river.points.length - 1), 0),
+      outletCount: hydrologyV3?.outletCount ?? hydrologyV2!.rivers.length,
+      maxUphillWaterStep: hydrologyV3?.maxUphillWaterStep ?? 0,
+      protectedWaterCellCount,
     },
   };
 }
@@ -326,6 +395,32 @@ function sampleNaturalTerrainV2(
   let waterKind: V2TerrainSample["waterKind"] = "none";
   if (supported.influence < 0.28) {
     const water = sampleV2Hydrology(x, z, height, seedHash, hydrology);
+    if (water.kind !== "none") {
+      height = water.height;
+      material = water.material;
+      waterKind = water.kind;
+    }
+  }
+  return { height, material, supportInfluence: supported.influence, moisture: macro.moisture, waterKind };
+}
+
+function sampleNaturalTerrainV3(
+  x: number,
+  z: number,
+  seedHash: number,
+  support: V2SupportContext,
+  hydrology: V3Hydrology,
+): V2TerrainSample {
+  const macro = sampleV2MacroTerrain(x, z, seedHash);
+  const supported = sampleV2Support(x, z, support);
+  const maximumSupportedHeight = supported.height + Math.pow(1 - supported.influence, 0.78) * 26;
+  let height = supported.influence >= 0.995
+    ? supported.height
+    : Math.round(Math.min(macro.height, maximumSupportedHeight));
+  let material: TerrainMaterial = macro.rocky && supported.influence < 0.2 ? "stone" : "grass";
+  let waterKind: V2TerrainSample["waterKind"] = "none";
+  if (supported.influence < 0.28) {
+    const water = sampleV3Hydrology(x, z, height, hydrology);
     if (water.kind !== "none") {
       height = water.height;
       material = water.material;
@@ -487,6 +582,346 @@ function createV2Hydrology(farExtent: number, seedHash: number, support: V2Suppo
   return { lakes, rivers };
 }
 
+function createV3Hydrology(farExtent: number, seedHash: number, support: V2SupportContext): V3Hydrology {
+  const step = 8;
+  const extent = alignTo(farExtent, step);
+  const minimum = -extent + step;
+  const maximum = extent - step;
+  const cells = new Map<string, V3HydrologyCell>();
+  let gx = 0;
+  for (let x = minimum; x <= maximum; x += step, gx += 1) {
+    let gz = 0;
+    for (let z = minimum; z <= maximum; z += step, gz += 1) {
+      const macro = sampleV2MacroTerrain(x, z, seedHash);
+      const protectedInfluence = sampleV2Support(x, z, support).influence;
+      const key = v3GridKey(gx, gz);
+      cells.set(key, {
+        key, gx, gz, x, z, height: macro.height,
+        moisture: v3PlateMoisture(x, z, seedHash, macro.moisture),
+        protectedInfluence,
+        filledHeight: Number.POSITIVE_INFINITY,
+        downstreamKey: null,
+        accumulation: 0,
+      });
+    }
+  }
+
+  const queue = new V3MinQueue();
+  const queued = new Set<string>();
+  for (const cell of cells.values()) {
+    if (cell.x !== minimum && cell.x !== maximum && cell.z !== minimum && cell.z !== maximum) continue;
+    cell.filledHeight = v3DrainElevation(cell);
+    queue.push({ key: cell.key, height: cell.filledHeight, tie: hash2d(seedHash, 0x401, cell.gx, cell.gz) });
+    queued.add(cell.key);
+  }
+  while (queue.size > 0) {
+    const item = queue.pop()!;
+    const current = cells.get(item.key)!;
+    for (const neighbor of v3HydrologyNeighbors(current, cells)) {
+      if (queued.has(neighbor.key)) continue;
+      queued.add(neighbor.key);
+      neighbor.filledHeight = Math.max(v3DrainElevation(neighbor), current.filledHeight + 0.001);
+      neighbor.downstreamKey = current.key;
+      queue.push({ key: neighbor.key, height: neighbor.filledHeight, tie: hash2d(seedHash, 0x401, neighbor.gx, neighbor.gz) });
+    }
+  }
+
+  for (const cell of cells.values()) {
+    if (cell.protectedInfluence >= 0.12) {
+      cell.accumulation = 0;
+      continue;
+    }
+    const wetness = Math.max(0, Math.min(1, (cell.moisture + 1) / 2));
+    cell.accumulation = 0.35 + wetness * 1.65;
+  }
+  const drainageOrder = [...cells.values()].sort((left, right) => right.filledHeight - left.filledHeight
+    || hash2d(seedHash, 0x411, left.gx, left.gz) - hash2d(seedHash, 0x411, right.gx, right.gz));
+  for (const cell of drainageOrder) {
+    if (!cell.downstreamKey || cell.accumulation <= 0) continue;
+    const downstream = cells.get(cell.downstreamKey)!;
+    downstream.accumulation += cell.accumulation;
+  }
+
+  const lakeComponents = v3LakeComponents(cells, seedHash);
+  const lakes: V3HydrologyLake[] = [];
+  const lakeByCell = new Map<string, V3HydrologyLake>();
+  for (const component of lakeComponents) {
+    if (lakes.length >= 3) break;
+    if (lakes.some((lake) => Math.hypot(lake.centerX - component.centerX, lake.centerZ - component.centerZ) < 72)) continue;
+    const lake: V3HydrologyLake = { ...component, id: lakes.length };
+    lakes.push(lake);
+    for (const key of lake.cells) lakeByCell.set(key, lake);
+  }
+
+  const minimumAccumulation = 24;
+  const channelCells = new Set([...cells.values()].filter((cell) => (
+    cell.accumulation >= minimumAccumulation
+    && cell.protectedInfluence < 0.08
+    && !lakeByCell.has(cell.key)
+    && (cell.moisture > -0.58 || cell.accumulation >= minimumAccumulation * 4)
+  )).map((cell) => cell.key));
+  const outletMemo = new Map<string, string>();
+  const grouped = new Map<string, V3HydrologyCell[]>();
+  for (const key of channelCells) {
+    const cell = cells.get(key)!;
+    const downstream = cell.downstreamKey ? cells.get(cell.downstreamKey) : undefined;
+    if (!downstream || downstream.protectedInfluence >= 0.18) continue;
+    const outlet = v3OutletKey(cell, cells, lakeByCell, outletMemo);
+    const group = grouped.get(outlet) ?? [];
+    group.push(cell);
+    grouped.set(outlet, group);
+  }
+  const selectedNetworks = [...grouped.entries()]
+    .filter(([, members]) => members.length >= 3)
+    .sort((left, right) => Math.max(...right[1].map((cell) => cell.accumulation)) - Math.max(...left[1].map((cell) => cell.accumulation))
+      || left[0].localeCompare(right[0]))
+    .slice(0, 5);
+  const segments: V3RiverSegment[] = [];
+  selectedNetworks.forEach(([, members], chainId) => {
+    const memberKeys = new Set(members.map((cell) => cell.key));
+    for (const cell of members) {
+      const downstream = cell.downstreamKey ? cells.get(cell.downstreamKey) : undefined;
+      if (!downstream || downstream.protectedInfluence >= 0.18) continue;
+      if (!memberKeys.has(downstream.key) && !lakeByCell.has(downstream.key) && downstream.accumulation < minimumAccumulation) continue;
+      segments.push(v3RiverSegment(cell, downstream, chainId, minimumAccumulation, seedHash, lakeByCell));
+    }
+  });
+  if (segments.length === 0) {
+    const fallback = [...cells.values()].filter((cell) => cell.protectedInfluence < 0.08 && !lakeByCell.has(cell.key))
+      .sort((left, right) => right.accumulation - left.accumulation)[0];
+    let current = fallback;
+    const seen = new Set<string>();
+    while (current?.downstreamKey && segments.length < 96 && !seen.has(current.key)) {
+      seen.add(current.key);
+      const downstream = cells.get(current.downstreamKey)!;
+      if (downstream.protectedInfluence >= 0.18) break;
+      segments.push(v3RiverSegment(current, downstream, 0, minimumAccumulation, seedHash, lakeByCell));
+      if (lakeByCell.has(downstream.key)) break;
+      current = downstream;
+    }
+  }
+  const segmentBuckets = v3SegmentBuckets(segments);
+  const networkCount = new Set(segments.map((segment) => segment.chainId)).size;
+  return {
+    step, extent, cells, lakes, lakeByCell, segments, segmentBuckets, networkCount,
+    outletCount: networkCount,
+    maxUphillWaterStep: segments.reduce((maximum, segment) => Math.max(maximum, segment.waterLevel2 - segment.waterLevel1), 0),
+  };
+}
+
+function v3DrainElevation(cell: V3HydrologyCell): number {
+  return cell.height + cell.protectedInfluence * 48;
+}
+
+function v3GridKey(gx: number, gz: number): string {
+  return `${gx}:${gz}`;
+}
+
+function v3HydrologyNeighbors(cell: V3HydrologyCell, cells: ReadonlyMap<string, V3HydrologyCell>): V3HydrologyCell[] {
+  const result: V3HydrologyCell[] = [];
+  for (let dx = -1; dx <= 1; dx += 1) {
+    for (let dz = -1; dz <= 1; dz += 1) {
+      if (dx === 0 && dz === 0) continue;
+      const neighbor = cells.get(v3GridKey(cell.gx + dx, cell.gz + dz));
+      if (neighbor) result.push(neighbor);
+    }
+  }
+  return result;
+}
+
+function v3PlateMoisture(x: number, z: number, seedHash: number, baseMoisture: number): number {
+  const scale = 192;
+  const baseX = Math.floor(x / scale);
+  const baseZ = Math.floor(z / scale);
+  let nearestDistance = Number.POSITIVE_INFINITY;
+  let plateMoisture = 0;
+  for (let dx = -1; dx <= 1; dx += 1) {
+    for (let dz = -1; dz <= 1; dz += 1) {
+      const px = baseX + dx;
+      const pz = baseZ + dz;
+      const jitterX = ((hash2d(seedHash, 0x421, px, pz) / 0xffffffff) - 0.5) * scale * 0.58;
+      const jitterZ = ((hash2d(seedHash, 0x422, px, pz) / 0xffffffff) - 0.5) * scale * 0.58;
+      const centerX = (px + 0.5) * scale + jitterX;
+      const centerZ = (pz + 0.5) * scale + jitterZ;
+      const distance = Math.hypot(x - centerX, z - centerZ);
+      if (distance >= nearestDistance) continue;
+      nearestDistance = distance;
+      plateMoisture = (hash2d(seedHash, 0x423, px, pz) / 0xffffffff) * 2 - 1;
+    }
+  }
+  return Math.max(-1, Math.min(1, baseMoisture * 0.74 + plateMoisture * 0.26));
+}
+
+function v3LakeComponents(cells: ReadonlyMap<string, V3HydrologyCell>, seedHash: number): Array<Omit<V3HydrologyLake, "id">> {
+  const candidates = new Set([...cells.values()].filter((cell) => (
+    cell.filledHeight - v3DrainElevation(cell) >= 0.9
+    && cell.protectedInfluence < 0.08
+    && cell.moisture > -0.48
+  )).map((cell) => cell.key));
+  const components: Array<{ members: V3HydrologyCell[]; score: number }> = [];
+  while (candidates.size > 0) {
+    const firstKey = candidates.values().next().value as string;
+    candidates.delete(firstKey);
+    const queue = [cells.get(firstKey)!];
+    const members: V3HydrologyCell[] = [];
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+      members.push(current);
+      for (const neighbor of v3HydrologyNeighbors(current, cells)) {
+        if (!candidates.delete(neighbor.key)) continue;
+        queue.push(neighbor);
+      }
+    }
+    if (members.length < 3) continue;
+    const wetness = members.reduce((sum, cell) => sum + cell.moisture, 0) / members.length;
+    components.push({ members, score: Math.min(180, members.length) * (1.2 + wetness * 0.35) });
+  }
+  if (components.length === 0) {
+    const fallback = [...cells.values()].filter((cell) => cell.protectedInfluence < 0.06 && cell.moisture > -0.35)
+      .sort((left, right) => left.height - right.height
+        || hash2d(seedHash, 0x431, left.gx, left.gz) - hash2d(seedHash, 0x431, right.gx, right.gz))[0];
+    if (fallback) components.push({ members: [fallback, ...v3HydrologyNeighbors(fallback, cells).filter((cell) => cell.height <= fallback.height + 1).slice(0, 7)], score: 1 });
+  }
+  return components.sort((left, right) => right.score - left.score).flatMap(({ members }) => {
+    const centerX = members.reduce((sum, cell) => sum + cell.x, 0) / members.length;
+    const centerZ = members.reduce((sum, cell) => sum + cell.z, 0) / members.length;
+    const ordered = [...members].sort((left, right) => Math.hypot(left.x - centerX, left.z - centerZ) - Math.hypot(right.x - centerX, right.z - centerZ));
+    const limited = ordered.slice(0, 160);
+    const spill = Math.max(1, Math.min(10, Math.floor(limited.reduce((sum, cell) => sum + cell.filledHeight, 0) / limited.length)));
+    const submerged = limited.filter((cell) => cell.height < spill);
+    const selected = submerged.length >= 3 ? submerged : limited.slice(0, Math.min(8, limited.length));
+    if (selected.length < 3) return [];
+    return [{
+      cells: new Set(selected.map((cell) => cell.key)),
+      waterLevel: Math.max(spill, Math.min(...selected.map((cell) => cell.height)) + 1),
+      centerX, centerZ,
+      area: selected.length * 64,
+    }];
+  });
+}
+
+function v3OutletKey(
+  start: V3HydrologyCell,
+  cells: ReadonlyMap<string, V3HydrologyCell>,
+  lakeByCell: ReadonlyMap<string, V3HydrologyLake>,
+  memo: Map<string, string>,
+): string {
+  const cached = memo.get(start.key);
+  if (cached) return cached;
+  const path: string[] = [];
+  const seen = new Set<string>();
+  let current: V3HydrologyCell | undefined = start;
+  let outlet = `edge:${start.key}`;
+  while (current && !seen.has(current.key)) {
+    const known = memo.get(current.key);
+    if (known) { outlet = known; break; }
+    path.push(current.key);
+    seen.add(current.key);
+    const lake = lakeByCell.get(current.key);
+    if (lake) { outlet = `lake:${lake.id}`; break; }
+    if (!current.downstreamKey) { outlet = `edge:${current.key}`; break; }
+    current = cells.get(current.downstreamKey);
+  }
+  for (const key of path) memo.set(key, outlet);
+  return outlet;
+}
+
+function v3RiverSegment(
+  cell: V3HydrologyCell,
+  downstream: V3HydrologyCell,
+  chainId: number,
+  minimumAccumulation: number,
+  seedHash: number,
+  lakeByCell: ReadonlyMap<string, V3HydrologyLake>,
+): V3RiverSegment {
+  const start = v3JitteredPoint(cell, seedHash);
+  const end = v3JitteredPoint(downstream, seedHash);
+  const downstreamLake = lakeByCell.get(downstream.key);
+  const rawStart = Math.max(0, Math.min(cell.height - 1, Math.floor(cell.filledHeight) - 1));
+  const rawEnd = downstreamLake?.waterLevel ?? Math.max(0, Math.min(downstream.height - 1, Math.floor(downstream.filledHeight) - 1));
+  const waterLevel2 = Math.min(rawStart, rawEnd);
+  const waterLevel1 = Math.max(waterLevel2, rawStart);
+  return {
+    x1: start.x, z1: start.z, x2: end.x, z2: end.z,
+    waterLevel1, waterLevel2,
+    width1: v3RiverWidth(cell.accumulation, minimumAccumulation),
+    width2: v3RiverWidth(downstream.accumulation, minimumAccumulation),
+    chainId,
+  };
+}
+
+function v3RiverWidth(accumulation: number, minimumAccumulation: number): number {
+  return Math.max(1.45, Math.min(6.4, 1.35 + Math.log2(1 + accumulation / minimumAccumulation) * 0.82));
+}
+
+function v3JitteredPoint(cell: V3HydrologyCell, seedHash: number): { x: number; z: number } {
+  const amplitude = 1.55;
+  return {
+    x: cell.x + ((hash2d(seedHash, 0x441, cell.gx, cell.gz) / 0xffffffff) * 2 - 1) * amplitude,
+    z: cell.z + ((hash2d(seedHash, 0x442, cell.gx, cell.gz) / 0xffffffff) * 2 - 1) * amplitude,
+  };
+}
+
+function v3SegmentBuckets(segments: readonly V3RiverSegment[]): ReadonlyMap<string, readonly number[]> {
+  const bucketSize = 32;
+  const buckets = new Map<string, number[]>();
+  segments.forEach((segment, index) => {
+    const padding = Math.max(segment.width1, segment.width2) + 5;
+    const minX = Math.floor((Math.min(segment.x1, segment.x2) - padding) / bucketSize);
+    const maxX = Math.floor((Math.max(segment.x1, segment.x2) + padding) / bucketSize);
+    const minZ = Math.floor((Math.min(segment.z1, segment.z2) - padding) / bucketSize);
+    const maxZ = Math.floor((Math.max(segment.z1, segment.z2) + padding) / bucketSize);
+    for (let bx = minX; bx <= maxX; bx += 1) {
+      for (let bz = minZ; bz <= maxZ; bz += 1) {
+        const key = `${bx}:${bz}`;
+        const bucket = buckets.get(key) ?? [];
+        bucket.push(index);
+        buckets.set(key, bucket);
+      }
+    }
+  });
+  return buckets;
+}
+
+interface V3QueueItem { key: string; height: number; tie: number }
+
+class V3MinQueue {
+  private readonly items: V3QueueItem[] = [];
+  get size(): number { return this.items.length; }
+  push(item: V3QueueItem): void {
+    this.items.push(item);
+    let index = this.items.length - 1;
+    while (index > 0) {
+      const parent = Math.floor((index - 1) / 2);
+      if (v3QueueBefore(this.items[parent]!, item)) break;
+      this.items[index] = this.items[parent]!;
+      index = parent;
+    }
+    this.items[index] = item;
+  }
+  pop(): V3QueueItem | undefined {
+    const first = this.items[0];
+    const last = this.items.pop();
+    if (!first || !last || this.items.length === 0) return first;
+    let index = 0;
+    while (true) {
+      const left = index * 2 + 1;
+      const right = left + 1;
+      if (left >= this.items.length) break;
+      const next = right < this.items.length && v3QueueBefore(this.items[right]!, this.items[left]!) ? right : left;
+      if (v3QueueBefore(last, this.items[next]!)) break;
+      this.items[index] = this.items[next]!;
+      index = next;
+    }
+    this.items[index] = last;
+    return first;
+  }
+}
+
+function v3QueueBefore(left: V3QueueItem, right: V3QueueItem): boolean {
+  return left.height < right.height || (left.height === right.height && left.tie <= right.tie);
+}
+
 function v2HydrologyNeighbors(point: V2HydrologyPoint, step: number, nodes: ReadonlyMap<string, V2HydrologyPoint>): V2HydrologyPoint[] {
   const result: V2HydrologyPoint[] = [];
   for (let dx = -step; dx <= step; dx += step) {
@@ -584,6 +1019,59 @@ function v2TurnPenalty(previous: V2HydrologyPoint, current: V2HydrologyPoint, ne
   const bz = next.z - current.z;
   const length = Math.max(1, Math.hypot(ax, az) * Math.hypot(bx, bz));
   return 1 - (ax * bx + az * bz) / length;
+}
+
+function sampleV3Hydrology(
+  x: number,
+  z: number,
+  baseHeight: number,
+  hydrology: V3Hydrology,
+): { kind: V2TerrainSample["waterKind"]; height: number; material: TerrainMaterial } {
+  const minimum = -hydrology.extent + hydrology.step;
+  const gx = Math.round((x - minimum) / hydrology.step);
+  const gz = Math.round((z - minimum) / hydrology.step);
+  let nearestLake: { distance: number; lake: V3HydrologyLake } | null = null;
+  for (let dx = -1; dx <= 1; dx += 1) {
+    for (let dz = -1; dz <= 1; dz += 1) {
+      const key = v3GridKey(gx + dx, gz + dz);
+      const lake = hydrology.lakeByCell.get(key);
+      const cell = hydrology.cells.get(key);
+      if (!lake || !cell) continue;
+      const distance = Math.hypot(x - cell.x, z - cell.z);
+      if (!nearestLake || distance < nearestLake.distance) nearestLake = { distance, lake };
+    }
+  }
+  if (nearestLake) {
+    const waterRadius = hydrology.step * 0.76;
+    if (nearestLake.distance <= waterRadius) return { kind: "lake", height: nearestLake.lake.waterLevel, material: "water" };
+    const bankRadius = hydrology.step * 1.24;
+    if (nearestLake.distance <= bankRadius) {
+      const bank = smoothstep(waterRadius, bankRadius, nearestLake.distance);
+      return { kind: "none", height: Math.round((nearestLake.lake.waterLevel + 1) * (1 - bank) + baseHeight * bank), material: "dirt" };
+    }
+  }
+
+  const bucket = hydrology.segmentBuckets.get(`${Math.floor(x / 32)}:${Math.floor(z / 32)}`) ?? [];
+  let nearest: { distance: number; waterLevel: number; width: number } | null = null;
+  for (const index of bucket) {
+    const segment = hydrology.segments[index]!;
+    const distance = distanceToSegmentV2(x, z, segment.x1, segment.z1, segment.x2, segment.z2);
+    if (nearest && distance.distance >= nearest.distance) continue;
+    nearest = {
+      distance: distance.distance,
+      waterLevel: segment.waterLevel1 + (segment.waterLevel2 - segment.waterLevel1) * distance.alpha,
+      width: segment.width1 + (segment.width2 - segment.width1) * distance.alpha,
+    };
+  }
+  if (!nearest) return { kind: "none", height: baseHeight, material: "grass" };
+  const waterLevel = Math.max(0, Math.min(baseHeight, Math.round(nearest.waterLevel)));
+  if (nearest.distance <= nearest.width) return { kind: "river", height: waterLevel, material: "water" };
+  const bankWidth = 3.8 + Math.min(2.2, nearest.width * 0.35);
+  if (nearest.distance <= nearest.width + bankWidth) {
+    const bank = smoothstep(nearest.width, nearest.width + bankWidth, nearest.distance);
+    return { kind: "none", height: Math.round((waterLevel + 1) * (1 - bank) + baseHeight * bank), material: "dirt" };
+  }
+  return { kind: "none", height: baseHeight, material: "grass" };
 }
 
 function sampleV2Hydrology(
