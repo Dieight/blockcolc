@@ -1,10 +1,16 @@
 import type { BlueprintVoxel } from "./blueprint";
 import { materialResponseForVoxel, type MaterialResponseKind } from "./material-response";
+import {
+  isOriginalMaterialPattern,
+  originalPatternForBlockId,
+  type OriginalMaterialPattern,
+} from "./original-materials";
 
 export interface FallbackVisualStyle {
   key: string;
   color: number;
   response: MaterialResponseKind;
+  pattern: OriginalMaterialPattern;
   transparent: boolean;
   opacity: number;
 }
@@ -34,11 +40,12 @@ const WOOD_COLORS: Readonly<Record<string, number>> = {
 export function fallbackVisualStyleForVoxel(
   voxel: Pick<BlueprintVoxel, "materialId" | "sourceBlockId">,
 ): FallbackVisualStyle {
-  const path = voxel.sourceBlockId?.toLowerCase().split(":", 2)[1] ?? "";
+  const path = voxel.sourceBlockId?.toLowerCase().split(":").pop() ?? "";
   const dyed = Object.entries(DYE_COLORS).find(([name]) => path === name || path.startsWith(`${name}_`));
   const wood = Object.entries(WOOD_COLORS).find(([name]) => path === name || path.startsWith(`${name}_`));
   let color = BASE_COLORS[voxel.materialId] ?? 0xc3b18d;
   let response = materialResponseForVoxel(voxel);
+  const pattern = originalPatternForBlockId(voxel.sourceBlockId, voxel.materialId);
   let transparent = voxel.materialId === "glass";
   let opacity = transparent ? 0.44 : 1;
 
@@ -47,6 +54,8 @@ export function fallbackVisualStyleForVoxel(
   } else if (wood && /(?:planks|log|wood|stem|hyphae|bamboo|shelf|bookshelf|door|trapdoor|fence|gate|sign|button|pressure_plate)/.test(path)) {
     color = wood[1];
     response = "wood";
+  } else if (/(?:^|_)ore(?:_|$)/.test(path)) {
+    color = oreColor(path);
   } else if (path.includes("copper")) {
     color = path.includes("oxidized") ? 0x51a68c
       : path.includes("weathered") ? 0x7c9b89
@@ -63,6 +72,46 @@ export function fallbackVisualStyleForVoxel(
     color = 0xd6c653;
   } else if (path.includes("cinnabar")) {
     color = 0xa24b3d;
+  } else if (path.includes("deepslate") || path.includes("blackstone") || path.includes("basalt")) {
+    color = 0x4d5655;
+  } else if (path.includes("tuff")) {
+    color = 0x65756c;
+  } else if (path.includes("granite")) {
+    color = 0x9b6a5b;
+  } else if (path.includes("diorite") || path.includes("calcite") || path.includes("quartz")) {
+    color = 0xc9cbc3;
+  } else if (path.includes("red_sandstone")) {
+    color = 0xba7042;
+  } else if (path.includes("sandstone") || path === "sand" || path.includes("end_stone")) {
+    color = 0xcbb887;
+  } else if (path.includes("andesite") || path.includes("stone") || path.includes("cobble")) {
+    color = 0x7d8581;
+  } else if (path.includes("nether_brick") || path.includes("netherrack")) {
+    color = 0x74413f;
+  } else if (path.includes("mud_brick") || path.includes("mud")) {
+    color = 0x776453;
+  } else if (path === "bricks" || path.includes("brick_block")) {
+    color = 0x9d5c4c;
+  } else if (path.includes("prismarine")) {
+    color = 0x59988d;
+  } else if (path.includes("purpur")) {
+    color = 0x9d6d9d;
+  } else if (path.includes("obsidian")) {
+    color = 0x3d334c;
+  } else if (path.includes("iron")) {
+    color = 0xb7b9b2;
+  } else if (path.includes("gold")) {
+    color = 0xd6ad3f;
+  } else if (path.includes("netherite")) {
+    color = 0x4e474b;
+  } else if (/(?:grass|moss|leaves|vine|azalea|fern)/.test(path)) {
+    color = 0x638453;
+  } else if (/(?:dirt|podzol|mycelium|soul_soil)/.test(path)) {
+    color = 0x79634e;
+  } else if (/(?:sand|gravel)/.test(path)) {
+    color = path.includes("red_") ? 0xb66c42 : 0xc7b88b;
+  } else if (path.includes("snow")) {
+    color = 0xe5ece8;
   }
 
   if (/(?:^|_)glass(?:_|$)|(?:^|_)ice(?:_|$)/.test(path)) {
@@ -71,25 +120,40 @@ export function fallbackVisualStyleForVoxel(
     response = "glass";
   }
   return {
-    key: `fallback:${color.toString(16).padStart(6, "0")}:${response}:${transparent ? "t" : "o"}`,
+    key: `fallback:${color.toString(16).padStart(6, "0")}:${response}:${pattern}:${transparent ? "t" : "o"}`,
     color,
     response,
+    pattern,
     transparent,
     opacity,
   };
 }
 
 export function parseFallbackVisualKey(key: string): FallbackVisualStyle | undefined {
-  const match = /^fallback:([0-9a-f]{6}):(default|stone|wood|metal|glass):(t|o)$/.exec(key);
-  if (!match) return undefined;
-  const transparent = match[3] === "t";
+  const match = /^fallback:([0-9a-f]{6}):(default|stone|wood|metal|glass):([^:]+):(t|o)$/.exec(key);
+  if (!match || !isOriginalMaterialPattern(match[3]!)) return undefined;
+  const transparent = match[4] === "t";
   return {
     key,
     color: Number.parseInt(match[1]!, 16),
     response: match[2] as MaterialResponseKind,
+    pattern: match[3],
     transparent,
     opacity: transparent ? 0.44 : 1,
   };
+}
+
+function oreColor(path: string): number {
+  if (path.includes("coal")) return 0x5f625f;
+  if (path.includes("iron")) return 0xa8927d;
+  if (path.includes("gold")) return 0xc5a344;
+  if (path.includes("redstone")) return 0x9f4d46;
+  if (path.includes("diamond")) return 0x5ca6a1;
+  if (path.includes("emerald")) return 0x57966b;
+  if (path.includes("lapis")) return 0x526f9f;
+  if (path.includes("copper")) return 0xa86e55;
+  if (path.includes("quartz")) return 0xbda99a;
+  return 0x7f827c;
 }
 
 export type StaticFluidKind = "water" | "lava";

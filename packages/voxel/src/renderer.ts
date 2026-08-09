@@ -69,6 +69,12 @@ import {
   staticFluidHeight,
   staticFluidKind,
 } from "./fallback-visual";
+import {
+  createOriginalMaterialTexture,
+  createPlanarQuadUvs,
+  originalPatternForMaterialId,
+  type OriginalMaterialPattern,
+} from "./original-materials";
 
 export interface WorldSnapshot {
   projectId: string;
@@ -137,6 +143,7 @@ export interface RendererDiagnostics {
   texturedBatchCount: number;
   texturedVoxelCount: number;
   fallbackVoxelCount: number;
+  originalMaterialTextureCount: number;
   transformedUvVoxelCount: number;
   geometrySignatureBatchCount: number;
   geometryVoxelCount: number;
@@ -398,6 +405,7 @@ export function createVoxelRenderer(
   lightRig.add(sunSprite, moonSprite);
 
   const materials = new Map<string, THREE.MeshStandardMaterial>();
+  const originalMaterialTextures = new Map<OriginalMaterialPattern, THREE.DataTexture>();
   let emissiveMaterials: TrackedEmissiveMaterial[] = [];
   let localLights: TrackedLocalLight[] = [];
   let glowSprites: TrackedGlowSprite[] = [];
@@ -515,8 +523,10 @@ export function createVoxelRenderer(
       const terrainWater = id === "terrainWater";
       const terrainLava = id === "terrainLava";
       const transparent = fallbackVisual?.transparent === true || id === "glass" || terrainWater;
+      const pattern = fallbackVisual?.pattern ?? originalPatternForMaterialId(id);
       found = new THREE.MeshStandardMaterial({
         color: fallbackVisual?.color ?? colors[id] ?? 0xffffff,
+        map: originalMaterialTexture(pattern),
         roughness: id === "glass" ? 0.1 : terrainWater ? 0.34 : response.roughness,
         metalness: id === "glass" ? 0.08 : terrainWater ? 0.05 : response.metalness,
         transparent,
@@ -528,6 +538,15 @@ export function createVoxelRenderer(
       const voxelEdgeStrength = transparent ? 0.22 : fallbackVisual ? 0.12 : ["stone", "wood", "plank", "roof", "accent"].includes(id) ? 0.12 : 0;
       trackMaterialEffects(found, voxelEdgeStrength);
       materials.set(id, found);
+    }
+    return found;
+  }
+
+  function originalMaterialTexture(pattern: OriginalMaterialPattern): THREE.DataTexture {
+    let found = originalMaterialTextures.get(pattern);
+    if (!found) {
+      found = createOriginalMaterialTexture(pattern);
+      originalMaterialTextures.set(pattern, found);
     }
     return found;
   }
@@ -779,6 +798,7 @@ export function createVoxelRenderer(
   function addTerrain(data: MergedGeometryData): void {
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute("position", new THREE.Float32BufferAttribute(data.positions, 3));
+    geometry.setAttribute("uv", new THREE.Float32BufferAttribute(createPlanarQuadUvs(data.positions), 2));
     const combined: number[] = [];
     const materialIds: readonly TerrainMaterialKey[] = ["grass", "dirt", "stone", "water"];
     materialIds.forEach((id, materialIndex) => {
@@ -902,6 +922,7 @@ export function createVoxelRenderer(
     if (data.indices.length === 0) return;
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute("position", new THREE.Float32BufferAttribute(data.positions, 3));
+    geometry.setAttribute("uv", new THREE.Float32BufferAttribute(createPlanarQuadUvs(data.positions), 2));
     geometry.setIndex(data.indices);
     geometry.computeVertexNormals();
     const mesh = new THREE.Mesh(geometry, material("path"));
@@ -1864,6 +1885,7 @@ export function createVoxelRenderer(
       texturedBatchCount,
       texturedVoxelCount,
       fallbackVoxelCount,
+      originalMaterialTextureCount: originalMaterialTextures.size,
       transformedUvVoxelCount,
       geometrySignatureBatchCount,
       geometryVoxelCount,
@@ -1950,6 +1972,7 @@ export function createVoxelRenderer(
     canvas.dataset.texturedBatchCount = String(diagnostics.texturedBatchCount);
     canvas.dataset.texturedVoxelCount = String(diagnostics.texturedVoxelCount);
     canvas.dataset.fallbackVoxelCount = String(diagnostics.fallbackVoxelCount);
+    canvas.dataset.originalMaterialTextureCount = String(diagnostics.originalMaterialTextureCount);
     canvas.dataset.transformedUvVoxelCount = String(diagnostics.transformedUvVoxelCount);
     canvas.dataset.geometrySignatureBatchCount = String(diagnostics.geometrySignatureBatchCount);
     canvas.dataset.geometryVoxelCount = String(diagnostics.geometryVoxelCount);
@@ -2220,6 +2243,7 @@ export function createVoxelRenderer(
       }
       renderer.dispose();
       materials.forEach((entry) => entry.dispose());
+      originalMaterialTextures.forEach((entry) => entry.dispose());
       activeResourcePack?.atlas.dispose();
       activeResourcePack = null;
     },

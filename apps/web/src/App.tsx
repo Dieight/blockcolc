@@ -21,7 +21,7 @@ type ImportRole = 'building' | 'decoration';
 interface ProjectSetupDraft { kind: 'finite' | 'habit'; title: string; subtasksText: string; blueprintId: string; habitTargetRounds: number; imported: LitematicImportResult | null; packCompatibility: { name: string; textured: number; fallback: number; total: number } | null; importRole: ImportRole }
 const PREFERENCES_KEY = 'blockcolc-focus-preferences-v1';
 const ROUND_PLAN_KEY = 'blockcolc-round-plan-v1';
-const APP_VERSION = '1.1.0';
+const APP_VERSION = '1.1.1';
 const REPOSITORY_URL = 'https://github.com/Dieight/blockcolc';
 const INITIAL_PROJECT_SETUP_DRAFT: ProjectSetupDraft = { kind: 'finite', title: '我的第一座工坊', subtasksText: '确定目标\n完成核心工作\n检查并收尾', blueprintId: 'builtin-small-workshop', habitTargetRounds: 10, imported: null, packCompatibility: null, importRole: 'building' };
 let voxelModulePromise:Promise<typeof import('@tomato-clock/voxel')>|null=null;

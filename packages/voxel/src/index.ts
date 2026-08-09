@@ -13,3 +13,4 @@ export * from './atlas-animation';
 export * from './visual-biome';
 export * from './resource-geometry';
 export * from './material-response';
+export * from './original-materials';
