@@ -1,0 +1,21 @@
+{
+  "name": "@tomato-clock/core-loop-browser",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test:e2e": "playwright test"
+  },
+  "dependencies": {
+    "@tomato-clock/application": "file:../../packages/application",
+    "@tomato-clock/domain": "file:../../packages/domain",
+    "@tomato-clock/storage-indexeddb": "file:../../packages/storage-indexeddb"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.55.1",
+    "@types/node": "^24.10.1",
+    "typescript": "^5.9.3",
+    "vite": "^7.1.7"
+  }
+}

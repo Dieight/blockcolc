@@ -1,0 +1,26 @@
+# Changelog
+
+User-facing release notes are kept here; internal diagnosis and per-run evidence belong in `docs/QA-BASELINES.md` or ignored artifacts.
+
+## v1.2.0 - 2026-08-11
+
+- Added Auto, Performance, Balanced, and Cinematic original lighting presets with bounded Bloom, improved water, glass, emissive materials, and brighter readable nights.
+- Kept Cinematic light halos synchronized during rotation and zoom without introducing an idle render loop or full-screen brightness switching.
+- Added off, current-building, and all-building construction-outline options using a lit exposed shell instead of bright white placeholder volumes.
+- Newly imported Litematic buildings now use deterministic support-aware construction order while existing saved blueprints retain their stored order.
+- Fixed Android night stars disappearing at the farthest settlement zoom and prevented compact 26-week heatmap month labels from overlapping.
+
+## v1.1.2 - 2026-08-10
+
+- Improved stable-seed watershed terrain, widening streams, lake basins, and building/road protection zones.
+- Daily goals now start automatically at eight rounds and save immediately; complete and early focus both count.
+- Updated 26-week effective-focus heatmap thresholds to `0 / 90 / 180 / 270 / 360` minutes.
+- Added persistent names for local blueprint-library entries and fixed Android Chinese composition input when saving a name.
+
+## v1.1.1 - 2026-08-09
+
+- Added original fallback material patterns for unsupported blocks while preserving user-imported resource-pack priority.
+
+## v1.1.0 - 2026-08-08
+
+- Added second-generation terrain, hydrology, support masks, LOD, and broader Minecraft Java block-model compatibility.

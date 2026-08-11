@@ -1,6 +1,6 @@
 {
   "name": "tomato-clock",
-  "version": "1.1.2",
+  "version": "1.2.0",
   "private": true,
   "workspaces": [
     "packages/*",
@@ -8,6 +8,8 @@
     "integration/*"
   ],
   "scripts": {
+    "version:check": "node tools/sync-version.mjs --check",
+    "version:sync": "node tools/sync-version.mjs --write",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
     "test:e2e": "npm run test:e2e --workspaces --if-present"

@@ -1,11 +1,9 @@
 import { Gunzip } from "fflate";
 import {
-  CONSTRUCTION_STAGES,
   validateBlueprint,
   type BlueprintBounds,
   type BlueprintV1,
   type BlueprintVoxel,
-  type ConstructionStageId,
   type MaterialId,
 } from "@tomato-clock/voxel";
 import { parseJavaNbt } from "./nbt.js";
@@ -365,15 +363,46 @@ function isAir(name: string): boolean {
 
 function assignBuildOrder(voxels: readonly DecodedVoxel[]): BlueprintVoxel[] {
   const minY = Math.min(...voxels.map((voxel) => voxel.y));
-  const maxY = Math.max(...voxels.map((voxel) => voxel.y));
-  const midpoint = minY + (maxY - minY) * 0.55;
-  const groups = new Map<ConstructionStageId, DecodedVoxel[]>(CONSTRUCTION_STAGES.map((stage) => [stage.id, []]));
-  for (const voxel of voxels) groups.get(stageFor(voxel, minY, midpoint))!.push(voxel);
+  const byCoordinate = new Map(voxels.map((voxel) => [coordinateKey(voxel.x, voxel.y, voxel.z), voxel]));
+  const queued = new Set<string>();
+  const built = new Set<string>();
+  const frontier = new ConstructionHeap(compareConstructionCandidates);
+  const disconnected = voxels
+    .filter((voxel) => !byCoordinate.has(coordinateKey(voxel.x, voxel.y - 1, voxel.z)))
+    .sort(compareConstructionCandidates);
+  let disconnectedIndex = 0;
   const ordered: DecodedVoxel[] = [];
-  for (const stage of CONSTRUCTION_STAGES) {
-    const members = groups.get(stage.id)!.sort((left, right) => left.y - right.y || left.x - right.x || left.z - right.z
-      || compareText(stateKey(left.state), stateKey(right.state)));
-    ordered.push(...members);
+  const enqueue = (voxel: DecodedVoxel | undefined, force = false): void => {
+    if (!voxel) return;
+    const key = coordinateKey(voxel.x, voxel.y, voxel.z);
+    if (queued.has(key) || built.has(key)) return;
+    if (!force && voxel.y !== minY) {
+      const below = coordinateKey(voxel.x, voxel.y - 1, voxel.z);
+      if (byCoordinate.has(below) && !built.has(below)) return;
+      if (!neighborsOf(voxel).some((neighbor) => built.has(neighbor))) return;
+    }
+    queued.add(key);
+    frontier.push(voxel);
+  };
+  voxels.filter((voxel) => voxel.y === minY).sort(compareConstructionCandidates).forEach((voxel) => enqueue(voxel));
+  while (ordered.length < voxels.length) {
+    let next = frontier.pop();
+    if (!next) {
+      // An intentionally detached component (for example a hanging detail) is
+      // deferred until all ground-connected structure is complete.
+      while (disconnectedIndex < disconnected.length
+        && built.has(coordinateKey(disconnected[disconnectedIndex]!.x, disconnected[disconnectedIndex]!.y, disconnected[disconnectedIndex]!.z))) {
+        disconnectedIndex += 1;
+      }
+      next = disconnected[disconnectedIndex];
+      enqueue(next, true);
+      next = frontier.pop();
+    }
+    if (!next) break;
+    const key = coordinateKey(next.x, next.y, next.z);
+    built.add(key);
+    ordered.push(next);
+    for (const neighbor of neighborsOf(next)) enqueue(byCoordinate.get(neighbor));
   }
   const divisor = Math.max(1, ordered.length - 1);
   return ordered.map((voxel, index) => {
@@ -389,6 +418,62 @@ function assignBuildOrder(voxels: readonly DecodedVoxel[]): BlueprintVoxel[] {
       ...emissive,
     };
   });
+}
+
+class ConstructionHeap {
+  private readonly values: DecodedVoxel[] = [];
+  constructor(private readonly compare: (left: DecodedVoxel, right: DecodedVoxel) => number) {}
+  get size(): number { return this.values.length; }
+  push(value: DecodedVoxel): void {
+    this.values.push(value);
+    let index = this.values.length - 1;
+    while (index > 0) {
+      const parent = Math.floor((index - 1) / 2);
+      if (this.compare(this.values[parent]!, value) <= 0) break;
+      this.values[index] = this.values[parent]!;
+      index = parent;
+    }
+    this.values[index] = value;
+  }
+  pop(): DecodedVoxel | undefined {
+    const first = this.values[0];
+    const last = this.values.pop();
+    if (last && this.values.length > 0) {
+      let index = 0;
+      while (true) {
+        const left = index * 2 + 1;
+        if (left >= this.values.length) break;
+        const right = left + 1;
+        const child = right < this.values.length && this.compare(this.values[right]!, this.values[left]!) < 0 ? right : left;
+        if (this.compare(this.values[child]!, last) >= 0) break;
+        this.values[index] = this.values[child]!;
+        index = child;
+      }
+      this.values[index] = last;
+    }
+    return first;
+  }
+}
+
+function compareConstructionCandidates(left: DecodedVoxel, right: DecodedVoxel): number {
+  return constructionDetailRank(left) - constructionDetailRank(right)
+    || left.y - right.y || left.x - right.x || left.z - right.z
+    || compareText(stateKey(left.state), stateKey(right.state));
+}
+
+function constructionDetailRank(voxel: DecodedVoxel): number {
+  const path = voxel.state.name.split(":", 2)[1] ?? "";
+  return voxel.materialId === "glass" || voxel.materialId === "accent"
+    || /(?:door|trapdoor|sign|button|pressure_plate|ladder|rail|carpet|bed|torch|lantern|plant|leaves|vine|flower|banner|candle|chain|skull|head|bell|lever)$/.test(path)
+    ? 1 : 0;
+}
+
+function neighborsOf(voxel: Position): string[] {
+  return [
+    coordinateKey(voxel.x - 1, voxel.y, voxel.z), coordinateKey(voxel.x + 1, voxel.y, voxel.z),
+    coordinateKey(voxel.x, voxel.y - 1, voxel.z), coordinateKey(voxel.x, voxel.y + 1, voxel.z),
+    coordinateKey(voxel.x, voxel.y, voxel.z - 1), coordinateKey(voxel.x, voxel.y, voxel.z + 1),
+  ];
 }
 
 function emissiveSemantics(state: PaletteEntry): Pick<BlueprintVoxel, "emissiveKind" | "emissiveLevel"> {
@@ -471,16 +556,6 @@ function emissiveSemantics(state: PaletteEntry): Pick<BlueprintVoxel, "emissiveK
       }
       return {};
   }
-}
-
-function stageFor(voxel: DecodedVoxel, minY: number, midpoint: number): ConstructionStageId {
-  const path = voxel.state.name.split(":", 2)[1] ?? "";
-  if (voxel.y === minY) return "foundation";
-  if (voxel.materialId === "glass" || voxel.materialId === "accent"
-    || /(?:door|trapdoor|sign|button|pressure_plate|ladder|rail|carpet|bed)$/.test(path)) return "details";
-  if (voxel.materialId === "roof" && voxel.y >= midpoint) return "roof";
-  if (voxel.materialId === "wood") return "frame";
-  return "walls";
 }
 
 function stateKey(state: PaletteEntry): string {
@@ -597,8 +672,10 @@ function stringValue(raw: unknown, fallback: string): string {
   return typeof raw === "string" ? raw : fallback;
 }
 
-function coordinateKey(position: Position): string {
-  return `${position.x}:${position.y}:${position.z}`;
+function coordinateKey(positionOrX: Position | number, y?: number, z?: number): string {
+  return typeof positionOrX === "number"
+    ? `${positionOrX}:${y}:${z}`
+    : `${positionOrX.x}:${positionOrX.y}:${positionOrX.z}`;
 }
 
 function safeMultiply(a: number, b: number, c: number, message: string): number {

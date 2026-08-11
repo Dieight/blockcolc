@@ -31,7 +31,14 @@ import {
   type TerrainGenerationVersion,
   type TerrainPad,
 } from "./terrain";
-import { lowerQualityTier, QUALITY_PROFILES, selectQualityTier, type QualityProfile, type QualityTier } from "./quality";
+import {
+  lowerQualityTier,
+  QUALITY_PROFILES,
+  selectQualityTierForLighting,
+  type QualityProfile,
+  type QualityTier,
+  type VoxelLightingQuality,
+} from "./quality";
 import {
   buildResourcePackAtlas,
   createAtlasMaterial,
@@ -75,6 +82,7 @@ import {
   originalPatternForMaterialId,
   type OriginalMaterialPattern,
 } from "./original-materials";
+import { LightingPostProcessor } from "./lighting-postprocess";
 
 export interface WorldSnapshot {
   projectId: string;
@@ -82,11 +90,15 @@ export interface WorldSnapshot {
   buildingCompletionBasisPoints: number;
   buildingConditionBasisPoints: number;
   isMonument: boolean;
+  /** Current project marker used only by local construction-outline presentation. */
+  isActive?: boolean;
   settlementIndex: number;
   /** Reached daily-goal dates assigned to this project. Derived from domain history, never stored here. */
   decorationDates?: readonly string[];
   importedDecorations?: readonly ImportedDecorationSnapshot[];
 }
+
+export type ConstructionOutlineVisibility = "off" | "current" | "all";
 
 export interface ImportedDecorationSnapshot {
   rewardId: string;
@@ -181,24 +193,26 @@ export interface RendererDiagnostics {
   glowSpriteCount: number;
   visibleGlowSpriteCount: number;
   glowTextureSize: 32;
-  requestedVisualExperiment: VoxelVisualExperiment;
-  activeVisualExperiment: VoxelVisualExperiment;
-  experimentMeshCount: number;
-  fullscreenPassCount: 0;
+  requestedLightingQuality: VoxelLightingQuality;
+  activeLightingQuality: "performance" | "balanced" | "cinematic";
+  bloomEnabled: boolean;
+  fullscreenPassCount: number;
+  postProcessRenderCount: number;
+  postProcessBypassCount: number;
   continuousRendering: false;
   lowLatencyWebGl: boolean;
   nativeInputReceivedCount: number;
   nativeInputLastSequence: number;
   nativeInputRenderedSequence: number;
   nativeInputTransport: "none" | "capacitor-event" | "direct-snapshot";
+  constructionOutlineVisibility: ConstructionOutlineVisibility;
+  plannedOutlineVoxelCount: number;
 }
 
 export interface VoxelResourcePack {
   id: string;
   manifest: ResourcePackManifest;
 }
-
-export type VoxelVisualExperiment = "none" | "water" | "mist-beam";
 
 export interface VoxelRenderer {
   setWorld(world: WorldSnapshot | null): void;
@@ -236,6 +250,10 @@ const colors: Record<string, number> = {
 const DEFAULT_FACE_UV_WORDS = packFaceUvTransform();
 const SKY_RADIUS = 120;
 const MAX_STAR_COUNT = 960;
+const STAR_RADIUS_RATIO = 0.91;
+const CELESTIAL_RADIUS_RATIO = 0.82;
+const SKY_FAR_CLIP_RATIO = 0.82;
+const STAR_NEAR_CLIP_MARGIN = 1.5;
 interface TrackedEmissiveMaterial {
   material: THREE.MeshStandardMaterial;
   level: number;
@@ -280,7 +298,8 @@ export function createVoxelRenderer(
     blueprint?: BlueprintV1;
     resolveBlueprint?: BlueprintResolver;
     resourcePackAtlasMaximumSize?: number;
-    visualExperiment?: VoxelVisualExperiment;
+    lightingQuality?: VoxelLightingQuality;
+    constructionOutlineVisibility?: ConstructionOutlineVisibility;
     environmentStyle?: TerrainEnvironmentStyle;
     worldSeed?: string;
     terrainGenerationVersion?: TerrainGenerationVersion;
@@ -313,6 +332,7 @@ export function createVoxelRenderer(
     alpha: false,
     powerPreference: "high-performance",
   });
+  renderer.info.autoReset = false;
   const webGlContext = renderer.getContext();
   const webGl2Context = typeof WebGL2RenderingContext !== "undefined" && webGlContext instanceof WebGL2RenderingContext
     ? webGlContext
@@ -337,8 +357,6 @@ export function createVoxelRenderer(
   roadGroup.name = "roads";
   const buildingGroup = new THREE.Group();
   buildingGroup.name = "buildingsAndDecorations";
-  const experimentGroup = new THREE.Group();
-  experimentGroup.name = "highQualityVisualExperiment";
   const lightRig = new THREE.Group();
   lightRig.name = "worldLightRig";
   const localLightGroup = new THREE.Group();
@@ -346,7 +364,7 @@ export function createVoxelRenderer(
   lightRig.add(localLightGroup);
   const atmosphereGroup = new THREE.Group();
   atmosphereGroup.name = "atmosphere";
-  rotatableWorldRoot.add(terrainGroup, roadGroup, buildingGroup, experimentGroup, lightRig, atmosphereGroup);
+  rotatableWorldRoot.add(terrainGroup, roadGroup, buildingGroup, lightRig, atmosphereGroup);
   scene.add(rotatableWorldRoot);
   const skyGroup = new THREE.Group();
   skyGroup.name = "layeredSky";
@@ -361,7 +379,7 @@ export function createVoxelRenderer(
   skyDome.frustumCulled = false;
   skyGroup.add(skyDome);
 
-  const starGeometry = createStarGeometry(MAX_STAR_COUNT, SKY_RADIUS * 0.91);
+  const starGeometry = createStarGeometry(MAX_STAR_COUNT, SKY_RADIUS * STAR_RADIUS_RATIO);
   const starMaterial = new THREE.PointsMaterial({
     color: 0xdce8ff, size: 1.45, sizeAttenuation: false,
     transparent: false, depthWrite: false, depthTest: false, fog: false,
@@ -402,7 +420,9 @@ export function createVoxelRenderer(
   moonSprite.name = "squareMoon";
   moonSprite.scale.set(6.2, 6.2, 1);
   moonSprite.renderOrder = -997;
-  lightRig.add(sunSprite, moonSprite);
+  // Celestial sprites belong to the camera-centred sky, not the settlement
+  // light rig. The directional light remains world-anchored for stable shadows.
+  skyGroup.add(sunSprite, moonSprite);
 
   const materials = new Map<string, THREE.MeshStandardMaterial>();
   const originalMaterialTextures = new Map<OriginalMaterialPattern, THREE.DataTexture>();
@@ -415,7 +435,9 @@ export function createVoxelRenderer(
   let contentBounds = defaultContentBounds();
   let currentWeather: WeatherState = weatherForLocalDate(localDateForDate(new Date()));
   let currentLighting = sunStateForLocalTime(new Date());
-  let qualityTier = selectQualityTier(deviceSignals(renderer, 0));
+  const requestedLightingQuality = options.lightingQuality ?? "auto";
+  const constructionOutlineVisibility = options.constructionOutlineVisibility ?? "current";
+  let qualityTier = selectQualityTierForLighting(deviceSignals(renderer, 0), requestedLightingQuality);
   let qualityProfile = QUALITY_PROFILES[qualityTier];
   let interactionFrameDurations: number[] = [];
   let interactionTotalDurations: number[] = [];
@@ -429,6 +451,9 @@ export function createVoxelRenderer(
   let gpuTimerQueryInteracting = false;
   let gpuRenderDurations: number[] = [];
   let gpuRenderMaxMs = 0;
+  const lightingPostProcessor = new LightingPostProcessor(renderer);
+  let postProcessRenderCount = 0;
+  let postProcessBypassCount = 0;
   let pointerMoveCount = 0;
   let resizeCount = 0;
   let shadowToggleCount = 0;
@@ -462,6 +487,7 @@ export function createVoxelRenderer(
     try { consumeNativeInput(options.readNativeInput()); } catch { /* A missing native bridge falls back to DOM input. */ }
   }
   let sceneVoxelCount = 0;
+  let plannedOutlineVoxelCount = 0;
   let fittedDistance = 24;
   let cameraDistance = 24;
   let minimumCameraDistance = fittedDistance * 0.65;
@@ -508,10 +534,7 @@ export function createVoxelRenderer(
   let shadowExtent = 18;
   let cloudMaterial: THREE.MeshLambertMaterial | null = null;
   let cloudBlockCount = 0;
-  const requestedVisualExperiment = options.visualExperiment ?? "none";
   const previewMode = options.previewMode === true;
-  let experimentWaterMaterial: THREE.MeshPhysicalMaterial | null = null;
-  let experimentBeamMaterial: THREE.MeshBasicMaterial | null = null;
   let naturalTreeMeshes: { trunks: THREE.InstancedMesh; crowns: THREE.InstancedMesh; total: number } | null = null;
   let rainAnimation: { mesh: THREE.InstancedMesh; drops: readonly { x: number; z: number; phase: number }[]; baseY: number; spanY: number; elapsedMs: number; lastUpdateMs: number } | null = null;
 
@@ -612,14 +635,24 @@ export function createVoxelRenderer(
     pollGpuTimer();
     beginGpuTimer();
     const started = performance.now();
+    renderer.info.reset();
+    const postProcessEnabled = lightingPostProcessor.getDiagnostics().enabled;
     try {
-      renderer.render(scene, camera);
+      if (postProcessEnabled) {
+        lightingPostProcessor.render(scene, camera);
+        postProcessRenderCount += 1;
+      } else {
+        renderer.setRenderTarget(null);
+        renderer.render(scene, camera);
+      }
     } finally {
       endGpuTimer();
     }
     canvas.dataset.renderCalls = String(renderer.info.render.calls);
     canvas.dataset.renderTriangles = String(renderer.info.render.triangles);
     canvas.dataset.pixelRatio = renderer.getPixelRatio().toFixed(2);
+    canvas.dataset.postProcessRenderCount = String(postProcessRenderCount);
+    canvas.dataset.postProcessBypassCount = String(postProcessBypassCount);
     const elapsed = performance.now() - started;
     if (interacting) {
       if (lastInteractionAnimationFrameMs !== null) {
@@ -673,10 +706,7 @@ export function createVoxelRenderer(
     clearGroup(buildingGroup);
     clearGroup(terrainGroup);
     clearGroup(roadGroup);
-    clearGroup(experimentGroup, true);
     naturalTreeMeshes = null;
-    experimentWaterMaterial = null;
-    experimentBeamMaterial = null;
     clearLights();
     emissiveMaterials = [];
     texturedBatchCount = 0;
@@ -690,6 +720,7 @@ export function createVoxelRenderer(
     multipartGeometryVoxelCount = 0;
     translucentGeometryVoxelCount = 0;
     tintedVoxelCount = 0;
+    plannedOutlineVoxelCount = 0;
     referencedAnimatedTextureIndices.clear();
     const initialPositioned = layoutWorlds(worlds, resolveBlueprint);
     const buildingPads: TerrainPad[] = [];
@@ -703,7 +734,7 @@ export function createVoxelRenderer(
     positionedWorlds = positioned;
     const voxelCount = positioned.reduce((sum, world) => sum + world.blueprint.voxels.length, 0);
     sceneVoxelCount = voxelCount;
-    qualityTier = selectQualityTier(deviceSignals(renderer, voxelCount));
+    qualityTier = selectQualityTierForLighting(deviceSignals(renderer, voxelCount), requestedLightingQuality);
     applyQuality(qualityTier);
 
     const roads = roadCellsForVillage(positioned);
@@ -750,7 +781,6 @@ export function createVoxelRenderer(
     canvas.dataset.terrainHydrologyProtectedWater = String(terrainData.hydrology.protectedWaterCellCount);
     canvas.dataset.terrainFarExtent = String(terrainData.bounds.maxX);
     addTerrain(terrainData);
-    addHighQualityExperiment(terrainData);
     addRoads(roads, positioned, [...buildingPads, ...decorationPads]);
     const emissivePoints: EmissivePoint[] = [];
     addRoadLamps(roads, positioned, emissivePoints);
@@ -776,7 +806,6 @@ export function createVoxelRenderer(
     cacheStaticTransformTree(terrainGroup);
     cacheStaticTransformTree(roadGroup);
     cacheStaticTransformTree(buildingGroup);
-    cacheStaticTransformTree(experimentGroup);
     cacheStaticTransformTree(atmosphereGroup);
     // The sky follows the camera's position. Cache its contents, but leave the
     // group itself under explicit camera control so focused framing cannot leave
@@ -872,51 +901,6 @@ export function createVoxelRenderer(
     naturalTreeMeshes.trunks.count = visible;
     naturalTreeMeshes.crowns.count = visible;
     naturalTreeMeshes.trunks.castShadow = qualityTier === "high";
-  }
-
-  function addHighQualityExperiment(data: MergedGeometryData): void {
-    if (requestedVisualExperiment === "none" || qualityTier !== "high") return;
-    if (requestedVisualExperiment === "water") {
-      experimentWaterMaterial = new THREE.MeshPhysicalMaterial({
-        color: 0x315e68,
-        emissive: 0x173f49,
-        emissiveIntensity: 0.14,
-        roughness: 0.26,
-        metalness: 0.04,
-        clearcoat: 0.58,
-        clearcoatRoughness: 0.24,
-        transparent: true,
-        opacity: 0.48,
-        depthWrite: false,
-        side: THREE.FrontSide,
-      });
-      const water = new THREE.Mesh(new THREE.CircleGeometry(1, 64), experimentWaterMaterial);
-      water.name = "staticWaterHighlightExperiment";
-      water.rotation.x = -Math.PI / 2;
-      water.position.y = -1.48;
-      water.scale.set((data.bounds.maxX - data.bounds.minX) / 2 + 6, (data.bounds.maxZ - data.bounds.minZ) / 2 + 6, 1);
-      water.receiveShadow = false;
-      experimentGroup.add(water);
-    } else {
-      experimentBeamMaterial = new THREE.MeshBasicMaterial({
-        color: 0xc9ddd2,
-        transparent: true,
-        opacity: 0.018,
-        depthWrite: false,
-        depthTest: true,
-        blending: THREE.AdditiveBlending,
-        side: THREE.FrontSide,
-        fog: false,
-        toneMapped: false,
-      });
-      const beam = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 4, 24, 12, 1, true), experimentBeamMaterial);
-      beam.name = "staticMistBeamExperiment";
-      beam.position.set(data.bounds.minX * 0.45, 10.5, data.bounds.maxZ * 0.18);
-      beam.rotation.z = THREE.MathUtils.degToRad(-8);
-      beam.renderOrder = 4;
-      experimentGroup.add(beam);
-    }
-    experimentGroup.visible = qualityTier === "high";
   }
 
   type TerrainMaterialKey = "grass" | "dirt" | "stone" | "water";
@@ -1024,7 +1008,9 @@ export function createVoxelRenderer(
       structure.add(mesh);
     }
     addVines(structure, conditionVisual.vines);
-    addPlannedOutline(structure, world.blueprint, completion);
+    const showOutline = constructionOutlineVisibility === "all"
+      || (constructionOutlineVisibility === "current" && world.isActive === true);
+    addPlannedOutline(structure, world.blueprint, completion, showOutline);
     addDecorations(structure, world, emissivePoints);
   }
 
@@ -1269,16 +1255,37 @@ export function createVoxelRenderer(
     root.add(mesh);
   }
 
-  function addPlannedOutline(root: THREE.Group, blueprint: BlueprintV1, completion: number): void {
-    const planned = blueprint.voxels.filter((voxel) => voxel.buildOrder > completion);
+  function addPlannedOutline(root: THREE.Group, blueprint: BlueprintV1, completion: number, showOutline: boolean): void {
+    if (!showOutline) return;
+    const occupied = new Set(blueprint.voxels.map((voxel) => `${voxel.x}:${voxel.y}:${voxel.z}`));
+    const planned = blueprint.voxels.filter((voxel) => voxel.buildOrder > completion && isExposedVoxel(voxel, occupied));
     if (planned.length === 0) return;
-    const plannedMaterial = new THREE.MeshBasicMaterial({ color: 0xdfe7e1, transparent: true, opacity: 0.055, depthWrite: false });
+    plannedOutlineVoxelCount += planned.length;
+    const plannedMaterial = new THREE.MeshStandardMaterial({
+      color: 0x8fa097,
+      transparent: true,
+      opacity: 0.2,
+      depthWrite: false,
+      roughness: 1,
+      metalness: 0,
+      emissive: 0x000000,
+      emissiveIntensity: 0,
+    });
     const outline = new THREE.InstancedMesh(new THREE.BoxGeometry(0.9, 0.9, 0.9), plannedMaterial, planned.length);
     const matrix = new THREE.Matrix4();
     planned.forEach((voxel, index) => { matrix.makeTranslation(voxel.x, voxel.y, voxel.z); outline.setMatrixAt(index, matrix); });
     outline.instanceMatrix.needsUpdate = true;
     outline.userData.ownedMaterial = plannedMaterial;
     root.add(outline);
+  }
+
+  function isExposedVoxel(voxel: BlueprintV1["voxels"][number], occupied: ReadonlySet<string>): boolean {
+    return !occupied.has(`${voxel.x - 1}:${voxel.y}:${voxel.z}`)
+      || !occupied.has(`${voxel.x + 1}:${voxel.y}:${voxel.z}`)
+      || !occupied.has(`${voxel.x}:${voxel.y - 1}:${voxel.z}`)
+      || !occupied.has(`${voxel.x}:${voxel.y + 1}:${voxel.z}`)
+      || !occupied.has(`${voxel.x}:${voxel.y}:${voxel.z - 1}`)
+      || !occupied.has(`${voxel.x}:${voxel.y}:${voxel.z + 1}`);
   }
 
   function addDecorations(root: THREE.Group, world: PositionedWorldSnapshot, emissivePoints: EmissivePoint[]): void {
@@ -1369,11 +1376,7 @@ export function createVoxelRenderer(
     for (const entry of localLights) entry.light.intensity = entry.baseIntensity * state.nightFactor;
     glowMaterial.opacity = state.nightFactor * (qualityTier === "high" ? 0.62 : 0.48);
     for (const entry of glowSprites) entry.sprite.visible = glowMaterial.opacity > 0.015;
-    if (experimentWaterMaterial) {
-      experimentWaterMaterial.color.setHex(0x315e68).lerp(new THREE.Color(state.skyHorizonColor), 0.12);
-      experimentWaterMaterial.clearcoat = qualityTier === "high" ? 0.58 : 0;
-    }
-    if (experimentBeamMaterial) experimentBeamMaterial.opacity = (0.014 + state.nightFactor * 0.012) * (qualityTier === "high" ? 1 : 0);
+    updateReflectiveMaterials(state);
     updateMaterialEffects(state);
     applyAtmosphere();
     requestShadowRefresh(now, forceShadowRefresh);
@@ -1401,6 +1404,25 @@ export function createVoxelRenderer(
         shadowTint: profile.coolColor,
         strength: profile.faceContrast,
       });
+    }
+  }
+
+  function updateReflectiveMaterials(state: SunState): void {
+    const water = materials.get("terrainWater");
+    if (water) {
+      water.color.setHex(0x3e7380).lerp(new THREE.Color(state.skyHorizonColor), qualityTier === "high" ? 0.2 : 0.1);
+      water.roughness = qualityTier === "high" ? 0.22 : qualityTier === "balanced" ? 0.3 : 0.48;
+      water.metalness = qualityTier === "high" ? 0.1 : 0.04;
+      water.emissive.setHex(state.nightFactor > 0.55 ? 0x102c36 : 0x071c22);
+      water.emissiveIntensity = qualityTier === "high" ? 0.2 : 0.08;
+    }
+    const glass = materials.get("glass");
+    if (glass) {
+      glass.color.setHex(state.nightFactor > 0.55 ? 0x7f9eae : 0x8eb4b7);
+      glass.roughness = qualityTier === "high" ? 0.08 : qualityTier === "balanced" ? 0.14 : 0.22;
+      glass.opacity = qualityTier === "high" ? 0.52 : qualityTier === "balanced" ? 0.46 : 0.4;
+      glass.emissive.setHex(state.nightFactor > 0.55 ? 0x24485b : 0x173641);
+      glass.emissiveIntensity = qualityTier === "high" ? 0.18 : 0.1;
     }
   }
 
@@ -1548,10 +1570,9 @@ export function createVoxelRenderer(
   function updateSkyVisuals(state: SunState): void {
     const weatherTint = currentWeather.kind === "clear" ? null : currentWeather.kind === "mist" ? 0xaeb8b1 : 0x9eada8;
     updateSkyDomeColors(skyGeometry, state, weatherTint);
-    const center = contentBounds.getCenter(new THREE.Vector3());
-    const celestialRadius = Math.max(70, contentBounds.getSize(new THREE.Vector3()).length() * 1.15);
-    setCelestialPosition(sunSprite, state.sunPosition, center, celestialRadius);
-    setCelestialPosition(moonSprite, state.moonPosition, center, celestialRadius);
+    const celestialRadius = SKY_RADIUS * CELESTIAL_RADIUS_RATIO;
+    setCelestialPosition(sunSprite, state.sunPosition, celestialRadius);
+    setCelestialPosition(moonSprite, state.moonPosition, celestialRadius);
     sunSpriteMaterial.color.setHex(state.color);
     sunSprite.visible = state.sunVisibility > 0.08;
     moonSpriteMaterial.color.setHex(state.skyHorizonColor).lerp(new THREE.Color(0xd7e3ef), state.moonVisibility);
@@ -1654,14 +1675,23 @@ export function createVoxelRenderer(
       cameraTarget.y + Math.sin(cameraPitch) * cameraDistance,
       cameraTarget.z + Math.sin(cameraAzimuth) * horizontal,
     );
-    skyGroup.position.copy(camera.position);
-    skyGroup.updateMatrix();
-    skyGroup.updateMatrixWorld();
     const radius = Math.max(6, contentBounds.getSize(new THREE.Vector3()).length() / 2);
     camera.near = Math.max(0.1, cameraDistance - radius * 1.65);
-    camera.far = cameraDistance + radius * 3 + 60;
+    camera.far = Math.max(
+      cameraDistance + radius * 3 + 60,
+      camera.near * STAR_NEAR_CLIP_MARGIN / (STAR_RADIUS_RATIO * SKY_FAR_CLIP_RATIO),
+    );
     camera.updateProjectionMatrix();
     camera.lookAt(cameraTarget);
+    camera.updateMatrixWorld(true);
+    const skyDistance = Math.min(
+      camera.far * SKY_FAR_CLIP_RATIO,
+      Math.max(SKY_RADIUS, camera.near * STAR_NEAR_CLIP_MARGIN / STAR_RADIUS_RATIO),
+    );
+    skyGroup.position.copy(camera.position);
+    skyGroup.scale.setScalar(skyDistance / SKY_RADIUS);
+    skyGroup.updateMatrix();
+    skyGroup.updateMatrixWorld(true);
     updateFogDistances();
     updateNearDetailEffects();
     // Keep interaction diagnostics truthful while the camera eases after a drag.
@@ -1671,6 +1701,12 @@ export function createVoxelRenderer(
     canvas.dataset.cameraMinimumDistanceRatio = (minimumCameraDistance / fittedDistance).toFixed(4);
     canvas.dataset.cameraMaximumDistanceRatio = (maximumCameraDistance / fittedDistance).toFixed(4);
     canvas.dataset.skyCameraWorldOffset = new THREE.Vector3().setFromMatrixPosition(skyGroup.matrixWorld).distanceTo(camera.position).toFixed(4);
+    canvas.dataset.skyRadius = skyDistance.toFixed(2);
+    canvas.dataset.starNearClipRatio = (skyDistance * STAR_RADIUS_RATIO / camera.near).toFixed(4);
+    const moonProjection = celestialProjection(moonSprite, camera);
+    canvas.dataset.moonInView = String(moonProjection.inView);
+    canvas.dataset.moonScreenX = moonProjection.x.toFixed(3);
+    canvas.dataset.moonScreenY = moonProjection.y.toFixed(3);
   }
 
   function applyPendingCameraUpdate(nowMs: number): boolean {
@@ -1697,6 +1733,7 @@ export function createVoxelRenderer(
     resizeCount += 1;
     const rect = canvas.getBoundingClientRect();
     renderer.setSize(Math.max(1, rect.width), Math.max(1, rect.height), false);
+    lightingPostProcessor.setSize(Math.max(1, rect.width), Math.max(1, rect.height), renderer.getPixelRatio());
     camera.aspect = Math.max(1, rect.width) / Math.max(1, rect.height);
     camera.updateProjectionMatrix();
     frameScene(false);
@@ -1818,6 +1855,10 @@ export function createVoxelRenderer(
     qualityTier = tier;
     qualityProfile = QUALITY_PROFILES[tier];
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, qualityProfile.maxPixelRatio));
+    lightingPostProcessor.configure(
+      LIGHTWEIGHT_SHADING_PROFILES[tier].features.halfResolutionBloom,
+      tier === "high" ? 0.32 : 0,
+    );
     renderer.shadowMap.enabled = true;
     sun.shadow.intensity = 0.62 + LIGHTWEIGHT_SHADING_PROFILES[tier].shadowStrength * 0.25;
     sun.shadow.bias = -0.00035;
@@ -1827,6 +1868,7 @@ export function createVoxelRenderer(
       sun.shadow.mapSize.set(qualityProfile.shadowMapSize, qualityProfile.shadowMapSize);
     }
     updateMaterialEffects(currentLighting);
+    updateReflectiveMaterials(currentLighting);
     for (const mesh of cutoutShadowMeshes) mesh.castShadow = LIGHTWEIGHT_SHADING_PROFILES[tier].features.cutoutShadows;
     requestShadowRefresh(new Date(), true);
     while (localLights.length > qualityProfile.maxLocalLights) {
@@ -1837,7 +1879,6 @@ export function createVoxelRenderer(
       const removed = glowSprites.pop();
       if (removed) localLightGroup.remove(removed.sprite);
     }
-    experimentGroup.visible = tier === "high" && requestedVisualExperiment !== "none";
     updateNaturalTreeDensity();
     if (atmosphereGroup.children.length > 0) updateWeather(currentWeather.localDate, true);
     canvas.dataset.qualityTier = tier;
@@ -1927,10 +1968,14 @@ export function createVoxelRenderer(
       glowSpriteCount: glowSprites.length,
       visibleGlowSpriteCount: glowSprites.filter((entry) => entry.sprite.visible).length,
       glowTextureSize: 32,
-      requestedVisualExperiment,
-      activeVisualExperiment: experimentGroup.visible ? requestedVisualExperiment : "none",
-      experimentMeshCount: experimentGroup.visible ? experimentGroup.children.length : 0,
-      fullscreenPassCount: 0,
+      requestedLightingQuality,
+      activeLightingQuality: qualityTier === "high" ? "cinematic" : qualityTier === "balanced" ? "balanced" : "performance",
+      bloomEnabled: lightingPostProcessor.getDiagnostics().enabled,
+      fullscreenPassCount: lightingPostProcessor.getDiagnostics().passCount,
+      postProcessRenderCount,
+      postProcessBypassCount,
+      constructionOutlineVisibility,
+      plannedOutlineVoxelCount,
       continuousRendering: false,
       lowLatencyWebGl,
       nativeInputReceivedCount,
@@ -2014,10 +2059,14 @@ export function createVoxelRenderer(
     canvas.dataset.glowSpriteCount = String(diagnostics.glowSpriteCount);
     canvas.dataset.visibleGlowSpriteCount = String(diagnostics.visibleGlowSpriteCount);
     canvas.dataset.glowTextureSize = String(diagnostics.glowTextureSize);
-    canvas.dataset.requestedVisualExperiment = diagnostics.requestedVisualExperiment;
-    canvas.dataset.activeVisualExperiment = diagnostics.activeVisualExperiment;
-    canvas.dataset.experimentMeshCount = String(diagnostics.experimentMeshCount);
+    canvas.dataset.requestedLightingQuality = diagnostics.requestedLightingQuality;
+    canvas.dataset.activeLightingQuality = diagnostics.activeLightingQuality;
+    canvas.dataset.bloomEnabled = String(diagnostics.bloomEnabled);
     canvas.dataset.fullscreenPassCount = String(diagnostics.fullscreenPassCount);
+    canvas.dataset.postProcessRenderCount = String(diagnostics.postProcessRenderCount);
+    canvas.dataset.postProcessBypassCount = String(diagnostics.postProcessBypassCount);
+    canvas.dataset.constructionOutlineVisibility = diagnostics.constructionOutlineVisibility;
+    canvas.dataset.plannedOutlineVoxelCount = String(diagnostics.plannedOutlineVoxelCount);
     canvas.dataset.continuousRendering = String(diagnostics.continuousRendering);
     canvas.dataset.lowLatencyWebGl = String(diagnostics.lowLatencyWebGl);
     canvas.dataset.nativeInputReceivedCount = String(diagnostics.nativeInputReceivedCount);
@@ -2043,6 +2092,12 @@ export function createVoxelRenderer(
       triangles: diagnostics.render.triangles,
       pixelRatio: diagnostics.pixelRatio,
       qualityTier: diagnostics.qualityTier,
+      requestedLightingQuality: diagnostics.requestedLightingQuality,
+      activeLightingQuality: diagnostics.activeLightingQuality,
+      bloomEnabled: diagnostics.bloomEnabled,
+      fullscreenPassCount: diagnostics.fullscreenPassCount,
+      postProcessRenderCount: diagnostics.postProcessRenderCount,
+      postProcessBypassCount: diagnostics.postProcessBypassCount,
       nearDetailLevel: diagnostics.nearDetailLevel,
       edgeDetailStrength: diagnostics.edgeDetailStrength,
       memoryGeometries: diagnostics.memory.geometries,
@@ -2230,7 +2285,7 @@ export function createVoxelRenderer(
       clearGroup(terrainGroup);
       clearGroup(roadGroup);
       clearGroup(atmosphereGroup, true);
-      clearGroup(experimentGroup, true);
+      lightingPostProcessor.dispose();
       skyGeometry.dispose();
       skyMaterial.dispose();
       starGeometry.dispose();
@@ -2334,17 +2389,10 @@ function updateSkyDomeColors(geometry: THREE.BufferGeometry, state: SunState, we
 function setCelestialPosition(
   sprite: THREE.Sprite,
   direction: readonly [number, number, number],
-  center: THREE.Vector3,
   radius: number,
 ): void {
-  const horizontalLength = Math.max(1e-6, Math.hypot(direction[0], direction[2]));
-  const elevation = THREE.MathUtils.clamp(direction[1] / 18, 0, 1);
-  const horizontalRadius = radius * 0.78;
-  sprite.position.set(
-    center.x + (direction[0] / horizontalLength) * horizontalRadius,
-    center.y + radius * (0.06 + elevation * 0.06),
-    center.z + (direction[2] / horizontalLength) * horizontalRadius,
-  );
+  const length = Math.max(1e-6, Math.hypot(direction[0], direction[1], direction[2]));
+  sprite.position.set(direction[0] / length, direction[1] / length, direction[2] / length).multiplyScalar(radius);
 }
 
 function smoothstep01(value: number): number {

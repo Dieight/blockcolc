@@ -99,7 +99,7 @@ export const LIGHTWEIGHT_SHADING_PROFILES: Readonly<Record<QualityTier, Lightwei
       faceAmbientOcclusion: true,
       warmCoolTint: true,
       cutoutShadows: true,
-      halfResolutionBloom: false,
+      halfResolutionBloom: true,
       simpleWaterHighlights: true,
     }),
     ambientStrength: 0.48,

@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "fixtures": [
+    {
+      "path": "litematic/a94f3c5d-b4ad-42e1-ba26-f474b204b0ea.litematic",
+      "sizeBytes": 3913,
+      "sha256": "145f563bbddf48efe19233e44286a476830e0dd61573012453363fc5d76664ac",
+      "purpose": "Minecraft Java 1.21.4 parser compatibility sample"
+    },
+    {
+      "path": "litematic/bd29cade-7000-42b7-adc1-0631ce512c30.litematic",
+      "sizeBytes": 8155,
+      "sha256": "83ae600d2e67b0ce27d8672b4ed3597002d7ae658b86f200c9db590c5cfe194d",
+      "purpose": "Minecraft Java 1.20.1 parser compatibility sample"
+    }
+  ]
+}

@@ -44,20 +44,9 @@ test-results/
 artifacts/
 **/artifacts/
 
-# Tests, fixtures and exploratory work are maintained outside the public release
-**/test/
-**/tests/
-**/e2e/
-**/androidTest/
-**/*.test.ts
-**/*.test.tsx
-**/*.spec.ts
-**/*.spec.tsx
-**/*Test.java
-**/playwright.config.ts
-**/vitest.config.ts
+# Real fixtures and exploratory work stay local. Test source and configuration
+# are versioned so released behavior has a reproducible baseline.
 /spikes/
-/integration/
 /litematic/
 
 # The root workspace lockfile is authoritative
@@ -73,7 +62,6 @@ V2-RESEARCH.md
 MINECRAFT-VISUAL-COMPATIBILITY.md
 gpt-image-*.png
 tools/generate-v3-device-resource-pack.mjs
-packages/litematic/scripts/
 
 # OS files
 .DS_Store

@@ -70,7 +70,7 @@ export function sunStateForLocalTime(date: Date): SunState {
     sunVisibility,
     moonVisibility,
     starVisibility,
-    intensity: mix(0.48, 1.35 + Math.max(0, elevation) * 0.85, dayFactor),
+    intensity: mix(0.65, 1.35 + Math.max(0, elevation) * 0.85, dayFactor),
     color: mixColor(mixColor(0x9db7d9, 0xfff1ce, dayFactor), 0xffae68, horizonWarmth * 0.72),
     skyColor,
     skyZenithColor,
@@ -80,8 +80,8 @@ export function sunStateForLocalTime(date: Date): SunState {
     fogColor: mixColor(mixColor(0x263444, 0xadc1b8, dayFactor), 0xc98269, horizonWarmth * 0.42),
     hemisphereSkyColor: mixColor(0x7895b5, 0xf4f0dc, dayFactor),
     hemisphereGroundColor: mixColor(0x24382d, 0x4d6659, dayFactor),
-    hemisphereIntensity: mix(0.62, 0.72, dayFactor),
-    exposure: mix(1.04, 1.06, dayFactor),
+    hemisphereIntensity: mix(1.05, 1.1, dayFactor),
+    exposure: mix(1.2, 1.22, dayFactor),
     nightFactor,
   };
 }

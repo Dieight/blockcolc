@@ -1,4 +1,5 @@
 export type QualityTier = "low" | "balanced" | "high";
+export type VoxelLightingQuality = "auto" | "performance" | "balanced" | "cinematic";
 
 export interface QualityProfile {
   tier: QualityTier;
@@ -31,6 +32,18 @@ export function selectQualityTier(signals: QualitySignals): QualityTier {
   if ((signals.voxelCount ?? 0) > 55_000 || (signals.hardwareConcurrency ?? 8) <= 4
     || (signals.deviceMemoryGb ?? 8) <= 4 || signals.devicePixelRatio > 2.5) return "balanced";
   return "high";
+}
+
+/** Selects a user-requested visual preset while retaining conservative device guards. */
+export function selectQualityTierForLighting(
+  signals: QualitySignals,
+  preference: VoxelLightingQuality,
+): QualityTier {
+  const automatic = selectQualityTier(signals);
+  if (preference === "performance") return "low";
+  if (preference === "balanced") return automatic === "low" ? "low" : "balanced";
+  if (preference === "cinematic") return automatic === "low" ? "low" : "high";
+  return automatic;
 }
 
 export function lowerQualityTier(tier: QualityTier): QualityTier {

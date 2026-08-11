@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "packageId": "com.blockcolc.app",
+  "signerSha256": "6405e2ff95a32549699a3081372e8462317bee717c08caabf67678f211ddc6e3",
+  "repository": "Dieight/blockcolc",
+  "branch": "main",
+  "apkNameTemplate": "Blockcolc-v{version}.apk"
+}

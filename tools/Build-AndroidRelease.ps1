@@ -31,6 +31,11 @@ try {
 
     Push-Location $repositoryRoot
     try {
+        node tools/sync-version.mjs --check
+        if ($LASTEXITCODE -ne 0) { throw 'Version consistency check failed.' }
+
+        & (Join-Path $PSScriptRoot 'Test-FixtureHashes.ps1')
+
         npm run android:sync -w '@tomato-clock/android'
         if ($LASTEXITCODE -ne 0) { throw 'Capacitor sync failed.' }
 
