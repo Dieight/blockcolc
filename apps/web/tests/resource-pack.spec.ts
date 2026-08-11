@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { strToU8, zipSync } from 'fflate';
+import { existsSync } from 'node:fs';
 import { deflateSync } from 'node:zlib';
 import { resolve } from 'node:path';
 
@@ -51,9 +52,10 @@ test('imports, persists, switches and safely deletes a local Java resource pack'
 
 test('applies an atlas to a real imported building and restores original rendering', async ({page},testInfo) => {
   test.setTimeout(60_000);
+  const sample=resolve(process.cwd(),'../../litematic/bd29cade-7000-42b7-adc1-0631ce512c30.litematic');
+  test.skip(!existsSync(sample), 'The real Litematic compatibility fixture stays local.');
   await page.clock.install({time:new Date('2026-07-26T05:00:00.000Z')});
   await page.goto('/?__atlasPageSize=128');
-  const sample=resolve(process.cwd(),'../../litematic/bd29cade-7000-42b7-adc1-0631ce512c30.litematic');
   await page.getByLabel('导入 .litematic').setInputFiles(sample);
   await page.getByLabel('大型任务').fill('资源包视觉验证');
   await page.getByLabel('拆成小任务，每行一项').fill('验证纹理渲染');
@@ -108,9 +110,10 @@ test('applies an atlas to a real imported building and restores original renderi
 
 test('renders translucent multipart panes and zero-thickness iron bars from a real imported building',async({page},testInfo)=>{
   test.setTimeout(90_000);
+  const sample=resolve(process.cwd(),'../../litematic/a94f3c5d-b4ad-42e1-ba26-f474b204b0ea.litematic');
+  test.skip(!existsSync(sample), 'The real Litematic compatibility fixture stays local.');
   await page.clock.install({time:new Date('2026-07-26T05:00:00.000Z')});
   await page.goto('/?__atlasPageSize=128');
-  const sample=resolve(process.cwd(),'../../litematic/a94f3c5d-b4ad-42e1-ba26-f474b204b0ea.litematic');
   await page.getByLabel('导入 .litematic').setInputFiles(sample);
   await page.getByLabel('大型任务').fill('P2 透明连接验证');
   await page.getByLabel('拆成小任务，每行一项').fill('验证墙体连接\n验证玻璃板与铁栏杆');

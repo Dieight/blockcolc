@@ -74,7 +74,7 @@ The unsigned CI APK is evidence, not an installable or publishable application. 
 
 - Never replace a local fixture without updating its manifest entry and recording why in the active version packet.
 - A fixture size or SHA-256 mismatch blocks the gate; do not accept a changed sample as an incidental test update.
-- Real-sample compatibility cases run only when every manifest-listed local file is present. Synthetic parser and safety coverage always runs in CI; local release preparation still requires and hashes the real samples.
+- Real-sample unit and browser compatibility cases run only when their manifest-listed local files are present. Synthetic parser, import, resource-pack, and safety coverage always runs in CI; local release preparation still requires, hashes, and exercises the real samples.
 - Prefer generated in-memory fixtures for new parser/unit tests when a real file is not required.
 - Keep Playwright screenshots, traces, videos, `test-results`, `artifacts`, APKs, and logs out of Git.
 

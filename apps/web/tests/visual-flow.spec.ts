@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 async function createDefaultProject(page: import('@playwright/test').Page) {
@@ -129,8 +130,9 @@ test('previews three blueprints and persists the selected building', async ({ pa
 });
 
 test('imports a local litematic, previews it and persists its normalized blueprint', async ({ page }, testInfo) => {
-  await page.goto('/');
   const sample = resolve(process.cwd(), '../../litematic/bd29cade-7000-42b7-adc1-0631ce512c30.litematic');
+  test.skip(!existsSync(sample), 'The real Litematic compatibility fixture stays local.');
+  await page.goto('/');
   await page.getByLabel('导入 .litematic').setInputFiles(sample);
   await expect(page.getByRole('radio')).toHaveCount(4);
   await expect(page.getByText(/4,301 个方块/)).toBeVisible();
@@ -538,9 +540,10 @@ test('persists daily goal target changes and disabled state', async ({ page }, t
 });
 
 test('renames an imported building blueprint without changing its stored snapshot', async ({ page }, testInfo) => {
+  const sample = resolve(process.cwd(), '../../litematic/bd29cade-7000-42b7-adc1-0631ce512c30.litematic');
+  test.skip(!existsSync(sample), 'The real Litematic compatibility fixture stays local.');
   await createDefaultProject(page);
   await page.getByRole('button', { name: '设置' }).click();
-  const sample = resolve(process.cwd(), '../../litematic/bd29cade-7000-42b7-adc1-0631ce512c30.litematic');
   await page.getByLabel('导入 .litematic').setInputFiles(sample);
   await page.getByRole('button', { name: '保存到建筑蓝图库' }).click();
 

@@ -76,7 +76,7 @@ jobs:
         run: npm run test:e2e -w @tomato-clock/core-loop-browser -- --workers=1
 
       - name: Run Web release matrix
-        run: npm run test:web:release
+        run: npm run test:e2e -w @tomato-clock/web -- --workers=1
 
   android-candidate:
     name: Unsigned Android candidate
