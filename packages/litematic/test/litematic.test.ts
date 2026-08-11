@@ -1,19 +1,22 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { gzipSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
 import { LitematicParseError, parseLitematic, readPackedIndex } from "../src/index.js";
 import { parseJavaNbt } from "../src/nbt.js";
 import { testNbt as nbt, writeJavaNbt } from "./nbt-fixture.js";
 
-describe("Litematic sample compatibility", () => {
-  const samples = [
-    { file: "a94f3c5d-b4ad-42e1-ba26-f474b204b0ea.litematic", dataVersion: 3953, dimensions: { width: 18, height: 35, depth: 20 }, blocks: 1846 },
-    { file: "bd29cade-7000-42b7-adc1-0631ce512c30.litematic", dataVersion: 3465, dimensions: { width: 40, height: 21, depth: 20 }, blocks: 4301 },
-  ] as const;
+const samples = [
+  { file: "a94f3c5d-b4ad-42e1-ba26-f474b204b0ea.litematic", dataVersion: 3953, dimensions: { width: 18, height: 35, depth: 20 }, blocks: 1846 },
+  { file: "bd29cade-7000-42b7-adc1-0631ce512c30.litematic", dataVersion: 3465, dimensions: { width: 40, height: 21, depth: 20 }, blocks: 4301 },
+] as const;
+const sampleUrl = (file: string) => new URL(`../../../litematic/${file}`, import.meta.url);
+const describeSampleCompatibility = samples.every((sample) => existsSync(sampleUrl(sample.file))) ? describe : describe.skip;
+
+describeSampleCompatibility("Litematic sample compatibility", () => {
 
   for (const sample of samples) {
     it(`imports ${sample.file}`, async () => {
-      const input = readFileSync(new URL(`../../../litematic/${sample.file}`, import.meta.url));
+      const input = readFileSync(sampleUrl(sample.file));
       const result = await parseLitematic(input);
       expect(result.preview.minecraftDataVersion).toBe(sample.dataVersion);
       expect(result.preview.dimensions).toEqual(sample.dimensions);
