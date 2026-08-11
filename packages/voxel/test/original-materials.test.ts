@@ -55,6 +55,8 @@ describe("original procedural materials", () => {
     expect(texture.wrapS).toBe(THREE.RepeatWrapping);
     expect(texture.wrapT).toBe(THREE.RepeatWrapping);
     expect(texture.magFilter).toBe(THREE.NearestFilter);
+    expect(texture.minFilter).toBe(THREE.NearestMipmapLinearFilter);
+    expect(texture.anisotropy).toBe(2);
     expect(texture.generateMipmaps).toBe(true);
     texture.dispose();
   });

@@ -17,7 +17,7 @@ const state = (title: string) => ({
   decorationBlueprintResources: [],
   decorationRewards: [],
   buildingBlueprintResources: [],
-  worldSettings: { worldSeed: "fixture-world", terrainGenerationVersion: 3 as const, environmentStyle: "natural-valley" as const },
+  worldSettings: { worldSeed: "fixture-world", terrainGenerationVersion: 4 as const, environmentStyle: "natural-valley" as const },
 });
 
 test("real browser saves across reload, previews without mutation, replaces and restores", async ({ page }) => {

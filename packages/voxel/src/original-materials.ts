@@ -86,7 +86,8 @@ export function createOriginalMaterialTexture(pattern: OriginalMaterialPattern):
   texture.wrapS = THREE.RepeatWrapping;
   texture.wrapT = THREE.RepeatWrapping;
   texture.magFilter = THREE.NearestFilter;
-  texture.minFilter = THREE.NearestMipmapNearestFilter;
+  texture.minFilter = THREE.NearestMipmapLinearFilter;
+  texture.anisotropy = 2;
   texture.generateMipmaps = true;
   texture.flipY = false;
   texture.needsUpdate = true;

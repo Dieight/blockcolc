@@ -12,7 +12,7 @@ test("renders the current compact world and supports bounded rotate and pinch ge
   await expect(canvas).toHaveAttribute("data-fullscreen-pass-count", activeLighting === "cinematic" ? "4" : "0");
   await expect(canvas).toHaveAttribute("data-continuous-rendering", "false");
   await expect(canvas).toHaveAttribute("data-shader-detail", /^(low|balanced|high)$/);
-  await expect(canvas).toHaveAttribute("data-terrain-generation-version", "3");
+  await expect(canvas).toHaveAttribute("data-terrain-generation-version", "4");
   expect(Number(await canvas.getAttribute("data-terrain-near-cell-count"))).toBeGreaterThan(0);
   expect(Number(await canvas.getAttribute("data-terrain-middle-cell-count"))).toBeGreaterThan(0);
   expect(Number(await canvas.getAttribute("data-terrain-far-cell-count"))).toBeGreaterThan(0);
@@ -72,6 +72,14 @@ test("renders the current compact world and supports bounded rotate and pinch ge
   expect(zoomedOutRatio).toBeLessThanOrEqual(1.14);
   const zoomedOut = await canvas.screenshot({ path: testInfo.outputPath("v2-world-zoomed-out.png") });
   expect(zoomedOut.byteLength).toBeGreaterThan(2_000);
+  await expect(canvas).toHaveAttribute("data-visibility-near-clip-safe", "true");
+  await expect(canvas).toHaveAttribute("data-visibility-far-clip-safe", "true");
+  const cameraNear = Number(await canvas.getAttribute("data-camera-near"));
+  const cameraFar = Number(await canvas.getAttribute("data-camera-far"));
+  const nearestTerrain = Number(await canvas.getAttribute("data-visibility-nearest-distance"));
+  const farthestTerrain = Number(await canvas.getAttribute("data-visibility-farthest-distance"));
+  expect(cameraNear).toBeLessThanOrEqual(Math.max(0.5, nearestTerrain * 0.72) + 0.01);
+  expect(cameraFar - farthestTerrain).toBeGreaterThanOrEqual(23.99);
 
   expect(Number(await canvas.getAttribute("data-render-calls"))).toBeGreaterThan(0);
   expect(Number(await canvas.getAttribute("data-render-calls"))).toBeLessThan(120);

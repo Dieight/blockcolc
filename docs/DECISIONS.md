@@ -41,3 +41,15 @@ This file records decisions that affect workflow, source boundaries, or release 
 - CI records source commit, package/version, size, and APK SHA-256 in a structured manifest, attests the APK, then redownloads and compares the uploaded candidate in a separate job.
 - CI fixes the browser timezone to `Asia/Shanghai` so local-time product tests are deterministic, and uses one Web worker because GitHub's software WebGL renderer cannot sustain two concurrent 3D scenes. Real local fixtures and the synchronous hardware gesture case are explicit local-only coverage rather than false CI failures.
 - Real third-party Litematic fixtures, formal signing, ADB installation, GPU/WebView behavior, and subjective device acceptance remain local. Existing local prepare/publish scripts remain the authoritative release path until a later explicitly approved signing phase.
+
+## 2026-08-11 V16 Terrain, Sampling, And Timer Layout
+
+- Natural Valley advances to deterministic terrain generation version 4. Existing version-3 Natural Valley worlds automatically rebuild only their derived terrain while retaining the exact seed, settlement layout, roads, buildings, tasks, and progress. Classic Island remains visually unchanged.
+- Water reduction targets small rectangular fragments and excessive coverage without severing downhill drainage. Shoreline geometry may refine independently of the coarse hydrology grid, while protection zones and request-on-demand generation remain mandatory.
+- Mountain work raises the upper elevation tail and extends ridgelines instead of multiplying all terrain height. Common settlement framing remains tied to buildings and the protected core, not distant peaks or the maximum legal imported-building height.
+- Moire mitigation first addresses imported-atlas minification and Cinematic offscreen edge sampling, then isolates any remaining shadow shimmer. V16 does not introduce temporal antialiasing, history buffers, or a continuous render loop.
+- Before a plan starts, the dominant duration is the complete plan: focus duration times rounds plus breaks only between rounds. Once focus or rest begins, the dominant timer returns to the authoritative current-stage end timestamp.
+- Tasks, Statistics, and Settings keep bottom-navigation and safe-area clearance, but do not stack an additional large decorative page tail above it.
+- Visible night glows select actual emissive voxel coordinates independently from clustered point-light centroids and use a bounded soft-square sprite. This preserves the two-light performance ceiling without presenting floating spherical light sources.
+- Terrain water is an opaque, depth-writing surface. The product has no true sky-reflection pass, so transmitting camera-facing star points through water is treated as a rendering defect rather than a reflection effect.
+- Camera composition remains tied to the settlement core, while near/far clipping uses a separate full-terrain visibility bound. This keeps buildings readable without clipping the expanded V16 mountain ring at maximum zoom.

@@ -163,7 +163,7 @@ describe("merged stepped terrain", () => {
     expect(natural.bounds.maxX).toBeGreaterThanOrEqual(720);
     expect(natural.bounds.maxY).toBeGreaterThanOrEqual(20);
     expect(natural.bounds.minY).toBe(-0.5);
-    expect(natural.terrainGenerationVersion).toBe(3);
+    expect(natural.terrainGenerationVersion).toBe(4);
     expect(natural.lodCellCounts.near).toBeGreaterThan(0);
     expect(natural.lodCellCounts.middle).toBeGreaterThan(0);
     expect(natural.lodCellCounts.far).toBeGreaterThan(0);
@@ -188,7 +188,7 @@ describe("merged stepped terrain", () => {
     expect(otherSeed.positions).not.toEqual(natural.positions);
   });
 
-  it("keeps the previous terrain generator addressable while defaulting new worlds to v3", () => {
+  it("keeps the previous terrain generators addressable while defaulting new worlds to v4", () => {
     const placements = layoutWorlds(snapshots);
     const roads = roadCellsForVillage(placements);
     const previous = createSteppedTerrainData(placements, roads, [], undefined, {
@@ -196,14 +196,48 @@ describe("merged stepped terrain", () => {
       worldSeed: "stable-world",
       terrainGenerationVersion: 2,
     });
-    const current = createSteppedTerrainData(placements, roads, [], undefined, {
+    const previousHydrology = createSteppedTerrainData(placements, roads, [], undefined, {
       environmentStyle: "natural-valley",
       worldSeed: "stable-world",
       terrainGenerationVersion: 3,
     });
+    const current = createSteppedTerrainData(placements, roads, [], undefined, {
+      environmentStyle: "natural-valley",
+      worldSeed: "stable-world",
+      terrainGenerationVersion: 4,
+    });
     expect(previous.terrainGenerationVersion).toBe(2);
-    expect(current.terrainGenerationVersion).toBe(3);
+    expect(previousHydrology.terrainGenerationVersion).toBe(3);
+    expect(current.terrainGenerationVersion).toBe(4);
     expect(current.positions).not.toEqual(previous.positions);
+    expect(current.positions).not.toEqual(previousHydrology.positions);
+  });
+
+  it("reduces water coverage and raises only the high mountain tail across fixed seeds", () => {
+    const placements = layoutWorlds(snapshots);
+    const roads = roadCellsForVillage(placements);
+    const seeds = ["stable-world", "river-basin", "quiet-valley", "world-default"];
+    const ratios = { previous: [] as number[], current: [] as number[] };
+    for (const worldSeed of seeds) {
+      const previous = createSteppedTerrainData(placements, roads, [], undefined, {
+        environmentStyle: "natural-valley", worldSeed, terrainGenerationVersion: 3,
+      });
+      const current = createSteppedTerrainData(placements, roads, [], undefined, {
+        environmentStyle: "natural-valley", worldSeed, terrainGenerationVersion: 4,
+      });
+      ratios.previous.push(previous.hydrology.waterSurfaceArea / previous.hydrology.terrainSurfaceArea);
+      ratios.current.push(current.hydrology.waterSurfaceArea / current.hydrology.terrainSurfaceArea);
+      expect(current.bounds.maxY - 0.5).toBeGreaterThanOrEqual(42);
+      expect(current.bounds.maxY - 0.5).toBeLessThanOrEqual(48);
+      expect(current.hydrology.protectedWaterCellCount).toBe(0);
+      expect(current.hydrology.maxUphillWaterStep).toBe(0);
+      expect(current.triangleCount).toBeLessThan(previous.triangleCount * 1.2);
+    }
+    const median = (values: number[]) => {
+      const sorted = [...values].sort((left, right) => left - right);
+      return (sorted[1]! + sorted[2]!) / 2;
+    };
+    expect(median(ratios.current)).toBeLessThan(median(ratios.previous) * 0.82);
   });
 
   it.each([30, 60, 100])("keeps a %i-building natural world inside the merged-mesh budget", (count) => {

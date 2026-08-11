@@ -13,6 +13,19 @@ export interface RoundPlan {
   reportedSessionIds: string[];
 }
 
+export function plannedDurationMs(focusMinutes: number, breakMinutes: number, rounds: number): number {
+  if (!Number.isSafeInteger(focusMinutes) || focusMinutes < 1 || focusMinutes > 180) {
+    throw new RangeError('focusMinutes must be an integer between 1 and 180');
+  }
+  if (!Number.isSafeInteger(breakMinutes) || breakMinutes < 0 || breakMinutes > 60) {
+    throw new RangeError('breakMinutes must be an integer between 0 and 60');
+  }
+  if (!Number.isSafeInteger(rounds) || rounds < 1 || rounds > 4) {
+    throw new RangeError('rounds must be an integer between 1 and 4');
+  }
+  return (focusMinutes * rounds + breakMinutes * Math.max(0, rounds - 1)) * 60_000;
+}
+
 export function parseRoundPlan(value: unknown, projectId: string): RoundPlan | null {
   if (!value || typeof value !== 'object') return null;
   const candidate = value as Partial<RoundPlan>;

@@ -3,6 +3,7 @@ import type { ResourcePackManifest } from "@tomato-clock/resource-pack";
 import { BlueprintV1, resolveBuiltinBlueprint, validateBlueprint } from "./blueprint";
 import {
   clusterEmissivePoints,
+  selectEmissiveVisualPoints,
   sunStateForLocalTime,
   type EmissivePoint,
   type SunState,
@@ -189,16 +190,26 @@ export interface RendererDiagnostics {
   weatherKind: WeatherState["kind"];
   fogNear: number;
   fogFar: number;
+  cameraNear: number;
+  cameraFar: number;
+  visibilityNearestDistance: number;
+  visibilityFarthestDistance: number;
+  visibilityNearClipSafe: boolean;
+  visibilityFarClipSafe: boolean;
   atmosphereFollowsWorld: boolean;
+  terrainWaterOpaque: boolean;
   glowSpriteCount: number;
   visibleGlowSpriteCount: number;
+  glowSpriteMaximumScale: number;
   glowTextureSize: 32;
+  glowTextureShape: "soft-square";
   requestedLightingQuality: VoxelLightingQuality;
   activeLightingQuality: "performance" | "balanced" | "cinematic";
   bloomEnabled: boolean;
   fullscreenPassCount: number;
   postProcessRenderCount: number;
   postProcessBypassCount: number;
+  postProcessSampleCount: number;
   continuousRendering: false;
   lowLatencyWebGl: boolean;
   nativeInputReceivedCount: number;
@@ -433,6 +444,9 @@ export function createVoxelRenderer(
   let disposed = false;
   let frame = 0;
   let contentBounds = defaultContentBounds();
+  let visibilityBounds = defaultContentBounds();
+  let visibilityNearestDistance = 0;
+  let visibilityFarthestDistance = 0;
   let currentWeather: WeatherState = weatherForLocalDate(localDateForDate(new Date()));
   let currentLighting = sunStateForLocalTime(new Date());
   const requestedLightingQuality = options.lightingQuality ?? "auto";
@@ -545,7 +559,10 @@ export function createVoxelRenderer(
       const response = materialResponse(fallbackVisual?.response ?? materialResponseForMaterialId(id));
       const terrainWater = id === "terrainWater";
       const terrainLava = id === "terrainLava";
-      const transparent = fallbackVisual?.transparent === true || id === "glass" || terrainWater;
+      // Water is rendered as a surface, not a transparent volume. Keeping a
+      // depth-writing surface prevents camera-facing sky stars from bleeding
+      // through the terrain and reads more like a night reflection.
+      const transparent = fallbackVisual?.transparent === true || id === "glass";
       const pattern = fallbackVisual?.pattern ?? originalPatternForMaterialId(id);
       found = new THREE.MeshStandardMaterial({
         color: fallbackVisual?.color ?? colors[id] ?? 0xffffff,
@@ -553,7 +570,7 @@ export function createVoxelRenderer(
         roughness: id === "glass" ? 0.1 : terrainWater ? 0.34 : response.roughness,
         metalness: id === "glass" ? 0.08 : terrainWater ? 0.05 : response.metalness,
         transparent,
-        opacity: fallbackVisual?.opacity ?? (id === "glass" ? 0.44 : terrainWater ? 0.78 : 1),
+        opacity: fallbackVisual?.opacity ?? (id === "glass" ? 0.44 : 1),
         depthWrite: !transparent,
         emissive: terrainLava ? 0x8f1f08 : id === "glass" ? 0x315c72 : 0x000000,
         emissiveIntensity: terrainLava ? 0.68 : id === "glass" ? 0.13 : 0,
@@ -1330,24 +1347,24 @@ export function createVoxelRenderer(
 
   function addClusteredLights(points: readonly EmissivePoint[]): void {
     clearLights();
-    const maximum = Math.min(2, Math.max(qualityProfile.maxLocalLights, qualityProfile.maxGlowSprites));
-    for (const [index, point] of clusterEmissivePoints(points, maximum).entries()) {
-      if (index < qualityProfile.maxLocalLights) {
-        const light = new THREE.PointLight(0xffb45f, 0, 12, 2);
-        light.position.set(point.x, point.y, point.z);
-        light.castShadow = false;
-        localLightGroup.add(light);
-        localLights.push({ light, baseIntensity: 0.75 + (point.intensity / 15) * 1.1 });
-      }
-      if (index < qualityProfile.maxGlowSprites) {
-        const sprite = new THREE.Sprite(glowMaterial);
-        const scale = 3.8 + (point.intensity / 15) * 2.2;
-        sprite.position.set(point.x, point.y, point.z);
-        sprite.scale.set(scale, scale, 1);
-        sprite.renderOrder = 5;
-        localLightGroup.add(sprite);
-        glowSprites.push({ sprite });
-      }
+    const lightPoints = clusterEmissivePoints(points, Math.min(2, qualityProfile.maxLocalLights));
+    for (const point of lightPoints) {
+      const light = new THREE.PointLight(0xffb45f, 0, 12, 2);
+      light.position.set(point.x, point.y, point.z);
+      light.castShadow = false;
+      localLightGroup.add(light);
+      localLights.push({ light, baseIntensity: 0.75 + (point.intensity / 15) * 1.1 });
+    }
+    // Glow sprites are a presentation cue, so anchor them to actual lamp
+    // blocks instead of the centroids used to amortize dynamic point lights.
+    for (const point of selectEmissiveVisualPoints(points, Math.min(2, qualityProfile.maxGlowSprites))) {
+      const sprite = new THREE.Sprite(glowMaterial);
+      const scale = 0.92 + (point.intensity / 15) * 0.2;
+      sprite.position.set(point.x, point.y, point.z);
+      sprite.scale.set(scale, scale, 1);
+      sprite.renderOrder = 5;
+      localLightGroup.add(sprite);
+      glowSprites.push({ sprite });
     }
   }
 
@@ -1626,6 +1643,10 @@ export function createVoxelRenderer(
         decoration.worldPosition.z,
       ));
     }
+    visibilityBounds = new THREE.Box3(
+      new THREE.Vector3(terrain.bounds.minX, terrain.bounds.minY, terrain.bounds.minZ),
+      new THREE.Vector3(terrain.bounds.maxX, terrain.bounds.maxY, terrain.bounds.maxZ),
+    ).union(contentBounds);
     const size = contentBounds.getSize(new THREE.Vector3());
     shadowExtent = Math.max(18, size.x / 2, size.z / 2, size.y);
     sun.shadow.camera.left = -shadowExtent;
@@ -1676,9 +1697,17 @@ export function createVoxelRenderer(
       cameraTarget.z + Math.sin(cameraAzimuth) * horizontal,
     );
     const radius = Math.max(6, contentBounds.getSize(new THREE.Vector3()).length() / 2);
-    camera.near = Math.max(0.1, cameraDistance - radius * 1.65);
+    visibilityNearestDistance = visibilityBounds.distanceToPoint(camera.position);
+    visibilityFarthestDistance = farthestDistanceToBox(camera.position, visibilityBounds);
+    const framingNear = Math.max(0.1, cameraDistance - radius * 1.65);
+    // V16's natural terrain extends far beyond the settlement bounds used for
+    // framing. Keep that scenery out of the camera's clip planes without
+    // allowing it to shrink the buildings in the default composition.
+    const visibilityNear = Math.max(0.5, visibilityNearestDistance * 0.72);
+    camera.near = Math.min(framingNear, visibilityNear);
     camera.far = Math.max(
       cameraDistance + radius * 3 + 60,
+      visibilityFarthestDistance + 24,
       camera.near * STAR_NEAR_CLIP_MARGIN / (STAR_RADIUS_RATIO * SKY_FAR_CLIP_RATIO),
     );
     camera.updateProjectionMatrix();
@@ -1700,6 +1729,12 @@ export function createVoxelRenderer(
     canvas.dataset.cameraDistanceRatio = (cameraDistance / fittedDistance).toFixed(4);
     canvas.dataset.cameraMinimumDistanceRatio = (minimumCameraDistance / fittedDistance).toFixed(4);
     canvas.dataset.cameraMaximumDistanceRatio = (maximumCameraDistance / fittedDistance).toFixed(4);
+    canvas.dataset.cameraNear = camera.near.toFixed(3);
+    canvas.dataset.cameraFar = camera.far.toFixed(3);
+    canvas.dataset.visibilityNearestDistance = visibilityNearestDistance.toFixed(3);
+    canvas.dataset.visibilityFarthestDistance = visibilityFarthestDistance.toFixed(3);
+    canvas.dataset.visibilityNearClipSafe = String(camera.near <= Math.max(0.5, visibilityNearestDistance * 0.72) + 0.001);
+    canvas.dataset.visibilityFarClipSafe = String(camera.far >= visibilityFarthestDistance + 23.999);
     canvas.dataset.skyCameraWorldOffset = new THREE.Vector3().setFromMatrixPosition(skyGroup.matrixWorld).distanceTo(camera.position).toFixed(4);
     canvas.dataset.skyRadius = skyDistance.toFixed(2);
     canvas.dataset.starNearClipRatio = (skyDistance * STAR_RADIUS_RATIO / camera.near).toFixed(4);
@@ -1964,16 +1999,28 @@ export function createVoxelRenderer(
       weatherKind: currentWeather.kind,
       fogNear: scene.fog instanceof THREE.Fog ? scene.fog.near : 0,
       fogFar: scene.fog instanceof THREE.Fog ? scene.fog.far : 0,
+      cameraNear: camera.near,
+      cameraFar: camera.far,
+      visibilityNearestDistance,
+      visibilityFarthestDistance,
+      visibilityNearClipSafe: camera.near <= Math.max(0.5, visibilityNearestDistance * 0.72) + 0.001,
+      visibilityFarClipSafe: camera.far >= visibilityFarthestDistance + 23.999,
       atmosphereFollowsWorld: atmosphereGroup.parent === rotatableWorldRoot,
+      terrainWaterOpaque: materials.get("terrainWater")?.transparent === false
+        && materials.get("terrainWater")?.depthWrite === true
+        && materials.get("terrainWater")?.opacity === 1,
       glowSpriteCount: glowSprites.length,
       visibleGlowSpriteCount: glowSprites.filter((entry) => entry.sprite.visible).length,
+      glowSpriteMaximumScale: Math.max(0, ...glowSprites.map((entry) => entry.sprite.scale.x)),
       glowTextureSize: 32,
+      glowTextureShape: "soft-square",
       requestedLightingQuality,
       activeLightingQuality: qualityTier === "high" ? "cinematic" : qualityTier === "balanced" ? "balanced" : "performance",
       bloomEnabled: lightingPostProcessor.getDiagnostics().enabled,
       fullscreenPassCount: lightingPostProcessor.getDiagnostics().passCount,
       postProcessRenderCount,
       postProcessBypassCount,
+      postProcessSampleCount: lightingPostProcessor.getDiagnostics().sampleCount,
       constructionOutlineVisibility,
       plannedOutlineVoxelCount,
       continuousRendering: false,
@@ -2055,16 +2102,26 @@ export function createVoxelRenderer(
     canvas.dataset.weatherKind = diagnostics.weatherKind;
     canvas.dataset.fogNear = diagnostics.fogNear.toFixed(2);
     canvas.dataset.fogFar = diagnostics.fogFar.toFixed(2);
+    canvas.dataset.cameraNear = diagnostics.cameraNear.toFixed(3);
+    canvas.dataset.cameraFar = diagnostics.cameraFar.toFixed(3);
+    canvas.dataset.visibilityNearestDistance = diagnostics.visibilityNearestDistance.toFixed(3);
+    canvas.dataset.visibilityFarthestDistance = diagnostics.visibilityFarthestDistance.toFixed(3);
+    canvas.dataset.visibilityNearClipSafe = String(diagnostics.visibilityNearClipSafe);
+    canvas.dataset.visibilityFarClipSafe = String(diagnostics.visibilityFarClipSafe);
     canvas.dataset.atmosphereFollowsWorld = String(diagnostics.atmosphereFollowsWorld);
+    canvas.dataset.terrainWaterOpaque = String(diagnostics.terrainWaterOpaque);
     canvas.dataset.glowSpriteCount = String(diagnostics.glowSpriteCount);
     canvas.dataset.visibleGlowSpriteCount = String(diagnostics.visibleGlowSpriteCount);
+    canvas.dataset.glowSpriteMaximumScale = diagnostics.glowSpriteMaximumScale.toFixed(3);
     canvas.dataset.glowTextureSize = String(diagnostics.glowTextureSize);
+    canvas.dataset.glowTextureShape = diagnostics.glowTextureShape;
     canvas.dataset.requestedLightingQuality = diagnostics.requestedLightingQuality;
     canvas.dataset.activeLightingQuality = diagnostics.activeLightingQuality;
     canvas.dataset.bloomEnabled = String(diagnostics.bloomEnabled);
     canvas.dataset.fullscreenPassCount = String(diagnostics.fullscreenPassCount);
     canvas.dataset.postProcessRenderCount = String(diagnostics.postProcessRenderCount);
     canvas.dataset.postProcessBypassCount = String(diagnostics.postProcessBypassCount);
+    canvas.dataset.postProcessSampleCount = String(diagnostics.postProcessSampleCount);
     canvas.dataset.constructionOutlineVisibility = diagnostics.constructionOutlineVisibility;
     canvas.dataset.plannedOutlineVoxelCount = String(diagnostics.plannedOutlineVoxelCount);
     canvas.dataset.continuousRendering = String(diagnostics.continuousRendering);
@@ -2098,6 +2155,7 @@ export function createVoxelRenderer(
       fullscreenPassCount: diagnostics.fullscreenPassCount,
       postProcessRenderCount: diagnostics.postProcessRenderCount,
       postProcessBypassCount: diagnostics.postProcessBypassCount,
+      postProcessSampleCount: diagnostics.postProcessSampleCount,
       nearDetailLevel: diagnostics.nearDetailLevel,
       edgeDetailStrength: diagnostics.edgeDetailStrength,
       memoryGeometries: diagnostics.memory.geometries,
@@ -2320,6 +2378,13 @@ function deviceSignals(renderer: THREE.WebGLRenderer, voxelCount: number) {
   };
 }
 
+function farthestDistanceToBox(point: THREE.Vector3, bounds: THREE.Box3): number {
+  const dx = Math.max(Math.abs(point.x - bounds.min.x), Math.abs(point.x - bounds.max.x));
+  const dy = Math.max(Math.abs(point.y - bounds.min.y), Math.abs(point.y - bounds.max.y));
+  const dz = Math.max(Math.abs(point.z - bounds.min.z), Math.abs(point.z - bounds.max.z));
+  return Math.hypot(dx, dy, dz);
+}
+
 function emissiveColor(kind: string): number {
   return /soul/i.test(kind) ? 0x65cfe3 : /redstone/i.test(kind) ? 0xe94b35 : 0xffb45f;
 }
@@ -2331,8 +2396,10 @@ function createLampGlowTexture(): THREE.DataTexture {
     for (let x = 0; x < size; x += 1) {
       const dx = ((x + 0.5) / size) * 2 - 1;
       const dy = ((y + 0.5) / size) * 2 - 1;
-      const distance = Math.sqrt(dx * dx + dy * dy);
-      const falloff = Math.max(0, 1 - distance);
+      // A soft square keeps the aura aligned with the voxel lamp instead of
+      // reading as a spherical billboard floating over the building.
+      const edgeDistance = Math.max(Math.abs(dx), Math.abs(dy));
+      const falloff = Math.max(0, 1 - edgeDistance);
       const alpha = Math.round((falloff * falloff * (3 - 2 * falloff)) * 255);
       const offset = (y * size + x) * 4;
       pixels[offset] = 255;

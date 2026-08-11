@@ -127,8 +127,28 @@ test('keeps the ordinary timer workbench within a mobile viewport', async ({ pag
   expect(navigationBox).not.toBeNull();
   expect(primaryBox!.y + primaryBox!.height).toBeLessThanOrEqual(navigationBox!.y + 1);
   expect(pageOffset).toBe(0);
-  await expect(page.locator('.timer')).toHaveCSS('font-size', '56px');
+  await expect(page.locator('.timer')).toHaveCSS('font-size', '64px');
   await page.screenshot({ path: testInfo.outputPath('v8-timer-portrait.png'), fullPage: true });
+});
+
+test('shows the complete plan duration before focus and the active stage after start', async ({ page }) => {
+  await createDefaultProject(page);
+  const timer = page.locator('.timer');
+  await expect(timer).toContainText('计划总时长');
+  await expect(timer).toContainText('45:00');
+
+  await page.getByRole('button', { name: '调整本次计划' }).click();
+  await page.getByRole('button', { name: '2 轮' }).click();
+  await page.getByRole('button', { name: '确认计划' }).click();
+  await expect(timer).toContainText('1:35:00');
+
+  await page.getByRole('button', { name: '调整本次计划' }).click();
+  await page.getByRole('button', { name: '4 轮' }).click();
+  await page.getByRole('button', { name: '确认计划' }).click();
+  await expect(timer).toContainText('3:15:00');
+  await page.getByRole('button', { name: '开始 4 轮' }).click();
+  await expect(timer).toContainText('本轮剩余');
+  await expect(timer).toContainText('45:00');
 });
 
 test('keeps the ordinary timer workbench within a mobile landscape viewport', async ({ page }, testInfo) => {
@@ -144,6 +164,31 @@ test('keeps the ordinary timer workbench within a mobile landscape viewport', as
   expect(primaryBox!.y + primaryBox!.height).toBeLessThanOrEqual(viewportHeight + 1);
   expect(pageOffset).toBe(0);
   await page.screenshot({ path: testInfo.outputPath('v8-timer-landscape.png'), fullPage: true });
+});
+
+test('keeps work-page scroll-end clearance compact above mobile navigation', async ({ page }) => {
+  await page.setViewportSize({ width: 360, height: 800 });
+  await createDefaultProject(page);
+  for (const tab of ['任务', '统计', '设置']) {
+    await page.getByRole('button', { name: tab, exact: true }).click();
+    const layout = await page.evaluate(() => {
+      window.scrollTo(0, document.documentElement.scrollHeight);
+      const pageElement = document.querySelector<HTMLElement>('main > .page');
+      const navigation = document.querySelector<HTMLElement>('.bottom-nav');
+      const last = pageElement?.lastElementChild?.getBoundingClientRect();
+      const navigationRect = navigation?.getBoundingClientRect();
+      return {
+        paddingBottom: pageElement ? Number.parseFloat(getComputedStyle(pageElement).paddingBottom) : -1,
+        scrollable: document.documentElement.scrollHeight > innerHeight + 1,
+        clearance: last && navigationRect ? navigationRect.top - last.bottom : -1,
+      };
+    });
+    expect(layout.paddingBottom).toBe(14);
+    if (layout.scrollable) {
+      expect(layout.clearance).toBeGreaterThanOrEqual(8);
+      expect(layout.clearance).toBeLessThanOrEqual(36);
+    }
+  }
 });
 
 test('keeps the global daily goal above the construction queue and in a secondary sheet', async ({ page }) => {
@@ -251,7 +296,7 @@ test('zero-minute break persists and early completion ends without a break', asy
   await page.getByRole('button', { name: '设置' }).click();
   await expect(page.getByLabel('每轮休息分钟')).toHaveValue('0');
   await page.getByRole('button', { name: '计时' }).click();
-  await expect(page.getByRole('button', { name: '调整本次计划' })).toContainText('每轮 45 分钟');
+  await expect(page.getByRole('button', { name: '调整本次计划' })).toContainText('总计 45 分钟');
 
   await page.getByRole('button', { name: '开始 1 轮' }).click();
   await page.getByRole('button', { name: '结束本次专注' }).click();

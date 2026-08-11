@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { clusterEmissivePoints, sunStateForLocalTime } from '../src/lighting';
+import { clusterEmissivePoints, selectEmissiveVisualPoints, sunStateForLocalTime } from '../src/lighting';
 
 describe('local sun path', () => {
   it('raises the light at noon and moves it from east to west', () => {
@@ -55,5 +55,21 @@ describe('emissive light clustering', () => {
     expect(first.some((point) => point.x < 0)).toBe(true);
     expect(first.some((point) => point.x > 0)).toBe(true);
     expect(clusterEmissivePoints(points, 0)).toEqual([]);
+  });
+
+  it('anchors visible glow only to deterministic real emissive blocks', () => {
+    const points = [
+      { x: -10, y: 3, z: 0, intensity: 15 },
+      { x: -9, y: 3, z: 1, intensity: 12 },
+      { x: 10, y: 4, z: 0, intensity: 15 },
+      { x: 9, y: 4, z: 1, intensity: 10 },
+    ];
+    const selected = selectEmissiveVisualPoints(points, 2);
+    expect(selected).toHaveLength(2);
+    expect(selectEmissiveVisualPoints([...points].reverse(), 2)).toEqual(selected);
+    expect(selected.every((entry) => points.some((point) => point.x === entry.x
+      && point.y === entry.y && point.z === entry.z && point.intensity === entry.intensity))).toBe(true);
+    expect(selectEmissiveVisualPoints([points[0]!, { ...points[0]! }], 2)).toEqual([points[0]]);
+    expect(selectEmissiveVisualPoints(points, 0)).toEqual([]);
   });
 });

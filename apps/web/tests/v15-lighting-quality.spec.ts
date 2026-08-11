@@ -47,6 +47,7 @@ test("replaces the old visual experiments with persistent adaptive lighting pres
   await expect(canvas).toHaveAttribute("data-active-lighting-quality", "performance");
   await expect(canvas).toHaveAttribute("data-bloom-enabled", "false");
   await expect(canvas).toHaveAttribute("data-fullscreen-pass-count", "0");
+  await expect(canvas).toHaveAttribute("data-post-process-sample-count", "0");
   const performance = await canvas.screenshot({ path: testInfo.outputPath("lighting-performance.png") });
 
   await page.getByRole("button", { name: "设置" }).click();
@@ -57,10 +58,12 @@ test("replaces the old visual experiments with persistent adaptive lighting pres
   if (active === "cinematic") {
     await expect(canvas).toHaveAttribute("data-bloom-enabled", "true");
     await expect(canvas).toHaveAttribute("data-fullscreen-pass-count", "4");
+    await expect(canvas).toHaveAttribute("data-post-process-sample-count", "2");
     await expect.poll(async () => Number(await canvas.getAttribute("data-post-process-render-count"))).toBeGreaterThan(0);
   } else {
     await expect(canvas).toHaveAttribute("data-bloom-enabled", "false");
     await expect(canvas).toHaveAttribute("data-fullscreen-pass-count", "0");
+    await expect(canvas).toHaveAttribute("data-post-process-sample-count", "0");
   }
   const cinematic = await canvas.screenshot({ path: testInfo.outputPath("lighting-cinematic.png") });
   expect(Buffer.compare(performance, cinematic)).not.toBe(0);

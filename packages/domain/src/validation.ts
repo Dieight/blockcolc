@@ -27,7 +27,7 @@ export class DomainStateValidationError extends Error {
 }
 
 export function parseDomainState(raw: unknown): DomainState {
-  const migrated = migrateV6State(migrateV5State(migrateV4State(withBuildingBlueprintDefaults(migrateV2State(withDecorationDefaults(migrateV1State(raw)))))));
+  const migrated = migrateTerrainV4State(migrateV6State(migrateV5State(migrateV4State(withBuildingBlueprintDefaults(migrateV2State(withDecorationDefaults(migrateV1State(raw))))))));
   const root = object(migrated, "$", [
     "schemaVersion", "projects", "habitBuildings", "activeProjectId", "retiredSubtaskIds", "activeFocusSession",
     "focusHistory", "progressReports", "dailyGoals", "calendar", "decayPolicy", "projectConditions", "focusIntegrityPolicy",
@@ -403,10 +403,10 @@ function parseFocusIntegrityPolicy(raw: unknown, path: string): DomainState["foc
 
 function parseWorldSettings(raw: unknown, path: string): DomainState["worldSettings"] {
   const x = object(raw, path, ["worldSeed", "terrainGenerationVersion", "environmentStyle"]);
-  integer(x.terrainGenerationVersion, path + ".terrainGenerationVersion", 3, 3);
+  integer(x.terrainGenerationVersion, path + ".terrainGenerationVersion", 4, 4);
   return {
     worldSeed: nonBlankString(x.worldSeed, path + ".worldSeed"),
-    terrainGenerationVersion: 3,
+    terrainGenerationVersion: 4,
     environmentStyle: enumeration(x.environmentStyle, path + ".environmentStyle", ["natural-valley", "classic-island"] as const),
   };
 }
@@ -732,6 +732,18 @@ function migrateV6State(raw: unknown): unknown {
     buildingBlueprintResources: resources,
     dailyGoals,
     worldSettings: { ...worldSettings, terrainGenerationVersion: 3 },
+  };
+}
+
+function migrateTerrainV4State(raw: unknown): unknown {
+  const candidate = record(raw, "$");
+  if (candidate.schemaVersion !== 7) return raw;
+  const worldSettings = record(candidate.worldSettings, "$.worldSettings");
+  if (worldSettings.terrainGenerationVersion === 4) return raw;
+  if (worldSettings.terrainGenerationVersion !== 2 && worldSettings.terrainGenerationVersion !== 3) return raw;
+  return {
+    ...candidate,
+    worldSettings: { ...worldSettings, terrainGenerationVersion: 4 },
   };
 }
 

@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "exports": "./src/index.ts",
-  "scripts": { "typecheck": "tsc --noEmit", "test": "vitest run" },
+  "scripts": { "typecheck": "tsc --noEmit", "test": "vitest run", "metrics:terrain": "vite-node tools/terrain-metrics.ts" },
   "dependencies": { "@tomato-clock/resource-pack": "file:../resource-pack", "three": "^0.178.0" },
   "devDependencies": { "@types/three": "^0.178.0", "fflate": "^0.8.2", "typescript": "^5.9.3", "vitest": "^3.2.4", "@types/node": "^24.10.1" }
 }

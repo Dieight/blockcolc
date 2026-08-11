@@ -123,7 +123,9 @@ export function buildResourcePackAtlas(manifest: ResourcePackManifest, maximumSi
     texture.name = `blockcolc-resource-pack-atlas-${page.index}`;
     texture.colorSpace = THREE.SRGBColorSpace;
     texture.magFilter = THREE.NearestFilter;
-    texture.minFilter = THREE.NearestFilter;
+    texture.minFilter = THREE.NearestMipmapLinearFilter;
+    texture.mipmaps = createSafeAtlasMipmaps(page.rgba, page.width, page.height, source.safeMipLevels);
+    texture.anisotropy = 2;
     texture.generateMipmaps = false;
     texture.flipY = true;
     texture.needsUpdate = true;
@@ -141,6 +143,58 @@ export function buildResourcePackAtlas(manifest: ResourcePackManifest, maximumSi
     alphaMode: entry.alphaMode,
   }]));
   return disposableAtlas(source, pages, tiles);
+}
+
+export function createSafeAtlasMipmaps(
+  rgba: Uint8Array,
+  width: number,
+  height: number,
+  safeMipLevels: number,
+): Array<{ data: Uint8Array; width: number; height: number }> {
+  const mipmaps = [{ data: rgba, width, height }];
+  let source = rgba;
+  let sourceWidth = width;
+  let sourceHeight = height;
+  const levels = Math.max(0, Math.min(safeMipLevels, Math.floor(Math.log2(Math.max(1, Math.min(width, height))))));
+  for (let level = 0; level < levels; level += 1) {
+    const nextWidth = Math.max(1, Math.floor(sourceWidth / 2));
+    const nextHeight = Math.max(1, Math.floor(sourceHeight / 2));
+    const next = new Uint8Array(nextWidth * nextHeight * 4);
+    for (let y = 0; y < nextHeight; y += 1) {
+      for (let x = 0; x < nextWidth; x += 1) {
+        const samples = [
+          (y * 2) * sourceWidth + x * 2,
+          (y * 2) * sourceWidth + Math.min(sourceWidth - 1, x * 2 + 1),
+          Math.min(sourceHeight - 1, y * 2 + 1) * sourceWidth + x * 2,
+          Math.min(sourceHeight - 1, y * 2 + 1) * sourceWidth + Math.min(sourceWidth - 1, x * 2 + 1),
+        ];
+        let alphaSum = 0;
+        let redSum = 0;
+        let greenSum = 0;
+        let blueSum = 0;
+        for (const pixel of samples) {
+          const offset = pixel * 4;
+          const alpha = source[offset + 3]!;
+          alphaSum += alpha;
+          redSum += source[offset]! * alpha;
+          greenSum += source[offset + 1]! * alpha;
+          blueSum += source[offset + 2]! * alpha;
+        }
+        const target = (y * nextWidth + x) * 4;
+        next[target + 3] = Math.round(alphaSum / 4);
+        if (alphaSum > 0) {
+          next[target] = Math.round(redSum / alphaSum);
+          next[target + 1] = Math.round(greenSum / alphaSum);
+          next[target + 2] = Math.round(blueSum / alphaSum);
+        }
+      }
+    }
+    mipmaps.push({ data: next, width: nextWidth, height: nextHeight });
+    source = next;
+    sourceWidth = nextWidth;
+    sourceHeight = nextHeight;
+  }
+  return mipmaps;
 }
 
 export function planTexturedVoxel(

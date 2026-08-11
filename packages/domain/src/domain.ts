@@ -45,7 +45,7 @@ export function createInitialState(timeZone = "UTC", restWeekdays: number[] = [0
     decorationBlueprintResources: [],
     decorationRewards: [],
     buildingBlueprintResources: [],
-    worldSettings: { worldSeed: "world-default", terrainGenerationVersion: 3, environmentStyle: "natural-valley" },
+    worldSettings: { worldSeed: "world-default", terrainGenerationVersion: 4, environmentStyle: "natural-valley" },
   };
 }
 

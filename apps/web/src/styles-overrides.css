@@ -167,3 +167,17 @@
 .building-blueprint-list .blueprint-rename,.building-blueprint-list .blueprint-rename-cancel{border-color:#7ba486;color:#276749}
 .building-blueprint-list .blueprint-delete{width:auto!important;padding:0 10px!important}
 @media(max-width:620px){.daily-goal-controls{grid-template-columns:1fr}.daily-goal-controls .switch-control{grid-column:auto}.building-blueprint-list li{align-items:flex-start}.building-blueprint-list .blueprint-library-actions{flex:0 0 auto}}
+
+/* V16: use the timer as plan information before focus, then as the current stage countdown. */
+.page{padding-bottom:20px}
+.timer{display:grid;justify-items:center;gap:6px;line-height:1}
+.timer-label{color:#58635d;font-size:12px;font-weight:700;line-height:1.2}
+.timer-value{font:inherit;line-height:1}
+@media(max-width:699px){
+  .page{padding-bottom:14px}
+  .world-screen:not(.is-focusing):not(.has-report) .timer{font-size:48px}
+}
+@media(max-width:699px) and (min-height:850px){
+  .world-screen:not(.is-focusing):not(.has-report){grid-template-rows:clamp(280px,35dvh,320px) minmax(0,1fr)}
+  .world-screen:not(.is-focusing):not(.has-report) .timer{font-size:64px}
+}

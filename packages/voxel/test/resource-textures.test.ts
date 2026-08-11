@@ -58,7 +58,34 @@ describe("resource-pack voxel texture planning", () => {
     // WebGL2 minimum MAX_VERTEX_ATTRIBS guarantee of 16.
     expect(Object.keys(geometry.attributes)).toHaveLength(12);
     expect(Object.keys(geometry.attributes).length + 4).toBeLessThanOrEqual(16);
+    expect(atlas.pages[0]!.texture.minFilter).toBe(THREE.NearestMipmapLinearFilter);
+    expect(atlas.pages[0]!.texture.mipmaps).toHaveLength(atlas.source.safeMipLevels + 1);
+    expect(atlas.pages[0]!.texture.mipmaps?.map((mipmap) => [mipmap.width, mipmap.height])).toEqual([
+      [atlas.pages[0]!.width, atlas.pages[0]!.height],
+      [atlas.pages[0]!.width / 2, atlas.pages[0]!.height / 2],
+      [atlas.pages[0]!.width / 4, atlas.pages[0]!.height / 4],
+    ]);
+    expect(atlas.pages[0]!.texture.anisotropy).toBe(2);
     geometry.dispose();
+    atlas.dispose();
+  });
+
+  it("keeps distinct atlas tiles isolated through the safe mip levels", () => {
+    const manifest = manifestFor([
+      { blockId: "minecraft:red", modelId: "minecraft:block/red", faces: allFaces("minecraft:block/red") },
+      { blockId: "minecraft:blue", modelId: "minecraft:block/blue", faces: allFaces("minecraft:block/blue") },
+    ]);
+    manifest.textures[0]!.png = rgbaPng([230, 20, 20, 255]);
+    manifest.textures[1]!.png = rgbaPng([20, 30, 230, 255]);
+    const atlas = buildResourcePackAtlas(manifest, 64);
+    const mip = atlas.pages[0]!.texture.mipmaps![2]! as { data: Uint8Array; width: number; height: number };
+    const colors = atlas.source.entries.map((entry) => {
+      const x = Math.floor((entry.x + 8) / 4);
+      const y = Math.floor((entry.y + 8) / 4);
+      const offset = (y * mip.width + x) * 4;
+      return [...mip.data.subarray(offset, offset + 4)];
+    });
+    expect(colors).toEqual([[230, 20, 20, 255], [20, 30, 230, 255]]);
     atlas.dispose();
   });
 

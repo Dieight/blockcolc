@@ -64,7 +64,7 @@ describe("parseDomainState", () => {
     delete raw.projects[0].importedBlueprint;
     const parsed = parseDomainState(raw);
     expect(parsed.schemaVersion).toBe(7);
-    expect(parsed.worldSettings).toEqual({ worldSeed: "legacy-p1", terrainGenerationVersion: 3, environmentStyle: "natural-valley" });
+    expect(parsed.worldSettings).toEqual({ worldSeed: "legacy-p1", terrainGenerationVersion: 4, environmentStyle: "natural-valley" });
     expect(parsed.projects[0]).toMatchObject({ kind: "finite", habit: null });
     expect(parsed.habitBuildings).toEqual([]);
     expect(parsed.projects[0]!.importedBlueprint).toBeNull();
@@ -94,7 +94,7 @@ describe("parseDomainState", () => {
     const parsed = parseDomainState(raw);
     expect(parsed.schemaVersion).toBe(7);
     expect(parsed.projects).toEqual(raw.projects);
-    expect(parsed.worldSettings).toEqual({ worldSeed: "legacy-p1", terrainGenerationVersion: 3, environmentStyle: "natural-valley" });
+    expect(parsed.worldSettings).toEqual({ worldSeed: "legacy-p1", terrainGenerationVersion: 4, environmentStyle: "natural-valley" });
   });
 
   it("migrates v6 terrain and building resource names to schema v7", () => {
@@ -112,8 +112,18 @@ describe("parseDomainState", () => {
     }];
     const parsed = parseDomainState(raw);
     expect(parsed.schemaVersion).toBe(7);
-    expect(parsed.worldSettings.terrainGenerationVersion).toBe(3);
+    expect(parsed.worldSettings.terrainGenerationVersion).toBe(4);
     expect(parsed.buildingBlueprintResources[0]).toMatchObject({ displayName: "Legacy library house" });
+  });
+
+  it("migrates a schema-v7 terrain-v3 world to v4 without changing user facts", () => {
+    const raw: any = structuredClone(validState());
+    raw.worldSettings.terrainGenerationVersion = 3;
+    const parsed = parseDomainState(raw);
+    expect(parsed.worldSettings).toEqual({ ...raw.worldSettings, terrainGenerationVersion: 4 });
+    expect(parsed.projects).toEqual(raw.projects);
+    expect(parsed.focusHistory).toEqual(raw.focusHistory);
+    expect(parsed.dailyGoals).toEqual(raw.dailyGoals);
   });
 
   it("repairs a v6 goal that becomes reached when early completions start counting", () => {

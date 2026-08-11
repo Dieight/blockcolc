@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { DomainState } from '@tomato-clock/domain';
-import { parseRoundPlan, reconcileRoundPlan, type RoundPlan } from './round-plan';
+import { parseRoundPlan, plannedDurationMs, reconcileRoundPlan, type RoundPlan } from './round-plan';
 
 const projectId = 'project-1';
 const subtaskId = 'task-1';
@@ -22,6 +22,21 @@ function state(overrides: Partial<DomainState>): DomainState {
     ...overrides,
   } as DomainState;
 }
+
+describe('planned duration', () => {
+  it('includes focus rounds and only the breaks between them', () => {
+    expect(plannedDurationMs(45, 5, 1)).toBe(45 * 60_000);
+    expect(plannedDurationMs(45, 5, 2)).toBe(95 * 60_000);
+    expect(plannedDurationMs(45, 5, 4)).toBe(195 * 60_000);
+    expect(plannedDurationMs(25, 0, 4)).toBe(100 * 60_000);
+  });
+
+  it('rejects values outside the settings contract', () => {
+    expect(() => plannedDurationMs(0, 5, 1)).toThrow(RangeError);
+    expect(() => plannedDurationMs(45, -1, 1)).toThrow(RangeError);
+    expect(() => plannedDurationMs(45, 5, 5)).toThrow(RangeError);
+  });
+});
 
 describe('round-plan recovery', () => {
   it('accepts legacy persisted plans and initializes their recovery evidence', () => {

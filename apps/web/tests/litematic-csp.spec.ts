@@ -8,7 +8,7 @@ const STRICT_CSP = [
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob:",
   "font-src 'self' data:",
-  "connect-src 'self' ws://127.0.0.1:4188",
+  "connect-src 'self' ws://127.0.0.1:41988",
   "worker-src 'self' blob:",
   "object-src 'none'",
   "base-uri 'self'",

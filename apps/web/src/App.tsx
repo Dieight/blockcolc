@@ -13,7 +13,7 @@ import { ChoiceMenu } from './ChoiceMenu';
 import { LITEMATIC_MAX_COMPRESSED_BYTES, readBrowserFileBytes, saveBackupFile } from './browser-adapters';
 import { APPLICATION_STATE_CHANGED_EVENT } from './bootstrap';
 import { effectiveFocusMillisecondsByDate, focusHeatmapLevel, focusSessionEndedAt, focusSessionLocalDate } from './focus-stats';
-import { parseRoundPlan, reconcileRoundPlan, roundPlansEqual, type RoundPlan } from './round-plan';
+import { parseRoundPlan, plannedDurationMs, reconcileRoundPlan, roundPlansEqual, type RoundPlan } from './round-plan';
 import releaseVersion from '../../../version.json';
 
 type Tab = 'world' | 'tasks' | 'stats' | 'settings';
@@ -296,7 +296,11 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
     setPlan({ ...reconciledPlan, completedRounds: completed, status: 'break', breakEndsAt: new Date(Date.now() + preferences.breakMinutes * 60000).toISOString(), currentSessionId: undefined, reportedSessionIds });
   };
   const focusMinutes = isHabit ? preferences.habitFocusMinutes : preferences.focusMinutes;
-  const planSummary = `${reconciledPlan?.totalRounds ?? rounds} 轮 · 每轮 ${focusMinutes} 分钟${preferences.breakMinutes > 0 ? ` · 休息 ${preferences.breakMinutes} 分钟` : ''}`;
+  const plannedRounds = reconciledPlan?.totalRounds ?? rounds;
+  const fullPlanDurationMs = plannedDurationMs(focusMinutes, preferences.breakMinutes, plannedRounds);
+  const timerMode = isBreak ? 'break' : session ? 'focus' : reconciledPlan?.status === 'ready' ? 'ready' : 'plan';
+  const timerFallbackMs = timerMode === 'plan' ? fullPlanDurationMs : focusMinutes * 60_000;
+  const planSummary = `${plannedRounds} 轮 · 总计 ${formatDurationSummary(fullPlanDurationMs)}`;
 
   return <div className={session ? 'world-screen is-focusing' : pending.length > 0 ? 'world-screen has-report' : habitAwaiting ? 'world-screen is-choosing-habit-building' : 'world-screen'}>
     <WorldCanvasV7 service={service} resourcePacks={resourcePacks} lightingQuality={preferences.lightingQuality} constructionOutlineVisibility={preferences.constructionOutlineVisibility} environmentStyle={state.worldSettings.environmentStyle} worldSeed={state.worldSettings.worldSeed} terrainGenerationVersion={state.worldSettings.terrainGenerationVersion} constructionFeedback={constructionFeedback} focusedProjectId={focusedProjectId} onSelectProject={onFocusWorldProject} onClearWorldFocus={onClearWorldFocus}/>
@@ -315,7 +319,7 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
         {(isBreak || session || reconciledPlan?.status === 'ready') && <div className={isBreak ? 'session-kind rest' : 'session-kind'}>{isBreak ? '放松一下，结束后会回到下一步。' : session ? `第 ${(reconciledPlan?.completedRounds ?? 0) + 1} / ${reconciledPlan?.totalRounds ?? 1} 轮专注` : `准备第 ${reconciledPlan!.completedRounds + 1} / ${reconciledPlan!.totalRounds} 轮`}</div>}
         {session && state.focusIntegrityPolicy.enabled && <div className={session.integrity.effectiveExcursions > 0 ? 'focus-integrity-warning active' : 'focus-integrity-warning'}><AlertTriangle/>有效离开 {session.integrity.effectiveExcursions} / {state.focusIntegrityPolicy.maxEffectiveExcursions} 次</div>}
         {integrityFailure && <div className="focus-integrity-ended" role="alert"><AlertTriangle/>本轮专注因达到离开应用次数上限而结束。下次可以从这里继续。</div>}
-         <FocusTimer endsAt={timerEndsAt} fallbackMs={focusMinutes * 60000} onElapsed={session ? reconcile : finishBreak}/>
+         <FocusTimer mode={timerMode} endsAt={timerEndsAt} fallbackMs={timerFallbackMs} onElapsed={session ? reconcile : finishBreak}/>
         {isBreak ? <button className="primary secondary-action" onClick={() => { if (reconciledPlan?.endAfterBreak) setPlan(null); else { const { breakEndsAt: _breakEndsAt, ...withoutBreak } = reconciledPlan!; setPlan({ ...withoutBreak, status: 'ready' }); } }}>跳过休息</button>
           : reconciledPlan?.status === 'ready' ? <button className="primary" onClick={() => void startFocus()}><Clock3/>开始下一轮</button>
             : <button className={session ? 'destructive primary' : 'primary'} onClick={() => void (session ? setEnding(true) : startFocus())}>{session ? <><Square/>结束本次专注</> : <><Clock3/>开始 {reconciledPlan?.totalRounds ?? rounds} 轮</>}</button>}
@@ -421,7 +425,7 @@ function ProgressReportV7({active,run,onSubmitted}:{active:NonNullable<ReturnTyp
   return <div className="report v7-progress-report"><Check/><span className="eyebrow">本轮已记录</span><h2>这次工作推进到哪里？</h2><p><strong>{task.title}</strong><br/>当前总进度 {Math.round(task.progressBasisPoints/100)}%。提交后会更新建筑的永久施工阶段。</p><div className="report-options">{options.map((value)=><button key={value} onClick={()=>void submit(value)}>{value===task.progressBasisPoints?`保持 ${value/100}%`:value===10000?'完成小任务':`推进至 ${value/100}%`}</button>)}</div></div>;
 }
 
-const WorldCanvasV7 = memo(function WorldCanvasV7({service,resourcePacks,lightingQuality,constructionOutlineVisibility,environmentStyle,worldSeed,terrainGenerationVersion,constructionFeedback=0,focusedProjectId,onSelectProject,onClearWorldFocus}:{service:ApplicationService;resourcePacks:ResourcePackRepository;lightingQuality:VoxelLightingQuality;constructionOutlineVisibility:ConstructionOutlineVisibility;environmentStyle:WorldEnvironmentStyle;worldSeed:string;terrainGenerationVersion:3;constructionFeedback?:number;focusedProjectId:string|null;onSelectProject:(projectId:string)=>void;onClearWorldFocus:()=>void}) {
+const WorldCanvasV7 = memo(function WorldCanvasV7({service,resourcePacks,lightingQuality,constructionOutlineVisibility,environmentStyle,worldSeed,terrainGenerationVersion,constructionFeedback=0,focusedProjectId,onSelectProject,onClearWorldFocus}:{service:ApplicationService;resourcePacks:ResourcePackRepository;lightingQuality:VoxelLightingQuality;constructionOutlineVisibility:ConstructionOutlineVisibility;environmentStyle:WorldEnvironmentStyle;worldSeed:string;terrainGenerationVersion:4;constructionFeedback?:number;focusedProjectId:string|null;onSelectProject:(projectId:string)=>void;onClearWorldFocus:()=>void}) {
   const ref=useRef<HTMLCanvasElement>(null); const renderer=useRef<VoxelRenderer|null>(null); const catalog=useBlueprintCatalog(); const world=service.worldProjection(); const state=service.snapshot(); const importedRef=useRef(new Map<string,BlueprintV1>()); const focusRef=useRef(focusedProjectId); const selectRef=useRef(onSelectProject);
   importedRef.current=new Map(world.projects.flatMap(project=>project.building.importedBlueprint?[[project.building.blueprintId,project.building.importedBlueprint as BlueprintV1]]:[])); focusRef.current=focusedProjectId; selectRef.current=onSelectProject;
   const decorationDates=decorationDatesByProject(state); const snapshotKey=world.projects.map(project=>`${project.project.id}:${project.building.blueprintId}:${project.building.completionBasisPoints}:${project.building.conditionBasisPoints}:${project.isActive}:${project.settlementIndex}:${(decorationDates.get(project.project.id)??[]).join(',')}:${project.importedDecorations.map(reward=>`${reward.rewardId}@${reward.localPosition.x},${reward.localPosition.z},${reward.rotationQuarterTurns}`).join(';')}`).join('|'); const snapshots=useMemo(()=>toVoxelWorlds(world.projects,state),[snapshotKey]); const summary=world.projects.map(project=>`${project.project.title}，${project.building.importedBlueprint?.title??blueprintName(catalog,project.building.blueprintId)}，${project.isActive?'正在建造':project.project.status==='paused'?'暂停建造':'纪念建筑'}，建造进度 ${Math.round(project.building.completionBasisPoints/100)}%，保存状况 ${conditionLabel(project.building.conditionBasisPoints)}`).join('；'); const focusedTitle=world.projects.find(project=>project.project.id===focusedProjectId)?.project.title;
@@ -432,7 +436,51 @@ const WorldCanvasV7 = memo(function WorldCanvasV7({service,resourcePacks,lightin
   return <figure className={focusedProjectId?'world is-project-focused':'world'}><canvas ref={ref} role="img" aria-label="项目建筑世界" aria-describedby="world-summary"/><figcaption id="world-summary" className="sr-only">林边聚落，共 {world.projects.length} 栋建筑。{summary}</figcaption><div className="world-hud"><span>{focusedTitle?`正在查看 · ${focusedTitle}`:`林边聚落 · ${world.projects.length} 栋`}</span><div className="world-hud-actions">{focusedProjectId&&<button title="返回完整聚落" aria-label="返回完整聚落" onClick={onClearWorldFocus}><MapIcon/></button>}<button title="重置视角" aria-label="重置视角" onClick={()=>renderer.current?.resetCamera()}><RotateCcw/></button></div></div>{focusedProject&&<div className="world-building-details" role="status"><div><strong>{focusedProject.project.title}</strong><span>{focusedProject.project.status==='monument'?'纪念建筑':focusedProject.isActive?'正在建造':'暂停建造'} · {conditionLabel(focusedProject.building.conditionBasisPoints)}</span></div><b>{Math.round(focusedProject.building.completionBasisPoints/100)}%</b></div>}{constructionFeedback>0&&<div key={constructionFeedback} className="construction-feedback" role="status"><Hammer/><span>材料已送达，继续建造</span><i/><i/><i/></div>}</figure>;
 });
 
-function FocusTimer({endsAt,fallbackMs,onElapsed}:{endsAt?:string;fallbackMs:number;onElapsed:()=>void}) { const [now,setNow]=useState(Date.now()); const elapsed=useRef(false); useEffect(()=>{if(!endsAt)return;elapsed.current=false;const tick=()=>{const next=Date.now();setNow(next);if(next>=Date.parse(endsAt)&&!elapsed.current){elapsed.current=true;onElapsed();}};tick();const timer=window.setInterval(tick,250);return()=>clearInterval(timer);},[endsAt,onElapsed]);const remaining=endsAt?Math.max(0,Date.parse(endsAt)-now):fallbackMs;const mins=Math.floor(remaining/60000).toString().padStart(2,'0');const secs=Math.floor((remaining%60000)/1000).toString().padStart(2,'0');return <div className="timer" role="timer" aria-label={`剩余 ${mins} 分 ${secs} 秒`}>{mins}:{secs}</div>; }
+type FocusTimerMode = 'plan' | 'focus' | 'break' | 'ready';
+
+function FocusTimer({ mode, endsAt, fallbackMs, onElapsed }: { mode?: FocusTimerMode; endsAt?: string; fallbackMs: number; onElapsed: () => void }) {
+  const [now, setNow] = useState(Date.now());
+  const elapsed = useRef(false);
+  useEffect(() => {
+    if (!endsAt) return;
+    elapsed.current = false;
+    const tick = () => {
+      const next = Date.now();
+      setNow(next);
+      if (next >= Date.parse(endsAt) && !elapsed.current) {
+        elapsed.current = true;
+        onElapsed();
+      }
+    };
+    tick();
+    const timer = window.setInterval(tick, 250);
+    return () => clearInterval(timer);
+  }, [endsAt, onElapsed]);
+  const remaining = endsAt ? Math.max(0, Date.parse(endsAt) - now) : fallbackMs;
+  const timerMode = mode ?? (endsAt ? 'focus' : 'ready');
+  const label = timerMode === 'plan' ? '计划总时长' : timerMode === 'break' ? '休息剩余' : timerMode === 'ready' ? '下一轮时长' : '本轮剩余';
+  const clock = formatClockDuration(remaining);
+  return <div className={`timer timer-${timerMode}`} role={endsAt ? 'timer' : undefined} aria-label={`${label} ${clock}`}>
+    <span className="timer-label">{label}</span>
+    <strong className="timer-value">{clock}</strong>
+  </div>;
+}
+
+function formatClockDuration(milliseconds: number): string {
+  const totalSeconds = Math.max(0, Math.ceil(milliseconds / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60).toString().padStart(2, '0');
+  const seconds = (totalSeconds % 60).toString().padStart(2, '0');
+  return hours > 0 ? `${hours}:${minutes}:${seconds}` : `${minutes}:${seconds}`;
+}
+
+function formatDurationSummary(milliseconds: number): string {
+  const totalMinutes = Math.round(milliseconds / 60_000);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (hours === 0) return `${minutes} 分钟`;
+  return minutes === 0 ? `${hours} 小时` : `${hours} 小时 ${minutes} 分钟`;
+}
 
 const WorldCanvas = memo(function WorldCanvas({service,resourcePacks,lightingQuality,constructionOutlineVisibility,constructionFeedback=0}:{service:ApplicationService;resourcePacks:ResourcePackRepository;lightingQuality:VoxelLightingQuality;constructionOutlineVisibility:ConstructionOutlineVisibility;constructionFeedback?:number}) {
   const ref=useRef<HTMLCanvasElement>(null); const renderer=useRef<VoxelRenderer|null>(null); const catalog=useBlueprintCatalog(); const world=service.worldProjection(); const state=service.snapshot(); const importedRef=useRef(new Map<string,BlueprintV1>()); importedRef.current=new Map(world.projects.flatMap(project=>project.building.importedBlueprint?[[project.building.blueprintId,project.building.importedBlueprint as BlueprintV1]]:[])); const decorationDates=decorationDatesByProject(state); const snapshotKey=world.projects.map(project=>`${project.project.id}:${project.building.blueprintId}:${project.building.completionBasisPoints}:${project.building.conditionBasisPoints}:${project.isActive}:${project.settlementIndex}:${(decorationDates.get(project.project.id)??[]).join(',')}:${project.importedDecorations.map(reward=>`${reward.rewardId}@${reward.localPosition.x},${reward.localPosition.z},${reward.rotationQuarterTurns}`).join(';')}`).join('|'); const snapshots=useMemo(()=>toVoxelWorlds(world.projects,state),[snapshotKey]); const summary=world.projects.map(project=>`${project.project.title}，${project.building.importedBlueprint?.title??blueprintName(catalog,project.building.blueprintId)}，${project.isActive?'正在建造':project.project.status==='paused'?'暂停建造':'纪念建筑'}，建造进度 ${Math.round(project.building.completionBasisPoints/100)}%，保存状况 ${conditionLabel(project.building.conditionBasisPoints)}`).join('；');

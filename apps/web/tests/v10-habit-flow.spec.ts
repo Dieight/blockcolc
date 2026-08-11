@@ -19,7 +19,7 @@ test('runs a repeatable habit building cycle with frozen targets and stable comp
 
   await page.getByRole('button', { name: '计时', exact: true }).click();
   await expect(page.locator('.workbench-context')).toContainText('本周期 0 / 10 轮');
-  await expect(page.getByRole('button', { name: '调整本次计划' })).toContainText('每轮 1 分钟');
+  await expect(page.getByRole('button', { name: '调整本次计划' })).toContainText('总计 1 分钟');
 
   for (let round = 1; round <= 10; round += 1) {
     await page.getByRole('button', { name: '开始 1 轮' }).click();

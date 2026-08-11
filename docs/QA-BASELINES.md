@@ -1,5 +1,12 @@
 # QA Baselines
 
+## V16 / v1.3.0 release scope (2026-08-11)
+
+- Release scope includes terrain generation v4, hydrology and mountain tuning, distant texture minification, bounded Cinematic multisampling, total-plan timer presentation, page-tail spacing, night glow/water regressions, and full-terrain camera clipping at maximum zoom.
+- The maximum-zoom regression runs on Pixel 7 and desktop Chromium across four orbit directions. Diagnostics require the near plane to stay within `72%` of the nearest full-terrain bound and the far plane to retain at least `24` world units beyond its farthest point, with request-on-demand rendering unchanged.
+- The formal APK, installed-device copy, GitHub upload, redownload, and final device copy are compared through the machine-readable release evidence under the ignored `artifacts/release/v1.3.0` directory.
+- The formal Web release matrix uses one Playwright worker. Renderer-heavy screenshot and gesture cases share the host GPU, so parallel workers can create concurrency-only timeouts even when each viewport passes independently.
+
 ## Current Release
 
 - Public version: `v1.2.0`
@@ -16,6 +23,8 @@
 ## Reference Device
 
 - OnePlus PJX110, Android 16 / API 36, device id is recorded only in local execution evidence.
+- V16 internal candidate on OnePlus PJX110: formally signed `1.2.0 (15)` replacement install preserves data and matches the build APK SHA-256. Six automated settlement swipes produce 381 frames with 0.79% modern jank, 12 ms p95, 23 ms p99, 140,990 KiB total PSS, thermal status 0, and no sampled fatal/WebView crash. ADB mouse-wheel injection verifies native WebView camera zoom and reset; direct physical pinch remains a manual visual check.
+- V16 terrain v4 six-seed diagnostic: median water coverage falls from 6.40% to 4.98%, maximum elevation is 47, area-weighted median land elevation changes by only 1-2 layers, and triangles remain below 1.2x v3. Reproduce with `npm run metrics:terrain -w @tomato-clock/voxel`.
 - Preserve app data during candidate installation. Do not use `pm clear` for release coverage.
 - Subjective 3D rotation smoothness remains a manual acceptance item even when automated frame and package checks pass.
 

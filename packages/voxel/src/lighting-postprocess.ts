@@ -5,6 +5,7 @@ export interface LightingPostProcessDiagnostics {
   scale: number;
   passCount: number;
   renderCount: number;
+  sampleCount: number;
 }
 
 /**
@@ -34,6 +35,7 @@ export class LightingPostProcessor {
   constructor(renderer: THREE.WebGLRenderer) {
     this.renderer = renderer;
     this.sceneTarget = createTarget(1, 1, true);
+    this.sceneTarget.samples = boundedSceneSampleCount(renderer.capabilities.maxSamples);
     // The scene target is sampled as linear data by the bloom shaders. Encoding
     // happens exactly once in the terminal composite pass.
     this.sceneTarget.texture.colorSpace = THREE.NoColorSpace;
@@ -148,7 +150,13 @@ export class LightingPostProcessor {
   }
 
   getDiagnostics(): LightingPostProcessDiagnostics {
-    return { enabled: this.enabled, scale: 0.5, passCount: this.enabled ? 4 : 0, renderCount: this.renderCount };
+    return {
+      enabled: this.enabled,
+      scale: 0.5,
+      passCount: this.enabled ? 4 : 0,
+      renderCount: this.renderCount,
+      sampleCount: this.enabled ? this.sceneTarget.samples : 0,
+    };
   }
 
   dispose(): void {
@@ -167,6 +175,10 @@ export class LightingPostProcessor {
     this.renderer.clear(true, false, false);
     this.renderer.render(this.quadScene, this.quadCamera);
   }
+}
+
+export function boundedSceneSampleCount(maxSamples: number): number {
+  return Number.isFinite(maxSamples) && maxSamples >= 2 ? 2 : 0;
 }
 
 function createTarget(width: number, height: number, depthBuffer: boolean): THREE.WebGLRenderTarget {

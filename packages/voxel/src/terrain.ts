@@ -3,7 +3,7 @@ import { terrainHeightAt } from "./village";
 
 export type TerrainMaterial = "grass" | "dirt" | "stone" | "water";
 export type TerrainEnvironmentStyle = "natural-valley" | "classic-island";
-export type TerrainGenerationVersion = 1 | 2 | 3;
+export type TerrainGenerationVersion = 1 | 2 | 3 | 4;
 
 export interface NaturalTreePlacement {
   x: number;
@@ -31,6 +31,8 @@ export interface MergedGeometryData {
     outletCount: number;
     maxUphillWaterStep: number;
     protectedWaterCellCount: number;
+    waterSurfaceArea: number;
+    terrainSurfaceArea: number;
   };
 }
 
@@ -64,8 +66,8 @@ export function createSteppedTerrainData(
   const natural = options.environmentStyle === "natural-valley";
   const worldSeed = options.worldSeed ?? "world-default";
   const seedHash = stableHash(worldSeed);
-  const terrainGenerationVersion = options.terrainGenerationVersion ?? 3;
-  if (natural && (terrainGenerationVersion === 2 || terrainGenerationVersion === 3)) {
+  const terrainGenerationVersion = options.terrainGenerationVersion ?? 4;
+  if (natural && (terrainGenerationVersion === 2 || terrainGenerationVersion === 3 || terrainGenerationVersion === 4)) {
     return createNaturalTerrainDataV2(placements, roads, additionalPads, radius, seedHash, terrainGenerationVersion);
   }
   const cells = new Map<string, number>();
@@ -152,6 +154,8 @@ export function createSteppedTerrainData(
       outletCount: natural && indicesByMaterial.water.length > 0 ? 1 : 0,
       maxUphillWaterStep: 0,
       protectedWaterCellCount: 0,
+      waterSurfaceArea: waterCells.size * cellSize * cellSize,
+      terrainSurfaceArea: cells.size * cellSize * cellSize,
     },
   };
 }
@@ -225,6 +229,8 @@ interface V3RiverSegment {
 }
 
 interface V3Hydrology {
+  generationVersion: 3 | 4;
+  seedHash: number;
   step: number;
   extent: number;
   cells: ReadonlyMap<string, V3HydrologyCell>;
@@ -251,7 +257,7 @@ function createNaturalTerrainDataV2(
   additionalPads: readonly TerrainPad[],
   coreRadius: number,
   seedHash: number,
-  terrainGenerationVersion: 2 | 3,
+  terrainGenerationVersion: 2 | 3 | 4,
 ): MergedGeometryData {
   const nearExtent = alignTo(Math.max(80, coreRadius + 28), 8);
   const middleExtent = alignTo(Math.max(160, nearExtent + 64), 8);
@@ -262,7 +268,9 @@ function createNaturalTerrainDataV2(
   const support = createV2SupportContext(placements, roads, additionalPads);
   const hydrologyExtent = Math.min(farExtent, 560);
   const hydrologyV2 = terrainGenerationVersion === 2 ? createV2Hydrology(hydrologyExtent, seedHash, support) : null;
-  const hydrologyV3 = terrainGenerationVersion === 3 ? createV3Hydrology(hydrologyExtent, seedHash, support) : null;
+  const hydrologyV3 = terrainGenerationVersion === 3 || terrainGenerationVersion === 4
+    ? createV3Hydrology(hydrologyExtent, seedHash, support, terrainGenerationVersion)
+    : null;
   const positions: number[] = [];
   const indicesByMaterial: Record<TerrainMaterial, number[]> = { grass: [], dirt: [], stone: [], water: [] };
   const naturalTrees: NaturalTreePlacement[] = [];
@@ -272,7 +280,11 @@ function createNaturalTerrainDataV2(
   let riverCellCount = 0;
   let lakeCellCount = 0;
   let protectedWaterCellCount = 0;
+  let waterSurfaceArea = 0;
+  let terrainSurfaceArea = 0;
   const sampleCache = new Map<string, V2TerrainSample>();
+  const landSampleCache = new Map<string, V2TerrainSample>();
+  const cellSampleCache = new Map<string, V2TerrainSample>();
 
   const sampleAt = (x: number, z: number): V2TerrainSample => {
     const key = `${x}:${z}`;
@@ -285,6 +297,38 @@ function createNaturalTerrainDataV2(
     return sample;
   };
 
+  const sampleLandAt = (x: number, z: number): V2TerrainSample => {
+    const key = `${x}:${z}`;
+    const cached = landSampleCache.get(key);
+    if (cached) return cached;
+    const sample = sampleNaturalTerrainV3(x, z, seedHash, support, hydrologyV3!, false);
+    landSampleCache.set(key, sample);
+    return sample;
+  };
+
+  const sampleCellAt = (x: number, z: number, size: number): V2TerrainSample => {
+    if (terrainGenerationVersion !== 4 || size < 8) return sampleAt(x, z);
+    const key = `${x}:${z}:${size}`;
+    const cached = cellSampleCache.get(key);
+    if (cached) return cached;
+    const center = sampleAt(x, z);
+    if (center.waterKind === "none") {
+      cellSampleCache.set(key, center);
+      return center;
+    }
+    let matchingWaterSamples = 0;
+    const offset = size * 0.3;
+    for (const dx of [-offset, 0, offset]) {
+      for (const dz of [-offset, 0, offset]) {
+        if (sampleAt(x + dx, z + dz).waterKind === center.waterKind) matchingWaterSamples += 1;
+      }
+    }
+    const requiredCoverage = center.waterKind === "lake" ? 5 : 2;
+    const sample = matchingWaterSamples >= requiredCoverage ? center : sampleLandAt(x, z);
+    cellSampleCache.set(key, sample);
+    return sample;
+  };
+
   const addQuad = (vertices: readonly number[], material: TerrainMaterial): void => {
     const start = positions.length / 3;
     positions.push(...vertices);
@@ -292,22 +336,25 @@ function createNaturalTerrainDataV2(
   };
 
   const addCell = (x: number, z: number, size: number, lod: keyof typeof lodCellCounts): void => {
-    const sample = sampleAt(x, z);
+    const sample = sampleCellAt(x, z, size);
     const half = size / 2;
     const top = sample.height - (sample.material === "water" ? 0.34 : 0.5);
     addQuad([
       x - half, top, z - half, x - half, top, z + half,
       x + half, top, z + half, x + half, top, z - half,
     ], sample.material);
-    addV2CellSide(x, z, size, sample, -1, 0, sampleAt, addQuad);
-    addV2CellSide(x, z, size, sample, 1, 0, sampleAt, addQuad);
-    addV2CellSide(x, z, size, sample, 0, -1, sampleAt, addQuad);
-    addV2CellSide(x, z, size, sample, 0, 1, sampleAt, addQuad);
+    const neighborAt = (neighborX: number, neighborZ: number) => sampleCellAt(neighborX, neighborZ, size);
+    addV2CellSide(x, z, size, sample, -1, 0, neighborAt, addQuad);
+    addV2CellSide(x, z, size, sample, 1, 0, neighborAt, addQuad);
+    addV2CellSide(x, z, size, sample, 0, -1, neighborAt, addQuad);
+    addV2CellSide(x, z, size, sample, 0, 1, neighborAt, addQuad);
     lodCellCounts[lod] += 1;
+    terrainSurfaceArea += size * size;
     minHeight = Math.min(minHeight, sample.height);
     maxHeight = Math.max(maxHeight, sample.height);
     if (sample.waterKind === "river") riverCellCount += 1;
     if (sample.waterKind === "lake") lakeCellCount += 1;
+    if (sample.waterKind !== "none") waterSurfaceArea += size * size;
     if (sample.waterKind !== "none" && sample.supportInfluence >= 0.28) protectedWaterCellCount += 1;
     if (size <= 4 && sample.material === "grass" && sample.supportInfluence < 0.18 && sample.moisture > 0.06) {
       const treeHash = hash2d(seedHash, 0x771, Math.round(x), Math.round(z));
@@ -342,6 +389,8 @@ function createNaturalTerrainDataV2(
       outletCount: hydrologyV3?.outletCount ?? hydrologyV2!.rivers.length,
       maxUphillWaterStep: hydrologyV3?.maxUphillWaterStep ?? 0,
       protectedWaterCellCount,
+      waterSurfaceArea,
+      terrainSurfaceArea,
     },
   };
 }
@@ -410,16 +459,18 @@ function sampleNaturalTerrainV3(
   seedHash: number,
   support: V2SupportContext,
   hydrology: V3Hydrology,
+  includeWater = true,
 ): V2TerrainSample {
-  const macro = sampleV2MacroTerrain(x, z, seedHash);
+  const macro = sampleV2MacroTerrain(x, z, seedHash, hydrology.generationVersion);
   const supported = sampleV2Support(x, z, support);
-  const maximumSupportedHeight = supported.height + Math.pow(1 - supported.influence, 0.78) * 26;
+  const maximumSupportedHeight = supported.height + Math.pow(1 - supported.influence, 0.78)
+    * (hydrology.generationVersion === 4 ? 48 : 26);
   let height = supported.influence >= 0.995
     ? supported.height
     : Math.round(Math.min(macro.height, maximumSupportedHeight));
   let material: TerrainMaterial = macro.rocky && supported.influence < 0.2 ? "stone" : "grass";
   let waterKind: V2TerrainSample["waterKind"] = "none";
-  if (supported.influence < 0.28) {
+  if (includeWater && supported.influence < 0.28) {
     const water = sampleV3Hydrology(x, z, height, hydrology);
     if (water.kind !== "none") {
       height = water.height;
@@ -430,7 +481,7 @@ function sampleNaturalTerrainV3(
   return { height, material, supportInfluence: supported.influence, moisture: macro.moisture, waterKind };
 }
 
-function sampleV2MacroTerrain(x: number, z: number, seedHash: number): { height: number; moisture: number; rocky: boolean } {
+function sampleV2MacroTerrain(x: number, z: number, seedHash: number, generationVersion: 2 | 3 | 4 = 3): { height: number; moisture: number; rocky: boolean } {
   const warpX = fractalNoise(x * 0.0048, z * 0.0048, seedHash, 0x121) * 38;
   const warpZ = fractalNoise(x * 0.0048, z * 0.0048, seedHash, 0x131) * 38;
   const px = x + warpX;
@@ -446,11 +497,27 @@ function sampleV2MacroTerrain(x: number, z: number, seedHash: number): { height:
     [-1, 0], [-0.58, 0.5], [-0.18, 2.2], [0.24, 4.2], [0.58, 6.8], [1, 8.5],
   ]);
   const mountainMask = smoothstep(-0.2, 0.46, continentalness - erosion * 0.28);
-  const mountain = ridge * mountainMask * (13 + Math.max(0, -erosion) * 10);
+  const mountain = ridge * mountainMask * (generationVersion === 4
+    ? 18 + Math.max(0, -erosion) * 15
+    : 13 + Math.max(0, -erosion) * 10);
+  const chainNoise = fractalNoise(px * 0.0042 + pz * 0.0016, pz * 0.012 - px * 0.0011, seedHash, 0x1a1);
+  const chainRidge = Math.pow(1 - Math.abs(chainNoise), 2.35);
+  const chainMask = smoothstep(0.04, 0.56, continentalness - erosion * 0.22);
+  const mountainChain = generationVersion === 4 ? chainRidge * chainMask * (8 + ridge * 11) : 0;
+  const peakSignal = smoothstep(0.48, 0.82, Math.max(ridge, chainRidge));
+  const highPeaks = generationVersion === 4
+    ? Math.pow(peakSignal, 1.35) * chainMask * (18 + mountainMask * 9 + Math.max(0, -erosion) * 7)
+    : 0;
   const rolling = smoothstep(-0.7, 0.22, continentalness) * (hills + 1) * 1.55;
   const valley = smoothstep(0.12, 0.76, erosion) * (2.4 + ridge * 1.5);
-  const height = Math.max(0, Math.min(25, Math.round(base + mountain + rolling - valley + detail * 0.35)));
-  return { height, moisture, rocky: height >= 17 && (ridge > 0.54 || moisture < -0.2) };
+  const rawHeight = base + mountain + mountainChain + highPeaks + rolling - valley + detail * 0.35;
+  const shapedHeight = generationVersion === 4 && rawHeight > 34
+    ? 34 + Math.tanh((rawHeight - 34) / 14) * 13
+    : rawHeight;
+  const maximumHeight = generationVersion === 4 ? 48 : 25;
+  const height = Math.max(0, Math.min(maximumHeight, Math.round(shapedHeight)));
+  const rockyHeight = generationVersion === 4 ? 22 : 17;
+  return { height, moisture, rocky: height >= rockyHeight && (ridge > 0.48 || chainRidge > 0.58 || moisture < -0.2) };
 }
 
 function splineRemap(value: number, points: readonly (readonly [number, number])[]): number {
@@ -582,7 +649,7 @@ function createV2Hydrology(farExtent: number, seedHash: number, support: V2Suppo
   return { lakes, rivers };
 }
 
-function createV3Hydrology(farExtent: number, seedHash: number, support: V2SupportContext): V3Hydrology {
+function createV3Hydrology(farExtent: number, seedHash: number, support: V2SupportContext, generationVersion: 3 | 4): V3Hydrology {
   const step = 8;
   const extent = alignTo(farExtent, step);
   const minimum = -extent + step;
@@ -592,7 +659,7 @@ function createV3Hydrology(farExtent: number, seedHash: number, support: V2Suppo
   for (let x = minimum; x <= maximum; x += step, gx += 1) {
     let gz = 0;
     for (let z = minimum; z <= maximum; z += step, gz += 1) {
-      const macro = sampleV2MacroTerrain(x, z, seedHash);
+      const macro = sampleV2MacroTerrain(x, z, seedHash, generationVersion);
       const protectedInfluence = sampleV2Support(x, z, support).influence;
       const key = v3GridKey(gx, gz);
       cells.set(key, {
@@ -642,18 +709,18 @@ function createV3Hydrology(farExtent: number, seedHash: number, support: V2Suppo
     downstream.accumulation += cell.accumulation;
   }
 
-  const lakeComponents = v3LakeComponents(cells, seedHash);
+  const lakeComponents = v3LakeComponents(cells, seedHash, generationVersion);
   const lakes: V3HydrologyLake[] = [];
   const lakeByCell = new Map<string, V3HydrologyLake>();
   for (const component of lakeComponents) {
-    if (lakes.length >= 3) break;
+    if (lakes.length >= (generationVersion === 4 ? 2 : 3)) break;
     if (lakes.some((lake) => Math.hypot(lake.centerX - component.centerX, lake.centerZ - component.centerZ) < 72)) continue;
     const lake: V3HydrologyLake = { ...component, id: lakes.length };
     lakes.push(lake);
     for (const key of lake.cells) lakeByCell.set(key, lake);
   }
 
-  const minimumAccumulation = 24;
+  const minimumAccumulation = generationVersion === 4 ? 32 : 24;
   const channelCells = new Set([...cells.values()].filter((cell) => (
     cell.accumulation >= minimumAccumulation
     && cell.protectedInfluence < 0.08
@@ -672,10 +739,10 @@ function createV3Hydrology(farExtent: number, seedHash: number, support: V2Suppo
     grouped.set(outlet, group);
   }
   const selectedNetworks = [...grouped.entries()]
-    .filter(([, members]) => members.length >= 3)
+    .filter(([, members]) => members.length >= (generationVersion === 4 ? 4 : 3))
     .sort((left, right) => Math.max(...right[1].map((cell) => cell.accumulation)) - Math.max(...left[1].map((cell) => cell.accumulation))
       || left[0].localeCompare(right[0]))
-    .slice(0, 5);
+    .slice(0, generationVersion === 4 ? 4 : 5);
   const segments: V3RiverSegment[] = [];
   selectedNetworks.forEach(([, members], chainId) => {
     const memberKeys = new Set(members.map((cell) => cell.key));
@@ -703,7 +770,7 @@ function createV3Hydrology(farExtent: number, seedHash: number, support: V2Suppo
   const segmentBuckets = v3SegmentBuckets(segments);
   const networkCount = new Set(segments.map((segment) => segment.chainId)).size;
   return {
-    step, extent, cells, lakes, lakeByCell, segments, segmentBuckets, networkCount,
+    generationVersion, seedHash, step, extent, cells, lakes, lakeByCell, segments, segmentBuckets, networkCount,
     outletCount: networkCount,
     maxUphillWaterStep: segments.reduce((maximum, segment) => Math.max(maximum, segment.waterLevel2 - segment.waterLevel1), 0),
   };
@@ -752,11 +819,14 @@ function v3PlateMoisture(x: number, z: number, seedHash: number, baseMoisture: n
   return Math.max(-1, Math.min(1, baseMoisture * 0.74 + plateMoisture * 0.26));
 }
 
-function v3LakeComponents(cells: ReadonlyMap<string, V3HydrologyCell>, seedHash: number): Array<Omit<V3HydrologyLake, "id">> {
+function v3LakeComponents(cells: ReadonlyMap<string, V3HydrologyCell>, seedHash: number, generationVersion: 3 | 4): Array<Omit<V3HydrologyLake, "id">> {
+  const minimumDepth = generationVersion === 4 ? 1.25 : 0.9;
+  const minimumMoisture = generationVersion === 4 ? -0.32 : -0.48;
+  const minimumComponentSize = generationVersion === 4 ? 4 : 3;
   const candidates = new Set([...cells.values()].filter((cell) => (
-    cell.filledHeight - v3DrainElevation(cell) >= 0.9
+    cell.filledHeight - v3DrainElevation(cell) >= minimumDepth
     && cell.protectedInfluence < 0.08
-    && cell.moisture > -0.48
+    && cell.moisture > minimumMoisture
   )).map((cell) => cell.key));
   const components: Array<{ members: V3HydrologyCell[]; score: number }> = [];
   while (candidates.size > 0) {
@@ -772,7 +842,7 @@ function v3LakeComponents(cells: ReadonlyMap<string, V3HydrologyCell>, seedHash:
         queue.push(neighbor);
       }
     }
-    if (members.length < 3) continue;
+    if (members.length < minimumComponentSize) continue;
     const wetness = members.reduce((sum, cell) => sum + cell.moisture, 0) / members.length;
     components.push({ members, score: Math.min(180, members.length) * (1.2 + wetness * 0.35) });
   }
@@ -786,11 +856,11 @@ function v3LakeComponents(cells: ReadonlyMap<string, V3HydrologyCell>, seedHash:
     const centerX = members.reduce((sum, cell) => sum + cell.x, 0) / members.length;
     const centerZ = members.reduce((sum, cell) => sum + cell.z, 0) / members.length;
     const ordered = [...members].sort((left, right) => Math.hypot(left.x - centerX, left.z - centerZ) - Math.hypot(right.x - centerX, right.z - centerZ));
-    const limited = ordered.slice(0, 160);
+    const limited = ordered.slice(0, generationVersion === 4 ? 128 : 160);
     const spill = Math.max(1, Math.min(10, Math.floor(limited.reduce((sum, cell) => sum + cell.filledHeight, 0) / limited.length)));
     const submerged = limited.filter((cell) => cell.height < spill);
-    const selected = submerged.length >= 3 ? submerged : limited.slice(0, Math.min(8, limited.length));
-    if (selected.length < 3) return [];
+    const selected = submerged.length >= minimumComponentSize ? submerged : limited.slice(0, Math.min(8, limited.length));
+    if (selected.length < minimumComponentSize) return [];
     return [{
       cells: new Set(selected.map((cell) => cell.key)),
       waterLevel: Math.max(spill, Math.min(...selected.map((cell) => cell.height)) + 1),
@@ -1042,9 +1112,12 @@ function sampleV3Hydrology(
     }
   }
   if (nearestLake) {
-    const waterRadius = hydrology.step * 0.76;
+    const shorelineNoise = hydrology.generationVersion === 4
+      ? fractalNoise(x * 0.055, z * 0.055, hydrology.seedHash, 0x451)
+      : 0;
+    const waterRadius = hydrology.step * (hydrology.generationVersion === 4 ? 0.64 + shorelineNoise * 0.07 : 0.76);
     if (nearestLake.distance <= waterRadius) return { kind: "lake", height: nearestLake.lake.waterLevel, material: "water" };
-    const bankRadius = hydrology.step * 1.24;
+    const bankRadius = hydrology.generationVersion === 4 ? waterRadius + 4.2 : hydrology.step * 1.24;
     if (nearestLake.distance <= bankRadius) {
       const bank = smoothstep(waterRadius, bankRadius, nearestLake.distance);
       return { kind: "none", height: Math.round((nearestLake.lake.waterLevel + 1) * (1 - bank) + baseHeight * bank), material: "dirt" };

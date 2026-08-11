@@ -54,6 +54,9 @@ test("turns a real blueprint lamp glow on only at night and keeps it attached wh
   await mountLampScene();
   await expect.poll(async () => Number(await canvas.getAttribute("data-glow-sprite-count"))).toBeGreaterThanOrEqual(1);
   expect(Number(await canvas.getAttribute("data-glow-sprite-count"))).toBeLessThanOrEqual(2);
+  await expect(canvas).toHaveAttribute("data-glow-texture-shape", "soft-square");
+  expect(Number(await canvas.getAttribute("data-glow-sprite-maximum-scale"))).toBeLessThanOrEqual(1.12);
+  await expect(canvas).toHaveAttribute("data-terrain-water-opaque", "true");
   await expect.poll(async () => Number(await canvas.getAttribute("data-visible-glow-sprite-count"))).toBeGreaterThanOrEqual(1);
   const night = await canvas.screenshot({ path: testInfo.outputPath("lamp-night.png") });
   expect(Buffer.compare(noon, night)).not.toBe(0);
@@ -95,6 +98,8 @@ test("renders distinct day phases with a bounded optional post-process and no co
     await expect(canvas).toHaveAttribute("data-day-phase", phase);
     await expect(canvas).toHaveAttribute("data-sky-layer-count", "3");
     await expect(canvas).toHaveAttribute("data-glow-texture-size", "32");
+    await expect(canvas).toHaveAttribute("data-glow-texture-shape", "soft-square");
+    await expect(canvas).toHaveAttribute("data-terrain-water-opaque", "true");
     expect(Number(await canvas.getAttribute("data-glow-sprite-count"))).toBeLessThanOrEqual(2);
     await expect.poll(async () => Number(await canvas.getAttribute("data-cloud-block-count"))).toBeGreaterThan(0);
     await expect.poll(async () => Number(await canvas.getAttribute("data-render-triangles"))).toBeGreaterThan(1_000);

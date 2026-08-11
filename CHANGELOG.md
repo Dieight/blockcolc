@@ -2,6 +2,13 @@
 
 User-facing release notes are kept here; internal diagnosis and per-run evidence belong in `docs/QA-BASELINES.md` or ignored artifacts.
 
+## v1.3.0 - 2026-08-11
+
+- Rebuilt Natural Valley terrain with fewer fragmented rectangular pools, refined shorelines, longer ridges, and a higher mountain tail while preserving settlement seeds and progress.
+- Reduced distant texture shimmer with isolated resource-pack mipmaps, smoother original-material minification, and bounded Cinematic edge sampling.
+- Fixed maximum-zoom mountain clipping, oversized floating night halos, and stars leaking through terrain water.
+- The idle timer now shows the complete multi-round plan duration, and primary mobile pages use their available height with less wasted spacing.
+
 ## v1.2.0 - 2026-08-11
 
 - Added Auto, Performance, Balanced, and Cinematic original lighting presets with bounded Bloom, improved water, glass, emissive materials, and brighter readable nights.

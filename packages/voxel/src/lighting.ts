@@ -123,6 +123,38 @@ export function clusterEmissivePoints(points: readonly EmissivePoint[], maximum:
   return centers;
 }
 
+/**
+ * Chooses visual glow anchors from real emissive blocks. Unlike clustered
+ * point lights, these anchors must never be weighted centroids: a sprite at a
+ * centroid can visibly float away from the lamp that emits it.
+ */
+export function selectEmissiveVisualPoints(points: readonly EmissivePoint[], maximum: number): EmissivePoint[] {
+  if (maximum <= 0 || points.length === 0) return [];
+  const seenCoordinates = new Set<string>();
+  const sorted = [...points]
+    .sort((left, right) => right.intensity - left.intensity
+      || left.x - right.x || left.z - right.z || left.y - right.y)
+    .filter((point) => {
+      const key = `${point.x}:${point.y}:${point.z}`;
+      if (seenCoordinates.has(key)) return false;
+      seenCoordinates.add(key);
+      return true;
+    });
+  if (sorted.length <= maximum) return sorted.map((point) => ({ ...point }));
+  const selected: EmissivePoint[] = [{ ...sorted[0]! }];
+  while (selected.length < maximum) {
+    const next = sorted.reduce((best, point) => {
+      if (selected.some((entry) => entry.x === point.x && entry.y === point.y && entry.z === point.z)) return best;
+      const distance = Math.min(...selected.map((entry) => squaredDistance(point, entry)));
+      if (distance > best.distance) return { point, distance };
+      if (distance === best.distance && point.intensity > best.point.intensity) return { point, distance };
+      return best;
+    }, { point: sorted[0]!, distance: -1 });
+    selected.push({ ...next.point });
+  }
+  return selected;
+}
+
 function squaredDistance(left: EmissivePoint, right: EmissivePoint): number {
   return (left.x - right.x) ** 2 + (left.y - right.y) ** 2 + (left.z - right.z) ** 2;
 }
