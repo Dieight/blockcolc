@@ -14,12 +14,18 @@ def releaseSigningConfigured = [
     releaseKeyAlias,
     releaseKeyPassword,
 ].every { it != null && !it.isBlank() }
+def unsignedCiCandidateAllowed = System.getenv('GITHUB_ACTIONS') == 'true' &&
+    System.getenv('BLOCKCOLC_ALLOW_UNSIGNED_RELEASE_CANDIDATE') == 'true'
 def releaseTaskRequested = gradle.startParameter.taskNames.any {
     it.toLowerCase().contains('release')
 }
 
-if (releaseTaskRequested && !releaseSigningConfigured) {
+if (releaseTaskRequested && !releaseSigningConfigured && !unsignedCiCandidateAllowed) {
     throw new GradleException('Release signing credentials are required. Use tools/Build-AndroidRelease.ps1.')
+}
+
+if (releaseTaskRequested && unsignedCiCandidateAllowed && !releaseSigningConfigured) {
+    logger.lifecycle('Building an unsigned CI release candidate. This APK is not installable or publishable.')
 }
 
 android {

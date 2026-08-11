@@ -2,12 +2,14 @@
 
 ## Current Release
 
-- Public version: `v1.1.2`
-- Android `versionCode`: `14`
+- Public version: `v1.2.0`
+- Android `versionCode`: `15`
 - Package: `com.blockcolc.app`
 - Formal signer SHA-256: `6405e2ff95a32549699a3081372e8462317bee717c08caabf67678f211ddc6e3`
-- Release APK SHA-256: `6833ff3e0447e70b85ed7248aadfe7f32c70e3c22a05fe7b169a5877c8c640a1`
-- Release test baseline: full low-concurrency Playwright `96` passed, `4` planned skips; unit/type/build/Capacitor/Android JVM/Lint passed.
+- Release APK SHA-256: `e48f54e79fe81ae87f714e01a5acc46d2082ce1c975763e361140dfd9054b87c`
+- Product baseline at release: full low-concurrency Playwright `100` passed with `4` planned project skips; unit/type/build/Capacitor/Android JVM/Lint passed.
+- Optimized workflow baseline: `395` unit tests; `2` browser persistence/core-loop tests; Web release matrix `58/58` with no planned project skips; production build, Capacitor sync, Android JVM tests, Release Lint, formal signing, and APK metadata checks pass.
+- Measured development-machine times: checkpoint gate `69.3s`, optimized Web matrix `256.8s`, prechecked Android build chain `64.9s`. Treat these as comparison baselines, not hard timeouts.
 
 ## Reference Device
 
@@ -18,6 +20,8 @@
 ## Required Viewports
 
 `360x800`, `412x915`, `915x412`, `768x1024`, `1440x900`.
+
+The mobile project owns complete product flows. Desktop runs the multi-viewport, pointer, and environment-interaction subset; renderer and lighting regressions run on both projects.
 
 ## Evidence Rules
 

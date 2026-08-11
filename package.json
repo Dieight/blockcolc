@@ -12,6 +12,8 @@
     "version:sync": "node tools/sync-version.mjs --write",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
+    "test:fast": "npm run version:check && npm run typecheck && npm test",
+    "test:web:release": "npm run test:e2e -w @tomato-clock/web -- --workers=2",
     "test:e2e": "npm run test:e2e --workspaces --if-present"
   }
 }

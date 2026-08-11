@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "tsc --noEmit && vite build",
+    "build:assets": "vite build",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests --exclude tests/**",
     "test:e2e": "playwright test"

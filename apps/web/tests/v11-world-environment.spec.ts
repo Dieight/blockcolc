@@ -26,7 +26,6 @@ test('switches the derived world environment without moving project data', async
 
 test('selects a building with a light tap while retaining drag gestures', async ({ page }, testInfo) => {
   test.setTimeout(60_000);
-  test.skip(testInfo.project.name !== 'desktop-chromium', 'Run deterministic pointer scanning once.');
   await page.goto('/');
   await page.getByRole('button', { name: '开始建造' }).click();
   const canvas = page.getByLabel('项目建筑世界');

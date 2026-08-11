@@ -1,0 +1,227 @@
+name: Android CI
+
+on:
+  pull_request:
+    paths-ignore:
+      - '**/*.md'
+  push:
+    branches:
+      - main
+      - 'release/**'
+    paths-ignore:
+      - '**/*.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CI: 'true'
+  NODE_VERSION: '24'
+  JAVA_VERSION: '21'
+
+jobs:
+  quality:
+    name: Fast quality gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run checkpoint gate
+        run: npm run test:fast
+
+  web-release:
+    name: Browser release gate
+    if: github.event_name != 'pull_request'
+    needs: quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Test IndexedDB persistence
+        run: npm run test:e2e -w @tomato-clock/storage-indexeddb -- --workers=1
+
+      - name: Test browser core loop
+        run: npm run test:e2e -w @tomato-clock/core-loop-browser -- --workers=1
+
+      - name: Run Web release matrix
+        run: npm run test:web:release
+
+  android-candidate:
+    name: Unsigned Android candidate
+    if: github.event_name != 'pull_request'
+    needs: web-release
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    outputs:
+      artifact-name: ${{ steps.package.outputs.artifact_name }}
+      apk-sha256: ${{ steps.package.outputs.apk_sha256 }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Set up Java and Gradle cache
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: gradle
+          cache-dependency-path: |
+            apps/android/android/*.gradle
+            apps/android/android/**/*.gradle
+            apps/android/android/gradle/wrapper/gradle-wrapper.properties
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Web assets and sync Capacitor
+        run: npm run android:sync:prechecked -w @tomato-clock/android
+
+      - name: Build unsigned Release candidate
+        env:
+          BLOCKCOLC_ALLOW_UNSIGNED_RELEASE_CANDIDATE: 'true'
+        working-directory: apps/android/android
+        run: |
+          chmod +x ./gradlew
+          ./gradlew --no-daemon --console=plain testDebugUnitTest lintRelease assembleRelease
+
+      - name: Verify and package candidate
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_apk='apps/android/android/app/build/outputs/apk/release/app-release-unsigned.apk'
+          test -f "$source_apk"
+
+          version_name="$(node -p "require('./version.json').versionName")"
+          version_code="$(node -p "require('./version.json').versionCode")"
+          artifact_name="blockcolc-${version_name}-unsigned-${GITHUB_SHA:0:12}"
+          artifact_dir="artifacts/ci/${artifact_name}"
+          candidate_apk="${artifact_dir}/blockcolc-${version_name}-unsigned.apk"
+          mkdir -p "$artifact_dir"
+          cp "$source_apk" "$candidate_apk"
+
+          source_sha="$(sha256sum "$source_apk" | cut -d' ' -f1)"
+          candidate_sha="$(sha256sum "$candidate_apk" | cut -d' ' -f1)"
+          test "$source_sha" = "$candidate_sha"
+
+          build_tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          badging="$($build_tools/aapt dump badging "$candidate_apk" | head -n 1)"
+          expected="package: name='com.blockcolc.app' versionCode='${version_code}' versionName='${version_name}'"
+          [[ "$badging" == "$expected"* ]]
+          if "$build_tools/apksigner" verify "$candidate_apk" >/dev/null 2>&1; then
+            echo 'CI candidate unexpectedly contains a signature.' >&2
+            exit 1
+          fi
+
+          node tools/create-ci-candidate-manifest.mjs \
+            --apk "$candidate_apk" \
+            --output "${artifact_dir}/candidate-manifest.json" \
+            --commit "$GITHUB_SHA" \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT"
+          node tools/verify-ci-candidate.mjs \
+            --manifest "${artifact_dir}/candidate-manifest.json" \
+            --expected-commit "$GITHUB_SHA"
+
+          echo "artifact_name=$artifact_name" >> "$GITHUB_OUTPUT"
+          echo "apk_path=$candidate_apk" >> "$GITHUB_OUTPUT"
+          echo "apk_sha256=$candidate_sha" >> "$GITHUB_OUTPUT"
+          echo "artifact_dir=$artifact_dir" >> "$GITHUB_OUTPUT"
+
+      - name: Attest candidate provenance
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        with:
+          subject-path: ${{ steps.package.outputs.apk_path }}
+
+      - name: Upload candidate
+        id: upload
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ steps.package.outputs.artifact_name }}
+          path: ${{ steps.package.outputs.artifact_dir }}
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+      - name: Record candidate summary
+        shell: bash
+        run: |
+          {
+            echo '### Unsigned Android candidate'
+            echo ''
+            echo "- Source commit: $GITHUB_SHA"
+            echo "- APK SHA-256: ${{ steps.package.outputs.apk_sha256 }}"
+            echo "- Actions artifact digest: ${{ steps.upload.outputs.artifact-digest }}"
+            echo '- Signing: unsigned; do not install or publish'
+            echo '- Local real Litematic fixtures and physical-device checks remain required'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  verify-upload:
+    name: Verify uploaded candidate
+    if: github.event_name != 'pull_request'
+    needs: android-candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Download exact workflow artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ${{ needs.android-candidate.outputs.artifact-name }}
+          path: downloaded-candidate
+
+      - name: Compare redownloaded APK with manifest
+        run: |
+          node tools/verify-ci-candidate.mjs \
+            --manifest downloaded-candidate/candidate-manifest.json \
+            --expected-commit "$GITHUB_SHA"

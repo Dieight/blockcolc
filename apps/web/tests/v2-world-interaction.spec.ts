@@ -1,7 +1,6 @@
 import { expect, test, type Locator } from "@playwright/test";
 
 test("renders the current compact world and supports bounded rotate and pinch gestures", async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== "desktop-chromium", "Run deterministic pointer simulation once.");
   await page.clock.install({ time: new Date("2026-07-26T12:00:00+08:00") });
   await page.goto("/");
   await page.getByRole("button", { name: "开始建造" }).click();

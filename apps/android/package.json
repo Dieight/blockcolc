@@ -6,7 +6,9 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "web:build": "npm --prefix ../web run build",
+    "web:build:assets": "npm --prefix ../web run build:assets",
     "android:sync": "npm run web:build && cap sync android",
+    "android:sync:prechecked": "npm run web:build:assets && cap sync android",
     "android:assemble": "cd android && gradlew.bat assembleDebug",
     "android:test": "cd android && gradlew.bat testDebugUnitTest lintDebug"
   },

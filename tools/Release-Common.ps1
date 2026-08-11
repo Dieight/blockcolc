@@ -21,6 +21,29 @@ function Invoke-External {
     }
 }
 
+function Invoke-TimedReleaseStep {
+    param(
+        [Parameter(Mandatory)][string]$Name,
+        [Parameter(Mandatory)][scriptblock]$Action,
+        [Parameter(Mandatory)][System.Collections.IDictionary]$Durations
+    )
+
+    Write-Host "==> $Name"
+    $stopwatch = [Diagnostics.Stopwatch]::StartNew()
+    $passed = $false
+    try {
+        & $Action
+        $passed = $true
+    }
+    finally {
+        $stopwatch.Stop()
+        $seconds = [Math]::Round($stopwatch.Elapsed.TotalSeconds, 1)
+        $Durations[$Name] = $seconds
+        $status = if ($passed) { 'passed' } else { 'failed' }
+        Write-Host "<== $Name $status in $seconds s"
+    }
+}
+
 function Get-RepositoryRoot {
     return Split-Path -Parent $PSScriptRoot
 }

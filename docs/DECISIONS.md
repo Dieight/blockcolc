@@ -24,3 +24,19 @@ This file records decisions that affect workflow, source boundaries, or release 
 - Cinematic adds bounded half-resolution bloom after the normal scene render. Every requested high-quality frame refreshes the current Bloom texture, including rotation, pinch, native input, and camera settling; stale screen-space glow is never reused, and request-on-demand scheduling still prevents an idle render loop.
 - Runtime quality downgrade remains authoritative over the stored request. Visual quality may fall back without changing product data or the user's stored preference.
 - Construction outlines are a local three-state preference: off, current building by default, or all unfinished buildings. Only exposed shell voxels use a lit translucent material. Newly imported Litematic blueprints use deterministic support-aware ordering, while existing saved blueprint order remains unchanged.
+
+## 2026-08-11 Test Gate Ownership
+
+- The edit loop uses affected package checks and exact targeted E2E instead of the complete release matrix.
+- `npm run test:fast` is the coherent-change checkpoint: version consistency, complete typecheck, and all unit tests. It is not required after every small edit.
+- Android/mobile Chromium owns complete product behavior flows. Desktop Chromium owns responsive viewport, mouse/pointer, and desktop environment interaction. Renderer and lighting regressions remain cross-project because viewport and GPU-path differences are material.
+- Release preparation reuses the version, fixture, and TypeScript results already established by its enclosing quality gate. The nested Android build still performs the production asset build, Capacitor sync, JVM tests, Release Lint, formal signing, and APK verification.
+- Publish-time staged-state, upload, redownload, install, and SHA-256 comparisons remain mandatory because they verify artifact boundaries rather than repeat behavioral coverage.
+
+## 2026-08-11 Hybrid Android CI Phase 1
+
+- The public repository uses GitHub Actions for reproducible committed-source checks. Pull requests run the checkpoint gate; `main`, `release/**`, and manual runs add the browser release gate and an unsigned Android Release candidate.
+- Phase 1 never uploads the formal keystore or passwords. The unsigned candidate uses the Release variant, is explicitly marked non-installable/non-publishable, and does not use the abandoned debug signature.
+- GitHub Actions are pinned to full commit SHAs with read-only repository permissions by default. Only the candidate provenance step receives `id-token: write` and `attestations: write`.
+- CI records source commit, package/version, size, and APK SHA-256 in a structured manifest, attests the APK, then redownloads and compares the uploaded candidate in a separate job.
+- Real third-party Litematic fixtures, formal signing, ADB installation, GPU/WebView behavior, and subjective device acceptance remain local. Existing local prepare/publish scripts remain the authoritative release path until a later explicitly approved signing phase.

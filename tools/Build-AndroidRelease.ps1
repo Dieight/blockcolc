@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
-    [string]$SigningDirectory = (Join-Path $env:USERPROFILE '.blockcolc\signing')
+    [string]$SigningDirectory = (Join-Path $env:USERPROFILE '.blockcolc\signing'),
+    [switch]$QualityGateAlreadyPassed
 )
 
 $ErrorActionPreference = 'Stop'
@@ -31,12 +32,18 @@ try {
 
     Push-Location $repositoryRoot
     try {
-        node tools/sync-version.mjs --check
-        if ($LASTEXITCODE -ne 0) { throw 'Version consistency check failed.' }
+        if (-not $QualityGateAlreadyPassed) {
+            node tools/sync-version.mjs --check
+            if ($LASTEXITCODE -ne 0) { throw 'Version consistency check failed.' }
 
-        & (Join-Path $PSScriptRoot 'Test-FixtureHashes.ps1')
+            & (Join-Path $PSScriptRoot 'Test-FixtureHashes.ps1')
+        }
+        else {
+            Write-Host 'Reusing version, fixture, and TypeScript checks from the enclosing release gate.'
+        }
 
-        npm run android:sync -w '@tomato-clock/android'
+        $syncScript = if ($QualityGateAlreadyPassed) { 'android:sync:prechecked' } else { 'android:sync' }
+        npm run $syncScript -w '@tomato-clock/android'
         if ($LASTEXITCODE -ne 0) { throw 'Capacitor sync failed.' }
 
         Push-Location (Join-Path $repositoryRoot 'apps\android\android')
