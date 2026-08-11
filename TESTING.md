@@ -46,7 +46,7 @@ The Web release matrix has one owner for each behavior instead of executing ever
 - Desktop Chromium owns the responsive viewport matrix, mouse/pointer interaction, and desktop environment interaction.
 - Renderer and lighting regressions run on both projects because their output can differ by viewport and GPU path.
 
-The current matrix schedules 58 tests with no planned project skips, down from 104 scheduled entries. Do not rerun `Prepare-Release.ps1` for an isolated tweak; return to the edit loop, run the affected test, and prepare once the release candidate is coherent.
+The current local matrix schedules 59 tests with no planned project skips, down from 104 duplicated entries before ownership was assigned. Do not rerun `Prepare-Release.ps1` for an isolated tweak; return to the edit loop, run the affected test, and prepare once the release candidate is coherent.
 
 ## Publish Boundary
 
@@ -63,12 +63,12 @@ The publish step deliberately rechecks staged state, prepared evidence, uploaded
 `.github/workflows/android-ci.yml` provides the first hybrid CI stage:
 
 - Pull requests run only `test:fast`; they never receive signing material or produce an APK.
-- Pushes to `main` and `release/**`, plus manual runs, continue through the two browser persistence/core-loop tests and the 58-test Web release matrix.
+- Pushes to `main` and `release/**`, plus manual runs, continue through the two browser persistence/core-loop tests and the owned Web release matrix. CI fixes its browser timezone to `Asia/Shanghai` for deterministic local-time tests and uses one worker to avoid software-WebGL contention.
 - Markdown-only pushes and pull requests do not start Android CI; documentation changes cannot alter the executable candidate.
 - Only after those gates pass does CI build the exact Release variant without a signature. The explicit unsigned escape hatch works only inside GitHub Actions and cannot weaken the normal local Release signing requirement.
 - The candidate contains a structured manifest with source commit, package/version metadata, size, and APK SHA-256. CI compares the build and packaged copies, uploads an attested artifact, redownloads it in a separate job, and compares it with the manifest.
 
-The unsigned CI APK is evidence, not an installable or publishable application. Formal signing, local real-fixture verification, ADB replacement installation, physical-device rendering/performance checks, and explicit publication remain local gates during this phase. Actions are pinned to full commit SHAs; no signing secret is configured in GitHub.
+The unsigned CI APK is evidence, not an installable or publishable application. Formal signing, local real-fixture verification, synchronous 3D gesture coverage, ADB replacement installation, physical-device rendering/performance checks, and explicit publication remain local gates during this phase. Actions are pinned to full commit SHAs; no signing secret is configured in GitHub.
 
 ## Fixture Rules
 

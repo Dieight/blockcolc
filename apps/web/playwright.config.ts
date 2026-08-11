@@ -11,12 +11,12 @@ export default defineConfig({
     {
       name: 'mobile-chromium',
       testIgnore: desktopOnlySpecs,
-      use: { ...devices['Pixel 7'] },
+      use: { ...devices['Pixel 7'], timezoneId: 'Asia/Shanghai' },
     },
     {
       name: 'desktop-chromium',
       testMatch: [desktopOnlySpecs, crossViewportRendererSpecs],
-      use: { ...devices['Desktop Chrome'], viewport: { width: 1440, height: 900 } },
+      use: { ...devices['Desktop Chrome'], viewport: { width: 1440, height: 900 }, timezoneId: 'Asia/Shanghai' },
     },
   ],
   outputDir: 'test-results',
