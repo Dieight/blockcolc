@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createInitialState, type FocusSession } from '@tomato-clock/domain';
-import { effectiveFocusMillisecondsByDate, focusHeatmapLevel, focusSessionEndedAt, focusSessionLocalDate, focusWindowSummary, projectFocusAllocation } from './focus-stats';
+import { effectiveFocusMillisecondsByDate, focusHeatmapLevel, focusHourDistribution, focusSessionEndedAt, focusSessionLocalDate, focusWindowSummary, projectFocusAllocation, settlementTotals } from './focus-stats';
 
 const base = {
   projectId: 'project',
@@ -46,5 +46,25 @@ describe('effective focus statistics', () => {
       { projectId: 'project-a', title: '论文', minutes: 45, share: 75 },
       { projectId: 'project-b', title: '阅读', minutes: 15, share: 25 },
     ]);
+  });
+
+  it('buckets effective time by the local hour it ended and totals the settlement', () => {
+    const state = createInitialState('Asia/Shanghai', [0, 6]);
+    state.projects.push(
+      { id: 'project-a', title: '论文', kind: 'finite', settlementIndex: 0, blueprintId: 'builtin-small-workshop', importedBlueprint: null, createdAt: '2026-08-01T00:00:00.000Z', status: 'monument', subtaskStructureLocked: true, subtasks: [], habit: null },
+    );
+    state.habitBuildings.push(
+      { id: 'building-1', habitProjectId: 'project-b', habitTitle: '阅读', cycleNumber: 1, settlementIndex: 1, blueprintId: 'builtin-small-workshop', importedBlueprint: null, targetRounds: 10, focusSessionIds: [], completedAt: '2026-08-11T12:00:00.000Z' },
+    );
+    state.focusHistory.push(
+      { id: 'focus-a', projectId: 'project-a', subtaskId: 'task-a', startedAt: '2026-08-10T14:00:00.000Z', endsAt: '2026-08-10T14:45:00.000Z', plannedDurationMs: 2_700_000, timeZoneAtStart: 'Asia/Shanghai', status: 'completed', completedAt: '2026-08-10T14:45:00.000Z', completedLocalDate: '2026-08-10', actualDurationMs: 2_700_000 },
+      { id: 'focus-b', projectId: 'project-a', subtaskId: 'task-a', startedAt: '2026-08-10T21:00:00.000Z', endsAt: '2026-08-10T21:15:00.000Z', plannedDurationMs: 900_000, timeZoneAtStart: 'Asia/Shanghai', status: 'interrupted', interruptedAt: '2026-08-10T21:15:00.000Z', interruptionReason: 'user-cancelled', interruptionCategory: 'fatigue', actualDurationMs: 900_000 },
+    );
+
+    const distribution = focusHourDistribution(state, '2026-08-12', 7);
+    expect(distribution.find((bucket) => bucket.hour === 22)?.minutes).toBe(45);
+    expect(distribution.find((bucket) => bucket.hour === 5)?.minutes).toBe(15);
+    expect(distribution.filter((bucket) => bucket.minutes > 0)).toHaveLength(2);
+    expect(settlementTotals(state)).toEqual({ totalMinutes: 60, completedRounds: 1, buildings: 2 });
   });
 });

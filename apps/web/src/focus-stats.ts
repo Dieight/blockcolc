@@ -77,3 +77,35 @@ export function projectFocusAllocation(state: DomainState, endDate: ISODate, day
     .map(([projectId, value]) => ({ projectId, title: titles.get(projectId) ?? '已移除任务', minutes: Math.round(value / 60_000), share: total > 0 ? Math.round(value / total * 100) : 0 }))
     .sort((left, right) => right.minutes - left.minutes || left.title.localeCompare(right.title, 'zh-CN'));
 }
+
+export interface FocusHourBucket {
+  hour: number;
+  minutes: number;
+}
+
+export function focusHourDistribution(state: DomainState, endDate: ISODate, days: number): FocusHourBucket[] {
+  if (!Number.isSafeInteger(days) || days < 1) throw new Error('days must be a positive integer');
+  const startDate = addLocalDays(endDate, 1 - days);
+  const buckets = Array.from({ length: 24 }, (_, hour) => ({ hour, minutes: 0 }));
+  for (const session of state.focusHistory) {
+    const date = focusSessionLocalDate(session);
+    if (date < startDate || date > endDate || session.actualDurationMs <= 0) continue;
+    const hour = Number(new Intl.DateTimeFormat('en-GB', { timeZone: session.timeZoneAtStart, hour: 'numeric', hourCycle: 'h23' }).format(new Date(focusSessionEndedAt(session))));
+    if (Number.isInteger(hour) && hour >= 0 && hour < 24) buckets[hour]!.minutes += session.actualDurationMs;
+  }
+  return buckets.map((bucket) => ({ hour: bucket.hour, minutes: Math.round(bucket.minutes / 60_000) }));
+}
+
+export interface SettlementTotals {
+  totalMinutes: number;
+  completedRounds: number;
+  buildings: number;
+}
+
+export function settlementTotals(state: DomainState): SettlementTotals {
+  return {
+    totalMinutes: Math.round(state.focusHistory.reduce((sum, session) => sum + session.actualDurationMs, 0) / 60_000),
+    completedRounds: state.focusHistory.filter((session) => session.status === 'completed' || session.status === 'completed-early').length,
+    buildings: state.habitBuildings.length + state.projects.filter((project) => project.status === 'monument').length,
+  };
+}

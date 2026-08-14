@@ -248,3 +248,23 @@
 .plan-summary span:first-child{color:#58635d}
 .plan-summary span:last-child{color:#276749;font-weight:700}
 @media(max-height:620px) and (orientation:landscape){.workbench-context{gap:3px}.workbench-context strong{font-size:17px}.workbench-heading h1{font-size:19px}}
+
+/* V18 tasks & stats: keep the informative cards, quiet the chrome, and add rhythm and settlement data. */
+.task-queue-label{display:block;margin-top:8px;color:#58635d;font-size:12px;font-weight:700}
+.project-view-action{min-height:44px;padding:0 8px;border:0;background:none;color:#276749;font-weight:700;display:inline-flex;align-items:center;justify-content:center;gap:6px}
+.project-view-action svg{width:18px}
+.project-switcher-actions button:last-child{border-color:#aeb8b1;color:#27342e}
+.task-editor-row.task-current{border-color:#7ba486;border-left:3px solid #4b8a5c;background:#fff}
+.stats-page>h1{margin-bottom:6px}
+.stats-intro{margin:0 0 18px;color:#58635d;font-size:13px}
+.focus-hour-card{margin-top:24px;padding:16px;border:1px solid #b7c8bb;border-radius:6px;background:#fff}
+.focus-hour-card .stats-section-heading{margin-bottom:14px}
+.focus-hour-chart{height:96px;display:flex;align-items:flex-end;gap:2px}
+.focus-hour-chart>div{flex:1;min-width:2px;border-radius:2px 2px 0 0;background:#d5e3d9}
+.focus-hour-chart>div.is-peak{background:#3f7d4e}
+.focus-hour-axis{display:flex;justify-content:space-between;margin-top:6px;color:#58635d;font-size:10px}
+.settlement-totals{margin-top:26px;padding:14px 16px;border:1px solid #b7c8bb;border-radius:6px;background:#fff}
+.settlement-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:10px;text-align:center}
+.settlement-grid strong{display:block;font-size:20px;font-weight:700;font-variant-numeric:tabular-nums}
+.settlement-grid span{display:block;margin-top:3px;color:#58635d;font-size:12px}
+.daily-goal-workbench{margin-bottom:26px}

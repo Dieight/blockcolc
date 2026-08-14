@@ -12,7 +12,7 @@ import { ResourcePackPanel } from './ResourcePackPanel';
 import { ChoiceMenu } from './ChoiceMenu';
 import { LITEMATIC_MAX_COMPRESSED_BYTES, readBrowserFileBytes, saveBackupFile } from './browser-adapters';
 import { APPLICATION_STATE_CHANGED_EVENT } from './bootstrap';
-import { effectiveFocusMillisecondsByDate, focusHeatmapLevel, focusSessionEndedAt, focusSessionLocalDate, focusWindowSummary, projectFocusAllocation } from './focus-stats';
+import { effectiveFocusMillisecondsByDate, focusHeatmapLevel, focusHourDistribution, focusSessionEndedAt, focusSessionLocalDate, focusWindowSummary, projectFocusAllocation, settlementTotals } from './focus-stats';
 import { parseRoundPlan, plannedDurationMs, reconcileRoundPlan, roundPlansEqual, type RoundPlan } from './round-plan';
 import releaseVersion from '../../../version.json';
 
@@ -523,8 +523,12 @@ function StatsScreen({state}:{state:ReturnType<ApplicationService['snapshot']>})
   const recent30=focusWindowSummary(state,today,30);
   const allocation=projectFocusAllocation(state,today,30).slice(0,5);
   const weeklyDelta=recent7.minutes-previous7.minutes;
+  const hours=focusHourDistribution(state,today,90);
+  const peakHours=Math.max(...hours.map(bucket=>bucket.minutes),0);
+  const peak=peakHours>0?hours.reduce((best,bucket)=>bucket.minutes>best.minutes?bucket:best,hours[0]!):null;
+  const totals=settlementTotals(state);
   return <section className="page stats-page">
-    <span className="eyebrow">本地统计</span><h1>专注轨迹</h1>
+    <h1>专注轨迹</h1><p className="stats-intro">所有数据只保存在本机；中断前的有效投入同样计入。</p>
     <FocusHeatmap heatmap={heatmap}/>
     <section className="stats-overview" aria-labelledby="stats-overview-title">
       <div className="stats-section-heading"><div><h2 id="stats-overview-title">本周</h2><p>从周一到今天的记录</p></div><span>{formatFocusMinutes(week.minutes)}</span></div>
@@ -537,8 +541,10 @@ function StatsScreen({state}:{state:ReturnType<ApplicationService['snapshot']>})
       <div className="stats-detail-line" aria-label="本周记录详情"><span><b>{week.completed+week.early}</b> 次有效完成</span><span><b>{week.interrupted}</b> 次中断</span><span><b>{week.rate}%</b> 完成率</span></div>
     </section>
     <section className="stats-rhythm" aria-labelledby="stats-rhythm-title"><div className="stats-section-heading"><div><h2 id="stats-rhythm-title">近期专注</h2><p>回顾近 7 天与近 30 天的有效专注时长。</p></div></div><div className="rhythm-grid"><div><span>近 7 天</span><strong>{formatFocusMinutes(recent7.minutes)}</strong><small>{recent7.activeDays} 个活跃日</small></div><div><span>近 30 天</span><strong>{formatFocusMinutes(recent30.minutes)}</strong><small>{recent30.activeDays} 个活跃日</small></div></div><p className="rhythm-comparison">{weeklyDelta===0?'与此前 7 天的有效专注时长相近':`比此前 7 天${weeklyDelta>0?'多':'少'}专注 ${formatFocusMinutes(Math.abs(weeklyDelta))}`}</p></section>
+    <section className="focus-hour-card" aria-labelledby="focus-hour-title"><div className="stats-section-heading"><div><h2 id="focus-hour-title">专注时段</h2><p>近 90 天有效专注按结束时刻的分布</p></div>{peak&&<span>高峰 {peak.hour}:00 前后</span>}</div><div className="focus-hour-chart" role="img" aria-label={peak?`近 90 天按小时的有效专注分布，高峰在 ${peak.hour} 点前后`:'近 90 天还没有有效专注记录'}>{hours.map(bucket=><div key={bucket.hour} className={peak&&bucket.minutes===peak.minutes?'is-peak':''} style={bucket.minutes>0?{height:`${Math.max(6,Math.round(bucket.minutes/Math.max(peakHours,1)*100))}%`}:undefined} title={`${bucket.hour}:00 前后 · 有效专注 ${bucket.minutes} 分钟`}/>)}</div><div className="focus-hour-axis" aria-hidden="true"><span>0时</span><span>6时</span><span>12时</span><span>18时</span><span>23时</span></div></section>
     <section className="project-allocation" aria-labelledby="project-allocation-title"><div className="stats-section-heading"><div><h2 id="project-allocation-title">项目投入</h2><p>近 30 天有效专注时长</p></div></div>{allocation.length===0?<p>还没有可分配的有效投入。</p>:<ul>{allocation.map(item=><li key={item.projectId}><div><strong>{item.title}</strong><span>{formatFocusMinutes(item.minutes)} · {item.share}%</span></div><i><b style={{width:`${Math.max(4,item.share)}%`}}/></i></li>)}</ul>}</section>
-    <section className="interruption-summary" aria-labelledby="interruption-summary-title"><h2 id="interruption-summary-title">本周中断原因</h2>{week.reasons.length===0?<p>这个周期没有已归类的中断。</p>:<ul>{week.reasons.map(reason=><li key={reason.value}><span>{reason.label}</span><strong>{reason.count}</strong></li>)}</ul>}</section>
+    <section className="interruption-summary" aria-labelledby="interruption-summary-title"><h2 id="interruption-summary-title">本周中断原因</h2>{week.reasons.length===0?<p>这个周期没有已归类的中断。</p>:<ul>{week.reasons.map(reason=><li key={reason.value}><span>{reason.label}</span><strong>{reason.count} 次{week.interrupted>0?` · ${Math.round(reason.count/week.interrupted*100)}%`:''}</strong></li>)}</ul>}</section>
+    <section className="settlement-totals" aria-labelledby="settlement-totals-title"><div className="stats-section-heading"><div><h2 id="settlement-totals-title">聚落总览</h2><p>从第一天起累计</p></div></div><div className="settlement-grid"><div><strong>{formatFocusMinutes(totals.totalMinutes)}</strong><span>累计有效专注</span></div><div><strong>{totals.completedRounds}</strong><span>有效轮次</span></div><div><strong>{totals.buildings}</strong><span>建成建筑</span></div></div></section>
     <p className="muted stats-note">热力图按实际专注时长统计，完整、提前完成和中断前的有效时间都会计入。</p>
   </section>;
 }

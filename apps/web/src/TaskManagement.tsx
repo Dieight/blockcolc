@@ -194,10 +194,10 @@ export function TasksScreen({ active, state, run, onCreateProject, onViewProject
   return <section className="page tasks-page">
     <DailyGoalControl state={state} run={perform} onViewReward={onViewProject}/>
 
-    <span className="eyebrow task-queue-label">建造队列</span>
+    <span className="task-queue-label">建造队列</span>
     <div className="project-switcher">
       <ChoiceMenu label="当前任务" value={active.project.id} disabled={pending || switchBlocked} onChange={projectId=>void perform({ type: 'SwitchActiveProject', projectId })} options={unfinishedProjects.map(project=>({id:project.id,label:project.title,detail:project.kind==='habit'?(project.habit?.awaitingNextBuilding?'习惯 · 等待选择建筑':`习惯 · ${project.habit?.completedFocusSessionIds.length??0} / ${project.habit?.targetRounds??10} 轮`):`${Math.round(project.subtasks.reduce((sum, subtask) => sum + subtask.progressBasisPoints, 0) / project.subtasks.length / 100)}%`}))}/>
-      <div className="project-switcher-actions"><button type="button" disabled={pending} onClick={() => onViewProject(active.project.id)}><MapPinned/>{isHabit&&habit?.awaitingNextBuilding?'查看聚落':'查看建筑'}</button><button type="button" disabled={pending || switchBlocked} title={switchBlocked ? '请先结束或汇报当前专注' : '新增任务'} onClick={onCreateProject}><Plus/>新增任务</button></div>
+      <div className="project-switcher-actions"><button type="button" className="project-view-action" disabled={pending} onClick={() => onViewProject(active.project.id)}><MapPinned/>{isHabit&&habit?.awaitingNextBuilding?'查看聚落':'查看建筑'}</button><button type="button" disabled={pending || switchBlocked} title={switchBlocked ? '请先结束或汇报当前专注' : '新增任务'} onClick={onCreateProject}><Plus/>新增任务</button></div>
     </div>
 
     <div className="task-project-title">
