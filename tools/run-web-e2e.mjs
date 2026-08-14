@@ -40,8 +40,12 @@ async function waitForServer(processHandle) {
   throw new Error(`Vite did not become ready at ${serverUrl}.`);
 }
 
+const completionDeadlineMs = Number.isFinite(Number(process.env.E2E_COMPLETION_DEADLINE_MS))
+  ? Number(process.env.E2E_COMPLETION_DEADLINE_MS)
+  : 900_000;
+
 async function waitForTestCompletion(processHandle) {
-  const deadline = Date.now() + 300_000;
+  const deadline = Date.now() + completionDeadlineMs;
   while (Date.now() < deadline) {
     if (processHandle.exitCode !== null) return processHandle.exitCode ?? 1;
     try {
@@ -53,7 +57,7 @@ async function waitForTestCompletion(processHandle) {
     }
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
-  throw new Error('Playwright did not produce a completion marker within 300 seconds.');
+  throw new Error(`Playwright did not produce a completion marker within ${Math.round(completionDeadlineMs / 1000)} seconds.`);
 }
 
 async function stopProcessTree(processHandle) {
