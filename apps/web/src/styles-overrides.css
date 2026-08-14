@@ -200,8 +200,8 @@
 .setting-name small{color:#58635d;font-size:12px;line-height:1.4}
 .setting-row-end{flex:0 0 auto;display:flex;align-items:center;gap:12px}
 .setting-value{color:#17211c;font-size:16px;font-weight:750;font-variant-numeric:tabular-nums}
-.number-field{flex:0 0 auto;display:flex;align-items:center;gap:5px;color:#58635d;font-size:13px}
-.number-field input{width:48px;height:44px;padding:8px 6px;border:0;border-radius:4px;background:transparent;color:#17211c;text-align:right;font-size:15px;font-weight:400;font-variant-numeric:tabular-nums}
+.number-field{flex:0 0 auto;display:flex;align-items:center;gap:5px;min-height:44px;margin:-6px 0;color:#58635d;font-size:13px}
+.number-field input{width:48px;height:32px;padding:8px 6px;border:0;border-radius:4px;background:transparent;color:#17211c;text-align:right;font-size:15px;font-weight:400;font-variant-numeric:tabular-nums}
 .number-field input:focus-visible{background:#fff;outline:3px solid #c25844;outline-offset:2px}
 .number-field input:disabled{opacity:.5}
 .settings-text-action{min-height:44px;padding:8px 2px;border:0;background:none;color:#276749;font-weight:700;display:inline-flex;align-items:center;gap:6px}
