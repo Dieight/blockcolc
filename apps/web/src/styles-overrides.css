@@ -190,9 +190,9 @@
 .settings-page{max-width:780px}
 .settings-head h1{margin:5px 0 8px}
 .settings-head p{margin:0 0 4px;color:#58635d;font-size:13px}
-.settings-group{padding:16px 0 4px;border-top:1px solid #dde4df}
+.settings-group{padding:24px 0 4px;border-top:1px solid #dde4df}
 .settings-group>h2{margin:0 0 4px;font-size:18px;font-weight:700;color:#27342e}
-.settings-group>.setting-row{padding:12px 0;border-bottom:1px solid #e9eeea}
+.settings-group>.setting-row{padding:10px 0;border-bottom:1px solid #e9eeea}
 .settings-group>.setting-row:last-child{border-bottom:0}
 .setting-row{min-height:56px;display:flex;align-items:center;justify-content:space-between;gap:14px}
 .setting-name{min-width:0;display:grid;gap:3px}
@@ -223,7 +223,7 @@
 .integrity-controls{display:flex!important;align-items:center;gap:14px!important}
 @media(max-width:480px){.integrity-setting{align-items:flex-start}.integrity-controls{flex-direction:row;align-items:center!important}}
 .building-blueprint-panel header p,.resource-pack-panel header p,.backup-panel>div>p{margin:4px 0 10px;color:#58635d;font-size:12.5px;line-height:1.5}
-.building-blueprint-panel,.resource-pack-panel,.backup-panel{margin-top:0;padding-top:16px;border-top:1px solid #dde4df}
+.building-blueprint-panel,.resource-pack-panel,.backup-panel{margin-top:0;padding-top:24px;border-top:1px solid #dde4df}
 .building-blueprint-panel h2,.resource-pack-panel h2,.backup-panel h2{margin:0 0 4px}
 .building-blueprint-list .blueprint-library-actions button{width:44px;min-width:44px;min-height:44px;border:0;background:transparent;color:#58635d}
 .building-blueprint-list .blueprint-library-actions .blueprint-delete{color:#b4232c}
