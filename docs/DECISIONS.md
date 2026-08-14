@@ -65,3 +65,12 @@ This file records decisions that affect workflow, source boundaries, or release 
 - Visible night glows select actual emissive voxel coordinates independently from clustered point-light centroids and use a bounded soft-square sprite. This preserves the two-light performance ceiling without presenting floating spherical light sources.
 - Terrain water is an opaque, depth-writing surface. The product has no true sky-reflection pass, so transmitting camera-facing star points through water is treated as a rendering defect rather than a reflection effect.
 - Camera composition remains tied to the settlement core, while near/far clipping uses a separate full-terrain visibility bound. This keeps buildings readable without clipping the expanded V16 mountain ring at maximum zoom.
+
+## 2026-08-14 V18 UI De-AI Redesign And Instant World Switch
+
+- The interface reads as a quiet Android utility: text-button secondary actions, one green primary per page, Android-settings typography (16px/650 names, right-aligned values, 18px section headings), hairline separators, and borderless numeric fields with 44px label hit areas.
+- Useful cards stay (daily goal, construction list, habit cycle, task overview, statistics cards); stacked decoration is removed rather than restyled.
+- Statistics add focus-hour distribution, project investment (top-5 + other), interruption-reason bars, and a symmetric settlement overview sharing one six-color project palette with the focus-hour chart.
+- Subtask creation is per-row native-composition inputs (add per Enter) instead of a single textarea, preserving Android IME safety.
+- The timer tab paints a full-screen loading page in the same frame as the switch: renderer init is deferred past the first paint (rAF + setTimeout), and ApplicationService projections become epoch-cached shared read-only copies so the render phase performs no deep blueprint clones. Boot and rebuild share the same loading page.
+- The notification-denied state offers a text-button jump to system notification settings through a native SettingsPlugin; non-native platforms no-op.

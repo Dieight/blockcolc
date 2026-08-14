@@ -2,6 +2,15 @@
 
 User-facing release notes are kept here; internal diagnosis and per-run evidence belong in `docs/QA-BASELINES.md` or ignored artifacts.
 
+## v1.3.2 - 2026-08-14
+
+- Redesigned settings into a quieter Android-settings hierarchy: uniform 18px section headings, hairline row separators, borderless numeric fields, and text-button secondary actions.
+- Reworked the task, statistics, and project-creation pages to remove boxed AI-flavored controls while keeping the useful cards, with a shared six-color project palette across focus-hour and allocation charts.
+- Statistics now include focus-hour distribution, project investment with an "other" roll-up, interruption reasons with per-reason bars, and a symmetric settlement overview.
+- Replaced row-by-row subtask entry with a native-composition row editor (add per Enter, clear, delete).
+- Opening the timer tab now shows a full-screen loading page instantly instead of freezing on the previous page; the app launch and world rebuild share the same loading screen.
+- The notification-denied state now offers a direct jump to system notification settings on Android.
+
 ## v1.3.1 - 2026-08-14
 
 - Preserved unfinished focus plans across navigation and ordinary lifecycle recovery so returning to work restores the same project, subtask, round count, and timer stage.
