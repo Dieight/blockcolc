@@ -223,7 +223,8 @@
 .integrity-controls{display:flex!important;align-items:center;gap:14px!important}
 @media(max-width:480px){.integrity-setting{align-items:flex-start}.integrity-controls{flex-direction:row;align-items:center!important}}
 .building-blueprint-panel header p,.resource-pack-panel header p,.backup-panel>div>p{margin:4px 0 10px;color:#58635d;font-size:12.5px;line-height:1.5}
-.building-blueprint-panel,.resource-pack-panel,.backup-panel{margin-top:34px;padding-top:22px;border-top:1px solid #cfd9d1}
+.building-blueprint-panel,.resource-pack-panel,.backup-panel{margin-top:0;padding-top:16px;border-top:1px solid #dde4df}
+.building-blueprint-panel h2,.resource-pack-panel h2,.backup-panel h2{margin:0 0 4px}
 .building-blueprint-list .blueprint-library-actions button{width:44px;min-width:44px;min-height:44px;border:0;background:transparent;color:#58635d}
 .building-blueprint-list .blueprint-library-actions .blueprint-delete{color:#b4232c}
 .building-blueprint-list .blueprint-library-copy input{min-height:44px}
