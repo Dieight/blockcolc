@@ -5,30 +5,6 @@ async function createDefaultProject(page: import('@playwright/test').Page) {
   await page.getByRole('button', { name: '开始建造' }).click();
 }
 
-test('keeps an unfinished multi-round plan through navigation and resumes the exact next round', async ({ page }, testInfo) => {
-  await page.clock.install({ time: new Date('2026-08-12T08:00:00+08:00') });
-  await createDefaultProject(page);
-  await page.getByRole('button', { name: '设置' }).click();
-  await page.getByLabel('普通任务专注分钟').fill('1');
-  await page.getByLabel('普通任务专注分钟').press('Enter');
-  await page.getByLabel('每轮休息分钟').fill('0');
-  await page.getByLabel('每轮休息分钟').press('Enter');
-  await page.getByRole('button', { name: '计时' }).click();
-  await page.getByRole('button', { name: '调整本次计划' }).click();
-  const plan = page.getByRole('dialog', { name: '安排下一轮' });
-  await plan.getByRole('button', { name: '3 轮' }).click();
-  await plan.getByRole('button', { name: '确认计划' }).click();
-  await page.getByRole('button', { name: '开始 3 轮' }).click();
-  await page.clock.fastForward(61_000);
-  await page.getByRole('button', { name: '推进至 25%' }).click();
-  await expect(page.getByRole('button', { name: '开始下一轮' })).toBeVisible();
-  await page.getByRole('button', { name: '任务', exact: true }).click();
-  await page.getByRole('button', { name: '计时' }).click();
-  await expect(page.getByText('继续上次计划')).toBeVisible();
-  await expect(page.locator('.resume-plan-context')).toContainText('第 2 / 3 轮');
-  await page.screenshot({ path: testInfo.outputPath('resume-plan-mobile.png'), fullPage: true });
-});
-
 test('keeps the global task portfolio collapsed until requested', async ({ page }, testInfo) => {
   await createDefaultProject(page);
   await page.getByRole('button', { name: '任务', exact: true }).click();

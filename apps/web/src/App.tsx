@@ -309,7 +309,6 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
         <h1>{active.project.title}</h1>
         <button className="task-switch-action" type="button" aria-label="切换当前工作" onClick={onOpenTasks}><ListTodo/><span>切换任务</span></button>
       </div>}
-       {!session && !isBreak && reconciledPlan && pending.length===0 && !habitAwaiting && <div className="resume-plan-context" role="status"><History/><span><strong>继续上次计划</strong><small>第 {reconciledPlan.completedRounds+1} / {reconciledPlan.totalRounds} 轮 · {isHabit?active.project.title:subtask!.title}</small></span></div>}
        {!session && !isBreak && pending.length === 0 && !habitAwaiting && <>
          {isHabit ? <div className="workbench-context"><span>当前习惯建筑 · 第 {habit!.cycleNumber} 座</span><strong>{blueprintName(blueprintCatalog, active.project.blueprintId)}</strong><small>本周期 {habit!.completedFocusSessionIds.length} / {habit!.targetRounds} 轮 · {dailySummary}</small></div> : <div className="workbench-context"><span>当前小任务</span><strong>{subtask!.title}</strong><small>已完成 {Math.round(subtask!.progressBasisPoints / 100)}% · {dailySummary}</small></div>}
          <button type="button" className="plan-summary" aria-label="调整本次计划" aria-expanded={planOpen} onClick={() => setPlanOpen(true)}><span>{planSummary}</span><span>调整</span></button>
