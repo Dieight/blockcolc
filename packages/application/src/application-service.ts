@@ -78,6 +78,10 @@ export class ApplicationService {
     return projectWorldState(this.state);
   }
 
+  notificationCapability(): Promise<NotificationCapability> {
+    return this.dependencies.notifications.refreshCapability();
+  }
+
   dispatch(command: ApplicationCommand): Promise<ApplicationResult> {
     return this.serial(() => this.dispatchInternal(materialize(command, this.dependencies.ids), "user"));
   }

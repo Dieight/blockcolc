@@ -32,17 +32,31 @@ interface NativePickResult {
   name?: string;
   mimeType?: string | null;
   base64Data?: string;
+  transport?: 'chunked-base64';
+  transferId?: string;
+  byteLength?: number;
+  chunkBytes?: number;
+}
+
+interface NativeChunkResult {
+  offset: number;
+  byteLength: number;
+  base64Data: string;
+  done: boolean;
 }
 
 export interface NativeFilePickerPlugin {
   pickFile(options: { maxBytes: number }): Promise<NativePickResult>;
   pickResourcePack?(options: { maxBytes: number }): Promise<NativePickResult>;
+  readResourcePackChunk?(options: { transferId: string; offset: number; maxBytes: number }): Promise<NativeChunkResult>;
+  releaseResourcePack?(options: { transferId: string }): Promise<{ released: boolean }>;
 }
 
 const NativeFilePicker = registerPlugin<NativeFilePickerPlugin>('LitematicFilePicker');
 
 export const DEFAULT_NATIVE_LITEMATIC_MAX_BYTES = 10 * 1024 * 1024;
 export const DEFAULT_NATIVE_RESOURCE_PACK_MAX_BYTES = 32 * 1024 * 1024;
+export const NATIVE_RESOURCE_PACK_CHUNK_MAX_BYTES = 256 * 1024;
 /** @deprecated Use the kind-specific limit. Retained for Litematic callers. */
 export const DEFAULT_NATIVE_FILE_MAX_BYTES = DEFAULT_NATIVE_LITEMATIC_MAX_BYTES;
 
@@ -82,6 +96,13 @@ export async function pickBinaryWithPlugin(
     throw new NativeFilePickerError('INVALID_RESPONSE', 'Native picker returned an invalid response');
   }
   if (result.cancelled) return null;
+  const pickResult = result as unknown as NativePickResult;
+  const name = optionalString(result.name, 'name')?.trim() || safeOptions.fallbackName;
+  const mimeType = optionalString(result.mimeType, 'mimeType')?.trim() || null;
+  if (result.transport === 'chunked-base64') {
+    const bytes = await readChunkedResourcePack(plugin, pickResult, safeOptions.maxBytes);
+    return { name, mimeType, bytes };
+  }
   if (typeof result.base64Data !== 'string' || result.base64Data.length === 0) {
     throw new NativeFilePickerError('MISSING_DATA', 'Native picker returned no file data');
   }
@@ -93,9 +114,53 @@ export async function pickBinaryWithPlugin(
   if (bytes.byteLength > safeOptions.maxBytes) {
     throw new NativeFilePickerError('FILE_TOO_LARGE', 'Native picker returned a file larger than requested');
   }
-  const name = optionalString(result.name, 'name')?.trim() || safeOptions.fallbackName;
-  const mimeType = optionalString(result.mimeType, 'mimeType')?.trim() || null;
   return { name, mimeType, bytes };
+}
+
+async function readChunkedResourcePack(
+  plugin: NativeFilePickerPlugin,
+  result: NativePickResult,
+  maxBytes: number,
+): Promise<Uint8Array> {
+  if (
+    typeof result.transferId !== 'string' || result.transferId.length === 0 || result.transferId.length > 80
+    || !Number.isSafeInteger(result.byteLength) || (result.byteLength ?? -1) < 0 || (result.byteLength ?? 0) > maxBytes
+    || !Number.isSafeInteger(result.chunkBytes) || (result.chunkBytes ?? 0) <= 0
+    || (result.chunkBytes ?? 0) > NATIVE_RESOURCE_PACK_CHUNK_MAX_BYTES
+    || typeof plugin.readResourcePackChunk !== 'function'
+    || typeof plugin.releaseResourcePack !== 'function'
+  ) {
+    throw new NativeFilePickerError('INVALID_RESPONSE', 'Native picker returned an invalid chunked transfer');
+  }
+  const transferId = result.transferId;
+  const byteLength = result.byteLength as number;
+  const chunkBytes = result.chunkBytes as number;
+  const output = new Uint8Array(byteLength);
+  let offset = 0;
+  try {
+    while (offset < byteLength) {
+      const requestedBytes = Math.min(chunkBytes, byteLength - offset);
+      const chunk: unknown = await plugin.readResourcePackChunk({ transferId, offset, maxBytes: requestedBytes });
+      if (
+        !isRecord(chunk) || chunk.offset !== offset || chunk.byteLength !== byteLength
+        || typeof chunk.base64Data !== 'string' || typeof chunk.done !== 'boolean'
+      ) {
+        throw new NativeFilePickerError('INVALID_RESPONSE', 'Native picker returned an invalid file chunk');
+      }
+      const bytes = decodeBase64(chunk.base64Data);
+      if (bytes.byteLength === 0 || bytes.byteLength > requestedBytes || offset + bytes.byteLength > byteLength) {
+        throw new NativeFilePickerError('INVALID_RESPONSE', 'Native picker returned a chunk with an invalid size');
+      }
+      output.set(bytes, offset);
+      offset += bytes.byteLength;
+      if (chunk.done !== (offset === byteLength)) {
+        throw new NativeFilePickerError('INVALID_RESPONSE', 'Native picker returned an inconsistent final chunk');
+      }
+    }
+    return output;
+  } finally {
+    await plugin.releaseResourcePack({ transferId }).catch(() => undefined);
+  }
 }
 
 export function decodeBase64(value: string): Uint8Array {

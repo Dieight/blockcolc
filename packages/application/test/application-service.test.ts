@@ -208,6 +208,14 @@ async function createProject(service: ApplicationService, subtasks = ["Foundatio
 }
 
 describe("initialization and command persistence", () => {
+  it("exposes a read-only notification capability refresh without requesting permission", async () => {
+    const { service, notifications } = await fixture();
+    notifications.capability = { permission: "granted", precision: "inexact", canSchedule: true };
+    await expect(service.notificationCapability()).resolves.toEqual(notifications.capability);
+    expect(notifications.refreshCount).toBe(1);
+    expect(notifications.requestCount).toBe(0);
+  });
+
   it("loads existing state or creates and saves a default aggregate", async () => {
     const fresh = await fixture();
     expect(fresh.repository.saves).toBe(1);

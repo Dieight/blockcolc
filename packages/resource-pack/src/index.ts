@@ -17,7 +17,7 @@ export * from "./png";
 
 export const DEFAULT_RESOURCE_PACK_LIMITS = Object.freeze({
   maxInputBytes: 32 * 1024 * 1024,
-  maxFileCount: 4096,
+  maxFileCount: 8192,
   maxSingleFileBytes: 4 * 1024 * 1024,
   maxTotalUncompressedBytes: 64 * 1024 * 1024,
   maxPackMetadataBytes: 64 * 1024,

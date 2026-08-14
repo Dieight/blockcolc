@@ -39,6 +39,56 @@ describe('native local file picker adapter', () => {
     await expect(pickNativeResourcePackFile()).resolves.toBeNull();
   });
 
+  it('reassembles resource-pack bytes through bounded native chunks and always releases the cache file', async () => {
+    const readResourcePackChunk = vi.fn(async ({ offset }: { offset: number }) => offset === 0
+      ? { offset: 0, byteLength: 7, base64Data: 'AQIDBA==', done: false }
+      : { offset: 4, byteLength: 7, base64Data: 'BQYH', done: true });
+    const releaseResourcePack = vi.fn(async () => ({ released: true }));
+    const plugin: NativeFilePickerPlugin = {
+      pickFile: vi.fn(async () => ({ cancelled: true })),
+      pickResourcePack: vi.fn(async () => ({
+        cancelled: false,
+        name: 'large-16x.zip',
+        mimeType: 'application/zip',
+        transport: 'chunked-base64' as const,
+        transferId: '12345678-1234-1234-1234-123456789012',
+        byteLength: 7,
+        chunkBytes: 4,
+      })),
+      readResourcePackChunk,
+      releaseResourcePack,
+    };
+
+    await expect(pickResourcePackWithPlugin(plugin, 8)).resolves.toEqual({
+      name: 'large-16x.zip', mimeType: 'application/zip', bytes: new Uint8Array([1, 2, 3, 4, 5, 6, 7]),
+    });
+    expect(readResourcePackChunk).toHaveBeenNthCalledWith(1, {
+      transferId: '12345678-1234-1234-1234-123456789012', offset: 0, maxBytes: 4,
+    });
+    expect(readResourcePackChunk).toHaveBeenNthCalledWith(2, {
+      transferId: '12345678-1234-1234-1234-123456789012', offset: 4, maxBytes: 3,
+    });
+    expect(releaseResourcePack).toHaveBeenCalledOnce();
+  });
+
+  it('rejects inconsistent chunk streams and releases them after failure', async () => {
+    const releaseResourcePack = vi.fn(async () => ({ released: true }));
+    const plugin: NativeFilePickerPlugin = {
+      pickFile: vi.fn(async () => ({ cancelled: true })),
+      pickResourcePack: vi.fn(async () => ({
+        cancelled: false,
+        transport: 'chunked-base64' as const,
+        transferId: 'transfer',
+        byteLength: 3,
+        chunkBytes: 3,
+      })),
+      readResourcePackChunk: vi.fn(async () => ({ offset: 1, byteLength: 3, base64Data: 'AQID', done: true })),
+      releaseResourcePack,
+    };
+    await expect(pickResourcePackWithPlugin(plugin, 3)).rejects.toMatchObject({ code: 'INVALID_RESPONSE' });
+    expect(releaseResourcePack).toHaveBeenCalledOnce();
+  });
+
   it('never falls back to the Litematic method when native resource-pack support is absent', async () => {
     const pickFile = vi.fn(async () => ({ cancelled: true }));
     await expect(pickResourcePackWithPlugin({ pickFile }, 2048)).rejects.toMatchObject({ code: 'INVALID_RESPONSE' });

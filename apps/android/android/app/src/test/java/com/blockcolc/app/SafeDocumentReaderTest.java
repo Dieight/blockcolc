@@ -5,6 +5,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertThrows;
 
 import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import org.junit.Test;
@@ -18,6 +19,13 @@ public class SafeDocumentReaderTest {
             SafeDocumentReader.FileTooLargeException.class,
             () -> SafeDocumentReader.readBounded(new ByteArrayInputStream(new byte[] { 1, 2, 3, 4, 5 }), 4)
         );
+    }
+
+    @Test
+    public void copiesToAStreamWithoutBuildingAnIntermediateByteArray() throws Exception {
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        assertEquals(4, SafeDocumentReader.copyBounded(new ByteArrayInputStream(new byte[] { 4, 3, 2, 1 }), output, 4));
+        assertArrayEquals(new byte[] { 4, 3, 2, 1 }, output.toByteArray());
     }
 
     @Test

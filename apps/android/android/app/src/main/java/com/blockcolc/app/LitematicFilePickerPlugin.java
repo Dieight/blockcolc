@@ -20,7 +20,18 @@ import java.io.InputStream;
 public class LitematicFilePickerPlugin extends Plugin {
     private static final int LITEMATIC_MAX_BYTES = 10 * 1024 * 1024;
     private static final int RESOURCE_PACK_MAX_BYTES = 32 * 1024 * 1024;
+    private static final int RESOURCE_PACK_CHUNK_BYTES = 256 * 1024;
     private static final String METHOD_RESOURCE_PACK = "pickResourcePack";
+    private ChunkedDocumentTransferStore resourcePackTransfers;
+
+    @Override
+    public void load() {
+        resourcePackTransfers = new ChunkedDocumentTransferStore(
+            new java.io.File(getContext().getCacheDir(), "resource-pack-imports"),
+            RESOURCE_PACK_CHUNK_BYTES
+        );
+        resourcePackTransfers.clear();
+    }
 
     @PluginMethod
     public void pickFile(PluginCall call) {
@@ -30,6 +41,44 @@ public class LitematicFilePickerPlugin extends Plugin {
     @PluginMethod
     public void pickResourcePack(PluginCall call) {
         openPicker(call, PickerKind.RESOURCE_PACK);
+    }
+
+    @PluginMethod
+    public void readResourcePackChunk(PluginCall call) {
+        String transferId = call.getString("transferId");
+        Integer offset = call.getInt("offset");
+        Integer maxBytes = call.getInt("maxBytes");
+        if (transferId == null || transferId.length() > 80 || offset == null || maxBytes == null) {
+            call.reject("Chunk request is invalid", "INVALID_CHUNK_REQUEST");
+            return;
+        }
+        bridge.execute(() -> {
+            try {
+                ChunkedDocumentTransferStore.Chunk chunk = resourcePackTransfers.read(transferId, offset, maxBytes);
+                JSObject result = new JSObject();
+                result.put("offset", chunk.offset);
+                result.put("byteLength", chunk.byteLength);
+                result.put("base64Data", Base64.encodeToString(chunk.bytes, Base64.NO_WRAP));
+                result.put("done", chunk.done());
+                call.resolve(result);
+            } catch (ChunkedDocumentTransferStore.TransferNotFoundException error) {
+                call.reject("Resource-pack transfer is no longer available", "TRANSFER_NOT_FOUND");
+            } catch (IOException | IllegalArgumentException error) {
+                call.reject("Could not read resource-pack transfer", "CHUNK_READ_FAILED", error);
+            }
+        });
+    }
+
+    @PluginMethod
+    public void releaseResourcePack(PluginCall call) {
+        String transferId = call.getString("transferId");
+        if (transferId == null || transferId.length() > 80) {
+            call.reject("Transfer identifier is invalid", "INVALID_CHUNK_REQUEST");
+            return;
+        }
+        JSObject result = new JSObject();
+        result.put("released", resourcePackTransfers.release(transferId));
+        call.resolve(result);
     }
 
     private void openPicker(PluginCall call, PickerKind kind) {
@@ -75,12 +124,20 @@ public class LitematicFilePickerPlugin extends Plugin {
                 call.reject("Android returned an unreadable document URI", "FILE_UNREADABLE");
                 return;
             }
-            byte[] content = SafeDocumentReader.readBounded(input, maxBytes);
             JSObject result = new JSObject();
             result.put("cancelled", false);
             result.put("name", metadata.name);
             result.put("mimeType", SafeDocumentReader.safeMimeType(getContext().getContentResolver().getType(uri)));
-            result.put("base64Data", Base64.encodeToString(content, Base64.NO_WRAP));
+            if (kind == PickerKind.RESOURCE_PACK) {
+                ChunkedDocumentTransferStore.TransferMetadata transfer = resourcePackTransfers.prepare(input, maxBytes);
+                result.put("transport", "chunked-base64");
+                result.put("transferId", transfer.transferId);
+                result.put("byteLength", transfer.byteLength);
+                result.put("chunkBytes", resourcePackTransfers.maximumChunkBytes());
+            } else {
+                byte[] content = SafeDocumentReader.readBounded(input, maxBytes);
+                result.put("base64Data", Base64.encodeToString(content, Base64.NO_WRAP));
+            }
             call.resolve(result);
         } catch (SafeDocumentReader.FileTooLargeException error) {
             call.reject("Selected file exceeds the import limit", "FILE_TOO_LARGE");

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ApplicationCommand, ApplicationResult, ApplicationService } from '@tomato-clock/application';
-import { completedPomodorosOn, dailyGoalForDate, localDateOf } from '@tomato-clock/domain';
+import { completedPomodorosOn, dailyGoalForDate, localDateOf, projectProgressBasisPoints } from '@tomato-clock/domain';
 import { Check, ChevronDown, GripVertical, LockKeyhole, MapPinned, Minus, Pencil, Plus, Repeat2, Trash2, X } from 'lucide-react';
 import { ChoiceMenu } from './ChoiceMenu';
 
@@ -19,6 +19,7 @@ export function TasksScreen({ active, state, run, onCreateProject, onViewProject
   const [managingTasks, setManagingTasks] = useState(false);
   const [futureExpanded, setFutureExpanded] = useState(false);
   const [completedExpanded, setCompletedExpanded] = useState(false);
+  const [portfolioExpanded, setPortfolioExpanded] = useState(false);
   const [draggingSubtaskId, setDraggingSubtaskId] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<DropTarget | null>(null);
   const dragState = useRef<{ id: string; pointerId: number; startX: number; startY: number; handle: HTMLButtonElement; active: boolean; target: DropTarget | null; timer: number | null } | null>(null);
@@ -36,6 +37,7 @@ export function TasksScreen({ active, state, run, onCreateProject, onViewProject
     setManagingTasks(false);
     setFutureExpanded(false);
     setCompletedExpanded(false);
+    setPortfolioExpanded(false);
   }, [active.project.id, active.project.title]);
 
   const perform = async (command: ApplicationCommand) => {
@@ -237,6 +239,8 @@ export function TasksScreen({ active, state, run, onCreateProject, onViewProject
       </div>}
     </>}
 
+    <ProjectPortfolio state={state} activeProjectId={active.project.id} expanded={portfolioExpanded} switchBlocked={switchBlocked} pending={pending} onToggle={()=>setPortfolioExpanded(value=>!value)} onActivate={projectId=>perform({type:'SwitchActiveProject',projectId})} onView={onViewProject}/>
+
     <section className="project-delete-zone" aria-labelledby="delete-project-title">
       <div><h2 id="delete-project-title">删除任务</h2><p>{hasActiveFocus ? '请先结束当前专注，才能删除任务。' : isHabit ? `当前未完成建筑会移除，已完成的 ${completedHabitBuildings} 座建筑会保留。删除前仍会创建回滚备份。` : '删除前会自动创建本地回滚备份，可在设置中恢复。'}</p></div>
       <button type="button" className="danger-outline" title={hasActiveFocus ? '请先结束当前专注后再删除任务' : undefined} disabled={pending || hasActiveFocus} onClick={() => setDeleteProjectOpen(true)}><Trash2/>删除当前任务</button>
@@ -261,6 +265,18 @@ export function TasksScreen({ active, state, run, onCreateProject, onViewProject
       <p>{isHabit?`“${active.project.title}”的当前未完成建筑会被移除，已完成的 ${completedHabitBuildings} 座建筑仍留在聚落中。`:`“${active.project.title}”会从当前世界中移除。`}删除前会自动创建本地回滚备份，可在设置中恢复。</p>
     </ConfirmDialog>}
   </section>;
+}
+
+function ProjectPortfolio({state,activeProjectId,expanded,switchBlocked,pending,onToggle,onActivate,onView}:{state:AppState;activeProjectId:string;expanded:boolean;switchBlocked:boolean;pending:boolean;onToggle:()=>void;onActivate:(projectId:string)=>Promise<boolean>;onView:(projectId:string)=>void}) {
+  const visible=state.projects.filter(project=>project.status!=='deleted');
+  if(visible.length<2)return null;
+  const groups=[
+    {id:'current',label:'当前',projects:visible.filter(project=>project.id===activeProjectId)},
+    {id:'habit',label:'习惯',projects:visible.filter(project=>project.kind==='habit'&&project.id!==activeProjectId)},
+    {id:'paused',label:'暂停',projects:visible.filter(project=>project.kind==='finite'&&project.status==='paused')},
+    {id:'completed',label:'纪念',projects:visible.filter(project=>project.status==='monument')},
+  ].filter(group=>group.projects.length>0);
+  return <section className={`project-portfolio${expanded?' is-expanded':''}`} aria-label="任务总览"><button type="button" className="project-portfolio-toggle" aria-expanded={expanded} onClick={onToggle}><span><strong>任务总览</strong><small>{groups.map(group=>`${group.label} ${group.projects.length}`).join(' · ')}</small></span><ChevronDown/></button>{expanded&&<div className="project-portfolio-groups">{groups.map(group=><section key={group.id}><h3>{group.label}<span>{group.projects.length}</span></h3><div>{group.projects.map(project=>{const isCurrent=project.id===activeProjectId;const isMonument=project.status==='monument';const progress=project.kind==='habit'?(project.habit?.awaitingNextBuilding?'等待下一座建筑':`第 ${project.habit?.cycleNumber??1} 座 · ${project.habit?.completedFocusSessionIds.length??0}/${project.habit?.targetRounds??10} 轮`):`${Math.round(projectProgressBasisPoints(project)/100)}%`;return <div className="project-portfolio-row" key={project.id}><span><strong>{project.title}</strong><small>{project.kind==='habit'?'习惯 · ':''}{progress}</small></span><button type="button" disabled={pending||(!isCurrent&&!isMonument&&switchBlocked)} onClick={()=>{if(isCurrent||isMonument)onView(project.id);else void onActivate(project.id);}}>{isCurrent||isMonument?'查看':'切换'}</button></div>;})}</div></section>)}</div>}</section>;
 }
 
 function SubtaskRow({ id, title, progressBasisPoints, phase, index, pending, managing, dragging, dropPosition, showDelete, canDelete, deleteReason, onRename, onMove, onDragStart, onDragMove, onDragEnd, onDragCancel, onDelete }: {

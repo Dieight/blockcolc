@@ -6,7 +6,6 @@ const crossViewportRendererSpecs = /(?:v3-lightweight-shading|v15-lighting-quali
 export default defineConfig({
   testDir: './tests', timeout: 30_000, fullyParallel: true,
   use: { baseURL: 'http://127.0.0.1:41988', trace: 'retain-on-failure' },
-  webServer: { command: 'node ../../node_modules/vite/bin/vite.js --host 127.0.0.1 --port 41988', url: 'http://127.0.0.1:41988', reuseExistingServer: true, timeout: 120_000 },
   projects: [
     {
       name: 'mobile-chromium',

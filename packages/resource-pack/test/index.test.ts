@@ -51,6 +51,18 @@ describe("parseJava16xResourcePack", () => {
     ).toThrowError(expect.objectContaining({ code: "INVALID_PACK_MCMETA" }));
   });
 
+  it("accepts the larger file lists used by current 16x packs while retaining an explicit override gate", () => {
+    const files: Record<string, Uint8Array> = { "pack.mcmeta": packMetadata };
+    for (let index = 0; index < 4_200; index += 1) files[`assets/minecraft/opt/${index}.json`] = strToU8("{}");
+    files["assets/minecraft/textures/block/stone.png"] = makePng(16, 16);
+    const result = parseJava16xResourcePack(makeZip(files));
+    expect(result.summary.archiveFileCount).toBe(4_202);
+    expect(result.textures).toHaveLength(1);
+    expect(() => parseJava16xResourcePack(makeZip(files), { maxFileCount: 4_096 })).toThrowError(
+      expect.objectContaining({ code: "TOO_MANY_FILES" }),
+    );
+  });
+
   it("reports non-16x and invalid PNG files without inventing textures", () => {
     const result = parseJava16xResourcePack(
       makeZip({

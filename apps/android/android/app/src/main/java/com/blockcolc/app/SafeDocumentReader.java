@@ -3,6 +3,7 @@ package com.blockcolc.app;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.util.Locale;
 
 final class SafeDocumentReader {
@@ -16,6 +17,14 @@ final class SafeDocumentReader {
         if (input == null) throw new IllegalArgumentException("input is required");
         if (maxBytes <= 0) throw new IllegalArgumentException("maxBytes must be positive");
         ByteArrayOutputStream output = new ByteArrayOutputStream(Math.min(maxBytes, BUFFER_BYTES));
+        copyBounded(input, output, maxBytes);
+        return output.toByteArray();
+    }
+
+    static int copyBounded(InputStream input, OutputStream output, int maxBytes) throws IOException, FileTooLargeException {
+        if (input == null) throw new IllegalArgumentException("input is required");
+        if (output == null) throw new IllegalArgumentException("output is required");
+        if (maxBytes <= 0) throw new IllegalArgumentException("maxBytes must be positive");
         byte[] buffer = new byte[BUFFER_BYTES];
         int total = 0;
         while (true) {
@@ -33,7 +42,7 @@ final class SafeDocumentReader {
             output.write(buffer, 0, count);
             total += count;
         }
-        return output.toByteArray();
+        return total;
     }
 
     static int clampRequestedMax(Integer requested, int hardMaximum) {

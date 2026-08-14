@@ -1,5 +1,10 @@
 # Confirmed Decisions
 
+## 2026-08-14 V17 Release
+
+- The accumulated V17 continuity, building-memory, explanatory-statistics, task-organization, notification-capability, and Android resource-pack transport work is published as `v1.3.1` (`versionCode 17`).
+- The release keeps the existing formal signer and installs over the prior app without clearing local data; GitHub upload and redownload remain SHA-256 identical to the prepared candidate.
+
 This file records decisions that affect workflow, source boundaries, or release evidence. Product behavior remains in `C:\Codex\Tomato Clock.md`.
 
 ## 2026-08-10 Workflow V2

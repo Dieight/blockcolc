@@ -2,6 +2,14 @@
 
 User-facing release notes are kept here; internal diagnosis and per-run evidence belong in `docs/QA-BASELINES.md` or ignored artifacts.
 
+## v1.3.1 - 2026-08-14
+
+- Preserved unfinished focus plans across navigation and ordinary lifecycle recovery so returning to work restores the same project, subtask, round count, and timer stage.
+- Added compact building memory, clearer effective-focus statistics, recent rhythm durations, and project allocation while retaining the 26-week heatmap.
+- Reorganized task summaries into current, paused, habit, and completed/monument groups, with a standard-size multi-project task overview after current-task details.
+- Added a read-only notification capability state and kept Android end-of-focus and end-of-break reminders honest about best-effort delivery.
+- Raised bounded resource-pack import limits and added Android cache-backed chunk transport so larger 16x packs can import without bridge stack overflow or the old file-count gate.
+
 ## v1.3.0 - 2026-08-11
 
 - Rebuilt Natural Valley terrain with fewer fragmented rectangular pools, refined shorelines, longer ridges, and a higher mountain tail while preserving settlement seeds and progress.

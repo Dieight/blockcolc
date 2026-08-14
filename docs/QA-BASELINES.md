@@ -1,5 +1,10 @@
 # QA Baselines
 
+## V17 / v1.3.1 release scope (2026-08-14)
+
+- Release scope includes unfinished-focus continuity, compact building memory, effective-focus statistics and rhythm durations, multi-project task organization, notification-capability visibility, and bounded Android 16x resource-pack chunk transport.
+- The formal APK, installed-device copy, GitHub upload, redownload, and final device copy are compared through the machine-readable release evidence under the ignored `artifacts/release/v1.3.1` directory.
+
 ## V16 / v1.3.0 release scope (2026-08-11)
 
 - Release scope includes terrain generation v4, hydrology and mountain tuning, distant texture minification, bounded Cinematic multisampling, total-plan timer presentation, page-tail spacing, night glow/water regressions, and full-terrain camera clipping at maximum zoom.
@@ -9,11 +14,11 @@
 
 ## Current Release
 
-- Public version: `v1.3.0`
-- Android `versionCode`: `16`
+- Public version: `v1.3.1`
+- Android `versionCode`: `17`
 - Package: `com.blockcolc.app`
 - Formal signer SHA-256: `6405e2ff95a32549699a3081372e8462317bee717c08caabf67678f211ddc6e3`
-- Release APK SHA-256: `aad8a5102fe9d38f6e8b96d579ac7f69e0680a45947aadea96c3a3662cee6283`
+- Release APK SHA-256: recorded in `artifacts/release/v1.3.1/release-evidence.json`
 - Product baseline at release: `402` unit tests, storage and core-loop browser persistence, serialized Web Playwright `62/62`, Android JVM tests, Release Lint, signed build, GitHub redownload, and final device reinstall all pass.
 - Measured development-machine times: typecheck `34.6s`, unit `33.6s`, storage E2E `3.9s`, core-loop E2E `3.6s`, serialized Web matrix `430.2s`, and prechecked Android build `71.6s`. Treat these as comparison baselines, not hard timeouts.
 - GitHub Phase 1 baseline: run `31469835438` passed on commit `9b871500f8293b61c6a411606cb7f41e65f61265`; fast gate about `61s`, browser job about `7m05s` with `53` passed and `6` explicit local-only skips, unsigned Android candidate job about `3m15s`, and upload verification about `12s`.

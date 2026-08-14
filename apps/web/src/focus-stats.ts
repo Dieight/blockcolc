@@ -1,4 +1,4 @@
-import { localDateOf, type DomainState, type ISODate, type ISOInstant } from '@tomato-clock/domain';
+import { addLocalDays, localDateOf, type DomainState, type ISODate, type ISOInstant } from '@tomato-clock/domain';
 
 export type FocusHistory = DomainState['focusHistory'];
 export type FocusHistoryEntry = FocusHistory[number];
@@ -29,4 +29,51 @@ export function focusHeatmapLevel(minutes: number): 0 | 1 | 2 | 3 | 4 | 5 {
   if (minutes < 270) return 3;
   if (minutes < 360) return 4;
   return 5;
+}
+
+export interface FocusWindowSummary {
+  minutes: number;
+  activeDays: number;
+  completed: number;
+  early: number;
+  interrupted: number;
+}
+
+export interface ProjectFocusAllocation {
+  projectId: string;
+  title: string;
+  minutes: number;
+  share: number;
+}
+
+export function focusWindowSummary(state: DomainState, endDate: ISODate, days: number): FocusWindowSummary {
+  if (!Number.isSafeInteger(days) || days < 1) throw new Error('days must be a positive integer');
+  const startDate = addLocalDays(endDate, 1 - days);
+  const sessions = state.focusHistory.filter((session) => {
+    const date = focusSessionLocalDate(session);
+    return date >= startDate && date <= endDate;
+  });
+  return {
+    minutes: Math.round(sessions.reduce((sum, session) => sum + session.actualDurationMs, 0) / 60_000),
+    activeDays: new Set(sessions.filter((session) => session.actualDurationMs > 0).map(focusSessionLocalDate)).size,
+    completed: sessions.filter((session) => session.status === 'completed').length,
+    early: sessions.filter((session) => session.status === 'completed-early').length,
+    interrupted: sessions.filter((session) => session.status === 'interrupted').length,
+  };
+}
+
+export function projectFocusAllocation(state: DomainState, endDate: ISODate, days = 30): ProjectFocusAllocation[] {
+  if (!Number.isSafeInteger(days) || days < 1) throw new Error('days must be a positive integer');
+  const startDate = addLocalDays(endDate, 1 - days);
+  const milliseconds = new Map<string, number>();
+  for (const session of state.focusHistory) {
+    const date = focusSessionLocalDate(session);
+    if (date < startDate || date > endDate || session.actualDurationMs <= 0) continue;
+    milliseconds.set(session.projectId, (milliseconds.get(session.projectId) ?? 0) + session.actualDurationMs);
+  }
+  const total = [...milliseconds.values()].reduce((sum, value) => sum + value, 0);
+  const titles = new Map(state.projects.map((project) => [project.id, project.title]));
+  return [...milliseconds]
+    .map(([projectId, value]) => ({ projectId, title: titles.get(projectId) ?? '已移除任务', minutes: Math.round(value / 60_000), share: total > 0 ? Math.round(value / total * 100) : 0 }))
+    .sort((left, right) => right.minutes - left.minutes || left.title.localeCompare(right.title, 'zh-CN'));
 }
