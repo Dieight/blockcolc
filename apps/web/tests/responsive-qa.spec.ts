@@ -17,7 +17,13 @@ async function interruptFocus(page: import('@playwright/test').Page) {
 test('keeps setup and the focus world usable across the target viewport matrix', async ({ page }, testInfo) => {
   await page.goto('/');
   await page.getByLabel('大型任务').fill('完成一个包含非常长名称与 EnglishIdentifierWithoutSpaces1234567890 的重要大型任务');
-  await page.getByLabel('拆成小任务，每行一项').fill('整理所有输入资料并逐项核对\n实现核心流程与异常恢复\n完成移动端、横屏、平板和桌面验证');
+  await page.getByRole('button', { name: '清空小任务' }).click();
+  await page.getByLabel('新增小任务').fill('整理所有输入资料并逐项核对');
+  await page.getByLabel('新增小任务').press('Enter');
+  await page.getByLabel('新增小任务').fill('实现核心流程与异常恢复');
+  await page.getByLabel('新增小任务').press('Enter');
+  await page.getByLabel('新增小任务').fill('完成移动端、横屏、平板和桌面验证');
+  await page.getByLabel('新增小任务').press('Enter');
 
   const preview = page.getByRole('img', { name: /完整建筑预览/ });
   for (const viewport of VIEWPORTS) {

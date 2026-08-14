@@ -11,7 +11,9 @@ test('keeps the global task portfolio collapsed until requested', async ({ page 
   await expect(page.getByRole('button', { name: /任务总览/ })).toHaveCount(0);
   await page.getByRole('button', { name: '新增任务' }).click();
   await page.getByLabel('大型任务').fill('第二项长期工作');
-  await page.getByLabel('拆成小任务，每行一项').fill('完成第二项工作');
+  await page.getByRole('button', { name: '清空小任务' }).click();
+  await page.getByLabel('新增小任务').fill('完成第二项工作');
+  await page.getByLabel('新增小任务').press('Enter');
   await page.getByRole('radio', { name: /河岸木屋/ }).check();
   await page.getByRole('button', { name: '开始建造' }).click();
   await page.getByRole('button', { name: '任务', exact: true }).click();

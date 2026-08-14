@@ -308,7 +308,9 @@ test('zero-minute break persists and early completion ends without a break', asy
 test('finishing the final task shows a skippable completion ceremony', async ({ page }) => {
   await page.goto('/');
   await page.getByLabel('大型任务').fill('完成整栋建筑');
-  await page.getByLabel('拆成小任务，每行一项').fill('交付最终成果');
+  await page.getByRole('button', { name: '清空小任务' }).click();
+  await page.getByLabel('新增小任务').fill('交付最终成果');
+  await page.getByLabel('新增小任务').press('Enter');
   await page.getByRole('button', { name: '开始建造' }).click();
   await page.getByRole('button', { name: '开始 1 轮' }).click();
   await page.getByRole('button', { name: '结束本次专注' }).click();

@@ -23,6 +23,16 @@ async function enableTaskEditing(page: import('@playwright/test').Page) {
   await page.getByRole('button', { name: '编辑施工清单' }).click();
 }
 
+async function replaceSubtasks(page: import('@playwright/test').Page, lines: string[]) {
+  const clear = page.getByRole('button', { name: '清空小任务' });
+  if (await clear.count()) await clear.click();
+  const add = page.getByLabel('新增小任务');
+  for (const line of lines) {
+    await add.fill(line);
+    await add.press('Enter');
+  }
+}
+
 async function openSubtaskEditor(page: import('@playwright/test').Page, title: string) {
   await page.locator('.task-editor-row').filter({ hasText: title }).dblclick();
 }
@@ -163,7 +173,7 @@ test('renders a monument with the active building and restores both after deleti
   await page.clock.install({ time: new Date('2026-07-24T08:00:00Z') });
   await page.goto('/');
   await page.getByLabel('大型任务').fill('完成第一栋建筑');
-  await page.getByLabel('拆成小任务，每行一项').fill('完成全部工作');
+  await replaceSubtasks(page, ['完成全部工作']);
   await page.getByRole('button', { name: '开始建造' }).click();
   await page.getByRole('button', { name: '设置' }).click();
   await page.getByLabel('普通任务专注分钟').fill('1');
@@ -175,7 +185,7 @@ test('renders a monument with the active building and restores both after deleti
 
   await expect(page.getByRole('heading', { name: '建立你的第一项任务' })).toBeVisible();
   await page.getByLabel('大型任务').fill('开始第二栋建筑');
-  await page.getByLabel('拆成小任务，每行一项').fill('完成第二项工作');
+  await replaceSubtasks(page, ['完成第二项工作']);
   await page.getByRole('radio', { name: /河岸木屋/ }).check();
   await page.getByRole('button', { name: '开始建造' }).click();
 
@@ -203,7 +213,7 @@ test('adds and switches unfinished large projects without moving their buildings
   await page.getByRole('button', { name: '新增任务' }).click();
   await expect(page.getByRole('heading', { name: '新增任务' })).toBeVisible();
   await page.getByLabel('大型任务').fill('第二项长期工作');
-  await page.getByLabel('拆成小任务，每行一项').fill('第二项的第一步\n第二项的第二步');
+  await replaceSubtasks(page, ['第二项的第一步', '第二项的第二步']);
   await page.getByRole('radio', { name: /河岸木屋/ }).check();
   await page.getByRole('button', { name: '开始建造' }).click();
 
@@ -237,11 +247,9 @@ test('keeps a new-project draft in memory when returning to the existing world',
   await page.getByRole('button', { name: '新增任务' }).click();
 
   const title = page.getByLabel('大型任务');
-  const tasks = page.getByLabel('拆成小任务，每行一项');
   await title.fill('');
-  await tasks.fill('');
   await enterNativeCompositionWithoutReactChange(title, '暂存的中文任务');
-  await enterNativeCompositionWithoutReactChange(tasks, '整理资料\n开始实现');
+  await replaceSubtasks(page, ['整理资料', '开始实现']);
   await page.getByRole('radio', { name: /河岸木屋/ }).check();
 
   await page.getByRole('button', { name: '计时' }).click();
@@ -250,14 +258,17 @@ test('keeps a new-project draft in memory when returning to the existing world',
   await openTasks(page);
   await page.getByRole('button', { name: '新增任务' }).click();
   await expect(page.getByLabel('大型任务')).toHaveValue('暂存的中文任务');
-  await expect(page.getByLabel('拆成小任务，每行一项')).toHaveValue('整理资料\n开始实现');
+  await expect(page.getByLabel('小任务 1')).toHaveValue('整理资料');
+  await expect(page.getByLabel('小任务 2')).toHaveValue('开始实现');
   await expect(page.getByRole('radio', { name: /河岸木屋/ })).toBeChecked();
 
   await page.reload();
   await openTasks(page);
   await page.getByRole('button', { name: '新增任务' }).click();
   await expect(page.getByLabel('大型任务')).toHaveValue('我的第一座工坊');
-  await expect(page.getByLabel('拆成小任务，每行一项')).toHaveValue('确定目标\n完成核心工作\n检查并收尾');
+  await expect(page.getByLabel('小任务 1')).toHaveValue('确定目标');
+  await expect(page.getByLabel('小任务 2')).toHaveValue('完成核心工作');
+  await expect(page.getByLabel('小任务 3')).toHaveValue('检查并收尾');
 });
 
 test('preserves mobile Chinese composition while selecting a project blueprint', async ({ page }) => {
@@ -266,17 +277,20 @@ test('preserves mobile Chinese composition while selecting a project blueprint',
   await page.getByRole('button', { name: '新增任务' }).click();
 
   const title = page.getByLabel('大型任务');
-  const tasks = page.getByLabel('拆成小任务，每行一项');
   await title.fill('');
-  await tasks.fill('');
   await enterUncommittedComposition(title, '中文长期任务');
-  await enterUncommittedComposition(tasks, '调研需求\n完成实现');
+  await page.getByRole('button', { name: '清空小任务' }).click();
+  await page.getByLabel('新增小任务').fill('占位');
+  await page.getByLabel('新增小任务').press('Enter');
+  const row = page.getByLabel('小任务 1');
+  await enterUncommittedComposition(row, '调研需求');
   await page.getByRole('radio', { name: /河岸木屋/ }).check();
 
   await expect(title).toHaveValue('中文长期任务');
-  await expect(tasks).toHaveValue('调研需求\n完成实现');
+  await expect(row).toHaveValue('调研需求');
   await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
   if ((await page.viewportSize())!.width < 700) expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
+  await row.dispatchEvent('input');
   await page.getByRole('button', { name: '开始建造' }).click();
   await expect(page.locator('#world-summary')).toContainText('中文长期任务');
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
@@ -289,15 +303,21 @@ test('creates a project when Android IME has not emitted a React change before b
   await page.getByRole('button', { name: '新增任务' }).click();
 
   const title = page.getByLabel('大型任务');
-  const tasks = page.getByLabel('拆成小任务，每行一项');
   await title.fill('');
-  await tasks.fill('');
   await enterNativeCompositionWithoutReactChange(title, '中文长期任务');
-  await enterNativeCompositionWithoutReactChange(tasks, '调研需求\n完成实现');
+  await page.getByRole('button', { name: '清空小任务' }).click();
+  await page.getByLabel('新增小任务').fill('占位');
+  await page.getByLabel('新增小任务').press('Enter');
+  const row = page.getByLabel('小任务 1');
+  await enterNativeCompositionWithoutReactChange(row, '调研需求');
+  await page.getByLabel('新增小任务').fill('完成实现');
+  await page.getByLabel('新增小任务').press('Enter');
   await page.getByRole('radio', { name: /河岸木屋/ }).check();
 
   await expect(title).toHaveValue('中文长期任务');
-  await expect(tasks).toHaveValue('调研需求\n完成实现');
+  await expect(page.getByLabel('小任务 1')).toHaveValue('调研需求');
+  await expect(page.getByLabel('小任务 2')).toHaveValue('完成实现');
+  await page.getByLabel('小任务 1').dispatchEvent('input');
   await page.getByRole('button', { name: '开始建造' }).click();
   await expect(page.locator('#world-summary')).toContainText('中文长期任务');
 });

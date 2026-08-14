@@ -58,7 +58,9 @@ test('applies an atlas to a real imported building and restores original renderi
   await page.goto('/?__atlasPageSize=128');
   await page.getByLabel('导入 .litematic').setInputFiles(sample);
   await page.getByLabel('大型任务').fill('资源包视觉验证');
-  await page.getByLabel('拆成小任务，每行一项').fill('验证纹理渲染');
+  await page.getByRole('button', { name: '清空小任务' }).click();
+  await page.getByLabel('新增小任务').fill('验证纹理渲染');
+  await page.getByLabel('新增小任务').press('Enter');
   await page.getByRole('button',{name:'开始建造'}).click();
   await setActiveProjectProgress(page,9900);
   await page.reload();
@@ -116,7 +118,11 @@ test('renders translucent multipart panes and zero-thickness iron bars from a re
   await page.goto('/?__atlasPageSize=128');
   await page.getByLabel('导入 .litematic').setInputFiles(sample);
   await page.getByLabel('大型任务').fill('P2 透明连接验证');
-  await page.getByLabel('拆成小任务，每行一项').fill('验证墙体连接\n验证玻璃板与铁栏杆');
+  await page.getByRole('button', { name: '清空小任务' }).click();
+  await page.getByLabel('新增小任务').fill('验证墙体连接');
+  await page.getByLabel('新增小任务').press('Enter');
+  await page.getByLabel('新增小任务').fill('验证玻璃板与铁栏杆');
+  await page.getByLabel('新增小任务').press('Enter');
   await page.getByRole('button',{name:'开始建造'}).click();
   await page.getByRole('button',{name:'设置'}).click();
   await page.getByLabel('导入 Java 资源包 ZIP').setInputFiles({name:'p2-visual-test.zip',mimeType:'application/zip',buffer:Buffer.from(makeVisualPack())});

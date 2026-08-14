@@ -277,6 +277,8 @@
 .allocation-legend li>div{flex:1;display:flex;align-items:baseline;justify-content:space-between;gap:12px}
 .allocation-legend strong{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}
 .allocation-legend span{flex:0 0 auto;color:#58635d;font-size:12px}
+.project-allocation{margin-top:24px;padding:16px;border:1px solid #b7c8bb;border-radius:6px;background:#fff}
+.project-allocation .allocation-bar{margin-top:14px}
 
 /* V18 creation: quiet type choice and text-level cancel, keep the blueprint cards. */
 .setup-kind{display:flex;gap:2px;margin:0 0 18px;border:0;background:none;padding:0}
@@ -284,6 +286,19 @@
 .setup-kind button[aria-pressed="true"]{color:#17211c;font-weight:750;text-decoration:underline;text-decoration-thickness:2px;text-decoration-color:#276749;text-underline-offset:7px}
 .setup-cancel{min-width:64px;border:0;background:none;color:#58635d;font-weight:700}
 .setup-actions>button:first-child:not(.primary){min-width:64px;border:0;background:none;color:#58635d;font-weight:700}
+.setup-subtasks{display:grid;gap:7px;margin-bottom:15px}
+.setup-subtasks-head{display:flex;align-items:center;justify-content:space-between;min-height:28px;font-size:13px;font-weight:700}
+.setup-subtasks-head .settings-text-action{min-height:32px;font-size:13px}
+.setup-subtask-row{display:grid;grid-template-columns:30px minmax(0,1fr) 44px;gap:8px;align-items:center}
+.setup-subtask-order{width:28px;height:28px;display:grid;place-items:center;border-radius:4px;background:#e2ebe5;color:#276749;font-weight:800}
+.setup-subtask-row .native-ime-entry input{width:100%;min-height:44px;padding:10px 12px;border:1px solid #aeb8b1;border-radius:6px;background:#fff;color:#17211c;font-size:15px}
+.setup-subtask-delete{width:44px;height:44px;padding:0;border:0;background:none;color:#b4232c;display:grid;place-items:center}
+.setup-subtask-delete svg{width:18px}
+.setup-subtask-add{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px}
+.setup-subtask-add input{min-height:44px;padding:10px 12px;border:1px dashed #aeb8b1;border-radius:6px;background:transparent;color:#17211c;font-size:15px}
+.setup-subtask-add button{min-height:44px;padding:0 14px;border:0;background:none;color:#276749;font-weight:700;display:inline-flex;align-items:center;gap:6px}
+.setup-subtask-add button svg{width:17px}
+.setup-subtask-add button:disabled{opacity:.45;cursor:not-allowed}
 .settlement-totals{margin-top:26px;padding:14px 16px;border:1px solid #b7c8bb;border-radius:6px;background:#fff}
 .settlement-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:10px;text-align:center}
 .settlement-grid strong{display:block;font-size:20px;font-weight:700;font-variant-numeric:tabular-nums}
