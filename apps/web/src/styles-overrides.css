@@ -186,3 +186,51 @@
   .world-screen:not(.is-focusing):not(.has-report){grid-template-rows:clamp(280px,35dvh,320px) minmax(0,1fr)}
   .world-screen:not(.is-focusing):not(.has-report) .timer{font-size:64px}
 }
+
+/* V18: settings redesign — grouped rows with hairline separators instead of stacked cards; secondary actions are quiet text buttons; green is reserved for the primary action and active states. */
+.settings-page{max-width:780px}
+.settings-head h1{margin:5px 0 8px}
+.settings-head p{margin:0 0 4px;color:#58635d;font-size:13px}
+.settings-group{padding:16px 0 4px;border-top:1px solid #dde4df}
+.settings-group>h2{margin:0 0 4px;font-size:15px;font-weight:750;color:#27342e}
+.settings-group>.setting-row{padding:12px 0;border-bottom:1px solid #e9eeea}
+.settings-group>.setting-row:last-child{border-bottom:0}
+.setting-row{min-height:56px;display:flex;align-items:center;justify-content:space-between;gap:14px}
+.setting-name{min-width:0;display:grid;gap:3px}
+.setting-name>span{font-size:15px;line-height:1.3;overflow-wrap:anywhere}
+.setting-name small{color:#58635d;font-size:12px;line-height:1.4}
+.setting-row-end{flex:0 0 auto;display:flex;align-items:center;gap:12px}
+.setting-value{color:#17211c;font-size:16px;font-weight:750;font-variant-numeric:tabular-nums}
+.number-field{flex:0 0 auto;display:flex;align-items:center;gap:5px;color:#58635d;font-size:13px}
+.number-field input{width:56px;height:44px;padding:8px 6px;border:0;border-radius:4px;background:transparent;color:#17211c;text-align:right;font-size:16px;font-weight:700;font-variant-numeric:tabular-nums}
+.number-field input:focus-visible{background:#fff;outline:3px solid #c25844;outline-offset:2px}
+.number-field input:disabled{opacity:.5}
+.settings-text-action{min-height:44px;padding:8px 2px;border:0;background:none;color:#276749;font-weight:700;display:inline-flex;align-items:center;gap:6px}
+.settings-text-action svg{width:16px}
+.settings-text-action:disabled{opacity:.45;cursor:not-allowed}
+.notification-health>.settings-text-action{width:auto;height:44px;display:inline-flex;align-items:center;justify-content:center;place-items:unset;padding:0 8px}
+.text-toggle{flex:0 0 auto;display:flex;gap:2px}
+.text-toggle button{min-height:44px;padding:9px 12px;border:0;background:transparent;border-radius:6px;color:#58635d;font-weight:500}
+.text-toggle button:hover{background:#eef2ee}
+.text-toggle button[aria-pressed="true"]{color:#17211c;font-weight:750;text-decoration:underline;text-decoration-thickness:2px;text-decoration-color:#276749;text-underline-offset:7px}
+.planned-days{flex:0 0 auto;display:flex;gap:3px}
+.planned-days button{width:44px;height:44px;padding:0;border:0;border-radius:50%;background:transparent;color:#58635d;font-weight:600}
+.planned-days button[aria-pressed="true"]{background:#e2efe5;color:#276749;font-weight:800}
+.planned-days button:disabled{color:#bcc5bf}
+@media(max-width:359px){.planned-days{width:100%;gap:2px}.planned-days button{width:40px;height:40px}}
+.integrity-setting{gap:18px}
+.integrity-controls{display:flex!important;align-items:center;gap:14px!important}
+.building-blueprint-panel header p,.resource-pack-panel header p,.backup-panel>div>p{margin:4px 0 10px;color:#58635d;font-size:12.5px;line-height:1.5}
+.building-blueprint-panel,.resource-pack-panel,.backup-panel{margin-top:34px;padding-top:22px;border-top:1px solid #cfd9d1}
+.building-blueprint-list .blueprint-library-actions button{width:44px;min-width:44px;min-height:44px;border:0;background:transparent;color:#58635d}
+.building-blueprint-list .blueprint-library-actions .blueprint-delete{color:#b4232c}
+.building-blueprint-list .blueprint-library-copy input{min-height:44px}
+.resource-pack-original button,.resource-pack-list button{border:0;background:transparent;color:#276749}
+.resource-pack-list .resource-pack-delete{color:#b4232c}
+.backup-actions button,.file-button,.rollback-heading button,.rollback-list li button{border:0;background:transparent;color:#276749}
+.backup-actions button:first-child{border:1px solid #aeb8b1;background:#fff;color:#27342e}
+@media(max-width:560px){
+  .setting-row.toggle-row{flex-wrap:wrap;gap:2px 12px}
+  .toggle-row .setting-name{width:100%}
+  .toggle-row .text-toggle,.toggle-row .planned-days{justify-content:flex-start}
+}

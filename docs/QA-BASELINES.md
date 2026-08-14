@@ -11,6 +11,7 @@
 - The maximum-zoom regression runs on Pixel 7 and desktop Chromium across four orbit directions. Diagnostics require the near plane to stay within `72%` of the nearest full-terrain bound and the far plane to retain at least `24` world units beyond its farthest point, with request-on-demand rendering unchanged.
 - The formal APK, installed-device copy, GitHub upload, redownload, and final device copy are compared through the machine-readable release evidence under the ignored `artifacts/release/v1.3.0` directory.
 - The formal Web release matrix uses one Playwright worker. Renderer-heavy screenshot and gesture cases share the host GPU, so parallel workers can create concurrency-only timeouts even when each viewport passes independently.
+- `v15-lighting-quality` rebuilds the WebGL renderer once per outline/quality change (five full rebuilds per viewport); its main case uses a 60s budget like the other renderer-heavy cases. `v10-habit-flow`'s ten-round cycle plus next-building WebGL preview likewise uses 60s. `v11-world-environment`'s local-only drag-gesture case is timing-sensitive on software WebGL and remains CI-skipped by design.
 
 ## Current Release
 

@@ -1,7 +1,7 @@
 import { defineConfig, devices } from '@playwright/test';
 
 const desktopOnlySpecs = /(?:responsive-qa|v2-world-interaction|v11-world-environment)\.spec\.ts/;
-const crossViewportRendererSpecs = /(?:v3-lightweight-shading|v15-lighting-quality)\.spec\.ts/;
+const crossViewportRendererSpecs = /(?:v3-lightweight-shading|v15-lighting-quality|settings-layout)\.spec\.ts/;
 
 export default defineConfig({
   testDir: './tests', timeout: 30_000, fullyParallel: true,

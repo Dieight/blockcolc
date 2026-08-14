@@ -42,7 +42,7 @@ export function ResourcePackPanel({repository}:{repository:ResourcePackRepositor
   const originalActive=!packs.some(pack=>pack.active);
 
   return <section className="resource-pack-panel" aria-labelledby="resource-pack-title">
-    <header><span className="eyebrow">Minecraft Java 资源包</span><h2 id="resource-pack-title">方块材质包</h2><p>支持 16x 方块纹理、方块状态和常用模型，包括完整方块、台阶、楼梯、围墙、栅栏、门窗、植物与透明发光材质。资源包只改变显示，不修改任务和进度。</p></header>
+    <header><h2 id="resource-pack-title">方块材质包</h2><p>支持 16x 纹理与常用模型；只改变显示，不修改任务和进度。</p></header>
     <div className={originalActive?'resource-pack-original active':'resource-pack-original'}><div><b>方块钟原创材质</b><small>{originalActive?'正在使用':'安全回退外观'}</small></div><button type="button" disabled={busy||originalActive} onClick={()=>void select(null)}>{originalActive?<PackageCheck/>:null}{originalActive?'使用中':'使用'}</button></div>
     {nativePicker?<button className="resource-pack-import" type="button" disabled={busy} onClick={()=>void importNativePack()}><FileArchive/><span>{busy?'正在处理...':'导入 Java 资源包 ZIP'}</span></button>:<label className="resource-pack-import"><FileArchive/><span>{busy?'正在处理...':'导入 Java 资源包 ZIP'}</span><input aria-label="导入 Java 资源包 ZIP" type="file" accept=".zip,application/zip,application/x-zip-compressed" disabled={busy} onChange={event=>{const file=event.target.files?.[0];event.currentTarget.value='';void importBrowserPack(file);}}/></label>}
     <p className="resource-pack-license">资源版权归原作者，请只导入你有权使用的资源包。任务 JSON 备份不包含资源包文件，未兼容的模型会使用原创材质安全回退。</p>

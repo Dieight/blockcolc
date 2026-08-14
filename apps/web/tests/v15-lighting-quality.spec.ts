@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 test("replaces the old visual experiments with persistent adaptive lighting presets", async ({ page }, testInfo) => {
+  test.setTimeout(60_000); // Five full software-WebGL renderer rebuilds (one per outline/quality change) exceed the default budget on shared GPUs.
   const pageErrors: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
   page.on("console", (message) => {
@@ -18,7 +19,7 @@ test("replaces the old visual experiments with persistent adaptive lighting pres
   await page.getByRole("button", { name: "设置" }).click();
   const quality = page.getByRole("group", { name: "光影质量" });
   await expect(quality.getByRole("button", { name: "自动" })).toHaveAttribute("aria-pressed", "true");
-  await expect(page.getByText("自动适配设备；更高档位可能增加耗电与发热")).toBeVisible();
+  await expect(page.getByText("更高档位增加耗电")).toBeVisible();
   const constructionOutline = page.getByRole("group", { name: "施工轮廓" });
   await expect(constructionOutline.getByRole("button", { name: "当前" })).toHaveAttribute("aria-pressed", "true");
   await constructionOutline.getByRole("button", { name: "关闭" }).click();

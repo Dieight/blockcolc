@@ -1,5 +1,12 @@
 # Confirmed Decisions
 
+## 2026-08-14 V18 Settings Redesign
+
+- The settings page drops the stacked-card, bordered-ghost-button, and label-plus-explainer layout in favor of grouped rows separated by hairlines: one quiet support line under the page title, 15px row names with an optional 12px note, and text-level secondary actions. Bordered controls remain only for numeric fields, native switches, and at most one prominent per-panel import/export action.
+- Segmented pill groups for lighting quality, construction outline, and environment become text option groups: neutral text with the active option in ink weight plus a green underline. Weekday planning buttons become 38px circles.
+- Aria labels, role-group names, panel class names, and interaction semantics stay unchanged so existing E2E contracts hold; this is a visual-hierarchy and copy-density change only.
+- The change lands in the `styles-overrides.css` versioned patch stream as a V18 block, following the established append-only convention.
+
 ## 2026-08-14 V17 Release
 
 - The accumulated V17 continuity, building-memory, explanatory-statistics, task-organization, notification-capability, and Android resource-pack transport work is published as `v1.3.1` (`versionCode 17`).

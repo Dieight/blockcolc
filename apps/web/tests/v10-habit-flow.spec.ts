@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 
 test('runs a repeatable habit building cycle with frozen targets and stable completed buildings', async ({ page }, testInfo) => {
+  test.setTimeout(60_000); // Ten early-completed rounds plus a second WebGL preview renderer for the next-building picker exceed the default budget on shared GPUs.
   await page.setViewportSize({ width: 412, height: 915 });
   await page.goto('/');
   await page.getByRole('button', { name: '习惯任务' }).click();
