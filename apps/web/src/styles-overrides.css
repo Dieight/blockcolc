@@ -197,18 +197,18 @@
 .settings-group>.setting-row:last-child{border-bottom:0}
 .setting-row{min-height:56px;display:flex;align-items:center;justify-content:space-between;gap:14px}
 .setting-name{min-width:0;display:grid;gap:3px}
-.setting-name>span{font-size:15px;line-height:1.3;overflow-wrap:anywhere}
+.setting-name>span{font-size:16px;font-weight:650;line-height:1.3;overflow-wrap:anywhere}
 .setting-name small{color:#58635d;font-size:12px;line-height:1.4}
 .setting-row-end{flex:0 0 auto;display:flex;align-items:center;gap:12px}
 .setting-value{color:#17211c;font-size:16px;font-weight:750;font-variant-numeric:tabular-nums}
 .number-field{flex:0 0 auto;display:flex;align-items:center;gap:5px;color:#58635d;font-size:13px}
-.number-field input{width:56px;height:44px;padding:8px 6px;border:0;border-radius:4px;background:transparent;color:#17211c;text-align:right;font-size:16px;font-weight:700;font-variant-numeric:tabular-nums}
+.number-field input{width:48px;height:44px;padding:8px 6px;border:0;border-radius:4px;background:transparent;color:#17211c;text-align:right;font-size:15px;font-weight:400;font-variant-numeric:tabular-nums}
 .number-field input:focus-visible{background:#fff;outline:3px solid #c25844;outline-offset:2px}
 .number-field input:disabled{opacity:.5}
 .settings-text-action{min-height:44px;padding:8px 2px;border:0;background:none;color:#276749;font-weight:700;display:inline-flex;align-items:center;gap:6px}
 .settings-text-action svg{width:16px}
 .settings-text-action:disabled{opacity:.45;cursor:not-allowed}
-.notification-health>.settings-text-action{width:auto;height:44px;display:inline-flex;align-items:center;justify-content:center;place-items:unset;padding:0 8px}
+.notification-health>.settings-text-action{width:44px;height:44px;display:grid;place-items:center;padding:0;border-radius:6px}
 .text-toggle{flex:0 0 auto;display:flex;gap:2px}
 .text-toggle button{min-height:44px;padding:9px 12px;border:0;background:transparent;border-radius:6px;color:#58635d;font-weight:500}
 .text-toggle button:hover{background:#eef2ee}
@@ -225,8 +225,10 @@
 .building-blueprint-list .blueprint-library-actions button{width:44px;min-width:44px;min-height:44px;border:0;background:transparent;color:#58635d}
 .building-blueprint-list .blueprint-library-actions .blueprint-delete{color:#b4232c}
 .building-blueprint-list .blueprint-library-copy input{min-height:44px}
-.resource-pack-original button,.resource-pack-list button{border:0;background:transparent;color:#276749}
+.resource-pack-original button,.resource-pack-list li button:not(.resource-pack-delete){min-width:84px;justify-content:center;border:0;background:transparent;color:#276749}
 .resource-pack-list .resource-pack-delete{color:#b4232c}
+.rollback-list li{flex-direction:row;align-items:center}
+.rollback-list li button{width:auto;flex:0 0 auto}
 .backup-actions button,.file-button,.rollback-heading button,.rollback-list li button{border:0;background:transparent;color:#276749}
 .backup-actions button:first-child{border:1px solid #aeb8b1;background:#fff;color:#27342e}
 @media(max-width:560px){
