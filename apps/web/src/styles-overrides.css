@@ -304,7 +304,21 @@
 .setup-subtask-add button svg{width:17px}
 .setup-subtask-add button:disabled{opacity:.45;cursor:not-allowed}
 .settlement-totals{margin-top:26px;padding:14px 16px;border:1px solid #b7c8bb;border-radius:6px;background:#fff}
-.settlement-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:10px;text-align:center}
-.settlement-grid strong{display:block;font-size:20px;font-weight:700;font-variant-numeric:tabular-nums}
-.settlement-grid span{display:block;margin-top:3px;color:#58635d;font-size:12px}
+.settlement-rows{display:grid;gap:10px;margin-top:10px}
+.settlement-rows>div{display:flex;align-items:baseline;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid #e9eeea}
+.settlement-rows>div:last-child{border-bottom:0}
+.settlement-rows span{color:#58635d;font-size:13px}
+.settlement-rows strong{font-size:16px;font-weight:700;font-variant-numeric:tabular-nums}
+.interruption-summary{margin-top:24px}
+.interruption-summary h2{margin:0 0 2px}
+.interruption-note{margin:0 0 12px;color:#58635d;font-size:12px}
+.interruption-summary>p{color:#58635d;font-size:13px}
+.interruption-list{display:grid;gap:14px;margin:0;padding:0;list-style:none}
+.interruption-list li{display:grid;gap:7px}
+.interruption-list li>div{display:flex;align-items:baseline;justify-content:space-between;gap:12px}
+.interruption-list span{color:#17211c;font-size:13px}
+.interruption-list strong{color:#58635d;font-size:12px;font-weight:600;font-variant-numeric:tabular-nums}
+.interruption-bar{height:6px;border-radius:3px;background:#efe3d5;overflow:hidden}
+.interruption-bar b{display:block;height:100%;border-radius:3px;background:#a0652b}
+.world-buffer{position:absolute;inset:0;z-index:2;display:grid;place-items:center;background:#dde7e0;color:#58635d;font-size:13px;pointer-events:none}
 .daily-goal-workbench{margin-bottom:26px}
