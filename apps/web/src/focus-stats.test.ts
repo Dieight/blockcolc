@@ -63,6 +63,7 @@ describe('effective focus statistics', () => {
 
     const distribution = focusHourDistribution(state, '2026-08-12', 7);
     expect(distribution.find((bucket) => bucket.hour === 22)?.minutes).toBe(45);
+    expect(distribution.find((bucket) => bucket.hour === 22)?.projects).toEqual([{ projectId: 'project-a', minutes: 45 }]);
     expect(distribution.find((bucket) => bucket.hour === 5)?.minutes).toBe(15);
     expect(distribution.filter((bucket) => bucket.minutes > 0)).toHaveLength(2);
     expect(settlementTotals(state)).toEqual({ totalMinutes: 60, completedRounds: 1, buildings: 2 });

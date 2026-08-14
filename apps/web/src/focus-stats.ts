@@ -78,22 +78,37 @@ export function projectFocusAllocation(state: DomainState, endDate: ISODate, day
     .sort((left, right) => right.minutes - left.minutes || left.title.localeCompare(right.title, 'zh-CN'));
 }
 
+export interface FocusHourProject {
+  projectId: string;
+  minutes: number;
+}
+
 export interface FocusHourBucket {
   hour: number;
   minutes: number;
+  projects: FocusHourProject[];
 }
 
 export function focusHourDistribution(state: DomainState, endDate: ISODate, days: number): FocusHourBucket[] {
   if (!Number.isSafeInteger(days) || days < 1) throw new Error('days must be a positive integer');
   const startDate = addLocalDays(endDate, 1 - days);
-  const buckets = Array.from({ length: 24 }, (_, hour) => ({ hour, minutes: 0 }));
+  const buckets = Array.from({ length: 24 }, (_, hour) => ({ hour, minutes: 0, projects: new Map<string, number>() }));
   for (const session of state.focusHistory) {
     const date = focusSessionLocalDate(session);
     if (date < startDate || date > endDate || session.actualDurationMs <= 0) continue;
     const hour = Number(new Intl.DateTimeFormat('en-GB', { timeZone: session.timeZoneAtStart, hour: 'numeric', hourCycle: 'h23' }).format(new Date(focusSessionEndedAt(session))));
-    if (Number.isInteger(hour) && hour >= 0 && hour < 24) buckets[hour]!.minutes += session.actualDurationMs;
+    if (!Number.isInteger(hour) || hour < 0 || hour >= 24) continue;
+    const bucket = buckets[hour]!;
+    bucket.minutes += session.actualDurationMs;
+    bucket.projects.set(session.projectId, (bucket.projects.get(session.projectId) ?? 0) + session.actualDurationMs);
   }
-  return buckets.map((bucket) => ({ hour: bucket.hour, minutes: Math.round(bucket.minutes / 60_000) }));
+  return buckets.map((bucket) => ({
+    hour: bucket.hour,
+    minutes: Math.round(bucket.minutes / 60_000),
+    projects: [...bucket.projects]
+      .map(([projectId, milliseconds]) => ({ projectId, minutes: Math.round(milliseconds / 60_000) }))
+      .sort((left, right) => right.minutes - left.minutes),
+  }));
 }
 
 export interface SettlementTotals {
