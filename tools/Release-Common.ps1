@@ -138,6 +138,51 @@ function Assert-ApkMetadata {
     return $metadata
 }
 
+function Get-ForegroundPackage {
+    param([Parameter(Mandatory)][string]$Serial)
+    try {
+        $adb = Get-AdbPath
+        $dump = (Invoke-External -FilePath $adb -Arguments @('-s', $Serial, 'shell', 'dumpsys', 'activity', 'activities') -Capture) -join "`n"
+        $match = [regex]::Match($dump, '(?im)ResumedActivity[^\r\n]*?([a-z][a-z0-9_.]+)/')
+        if ($match.Success) { return $match.Groups[1].Value }
+    } catch { }
+    return $null
+}
+
+function Get-DefaultLauncherPackage {
+    param([Parameter(Mandatory)][string]$Serial)
+    try {
+        $adb = Get-AdbPath
+        $dump = (Invoke-External -FilePath $adb -Arguments @('-s', $Serial, 'shell', 'cmd', 'shortcut', 'get-default-launcher') -Capture) -join ' '
+        $match = [regex]::Match($dump, '(?i)ComponentInfo\{([a-z][a-z0-9_.]+)/')
+        if (-not $match.Success) { $match = [regex]::Match($dump, '(?i)launcher:\s*([a-z][a-z0-9_.]+)') }
+        if ($match.Success) { return $match.Groups[1].Value }
+    } catch { }
+    return $null
+}
+
+function Assert-DeviceNotBusy {
+    param(
+        [Parameter(Mandatory)][string]$Serial,
+        [Parameter(Mandatory)]$Context,
+        [switch]$AllowBusyDevice
+    )
+    if ($AllowBusyDevice) { return }
+    try {
+        $adb = Get-AdbPath
+        $power = (Invoke-External -FilePath $adb -Arguments @('-s', $Serial, 'shell', 'dumpsys', 'power') -Capture) -join "`n"
+        if ($power -notmatch 'mWakefulness=Awake') { return }
+        $foreground = Get-ForegroundPackage -Serial $Serial
+        if (-not $foreground -or $foreground -eq $Context.PackageId) { return }
+        $launcher = Get-DefaultLauncherPackage -Serial $Serial
+        if ($launcher -and $foreground -eq $launcher) { return }
+        throw "Device $Serial is busy (foreground: $foreground). Release verification must not interrupt active use; disconnect the device or pass -AllowBusyDevice."
+    } catch {
+        if ($_.Exception.Message -like 'Device * is busy*') { throw }
+        Write-Warning "Could not verify device $Serial is idle ($($_.Exception.Message)); proceeding."
+    }
+}
+
 function Get-AuthorizedAndroidDevices {
     $adb = Get-AdbPath
     $lines = Invoke-External -FilePath $adb -Arguments @('devices', '-l') -Capture
@@ -153,7 +198,8 @@ function Install-AndVerifyApk {
         [Parameter(Mandatory)][string]$ApkPath,
         [Parameter(Mandatory)][string]$Serial,
         [Parameter(Mandatory)]$Context,
-        [Parameter(Mandatory)][string]$ExpectedSha256
+        [Parameter(Mandatory)][string]$ExpectedSha256,
+        [switch]$AllowBusyDevice
     )
 
     $adb = Get-AdbPath
@@ -172,6 +218,7 @@ function Install-AndVerifyApk {
     if (-not $deviceHash) { throw "Unable to calculate installed APK SHA-256 on $Serial." }
     Assert-Sha256Equal -Expected $ExpectedSha256 -Actual $deviceHash -Boundary "device $Serial installed base.apk"
 
+    Assert-DeviceNotBusy -Serial $Serial -Context $Context -AllowBusyDevice:$AllowBusyDevice
     $null = Invoke-External -FilePath $adb -Arguments @('-s', $Serial, 'shell', 'am', 'start', '-n', "$($Context.PackageId)/.MainActivity") -Capture
     [pscustomobject]@{ Serial = $Serial; InstalledSha256 = $deviceHash; VersionName = $Context.VersionName; VersionCode = $Context.VersionCode }
 }

@@ -1,5 +1,7 @@
 [CmdletBinding()]
-param()
+param(
+    [switch]$AllowBusyDevice
+)
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Release-Common.ps1')
@@ -48,7 +50,7 @@ try {
 
     $devices = @()
     foreach ($serial in (Get-AuthorizedAndroidDevices)) {
-        $devices += Install-AndVerifyApk -ApkPath $candidateApk -Serial $serial -Context $context -ExpectedSha256 $candidateHash
+        $devices += Install-AndVerifyApk -ApkPath $candidateApk -Serial $serial -Context $context -ExpectedSha256 $candidateHash -AllowBusyDevice:$AllowBusyDevice
     }
 
     Assert-StagedState
