@@ -191,7 +191,7 @@
 .settings-head h1{margin:5px 0 8px}
 .settings-head p{margin:0 0 4px;color:#58635d;font-size:13px}
 .settings-group{padding:16px 0 4px;border-top:1px solid #dde4df}
-.settings-group>h2{margin:0 0 4px;font-size:15px;font-weight:750;color:#27342e}
+.settings-group>h2{margin:0 0 4px;font-size:18px;font-weight:700;color:#27342e}
 .settings-group>.setting-row{padding:12px 0;border-bottom:1px solid #e9eeea}
 .settings-group>.setting-row:last-child{border-bottom:0}
 .setting-row{min-height:56px;display:flex;align-items:center;justify-content:space-between;gap:14px}
@@ -219,8 +219,9 @@
 .planned-days button[aria-pressed="true"]{background:#e2efe5;color:#276749;font-weight:800}
 .planned-days button:disabled{color:#bcc5bf}
 @media(max-width:359px){.planned-days{width:100%;gap:2px}.planned-days button{width:40px;height:40px}}
-.integrity-setting{gap:18px}
+.integrity-setting{gap:18px;align-items:flex-start}
 .integrity-controls{display:flex!important;align-items:center;gap:14px!important}
+@media(max-width:480px){.integrity-setting{align-items:flex-start}.integrity-controls{flex-direction:row;align-items:center!important}}
 .building-blueprint-panel header p,.resource-pack-panel header p,.backup-panel>div>p{margin:4px 0 10px;color:#58635d;font-size:12.5px;line-height:1.5}
 .building-blueprint-panel,.resource-pack-panel,.backup-panel{margin-top:34px;padding-top:22px;border-top:1px solid #cfd9d1}
 .building-blueprint-list .blueprint-library-actions button{width:44px;min-width:44px;min-height:44px;border:0;background:transparent;color:#58635d}
