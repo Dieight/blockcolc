@@ -306,7 +306,7 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
     <WorldCanvasV7 service={service} resourcePacks={resourcePacks} lightingQuality={preferences.lightingQuality} constructionOutlineVisibility={preferences.constructionOutlineVisibility} environmentStyle={state.worldSettings.environmentStyle} worldSeed={state.worldSettings.worldSeed} terrainGenerationVersion={state.worldSettings.terrainGenerationVersion} constructionFeedback={constructionFeedback} focusedProjectId={focusedProjectId} onSelectProject={onFocusWorldProject} onClearWorldFocus={onClearWorldFocus}/>
     <section className="focus-panel v7-focus-panel">
       {!session && <div className="workbench-heading">
-        <div><span className="eyebrow">今天继续建造</span><h1>{active.project.title}</h1></div>
+        <h1>{active.project.title}</h1>
         <button className="task-switch-action" type="button" aria-label="切换当前工作" onClick={onOpenTasks}><ListTodo/><span>切换任务</span></button>
       </div>}
        {!session && !isBreak && reconciledPlan && pending.length===0 && !habitAwaiting && <div className="resume-plan-context" role="status"><History/><span><strong>继续上次计划</strong><small>第 {reconciledPlan.completedRounds+1} / {reconciledPlan.totalRounds} 轮 · {isHabit?active.project.title:subtask!.title}</small></span></div>}
