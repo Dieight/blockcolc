@@ -27,6 +27,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(FocusIntegrityPlugin.class);
         registerPlugin(LitematicFilePickerPlugin.class);
         registerPlugin(NativeInputPlugin.class);
+        registerPlugin(SettingsPlugin.class);
         bridgeBuilder.addWebViewListener(new WebViewListener() {
             @Override
             public void onPageLoaded(WebView webView) {

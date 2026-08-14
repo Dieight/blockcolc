@@ -4,3 +4,4 @@ export * from './system-bars';
 export * from './backup-file';
 export * from './local-file-picker';
 export * from './native-input';
+export * from './settings-plugin';
