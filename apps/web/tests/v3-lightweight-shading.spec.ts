@@ -182,7 +182,12 @@ test("moves rain across frames without a permanent render loop", async ({ page }
   await expect(canvas).toHaveAttribute("data-weather-kind", "rain");
   await expect(canvas).toHaveAttribute("data-continuous-rendering", "false");
   const before = await canvas.screenshot({ path: testInfo.outputPath("rain-before.png") });
-  await page.clock.fastForward(240);
-  const after = await canvas.screenshot({ path: testInfo.outputPath("rain-after.png") });
-  expect(Buffer.compare(before, after)).not.toBe(0);
+  // Rain frames are scheduled renders (no continuous loop). Under CI software-GL the
+  // flushed frame can lag behind the mocked clock, so advance in bounded steps until
+  // the canvas visibly changes instead of comparing a single raced screenshot.
+  await expect.poll(async () => {
+    await page.clock.fastForward(240);
+    const after = await canvas.screenshot({ path: testInfo.outputPath("rain-after.png") });
+    return Buffer.compare(before, after) !== 0;
+  }, { timeout: 20_000 }).toBe(true);
 });
