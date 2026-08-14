@@ -872,8 +872,12 @@ describe("serialization and projection", () => {
       project: { status: "active", blueprintId: "tower" },
       building: { completionBasisPoints: 0, conditionBasisPoints: 10_000 },
     });
-    world.projects[0]!.project.title = "External mutation";
-    expect(f.service.worldProjection().projects[0]!.project.title).toBe("Build release");
+    // Projections are epoch-cached shared copies (render-phase performance contract):
+    // stable identity within a state epoch, fresh copies after the next adopted state.
+    expect(f.service.worldProjection()).toBe(world);
+    await f.service.dispatch({ type: "RenameProject", title: "Release renamed" });
+    expect(f.service.worldProjection()).not.toBe(world);
+    expect(f.service.worldProjection().projects[1]!.project.title).toBe("Release renamed");
   });
 
   it("keeps a completed habit building on its plot and assigns the next cycle a new plot", async () => {

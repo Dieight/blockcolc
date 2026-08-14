@@ -48,6 +48,11 @@ export class ApplicationService {
   private state: DomainState;
   private revision: number;
   private tail: Promise<void> = Promise.resolve();
+  /** Bumped on every adopted state so render-phase projections can be cached per epoch. */
+  private stateEpoch = 0;
+  private snapshotCache: { epoch: number; value: DomainState } | null = null;
+  private worldProjectionCache: { epoch: number; value: WorldProjection } | null = null;
+  private activeProjectionCache: { epoch: number; value: ActiveProjectProjection | null } | null = null;
 
   private constructor(private readonly dependencies: ApplicationDependencies, initialState: DomainState, revision: number) {
     this.state = initialState;
@@ -67,15 +72,27 @@ export class ApplicationService {
   }
 
   snapshot(): DomainState {
-    return structuredClone(this.state);
+    const cached = this.snapshotCache;
+    if (cached !== null && cached.epoch === this.stateEpoch) return cached.value;
+    const value = structuredClone(this.state);
+    this.snapshotCache = { epoch: this.stateEpoch, value };
+    return value;
   }
 
   activeProjectProjection(): ActiveProjectProjection | null {
-    return projectActiveState(this.state);
+    const cached = this.activeProjectionCache;
+    if (cached !== null && cached.epoch === this.stateEpoch) return cached.value;
+    const value = projectActiveState(this.state);
+    this.activeProjectionCache = { epoch: this.stateEpoch, value };
+    return value;
   }
 
   worldProjection(): WorldProjection {
-    return projectWorldState(this.state);
+    const cached = this.worldProjectionCache;
+    if (cached !== null && cached.epoch === this.stateEpoch) return cached.value;
+    const value = projectWorldState(this.state);
+    this.worldProjectionCache = { epoch: this.stateEpoch, value };
+    return value;
   }
 
   notificationCapability(): Promise<NotificationCapability> {
@@ -281,6 +298,10 @@ export class ApplicationService {
   private adopt(state: DomainState, revision: number): void {
     this.state = state;
     this.revision = revision;
+    this.stateEpoch += 1;
+    this.snapshotCache = null;
+    this.worldProjectionCache = null;
+    this.activeProjectionCache = null;
   }
 
   private async dispatchInternal(command: DomainCommand, origin: "user" | "recovery", clock: Clock = this.dependencies.clock): Promise<ApplicationResult> {
