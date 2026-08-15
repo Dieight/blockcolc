@@ -1666,6 +1666,7 @@ export function createVoxelRenderer(
       rain.userData.ownedMaterial = rainMaterial;
       atmosphereGroup.add(rain);
       rainAnimation = { mesh: rain, drops, baseY: -2, spanY: 17, elapsedMs: 0, lastUpdateMs: performance.now() };
+      canvas.dataset.rainPhaseMs = "0";
     }
     applyAtmosphere();
     cacheStaticTransformTree(atmosphereGroup);
@@ -1684,6 +1685,7 @@ export function createVoxelRenderer(
     });
     rain.mesh.instanceMatrix.needsUpdate = true;
     rain.lastUpdateMs = nowMs;
+    canvas.dataset.rainPhaseMs = String(Math.round(rain.elapsedMs));
     requestRender();
   }
 
