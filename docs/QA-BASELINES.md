@@ -47,3 +47,7 @@ Store generated evidence under ignored `artifacts/`. Keep the current baseline h
 - V18 candidate on OnePlus PJX110: `1.3.1 (17)` overwrite install preserves data; burst evidence `artifacts/device-qa/v18-loader2/f0` shows the full-screen loading page in the first captured frame after tapping 计时 (no source-page stall), world ready ~2.5s later; launch burst `v18-boot/f2-f3` shows boot and world rebuild as one continuous loading page. Settings/tasks/stats/settings sweep screenshots under `artifacts/device-qa/v18-loader3/`.
 - V18 E2E: 65/66 pass; the `v11-world-environment` canvas-drag gesture case times out identically on the pre-change tree (desktop GPU environment, skipped on CI by design) and is not a V18 regression.
 - The ColorOS security layer blocks adb `pm revoke`/`appops` notification-permission changes, so the denied-state "打开系统设置" jump remains a manual user check.
+
+## 2026-08-15 CI scope change
+
+- GitHub Actions now runs only the fast quality gate (`npm run test:fast`). The browser release matrix and the unsigned Android candidate left CI: GitHub's software WebGL intermittently times out pointer gestures and never reliably flushes timer-driven frames, so those runs were a flaky lottery duplicating local work. The signed build, the full web E2E matrix, and real-device acceptance remain local/device-owned. `Publish-Release.ps1`'s CI green gate now checks the fast gate run.

@@ -37,11 +37,9 @@
 
 ## CI 抖动处理手册
 
-- GitHub runner 的 WebGL 是软件渲染，且镜像缺中文字体。渲染/布局用例在 CI 偶发失败时，按此顺序处理，**不要先改产品代码**：
-  1. 看失败用例是否与字体度量相关（中文文本换行/溢出）→ CI 已装 `fonts-noto-cjk`，检查该步骤是否仍在；本地用 `run-web-e2e.mjs` 复跑（不要直接 `npx playwright`，会因未起 vite 得到 `ERR_CONNECTION_REFUSED` 假失败）。
-  2. 时序敏感断言（假时钟快进后截图对比）→ 改为步进 + `expect.poll`，参照雨丝用例的修法。
-  3. 本地两次全量 66/66 通过 + 真机通过 → 判定环境偶发，可 `-AllowRedCi` 发布并记录；CI 失败时 workflow 会保留 `test-results` 产物供下载诊断。
-- 需要跳过用例时沿用 `v11` 手势用例的 `test.skip(Boolean(process.env.CI))` 惯例，并在注释说明真机/本地 GPU 覆盖。
+- GitHub Actions 自 2026-08-15 起**只保留快速门禁**（`npm run test:fast`：全仓 typecheck + 单测，确定性、不跑 WebGL）。浏览器渲染矩阵与未签名 Android 候选已从 CI 移除：软件 WebGL 无法稳定跑 3D 用例（帧刷新/手势超时抖动），签名构建与真机验收都在本地完成。**web E2E 矩阵是本地/真机专属**，与 v11 手势用例的跳过惯例一致。
+- 渲染/布局用例在本地偶发失败时：交互驱动渲染（参照雨丝用例修法）→ 真机复核；本地直跑 playwright 前必须用 `run-web-e2e.mjs`（直接 `npx playwright` 会因未起 vite 得到 `ERR_CONNECTION_REFUSED` 假失败）。
+- `Publish-Release.ps1` 的 CI 绿色门槛检查快速门禁的运行，语义不变。
 
 ## 视觉核验（信任阶梯）
 
