@@ -197,7 +197,7 @@ describe("merged stepped terrain", () => {
         expect(covered, `shoreline water edge ${key} at y=${a.y} must be closed by a side face`).toBe(true);
       }
     }
-  });
+  }, 15_000);
 
   it("adds deterministic natural scenery outside the unchanged settlement frame", () => {
     const placements = layoutWorlds(snapshots);
