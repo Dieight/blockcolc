@@ -232,6 +232,8 @@ export interface VoxelRenderer {
   focusProject(projectId: string | null): void;
   setResourcePack(pack: VoxelResourcePack | null): Promise<void>;
   setReducedMotion(value: boolean): void;
+  /** Pauses frame rendering and texture animation while the canvas pane is hidden (tab switches); resuming re-sizes and renders once. */
+  setVisible(value: boolean): void;
   resetCamera(): void;
   resize(): void;
   getDiagnostics(): RendererDiagnostics;
@@ -443,6 +445,8 @@ export function createVoxelRenderer(
   let reducedMotion = false;
   let disposed = false;
   let frame = 0;
+  /** False while the canvas pane is hidden (tab switch); frame rendering pauses until setVisible(true). */
+  let paneVisible = true;
   let contentBounds = defaultContentBounds();
   let visibilityBounds = defaultContentBounds();
   let visibilityNearestDistance = 0;
@@ -692,7 +696,7 @@ export function createVoxelRenderer(
   }
 
   function requestRender(): void {
-    if (disposed || frame !== 0) return;
+    if (disposed || frame !== 0 || !paneVisible) return;
     frame = requestAnimationFrame(() => {
       frame = 0;
       const cameraStillMoving = renderFrame(performance.now());
@@ -1551,7 +1555,7 @@ export function createVoxelRenderer(
 
   function updateRainAnimation(nowMs: number): void {
     const rain = rainAnimation;
-    if (!rain || interacting || reducedMotion || document.hidden || nowMs - rain.lastUpdateMs < 80) return;
+    if (!rain || !paneVisible || interacting || reducedMotion || document.hidden || nowMs - rain.lastUpdateMs < 80) return;
     rain.elapsedMs += nowMs - rain.lastUpdateMs;
     const fall = rain.elapsedMs * 0.00078;
     const matrix = new THREE.Matrix4();
@@ -2230,7 +2234,7 @@ export function createVoxelRenderer(
   const contextLost = (event: Event): void => { event.preventDefault(); };
   const contextRestored = (): void => { resize(); };
   const visibilityChange = (): void => {
-    for (const controller of atlasAnimationControllers) controller?.setVisible(!document.hidden);
+    for (const controller of atlasAnimationControllers) controller?.setVisible(!document.hidden && paneVisible);
     if (!document.hidden) { updateLighting(new Date()); updateWeather(localDateForDate(new Date())); }
   };
   const observer = new ResizeObserver(resize);
@@ -2317,6 +2321,15 @@ export function createVoxelRenderer(
       reducedMotion = value;
       for (const controller of atlasAnimationControllers) controller?.setReducedMotion(value);
       canvas.dataset.reducedMotion = String(value);
+    },
+    setVisible(value) {
+      paneVisible = value;
+      for (const controller of atlasAnimationControllers) controller?.setVisible(!document.hidden && value);
+      if (value) {
+        updateLighting(new Date());
+        updateWeather(localDateForDate(new Date()));
+        resize();
+      }
     },
     resetCamera: resetView,
     resize,

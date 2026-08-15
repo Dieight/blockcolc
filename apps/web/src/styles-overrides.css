@@ -334,3 +334,10 @@
 @keyframes world-boot-in{from{opacity:0}to{opacity:1}}
 @keyframes world-boot-block{0%,100%{transform:translateY(0);opacity:.55}35%{transform:translateY(-7px);opacity:1}70%{transform:translateY(0);opacity:.75}}
 .daily-goal-workbench{margin-bottom:26px}
+
+/* V19 SW-01: the world pane stays mounted across tab switches; hiding it keeps the renderer resident so returning to the timer tab is instant. The renderer pauses frames while hidden (setVisible). */
+.world-pane.is-hidden{display:none}
+
+/* V19 SW-01: the idle-workbench scroll lock uses :has(.world-screen...), which the now-resident hidden world pane also satisfies and would lock every tab. Restore free scrolling whenever the world pane is hidden. */
+@media(max-width:699px){html:has(.world-pane.is-hidden .world-screen),body:has(.world-pane.is-hidden .world-screen),#root:has(.world-pane.is-hidden .world-screen){height:auto!important;overflow:auto!important}}
+@media(min-width:700px) and (max-height:620px){html:has(.world-pane.is-hidden .world-screen),body:has(.world-pane.is-hidden .world-screen),#root:has(.world-pane.is-hidden .world-screen){height:auto!important;overflow:auto!important}}

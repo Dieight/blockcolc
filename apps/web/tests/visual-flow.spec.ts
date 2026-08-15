@@ -336,6 +336,31 @@ test('navigation remains usable without overlap', async ({ page }) => {
   expect(unobstructed).toBe(true);
 });
 
+test('keeps the world renderer resident across tab switches', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: '开始建造' }).click();
+  const canvas = page.getByLabel('项目建筑世界');
+  await expect(canvas).toHaveAttribute('data-environment-style', 'natural-valley');
+
+  const box = await canvas.boundingBox();
+  if (!box) throw new Error('World canvas has no layout box');
+  const y = box.y + box.height * 0.52;
+  await canvas.dispatchEvent('pointerdown', { pointerId: 71, pointerType: 'touch', isPrimary: true, clientX: box.x + box.width * 0.3, clientY: y, buttons: 1 });
+  await canvas.dispatchEvent('pointermove', { pointerId: 71, pointerType: 'touch', isPrimary: true, clientX: box.x + box.width * 0.7, clientY: y, buttons: 1 });
+  await canvas.dispatchEvent('pointerup', { pointerId: 71, pointerType: 'touch', isPrimary: true, clientX: box.x + box.width * 0.7, clientY: y, buttons: 0 });
+  await expect.poll(async () => Math.abs(Number(await canvas.getAttribute('data-camera-azimuth')))).toBeGreaterThan(2);
+  const azimuth = await canvas.getAttribute('data-camera-azimuth');
+
+  await page.getByRole('button', { name: '任务', exact: true }).click();
+  await expect(page.getByRole('heading', { name: '我的第一座工坊' })).toBeVisible();
+  await page.getByRole('button', { name: '计时', exact: true }).click();
+
+  // The renderer survived the round trip: same camera, no loading page, diagnostics intact.
+  await expect(page.locator('.boot-page')).toHaveCount(0);
+  await expect(canvas).toHaveAttribute('data-camera-azimuth', azimuth!);
+  await expect(canvas).toHaveAttribute('data-environment-style', 'natural-valley');
+});
+
 test('expired focus resumes into progress reporting and grows the building', async ({ page }, testInfo) => {
   await page.clock.install({ time: new Date('2026-07-23T08:00:00Z') });
   await page.goto('/');
