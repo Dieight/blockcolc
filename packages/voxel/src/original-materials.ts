@@ -50,6 +50,22 @@ export function originalPatternForMaterialId(materialId: string): OriginalMateri
   return "smooth";
 }
 
+/**
+ * Vanilla block ids standing in for Blockcolc built-in building materials, so an
+ * imported resource pack can retexture built-in blueprints the same way it
+ * retextures imported Litematic voxels. Voxels that resolve no pack texture keep
+ * their procedural original material, so packs never break the default look.
+ */
+export function builtinMaterialBlockId(materialId: string): string | undefined {
+  if (materialId === "stone") return "minecraft:stone";
+  if (materialId === "wood") return "minecraft:oak_log";
+  if (materialId === "plank") return "minecraft:oak_planks";
+  if (materialId === "roof") return "minecraft:bricks";
+  if (materialId === "glass") return "minecraft:glass";
+  if (materialId === "accent") return "minecraft:birch_planks";
+  return undefined;
+}
+
 export function originalPatternForBlockId(sourceBlockId: string | undefined, materialId: string): OriginalMaterialPattern {
   const path = sourceBlockId?.toLowerCase().split(":").pop() ?? "";
   if (path === "water" || path === "bubble_column") return "water";

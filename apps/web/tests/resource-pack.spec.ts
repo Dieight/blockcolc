@@ -110,6 +110,38 @@ test('applies an atlas to a real imported building and restores original renderi
   expect(restoration.changedPixelRatio).toBeLessThan(0.01);
 });
 
+test('retextures built-in buildings through vanilla stand-in blocks', async ({ page }, testInfo) => {
+  test.setTimeout(60_000);
+  await page.goto('/?__atlasPageSize=128');
+  await page.getByRole('button', { name: '开始建造' }).click();
+  await setActiveProjectProgress(page, 9900);
+  await page.reload();
+  const canvas = page.getByLabel('项目建筑世界');
+  await expect(canvas).toBeVisible();
+  const original = await canvas.screenshot({ path: testInfo.outputPath('builtin-original.png') });
+
+  await page.getByRole('button', { name: '设置' }).click();
+  await page.getByLabel('导入 Java 资源包 ZIP').setInputFiles({
+    name: 'builtin-visual.zip', mimeType: 'application/zip', buffer: Buffer.from(makeBuiltinVisualPack()),
+  });
+  await expect(page.getByRole('status')).toContainText('已导入并启用');
+  await page.getByRole('button', { name: '计时' }).click();
+  await expect(canvas).toHaveAttribute('data-active-resource-pack-id', /sha256:/);
+  await expect.poll(async () => Number(await canvas.getAttribute('data-textured-voxel-count')), { timeout: 30_000 }).toBeGreaterThan(100);
+  const textured = await canvas.screenshot({ path: testInfo.outputPath('builtin-pack.png') });
+  const changed = await pixelDifference(page, original, textured);
+  expect(changed.changedPixelRatio).toBeGreaterThan(0.005);
+  expect(changed.meanChannelDelta).toBeGreaterThan(0.3);
+
+  await page.getByRole('button', { name: '设置' }).click();
+  await page.locator('.resource-pack-original').getByRole('button', { name: '使用' }).click();
+  await page.getByRole('button', { name: '计时' }).click();
+  await expect(canvas).toHaveAttribute('data-active-resource-pack-id', '');
+  const restored = await canvas.screenshot({ path: testInfo.outputPath('builtin-restored.png') });
+  const restoration = await pixelDifference(page, original, restored);
+  expect(restoration.changedPixelRatio).toBeLessThan(0.01);
+});
+
 test('renders translucent multipart panes and zero-thickness iron bars from a real imported building',async({page},testInfo)=>{
   test.setTimeout(90_000);
   const sample=resolve(process.cwd(),'../../litematic/a94f3c5d-b4ad-42e1-ba26-f474b204b0ea.litematic');
@@ -176,6 +208,21 @@ function makeVisualPack():Uint8Array{
   files['assets/minecraft/textures/block/oak_leaves.png']=makePng([205,215,190,255]);
   addP1GeometryFixtures(files);
   addP2MultipartFixtures(files);
+  return zipSync(files,{level:6});
+}
+
+function makeBuiltinVisualPack():Uint8Array{
+  // Bright distinct cube_all textures for the six vanilla stand-in blocks that
+  // built-in Blockcolc materials resolve to (see builtinMaterialBlockId).
+  const files:Record<string,Uint8Array>={'pack.mcmeta':strToU8(JSON.stringify({pack:{pack_format:34,description:'Builtin retexture test'}}))};
+  const cubes:Record<string,readonly[number,number,number,number]>={
+    stone:[30,30,30,255],oak_planks:[200,120,40,255],bricks:[160,40,40,255],glass:[80,180,255,255],birch_planks:[220,200,150,255],oak_log:[120,80,40,255],
+  };
+  for(const [id,color] of Object.entries(cubes)){
+    files[`assets/minecraft/blockstates/${id}.json`]=strToU8(JSON.stringify({variants:{'':{model:`minecraft:block/${id}`}}}));
+    files[`assets/minecraft/models/block/${id}.json`]=strToU8(JSON.stringify({parent:'block/cube_all',textures:{all:`block/${id}`}}));
+    files[`assets/minecraft/textures/block/${id}.png`]=makePng(color);
+  }
   return zipSync(files,{level:6});
 }
 

@@ -3,6 +3,7 @@ import { strToU8, zlibSync } from "fflate";
 import * as THREE from "three";
 import { describe, expect, it, vi } from "vitest";
 import type { BlueprintVoxel } from "../src/blueprint";
+import { builtinMaterialBlockId } from "../src/original-materials";
 import {
   BLOCK_FACE_SLOTS,
   buildResourcePackAtlas,
@@ -68,6 +69,36 @@ describe("resource-pack voxel texture planning", () => {
     expect(atlas.pages[0]!.texture.anisotropy).toBe(2);
     geometry.dispose();
     atlas.dispose();
+  });
+
+  it("retextures built-in materials through their vanilla stand-in block ids", () => {
+    expect(builtinMaterialBlockId("stone")).toBe("minecraft:stone");
+    expect(builtinMaterialBlockId("wood")).toBe("minecraft:oak_log");
+    expect(builtinMaterialBlockId("plank")).toBe("minecraft:oak_planks");
+    expect(builtinMaterialBlockId("roof")).toBe("minecraft:bricks");
+    expect(builtinMaterialBlockId("glass")).toBe("minecraft:glass");
+    expect(builtinMaterialBlockId("accent")).toBe("minecraft:birch_planks");
+    expect(builtinMaterialBlockId("terrainWater")).toBeUndefined();
+
+    const manifest = manifestFor([
+      { blockId: "minecraft:oak_planks", modelId: "minecraft:block/oak_planks", faces: allFaces("minecraft:block/oak_planks") },
+    ]);
+    const atlas = buildResourcePackAtlas(manifest);
+    const builtinPlank: BlueprintVoxel = { x: 0, y: 0, z: 0, materialId: "plank", buildOrder: 10000 };
+    const plan = planTexturedVoxel(builtinPlank, manifest, atlas);
+    expect(plan).toBeDefined();
+    expect(plan?.faceTiles[0]).toBe(atlas.tiles.get("minecraft:block/oak_planks")?.index);
+
+    // A built-in material whose stand-in block the pack does not provide keeps the procedural fallback.
+    const missing: BlueprintVoxel = { x: 0, y: 0, z: 0, materialId: "accent", buildOrder: 10000 };
+    expect(planTexturedVoxel(missing, manifest, atlas)).toBeUndefined();
+
+    // Packs without any atlas pages still fall back for every voxel.
+    const emptyManifest = manifestFor([]);
+    const emptyAtlas = buildResourcePackAtlas(emptyManifest);
+    expect(planTexturedVoxel(builtinPlank, emptyManifest, emptyAtlas)).toBeUndefined();
+    atlas.dispose();
+    emptyAtlas.dispose();
   });
 
   it("keeps distinct atlas tiles isolated through the safe mip levels", () => {

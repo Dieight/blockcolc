@@ -17,6 +17,7 @@ import {
   type LocalOcclusionField,
 } from "./local-occlusion";
 import { createVisualBiomePalette, type VisualBiomePalette } from "./visual-biome";
+import { builtinMaterialBlockId } from "./original-materials";
 import { materialResponse, materialResponseCode, materialResponseForVoxel, type MaterialResponseKind } from "./material-response";
 
 export const BLOCK_FACE_SLOTS = ["down", "up", "north", "south", "west", "east"] as const satisfies readonly BlockFace[];
@@ -211,8 +212,9 @@ export function planTexturedVoxelPages(
   manifest: ResourcePackManifest,
   atlas: ResourcePackAtlas,
 ): TexturedVoxelPlan[] | undefined {
-  if (!voxel.sourceBlockId || atlas.pages.length === 0) return undefined;
-  const sourceBlockId = voxel.sourceBlockId;
+  if (atlas.pages.length === 0) return undefined;
+  const sourceBlockId = voxel.sourceBlockId ?? builtinMaterialBlockId(voxel.materialId);
+  if (!sourceBlockId) return undefined;
   const resolution = resolveBlockTextures(manifest, sourceBlockId, voxel.sourceBlockState);
   const mapped = mapBlockTexturesToAtlas(resolution, atlas.source);
   if (mapped.status !== "resolved") return undefined;
