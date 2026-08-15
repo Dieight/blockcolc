@@ -288,7 +288,10 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
   // excursion is consumed (returning from an app switch); the rest of the time
   // the band stays quiet.
   useEffect(() => {
-    if (!session || !state.focusIntegrityPolicy.enabled) return;
+    if (!session || !state.focusIntegrityPolicy.enabled) {
+      lastExcursionsRef.current = null;
+      return;
+    }
     const count = session.integrity.effectiveExcursions;
     const previous = lastExcursionsRef.current;
     lastExcursionsRef.current = count;
