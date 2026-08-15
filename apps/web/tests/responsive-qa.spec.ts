@@ -156,6 +156,9 @@ test('bleeds the focus world under a landscape cutout while keeping controls saf
   // Design A: the immersive world owns the whole screen and the HUD is gone;
   // the controls live in the floating band until the double-tap reveals them.
   await revealFocusControls(page);
+  // The band must opt out of the browser's double-tap-zoom, which would deliver
+  // the second tap of the reveal gesture as pointercancel on real touch devices.
+  await expect(page.locator('.is-focusing .focus-panel')).toHaveCSS('touch-action', 'manipulation');
 
   const layout = await page.evaluate(() => {
     const shell = document.querySelector('.focus-immersive')?.getBoundingClientRect();

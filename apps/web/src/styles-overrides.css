@@ -365,6 +365,9 @@
 .immersive-hint{margin:6px 0 0;font-size:11px;color:#58635d;opacity:1;transition:opacity 1.2s ease}
 .immersive-hint.is-faded{opacity:0}
 .focus-immersive .is-focusing .primary.destructive{min-height:48px}
+/* manipulation disables the browser's double-tap-zoom on the band; with zoom enabled the
+   second tap of a double-tap arrives as pointercancel and the reveal never fires on-device. */
+.focus-immersive .is-focusing .focus-panel{touch-action:manipulation}
 @media(min-width:700px){.focus-immersive .world-screen.is-focusing{display:block;position:relative}
 .focus-immersive .is-focusing .world{position:absolute;inset:0;width:100%;height:100dvh;min-height:0;max-height:none}
 .focus-immersive .is-focusing .focus-panel{position:absolute;left:auto;right:0;top:0;bottom:0;height:100dvh;width:clamp(288px,34vw,330px);border-top:0;border-left:0;background:linear-gradient(90deg,rgba(243,245,242,0) 0%,rgba(243,245,242,.86) 34%,#f3f5f2 62%);padding:max(16px,var(--safe-top)) max(18px,var(--safe-right)) max(16px,var(--safe-bottom)) 18px;align-content:center}
