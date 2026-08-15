@@ -1,5 +1,30 @@
 import { expect, test } from '@playwright/test';
 
+async function revealFocusControls(page: import('@playwright/test').Page) {
+  const endButton = page.getByRole('button', { name: '结束本次专注' });
+  if (await endButton.isVisible().catch(() => false)) return;
+  // Aim the double-tap at the hint paragraph, never at a fixed band offset:
+  // a tap that lands on the end button would open the end dialog, and the
+  // band moves between panel layouts, so pixel offsets can hit other controls.
+  const hint = page.locator('.immersive-hint');
+  const box = (await hint.boundingBox()) ?? (await page.locator('.focus-panel').boundingBox());
+  if (!box) throw new Error('Focus panel has no layout box');
+  const x = box.x + box.width / 2;
+  const y = box.y + box.height / 2;
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    // A mouse double-click fires two pointerup events in the same spot, which
+    // the gesture detector reads as a double-tap; it also works on desktop
+    // contexts where touchscreen emulation is unavailable.
+    await page.mouse.dblclick(x, y);
+    try {
+      await expect(endButton).toBeVisible({ timeout: 1_500 });
+      return;
+    } catch {
+      await page.waitForTimeout(300);
+    }
+  }
+  throw new Error('Focus controls did not reveal after repeated double-taps');
+}
 test('runs a repeatable habit building cycle with frozen targets and stable completed buildings', async ({ page }, testInfo) => {
   test.setTimeout(60_000); // Ten early-completed rounds plus a second WebGL preview renderer for the next-building picker exceed the default budget on shared GPUs.
   await page.setViewportSize({ width: 412, height: 915 });
@@ -24,7 +49,8 @@ test('runs a repeatable habit building cycle with frozen targets and stable comp
 
   for (let round = 1; round <= 10; round += 1) {
     await page.getByRole('button', { name: '开始 1 轮' }).click();
-    await page.getByRole('button', { name: '结束本次专注' }).click();
+    await revealFocusControls(page);
+  await page.getByRole('button', { name: '结束本次专注' }).click();
     const dialog = page.getByRole('dialog', { name: '如何结束这次专注？' });
     await expect(dialog.getByRole('button', { name: /提前完成本轮/ })).toContainText('推进当前习惯建筑');
     await dialog.getByRole('button', { name: /提前完成本轮/ }).click();

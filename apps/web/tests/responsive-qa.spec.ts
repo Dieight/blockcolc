@@ -9,11 +9,37 @@ const VIEWPORTS = [
 ] as const;
 
 async function interruptFocus(page: import('@playwright/test').Page) {
+  await revealFocusControls(page);
   await page.getByRole('button', { name: '结束本次专注' }).click();
   await page.getByRole('button', { name: '中断本轮' }).click();
   await page.getByRole('button', { name: '不记录' }).click();
 }
 
+async function revealFocusControls(page: import('@playwright/test').Page) {
+  const endButton = page.getByRole('button', { name: '结束本次专注' });
+  if (await endButton.isVisible().catch(() => false)) return;
+  // Aim the double-tap at the hint paragraph, never at a fixed band offset:
+  // a tap that lands on the end button would open the end dialog, and the
+  // band moves between panel layouts, so pixel offsets can hit other controls.
+  const hint = page.locator('.immersive-hint');
+  const box = (await hint.boundingBox()) ?? (await page.locator('.focus-panel').boundingBox());
+  if (!box) throw new Error('Focus panel has no layout box');
+  const x = box.x + box.width / 2;
+  const y = box.y + box.height / 2;
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    // A mouse double-click fires two pointerup events in the same spot, which
+    // the gesture detector reads as a double-tap; it also works on desktop
+    // contexts where touchscreen emulation is unavailable.
+    await page.mouse.dblclick(x, y);
+    try {
+      await expect(endButton).toBeVisible({ timeout: 1_500 });
+      return;
+    } catch {
+      await page.waitForTimeout(300);
+    }
+  }
+  throw new Error('Focus controls did not reveal after repeated double-taps');
+}
 test('keeps setup and the focus world usable across the target viewport matrix', async ({ page }, testInfo) => {
   await page.goto('/');
   await page.getByLabel('大型任务').fill('完成一个包含非常长名称与 EnglishIdentifierWithoutSpaces1234567890 的重要大型任务');
@@ -71,7 +97,7 @@ test('keeps setup and the focus world usable across the target viewport matrix',
   await expect(page.getByRole('navigation', { name: '主导航' })).toHaveCount(0);
   await expect(page.locator('.topbar')).toHaveCount(0);
   await expect(page.getByText('本轮任务')).toBeVisible();
-  await expect(page.getByRole('button', { name: '结束本次专注' })).toBeVisible();
+  await revealFocusControls(page);
 
   for (const viewport of VIEWPORTS) {
     await page.setViewportSize({ width: viewport.width, height: viewport.height });
@@ -127,6 +153,9 @@ test('bleeds the focus world under a landscape cutout while keeping controls saf
     style.setProperty('--native-safe-area-inset-right', '8px');
     style.setProperty('--native-safe-area-inset-bottom', '6px');
   });
+  // Design A: the immersive world owns the whole screen and the HUD is gone;
+  // the controls live in the floating band until the double-tap reveals them.
+  await revealFocusControls(page);
 
   const layout = await page.evaluate(() => {
     const shell = document.querySelector('.focus-immersive')?.getBoundingClientRect();
@@ -140,10 +169,11 @@ test('bleeds the focus world under a landscape cutout while keeping controls saf
   expect(layout.shell?.right).toBe(915);
   expect(layout.world?.left).toBe(0);
   expect(layout.world?.top).toBe(0);
-  expect(layout.hud?.left).toBeGreaterThanOrEqual(46);
-  expect(layout.hud?.top).toBeGreaterThanOrEqual(24);
+  expect(layout.world?.right).toBeGreaterThanOrEqual(layout.width - 1);
+  expect(layout.hud?.width).toBe(0);
   expect(layout.panel?.width).toBeLessThanOrEqual(330);
   expect(layout.panel?.right).toBeLessThanOrEqual(layout.width);
+  expect(layout.action?.right).toBeLessThanOrEqual(layout.width - 8 + 1);
   expect(layout.action?.bottom).toBeLessThanOrEqual(layout.height - 6 + 1);
   const canvas = await page.getByLabel('项目建筑世界').screenshot({ path: testInfo.outputPath('focus-landscape-cutout-canvas.png') });
   expect(canvas.byteLength).toBeGreaterThan(2_000);

@@ -5,6 +5,31 @@ async function createDefaultProject(page: import('@playwright/test').Page) {
   await page.getByRole('button', { name: '开始建造' }).click();
 }
 
+async function revealFocusControls(page: import('@playwright/test').Page) {
+  const endButton = page.getByRole('button', { name: '结束本次专注' });
+  if (await endButton.isVisible().catch(() => false)) return;
+  // Aim the double-tap at the hint paragraph, never at a fixed band offset:
+  // a tap that lands on the end button would open the end dialog, and the
+  // band moves between panel layouts, so pixel offsets can hit other controls.
+  const hint = page.locator('.immersive-hint');
+  const box = (await hint.boundingBox()) ?? (await page.locator('.focus-panel').boundingBox());
+  if (!box) throw new Error('Focus panel has no layout box');
+  const x = box.x + box.width / 2;
+  const y = box.y + box.height / 2;
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    // A mouse double-click fires two pointerup events in the same spot, which
+    // the gesture detector reads as a double-tap; it also works on desktop
+    // contexts where touchscreen emulation is unavailable.
+    await page.mouse.dblclick(x, y);
+    try {
+      await expect(endButton).toBeVisible({ timeout: 1_500 });
+      return;
+    } catch {
+      await page.waitForTimeout(300);
+    }
+  }
+  throw new Error('Focus controls did not reveal after repeated double-taps');
+}
 test('keeps the global task portfolio collapsed until requested', async ({ page }, testInfo) => {
   await createDefaultProject(page);
   await page.getByRole('button', { name: '任务', exact: true }).click();
@@ -37,6 +62,7 @@ test('explains interrupted time in recent rhythm, project allocation, building m
   await page.getByRole('button', { name: '计时' }).click();
   await page.getByRole('button', { name: '开始 1 轮' }).click();
   await page.clock.fastForward(75 * 60_000);
+  await revealFocusControls(page);
   await page.getByRole('button', { name: '结束本次专注' }).click();
   await page.getByRole('button', { name: /中断本轮/ }).click();
   await page.getByRole('button', { name: '外部打扰' }).click();

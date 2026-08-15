@@ -354,3 +354,18 @@
 .imported-blueprint-role .dialog-actions{display:flex;align-items:center;justify-content:flex-end;gap:10px;margin-top:10px}
 .imported-blueprint-role .dialog-actions button{min-height:44px;padding:0 8px;border:0;background:none;color:#58635d;font-size:13px;font-weight:600}
 .imported-blueprint-role .primary{width:auto;margin:0;min-height:44px;padding:0 18px;border-radius:6px;background:var(--focus);color:#fff;font-weight:700;font-size:14px}
+
+/* V19 immersive design A: the world owns the whole screen; the info band floats on a bottom gradient scrim. The end control is hidden until a double-tap on the band. */
+.focus-immersive .world-screen.is-focusing{display:block;position:relative;width:100%;height:100dvh}
+.focus-immersive .is-focusing .world{position:absolute;inset:0;width:100%;height:100dvh;min-height:0;max-height:none}
+.focus-immersive .is-focusing .world-hud{display:none}
+.focus-immersive .is-focusing .focus-panel{position:absolute;left:0;right:0;bottom:0;border-top:0;background:linear-gradient(180deg,rgba(243,245,242,0) 0%,rgba(243,245,242,.84) 42%,#f3f5f2 68%);padding:max(16px,var(--safe-bottom)) max(20px,var(--safe-right)) 20px max(20px,var(--safe-left));display:grid;align-content:end;justify-items:center;gap:6px;max-width:none;margin:0}
+.focus-immersive .is-focusing .timer{margin:10px 0 6px;font-size:64px}
+.focus-immersive .is-focusing .focus-task-context strong{font-size:16px}
+.immersive-hint{margin:6px 0 0;font-size:11px;color:#58635d;opacity:1;transition:opacity 1.2s ease}
+.immersive-hint.is-faded{opacity:0}
+.focus-immersive .is-focusing .primary.destructive{min-height:48px}
+@media(min-width:700px){.focus-immersive .world-screen.is-focusing{display:block;position:relative}
+.focus-immersive .is-focusing .world{position:absolute;inset:0;width:100%;height:100dvh;min-height:0;max-height:none}
+.focus-immersive .is-focusing .focus-panel{position:absolute;left:auto;right:0;top:0;bottom:0;height:100dvh;width:clamp(288px,34vw,330px);border-top:0;border-left:0;background:linear-gradient(90deg,rgba(243,245,242,0) 0%,rgba(243,245,242,.86) 34%,#f3f5f2 62%);padding:max(16px,var(--safe-top)) max(18px,var(--safe-right)) max(16px,var(--safe-bottom)) 18px;align-content:center}
+.focus-immersive .is-focusing .timer{margin:14px 0 10px}}

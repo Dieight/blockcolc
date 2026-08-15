@@ -201,6 +201,10 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
   const [plan, setPlanState] = useState<RoundPlan | null>(() => loadRoundPlan(active.project.id));
   const [ending, setEnding] = useState(false);
   const [planOpen, setPlanOpen] = useState(false);
+  const [controlsVisible, setControlsVisible] = useState(false);
+  const [hintVisible, setHintVisible] = useState(false);
+  const lastTapRef = useRef<{ time: number; x: number; y: number } | null>(null);
+  const revealTimerRef = useRef<number | null>(null);
   const [constructionFeedback, setConstructionFeedback] = useState(0);
   const reconciling = useRef(false);
   const latestSuccess = lastSuccessfulSession(state.focusHistory);
@@ -247,6 +251,37 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
   const habitAwaiting = isHabit && habit?.awaitingNextBuilding === true;
   const reconciledPlan = reconcileRoundPlan(plan, state, active.project.id, Date.now(), preferences.breakMinutes * 60_000);
   const isBreak = reconciledPlan?.status === 'break' && !!reconciledPlan.breakEndsAt;
+  // Immersive design A: the end control stays hidden so the world is the whole
+  // screen; a double-tap on the bottom band reveals it. A one-time hint explains
+  // the gesture at the start of each session.
+  useEffect(() => {
+    // Every session transition resets the gesture state so a pending reveal
+    // timer can never surface the end button inside the next session.
+    if (revealTimerRef.current !== null) window.clearTimeout(revealTimerRef.current);
+    revealTimerRef.current = null;
+    lastTapRef.current = null;
+    setControlsVisible(false);
+    if (!session) return;
+    setHintVisible(true);
+    const timer = window.setTimeout(() => setHintVisible(false), 20_000);
+    return () => window.clearTimeout(timer);
+  }, [session?.id]);
+  const handlePanelTap = useCallback((event: { target: EventTarget | null; clientX: number; clientY: number }) => {
+    if (!session || (event.target instanceof Element && event.target.closest('button'))) return;
+    const now = performance.now();
+    const previous = lastTapRef.current;
+    lastTapRef.current = { time: now, x: event.clientX, y: event.clientY };
+    if (previous && now - previous.time < 450 && Math.hypot(event.clientX - previous.x, event.clientY - previous.y) < 48) {
+      lastTapRef.current = null;
+      // Reveal after a beat so the second tap's trailing click lands on empty space
+      // instead of the freshly shown button; hiding stays immediate.
+      if (controlsVisible) setControlsVisible(false);
+      else {
+        if (revealTimerRef.current !== null) window.clearTimeout(revealTimerRef.current);
+        revealTimerRef.current = window.setTimeout(() => setControlsVisible(true), 250);
+      }
+    }
+  }, [session, controlsVisible]);
   useEffect(() => {
     if (!roundPlansEqual(plan, reconciledPlan)) setPlan(reconciledPlan);
   }, [plan, reconciledPlan, setPlan]);
@@ -341,7 +376,7 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
 
   return <div className={session ? 'world-screen is-focusing' : pending.length > 0 ? 'world-screen has-report' : habitAwaiting ? 'world-screen is-choosing-habit-building' : 'world-screen'}>
     <WorldCanvasV7 service={service} resourcePacks={resourcePacks} lightingQuality={preferences.lightingQuality} constructionOutlineVisibility={preferences.constructionOutlineVisibility} environmentStyle={state.worldSettings.environmentStyle} worldSeed={state.worldSettings.worldSeed} terrainGenerationVersion={state.worldSettings.terrainGenerationVersion} constructionFeedback={constructionFeedback} sessionActive={!!session} focusedProjectId={focusedProjectId} onSelectProject={onFocusWorldProject} onClearWorldFocus={onClearWorldFocus} visible={visible}/>
-    {visible && <section className="focus-panel v7-focus-panel">
+    {visible && <section className="focus-panel v7-focus-panel" onPointerUp={(event) => handlePanelTap({ target: event.target, clientX: event.clientX, clientY: event.clientY })}>
       {!session && <div className="workbench-heading">
         <h1>{active.project.title}</h1>
         <button className="task-switch-action" type="button" aria-label="切换当前工作" onClick={onOpenTasks}><ListTodo/><span>切换任务</span></button>
@@ -359,7 +394,10 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
          <FocusTimer mode={timerMode} endsAt={timerEndsAt} fallbackMs={timerFallbackMs} onElapsed={session ? reconcile : finishBreak}/>
         {isBreak ? <button className="primary secondary-action" onClick={() => { if (reconciledPlan?.endAfterBreak) setPlan(null); else { const { breakEndsAt: _breakEndsAt, ...withoutBreak } = reconciledPlan!; setPlan({ ...withoutBreak, status: 'ready' }); } }}>跳过休息</button>
           : reconciledPlan?.status === 'ready' ? <button className="primary" onClick={() => void startFocus()}><Clock3/>开始下一轮</button>
-            : <button className={session ? 'destructive primary' : 'primary'} onClick={() => void (session ? setEnding(true) : startFocus())}>{session ? <><Square/>结束本次专注</> : <><Clock3/>开始 {reconciledPlan?.totalRounds ?? rounds} 轮</>}</button>}
+            : session ? (controlsVisible
+              ? <button className="destructive primary" onClick={() => void setEnding(true)}><Square/>结束本次专注</button>
+              : <p className={hintVisible ? 'immersive-hint' : 'immersive-hint is-faded'} role="status">双击下方空白处唤出结束按钮</p>)
+            : <button className="primary" onClick={() => void startFocus()}><Clock3/>开始 {reconciledPlan?.totalRounds ?? rounds} 轮</button>}
       </>}
       {ending && session && (
          <EndFocusDialog taskTitle={isHabit ? active.project.title : subtask!.title} habit={isHabit} onClose={() => setEnding(false)} onInterrupt={interruptFocus} onCompleteEarly={completeEarly}/>
