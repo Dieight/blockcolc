@@ -1559,17 +1559,23 @@ export function createVoxelRenderer(
     rainAnimation = null;
     cloudBlockCount = 0;
     const random = seededRandom(currentWeather.seed);
-    const size = contentBounds.getSize(new THREE.Vector3());
-    const spanX = Math.max(32, size.x + 12);
-    const spanZ = Math.max(28, size.z + 12);
-    const cloudCount = Math.max(1, Math.round(currentWeather.cloudCount * qualityProfile.weatherDensity));
+    // Clouds and rain cover the full visible terrain, not just the settlement core:
+    // V16 expanded the world far beyond contentBounds and the sky must follow it.
+    const contentSize = contentBounds.getSize(new THREE.Vector3());
+    const visibleSize = visibilityBounds.getSize(new THREE.Vector3());
+    const spanX = Math.max(32, visibleSize.x + 12);
+    const spanZ = Math.max(28, visibleSize.z + 12);
+    const contentArea = Math.max(1, contentSize.x * contentSize.z);
+    const spreadRatio = Math.min(24, Math.max(1, (visibleSize.x * visibleSize.z) / contentArea));
+    canvas.dataset.cloudSpanX = String(Math.round(spanX));
+    const cloudCount = Math.min(320, Math.max(1, Math.round(currentWeather.cloudCount * qualityProfile.weatherDensity * spreadRatio)));
     const cloudGeometry = new THREE.BoxGeometry(1, 1, 1);
     cloudMaterial = new THREE.MeshLambertMaterial({ color: currentLighting.cloudColor });
     const cloudLobes = qualityProfile.cloudLobes;
     cloudBlockCount = cloudCount * cloudLobes;
     const clouds = new THREE.InstancedMesh(cloudGeometry, cloudMaterial, cloudBlockCount);
     const matrix = new THREE.Matrix4();
-    const cloudBase = Math.max(14, contentBounds.max.y + 7);
+    const cloudBase = Math.max(14, visibilityBounds.max.y + 7);
     for (let cloudIndex = 0; cloudIndex < cloudCount; cloudIndex += 1) {
       const angle = random() * Math.PI * 2;
       const radius = Math.sqrt(random()) * (0.22 + random() * 0.46);
@@ -1596,7 +1602,7 @@ export function createVoxelRenderer(
     clouds.instanceMatrix.needsUpdate = true;
     clouds.userData.ownedMaterial = cloudMaterial;
     atmosphereGroup.add(clouds);
-    const rainCount = Math.round(currentWeather.rainDropCount * qualityProfile.weatherDensity);
+    const rainCount = Math.min(600, Math.round(currentWeather.rainDropCount * qualityProfile.weatherDensity * spreadRatio));
     if (rainCount > 0) {
       const rainMaterial = new THREE.MeshBasicMaterial({ color: 0xa8c5cf, transparent: true, opacity: 0.62 });
       const rain = new THREE.InstancedMesh(new THREE.BoxGeometry(0.035, 1.5, 0.035), rainMaterial, rainCount);

@@ -6,6 +6,8 @@ test("keeps the complete natural terrain inside safe clip planes at maximum zoom
   await page.getByRole("button", { name: "开始建造" }).click();
   const canvas = page.getByLabel("项目建筑世界");
   await expect(canvas).toHaveAttribute("data-terrain-generation-version", "4");
+  // Clouds span the full visible terrain, not just the settlement core (V16 regression guard).
+  await expect.poll(async () => Number(await canvas.getAttribute("data-cloud-span-x"))).toBeGreaterThan(600);
   await canvas.dispatchEvent("wheel", { deltaY: 4_000, deltaMode: 0 });
   await expect.poll(async () => Number(await canvas.getAttribute("data-camera-distance-ratio"))).toBeGreaterThanOrEqual(1.13);
 
