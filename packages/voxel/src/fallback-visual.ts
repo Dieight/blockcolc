@@ -104,6 +104,14 @@ export function fallbackVisualStyleForVoxel(
     color = 0xd6ad3f;
   } else if (path.includes("netherite")) {
     color = 0x4e474b;
+  } else if (path === "cherry_leaves" || path === "flowering_azalea_leaves") {
+    color = 0xe8a8c4;
+  } else if (path.includes("spruce_leaves")) {
+    color = 0x4d6e4e;
+  } else if (path.includes("birch_leaves")) {
+    color = 0x7d9449;
+  } else if (path.includes("mangrove_leaves") || path.includes("jungle_leaves") || path.includes("dark_oak_leaves")) {
+    color = 0x3f6b3f;
   } else if (/(?:grass|moss|leaves|vine|azalea|fern)/.test(path)) {
     color = 0x638453;
   } else if (/(?:dirt|podzol|mycelium|soul_soil)/.test(path)) {

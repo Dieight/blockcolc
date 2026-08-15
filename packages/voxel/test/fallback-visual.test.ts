@@ -32,6 +32,19 @@ describe("runtime fallback visuals", () => {
     expect(new Set([sandstone.key, deepslate.key, diamondOre.key]).size).toBe(3);
   });
 
+  it("keeps leaf families distinct instead of one green foliage color", () => {
+    const cherry = fallbackVisualStyleForVoxel({ materialId: "plank", sourceBlockId: "minecraft:cherry_leaves" });
+    const azalea = fallbackVisualStyleForVoxel({ materialId: "plank", sourceBlockId: "minecraft:flowering_azalea_leaves" });
+    const oak = fallbackVisualStyleForVoxel({ materialId: "plank", sourceBlockId: "minecraft:oak_leaves" });
+    const spruce = fallbackVisualStyleForVoxel({ materialId: "plank", sourceBlockId: "minecraft:spruce_leaves" });
+
+    expect(cherry).toMatchObject({ color: 0xe8a8c4, pattern: "foliage" });
+    expect(azalea.color).toBe(0xe8a8c4);
+    expect(oak).toMatchObject({ color: 0x638453, pattern: "foliage" });
+    expect(spruce.color).toBe(0x4d6e4e);
+    expect(new Set([cherry.key, oak.key, spruce.key]).size).toBe(3);
+  });
+
   it("classifies static fluids and keeps falling levels lower than source blocks", () => {
     expect(staticFluidKind({ sourceBlockId: "minecraft:water" })).toBe("water");
     expect(staticFluidKind({ sourceBlockId: "minecraft:bubble_column" })).toBe("water");
