@@ -50,14 +50,29 @@ test('selects a building with a light tap', async ({ page }, testInfo) => {
 test('retains drag gestures in the selected-building view', async ({ page }) => {
   test.skip(Boolean(process.env.CI), 'Physical-device and local GPU gates own synchronous 3D gesture coverage.');
   test.setTimeout(60_000);
+  page.on('pageerror', (error) => console.log('PAGEERROR:', error.message));
+  page.on('console', (message) => { if (message.type() === 'error') console.log('CONSOLE-ERROR:', message.text()); });
+  page.on('framenavigated', (frame) => console.log('NAVIGATED:', frame.url()));
   await page.goto('/');
   await page.getByRole('button', { name: '开始建造' }).click();
   const canvas = page.getByLabel('项目建筑世界');
   const box = await canvas.boundingBox();
   if (!box) throw new Error('World canvas has no layout box');
   const before = Number(await canvas.getAttribute('data-camera-azimuth'));
+  await page.evaluate(() => {
+    const win = window as unknown as { __canvasLog: string[] };
+    win.__canvasLog = [];
+    const probe = () => {
+      const node = document.querySelector('canvas[aria-label="项目建筑世界"]');
+      const heading = document.querySelector('h1')?.textContent ?? '';
+      win.__canvasLog.push(`${performance.now().toFixed(0)} attached=${Boolean(node?.isConnected)} heading=${heading}`);
+    };
+    new MutationObserver(() => probe()).observe(document.body, { childList: true, subtree: true });
+    probe();
+  });
   await canvas.dispatchEvent('pointerdown', { pointerId: 1, pointerType: 'touch', isPrimary: true, clientX: box.x + box.width * 0.35, clientY: box.y + box.height * 0.5, buttons: 1 });
   await canvas.dispatchEvent('pointermove', { pointerId: 1, pointerType: 'touch', isPrimary: true, clientX: box.x + box.width * 0.65, clientY: box.y + box.height * 0.5, buttons: 1 });
+  console.log('DRAG-LOG:', await page.evaluate(() => (window as unknown as { __canvasLog: string[] }).__canvasLog.join(' | ')));
   await canvas.dispatchEvent('pointerup', { pointerId: 1, pointerType: 'touch', isPrimary: true, clientX: box.x + box.width * 0.65, clientY: box.y + box.height * 0.5, buttons: 0 });
   await expect.poll(async () => Number(await canvas.getAttribute('data-camera-azimuth'))).not.toBe(before);
 });

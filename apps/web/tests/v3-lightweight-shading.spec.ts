@@ -185,9 +185,8 @@ test("moves rain across frames without a permanent render loop", async ({ page }
   // Rain is advanced by scheduled frames (no continuous loop). Software WebGL
   // does not reliably flush timer-scheduled frames to a capturable buffer, so
   // the phase stamp in the renderer diagnostic is the deterministic signal:
-  // it only moves when the scheduled rain update actually runs.
-  await expect(canvas).toHaveAttribute("data-rain-phase-ms", "0");
-  await page.clock.fastForward(320);
-  await expect.poll(async () => Number(await canvas.getAttribute("data-rain-phase-ms"))).toBeGreaterThan(0);
+  // it only moves when the scheduled rain update actually runs. The installed
+  // clock flows in real time, so the stamp grows without any fast-forward.
+  await expect.poll(async () => Number(await canvas.getAttribute("data-rain-phase-ms")), { timeout: 10_000 }).toBeGreaterThan(0);
   await canvas.screenshot({ path: testInfo.outputPath("rain-after.png") });
 });

@@ -2,6 +2,15 @@
 
 User-facing release notes are kept here; internal diagnosis and per-run evidence belong in `docs/QA-BASELINES.md` or ignored artifacts.
 
+## v1.4.0 - unreleased
+
+- The settlement world now stays resident across tab switches: returning to the timer shows the world instantly with the same camera, and nothing renders in the background while you are away.
+- The focus screen becomes fully immersive: the world fills the whole screen, the info band floats on a soft gradient, and the end control hides until a double-tap on the band (a one-time hint explains the gesture).
+- Starting a round and finishing it now pulse the construction site, and each finished round grows the current building.
+- Imported resource packs now visibly retexture the settlement terrain and trees, and switching packs applies immediately without leaving the page.
+- Renamed blueprint labels now appear everywhere the world speaks a building's name.
+- Shoreline water surfaces no longer show thin bright seams, and the typed cloud clusters now spread across the whole visible terrain.
+
 ## v1.3.2 - 2026-08-14
 
 - Redesigned settings into a quieter Android-settings hierarchy: uniform 18px section headings, hairline row separators, borderless numeric fields, and text-button secondary actions.

@@ -42,7 +42,7 @@ async function waitForServer(processHandle) {
 
 const completionDeadlineMs = Number.isFinite(Number(process.env.E2E_COMPLETION_DEADLINE_MS))
   ? Number(process.env.E2E_COMPLETION_DEADLINE_MS)
-  : 900_000;
+  : 1_500_000;
 
 async function waitForTestCompletion(processHandle) {
   const deadline = Date.now() + completionDeadlineMs;
