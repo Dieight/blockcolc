@@ -559,6 +559,7 @@ export function createVoxelRenderer(
   let lastShadowSample: ShadowRefreshSample | undefined;
   let shadowExtent = 18;
   let cloudMaterial: THREE.MeshLambertMaterial | null = null;
+  let cloudPuffTexture: THREE.Texture | null = null;
   let cloudBlockCount = 0;
   const previewMode = options.previewMode === true;
   let naturalTreeMeshes: { trunks: THREE.InstancedMesh; crowns: THREE.InstancedMesh; total: number } | null = null;
@@ -914,6 +915,26 @@ export function createVoxelRenderer(
    * texture (shared pixels) with per-material repeat/offset over the tile rect, so
    * the existing world-scaled planar terrain UVs tile the pack texture.
    */
+  function buildCloudPuffTexture(): THREE.Texture {
+    const size = 64;
+    const canvas = document.createElement("canvas");
+    canvas.width = size;
+    canvas.height = size;
+    const context = canvas.getContext("2d")!;
+    const gradient = context.createRadialGradient(size / 2, size / 2, size * 0.06, size / 2, size / 2, size / 2);
+    gradient.addColorStop(0, "rgba(255,255,255,0.92)");
+    gradient.addColorStop(0.55, "rgba(255,255,255,0.55)");
+    gradient.addColorStop(0.85, "rgba(255,255,255,0.12)");
+    gradient.addColorStop(1, "rgba(255,255,255,0)");
+    context.fillStyle = gradient;
+    context.fillRect(0, 0, size, size);
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.minFilter = THREE.LinearFilter;
+    texture.magFilter = THREE.LinearFilter;
+    return texture;
+  }
+
   function packTileMaterial(blockId: string, face: BlockFace): THREE.MeshStandardMaterial | null {
     const pack = activeResourcePack;
     if (!pack) return null;
@@ -1570,35 +1591,64 @@ export function createVoxelRenderer(
     canvas.dataset.cloudSpanX = String(Math.round(spanX));
     const cloudCount = Math.min(320, Math.max(1, Math.round(currentWeather.cloudCount * qualityProfile.weatherDensity * spreadRatio)));
     const cloudGeometry = new THREE.BoxGeometry(1, 1, 1);
-    cloudMaterial = new THREE.MeshLambertMaterial({ color: currentLighting.cloudColor });
-    const cloudLobes = qualityProfile.cloudLobes;
-    cloudBlockCount = cloudCount * cloudLobes;
-    const clouds = new THREE.InstancedMesh(cloudGeometry, cloudMaterial, cloudBlockCount);
-    const matrix = new THREE.Matrix4();
-    const cloudBase = Math.max(14, visibilityBounds.max.y + 7);
+    if (!cloudPuffTexture) cloudPuffTexture = buildCloudPuffTexture();
+    cloudMaterial = new THREE.MeshLambertMaterial({
+      color: currentLighting.cloudColor,
+      map: cloudPuffTexture,
+      transparent: true,
+      depthWrite: false,
+    });
+    // Typed clouds (simple-clouds style): cirrus wisps high up, puffy stacked cumulus,
+    // flat stratus bands, and tall storm towers when raining. Each cloud is a seeded
+    // cluster of soft-edge lobes so the sky reads as varied weather, not a grid of boxes.
+    const cloudKinds: Array<"cirrus" | "cumulus" | "stratus" | "storm"> = [];
+    const cloudLobes: number[] = [];
+    const raining = currentWeather.kind === "rain";
+    let totalInstances = 0;
     for (let cloudIndex = 0; cloudIndex < cloudCount; cloudIndex += 1) {
+      const roll = random();
+      const kind = raining
+        ? roll < 0.8 ? "storm" : roll < 0.92 ? "cumulus" : "stratus"
+        : roll < 0.24 ? "cirrus" : roll < 0.82 ? "cumulus" : "stratus";
+      const lobes = kind === "cirrus" ? 2 : kind === "stratus" ? 2 : 3 + Math.floor(random() * 3);
+      if (totalInstances + lobes > 900) break;
+      cloudKinds.push(kind as "cirrus" | "cumulus" | "stratus" | "storm");
+      cloudLobes.push(lobes);
+      totalInstances += lobes;
+    }
+    cloudBlockCount = totalInstances;
+    const clouds = new THREE.InstancedMesh(cloudGeometry, cloudMaterial, totalInstances);
+    const matrix = new THREE.Matrix4();
+    const quaternion = new THREE.Quaternion();
+    const cloudBase = Math.max(14, visibilityBounds.max.y + 7);
+    let instanceIndex = 0;
+    cloudKinds.forEach((kind, cloudIndex) => {
       const angle = random() * Math.PI * 2;
-      const radius = Math.sqrt(random()) * (0.22 + random() * 0.46);
+      const radius = Math.sqrt(random()) * (0.2 + random() * 0.55);
+      const altitudeOffset = kind === "cirrus" ? 5 + random() * 6 : kind === "stratus" ? -2 + random() * 2 : 0;
       const center = new THREE.Vector3(
         Math.cos(angle) * spanX * radius,
-        cloudBase + random() * 4,
+        cloudBase + altitudeOffset + random() * 1.5,
         Math.sin(angle) * spanZ * radius,
       );
-      const width = 2.3 + random() * 3.8;
-      const depth = 2.3 + random() * 3.8;
-      for (let lobe = 0; lobe < cloudLobes; lobe += 1) {
-        const angle = random() * Math.PI * 2;
-        const radius = lobe === 0 ? 0 : (0.3 + random() * 0.55) * Math.max(width, depth);
-        const lobeWidth = width * (0.48 + random() * 0.34);
-        const lobeDepth = depth * (0.48 + random() * 0.34);
+      const lobes = cloudLobes[cloudIndex]!;
+      for (let lobe = 0; lobe < lobes; lobe += 1) {
+        const lobeAngle = random() * Math.PI * 2;
+        const lobeRadius = lobe === 0 ? 0 : (0.25 + random() * 0.5) * (kind === "cirrus" ? 3.4 : 2.1);
+        const baseWidth = kind === "cirrus" ? 5 + random() * 7 : kind === "stratus" ? 6 + random() * 9 : 2.6 + random() * 3.6;
+        const width = baseWidth * (0.55 + random() * 0.5);
+        const depth = kind === "cirrus" ? 1.6 + random() * 1.6 : baseWidth * (0.5 + random() * 0.4);
+        const height = kind === "storm" ? 1.8 + random() * 2.2 : kind === "cumulus" ? 0.9 + random() * 1.4 : kind === "stratus" ? 0.4 + random() * 0.4 : 0.3 + random() * 0.3;
+        const lift = lobe === 0 ? 0 : (kind === "cumulus" || kind === "storm") ? lobe * 0.55 + random() * 0.3 : random() * 0.25;
         matrix.compose(
-          new THREE.Vector3(center.x + Math.cos(angle) * radius, center.y + random() * 0.72, center.z + Math.sin(angle) * radius),
-          new THREE.Quaternion(),
-          new THREE.Vector3(lobeWidth, 0.55 + random() * 0.56, lobeDepth),
+          new THREE.Vector3(center.x + Math.cos(lobeAngle) * lobeRadius, center.y + lift, center.z + Math.sin(lobeAngle) * lobeRadius),
+          quaternion,
+          new THREE.Vector3(width, height, depth),
         );
-        clouds.setMatrixAt(cloudIndex * cloudLobes + lobe, matrix);
+        clouds.setMatrixAt(instanceIndex, matrix);
+        instanceIndex += 1;
       }
-    }
+    });
     clouds.instanceMatrix.needsUpdate = true;
     clouds.userData.ownedMaterial = cloudMaterial;
     atmosphereGroup.add(clouds);
@@ -2436,6 +2486,8 @@ export function createVoxelRenderer(
       terrainPackTextures.length = 0;
       clearGroup(roadGroup);
       clearGroup(atmosphereGroup, true);
+      cloudPuffTexture?.dispose();
+      cloudPuffTexture = null;
       lightingPostProcessor.dispose();
       skyGeometry.dispose();
       skyMaterial.dispose();

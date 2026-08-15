@@ -349,3 +349,8 @@
 .focus-immersive .is-focusing .focus-integrity-warning{border:0;border-radius:0;background:none;padding:4px 0;color:#58635d;font-weight:600}
 .focus-immersive .is-focusing .focus-integrity-warning.active{background:none;color:#8a5a14}
 .focus-immersive .is-focusing .focus-integrity-ended{border:0;background:none;padding:4px 0}
+
+/* V19 fix: the import-role confirm row inherits the page-level .primary sizing (width 100% + auto margins), which squeezes the cancel button and clips the long confirm label. Restore a V18-quiet action row. */
+.imported-blueprint-role .dialog-actions{display:flex;align-items:center;justify-content:flex-end;gap:10px;margin-top:10px}
+.imported-blueprint-role .dialog-actions button{min-height:44px;padding:0 8px;border:0;background:none;color:#58635d;font-size:13px;font-weight:600}
+.imported-blueprint-role .primary{width:auto;margin:0;min-height:44px;padding:0 18px;border-radius:6px;background:var(--focus);color:#fff;font-weight:700;font-size:14px}

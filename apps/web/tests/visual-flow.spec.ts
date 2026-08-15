@@ -590,7 +590,18 @@ test('renames an imported building blueprint without changing its stored snapsho
   await createDefaultProject(page);
   await page.getByRole('button', { name: '设置' }).click();
   await page.getByLabel('导入 .litematic').setInputFiles(sample);
-  await page.getByRole('button', { name: '保存到建筑蓝图库' }).click();
+  const saveToLibrary = page.getByRole('button', { name: '保存到建筑蓝图库' });
+  await expect(saveToLibrary).toBeVisible();
+  // V19 regression: the confirm row must keep both buttons readable and evenly sized.
+  const saveBox = await saveToLibrary.boundingBox();
+  const cancelBox = await page.getByRole('button', { name: '取消', exact: true }).boundingBox();
+  if (saveBox && cancelBox) {
+    expect(saveBox.width).toBeGreaterThan(100);
+    expect(saveBox.height).toBeGreaterThanOrEqual(40);
+    expect(cancelBox.width).toBeLessThanOrEqual(saveBox.width + 2);
+    expect(Math.abs(saveBox.height - cancelBox.height)).toBeLessThanOrEqual(4);
+  }
+  await saveToLibrary.click();
 
   const rename = page.getByRole('button', { name: /重命名“/ }).first();
   await expect(rename).toBeVisible();
