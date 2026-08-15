@@ -215,7 +215,12 @@ export function planTexturedVoxelPages(
   if (atlas.pages.length === 0) return undefined;
   const sourceBlockId = voxel.sourceBlockId ?? builtinMaterialBlockId(voxel.materialId);
   if (!sourceBlockId) return undefined;
-  const resolution = resolveBlockTextures(manifest, sourceBlockId, voxel.sourceBlockState);
+  let resolution = resolveBlockTextures(manifest, sourceBlockId, voxel.sourceBlockState);
+  // Real packs often replace log/wood blocks with axis variants; built-in voxels carry
+  // no block state, so retry the vertical-axis variant before falling back to procedural.
+  if (resolution.status === "fallback" && voxel.sourceBlockId === undefined && resolution.reason === "NO_MATCHING_VARIANT") {
+    resolution = resolveBlockTextures(manifest, sourceBlockId, { axis: "y" });
+  }
   const mapped = mapBlockTexturesToAtlas(resolution, atlas.source);
   if (mapped.status !== "resolved") return undefined;
   const resolvedFaces = BLOCK_FACE_SLOTS.map((face, faceIndex) => {
