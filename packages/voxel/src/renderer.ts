@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import type { ResourcePackManifest } from "@tomato-clock/resource-pack";
+import type { BlockFace, ResourcePackManifest } from "@tomato-clock/resource-pack";
 import { BlueprintV1, resolveBuiltinBlueprint, validateBlueprint } from "./blueprint";
 import {
   clusterEmissivePoints,
@@ -46,6 +46,7 @@ import {
   createTextureBatches,
   createTexturedBoxGeometry,
   packFaceUvTransform,
+  resolvePackTileRect,
   type ResourcePackAtlas,
   type TexturedVoxelBatch,
   type TexturedVoxelPlan,
@@ -562,6 +563,7 @@ export function createVoxelRenderer(
   const previewMode = options.previewMode === true;
   let naturalTreeMeshes: { trunks: THREE.InstancedMesh; crowns: THREE.InstancedMesh; total: number } | null = null;
   let rainAnimation: { mesh: THREE.InstancedMesh; drops: readonly { x: number; z: number; phase: number }[]; baseY: number; spanY: number; elapsedMs: number; lastUpdateMs: number } | null = null;
+  const terrainPackTextures: THREE.Texture[] = [];
 
   function material(id: string): THREE.MeshStandardMaterial {
     let found = materials.get(id);
@@ -749,6 +751,8 @@ export function createVoxelRenderer(
     sceneRevision += 1;
     clearGroup(buildingGroup);
     clearGroup(terrainGroup);
+    for (const texture of terrainPackTextures) texture.dispose();
+    terrainPackTextures.length = 0;
     clearGroup(roadGroup);
     naturalTreeMeshes = null;
     clearLights();
@@ -885,13 +889,46 @@ export function createVoxelRenderer(
     });
     geometry.setIndex(combined);
     geometry.computeVertexNormals();
-    const mesh = new THREE.Mesh(geometry, [material("grass"), material("dirt"), material("terrainStone"), material("terrainWater")]);
+    // Terrain surfaces retexture through pack tiles when the pack provides them;
+    // water keeps the opaque procedural contract.
+    const grassPack = packTileMaterial("minecraft:grass_block", "up");
+    const dirtPack = packTileMaterial("minecraft:dirt", "up");
+    const stonePack = packTileMaterial("minecraft:stone", "up");
+    canvas.dataset.terrainPackTextured = String(grassPack !== null || dirtPack !== null || stonePack !== null);
+    const mesh = new THREE.Mesh(geometry, [
+      grassPack ?? material("grass"),
+      dirtPack ?? material("dirt"),
+      stonePack ?? material("terrainStone"),
+      material("terrainWater"),
+    ]);
     mesh.receiveShadow = true;
     mesh.castShadow = false;
     mesh.userData.terrainTriangles = data.triangleCount;
     terrainGroup.add(mesh);
     addNaturalBackdrop(data);
     addNaturalTrees(data);
+  }
+
+  /**
+   * Repeat-sampling material for one face of a pack block: clones the atlas page
+   * texture (shared pixels) with per-material repeat/offset over the tile rect, so
+   * the existing world-scaled planar terrain UVs tile the pack texture.
+   */
+  function packTileMaterial(blockId: string, face: BlockFace): THREE.MeshStandardMaterial | null {
+    const pack = activeResourcePack;
+    if (!pack) return null;
+    const rect = resolvePackTileRect(pack.manifest, pack.atlas, blockId, face);
+    if (!rect) return null;
+    const page = pack.atlas.pages[rect.page];
+    if (!page) return null;
+    const texture = page.texture.clone();
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.RepeatWrapping;
+    texture.repeat.set(rect.u1 - rect.u0, rect.v1 - rect.v0);
+    texture.offset.set(rect.u0, rect.v0);
+    texture.needsUpdate = true;
+    terrainPackTextures.push(texture);
+    return new THREE.MeshStandardMaterial({ color: 0xffffff, map: texture, roughness: 0.94, metalness: 0 });
   }
 
   function addNaturalBackdrop(data: MergedGeometryData): void {
@@ -910,8 +947,10 @@ export function createVoxelRenderer(
 
   function addNaturalTrees(data: MergedGeometryData): void {
     if (data.naturalTrees.length === 0) return;
-    const trunks = new THREE.InstancedMesh(new THREE.BoxGeometry(0.72, 2.4, 0.72), material("wood"), data.naturalTrees.length);
-    const crowns = new THREE.InstancedMesh(new THREE.BoxGeometry(2.55, 2.35, 2.55), material("leaves"), data.naturalTrees.length);
+    const trunksMaterial = packTileMaterial("minecraft:oak_log", "north") ?? material("wood");
+    const crownsMaterial = packTileMaterial("minecraft:oak_leaves", "up") ?? material("leaves");
+    const trunks = new THREE.InstancedMesh(new THREE.BoxGeometry(0.72, 2.4, 0.72), trunksMaterial, data.naturalTrees.length);
+    const crowns = new THREE.InstancedMesh(new THREE.BoxGeometry(2.55, 2.35, 2.55), crownsMaterial, data.naturalTrees.length);
     const matrix = new THREE.Matrix4();
     const rotation = new THREE.Quaternion();
     data.naturalTrees.forEach((tree, index) => {
@@ -2387,6 +2426,8 @@ export function createVoxelRenderer(
       canvas.removeEventListener("wheel", wheel);
       clearGroup(buildingGroup);
       clearGroup(terrainGroup);
+      for (const texture of terrainPackTextures) texture.dispose();
+      terrainPackTextures.length = 0;
       clearGroup(roadGroup);
       clearGroup(atmosphereGroup, true);
       lightingPostProcessor.dispose();

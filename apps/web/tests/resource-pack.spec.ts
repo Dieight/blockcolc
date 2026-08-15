@@ -128,6 +128,8 @@ test('retextures built-in buildings through vanilla stand-in blocks', async ({ p
   await page.getByRole('button', { name: '计时' }).click();
   await expect(canvas).toHaveAttribute('data-active-resource-pack-id', /sha256:/);
   await expect.poll(async () => Number(await canvas.getAttribute('data-textured-voxel-count')), { timeout: 30_000 }).toBeGreaterThan(100);
+  // MT-01 phase 2: the terrain surface retextures through pack tiles too (water stays procedural).
+  await expect(canvas).toHaveAttribute('data-terrain-pack-textured', 'true');
   // Visual pixel proof for built-in retexture is owned by the on-device acceptance
   // (compare-shot pixel diff): desktop software-GL intermittently never flushes the
   // rebuilt frame, so a screenshot delta would flake. The mesh-level diagnostics
@@ -137,6 +139,7 @@ test('retextures built-in buildings through vanilla stand-in blocks', async ({ p
   await page.locator('.resource-pack-original').getByRole('button', { name: '使用' }).click();
   await page.getByRole('button', { name: '计时' }).click();
   await expect(canvas).toHaveAttribute('data-active-resource-pack-id', '');
+  await expect.poll(async () => canvas.getAttribute('data-terrain-pack-textured'), { timeout: 20_000 }).toBe('false');
   await expect.poll(async () => {
     await page.getByRole('button', { name: '重置视角' }).click();
     const shot = await canvas.screenshot({ path: testInfo.outputPath('builtin-restored.png') });
@@ -218,7 +221,7 @@ function makeBuiltinVisualPack():Uint8Array{
   // built-in Blockcolc materials resolve to (see builtinMaterialBlockId).
   const files:Record<string,Uint8Array>={'pack.mcmeta':strToU8(JSON.stringify({pack:{pack_format:34,description:'Builtin retexture test'}}))};
   const cubes:Record<string,readonly[number,number,number,number]>={
-    stone:[30,30,30,255],oak_planks:[200,120,40,255],bricks:[160,40,40,255],glass:[80,180,255,255],birch_planks:[220,200,150,255],oak_log:[120,80,40,255],
+    stone:[30,30,30,255],oak_planks:[200,120,40,255],bricks:[160,40,40,255],glass:[80,180,255,255],birch_planks:[220,200,150,255],oak_log:[120,80,40,255],grass_block:[60,140,40,255],dirt:[140,100,60,255],
   };
   for(const [id,color] of Object.entries(cubes)){
     files[`assets/minecraft/blockstates/${id}.json`]=strToU8(JSON.stringify({variants:{'':{model:`minecraft:block/${id}`}}}));

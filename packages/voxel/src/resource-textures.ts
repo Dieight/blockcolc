@@ -207,6 +207,39 @@ export function planTexturedVoxel(
   return plans?.length === 1 ? plans[0] : undefined;
 }
 
+export interface PackTileRect {
+  page: number;
+  u0: number;
+  v0: number;
+  u1: number;
+  v1: number;
+}
+
+/**
+ * Resolves the atlas rectangle of one face of a block for repeat-sampling
+ * materials (terrain surfaces, natural trees). Undefined when the pack does
+ * not provide the block, so callers keep their procedural fallback.
+ */
+export function resolvePackTileRect(
+  manifest: ResourcePackManifest,
+  atlas: ResourcePackAtlas,
+  blockId: string,
+  face: BlockFace,
+): PackTileRect | undefined {
+  let resolution = resolveBlockTextures(manifest, blockId, {});
+  if (resolution.status === "fallback" && resolution.reason === "NO_MATCHING_VARIANT") {
+    const entry = manifest.blockStates.find((candidate) => candidate.resourceId === blockId);
+    const conditions = entry?.variants[0]?.conditions ?? {};
+    resolution = resolveBlockTextures(manifest, blockId, conditions);
+  }
+  if (resolution.status !== "resolved") return undefined;
+  const mapped = mapBlockTexturesToAtlas(resolution, atlas.source);
+  if (mapped.status !== "resolved") return undefined;
+  const reference = mapped.faces[face];
+  if (!atlas.pages[reference.page]) return undefined;
+  return { page: reference.page, u0: reference.uv.u0, v0: reference.uv.v0, u1: reference.uv.u1, v1: reference.uv.v1 };
+}
+
 export function planTexturedVoxelPages(
   voxel: BlueprintVoxel,
   manifest: ResourcePackManifest,
