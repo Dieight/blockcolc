@@ -155,6 +155,7 @@ export interface RendererDiagnostics {
   atlasPageCount: number;
   texturedBatchCount: number;
   texturedVoxelCount: number;
+  constructionPulseCount: number;
   fallbackVoxelCount: number;
   originalMaterialTextureCount: number;
   transformedUvVoxelCount: number;
@@ -234,6 +235,8 @@ export interface VoxelRenderer {
   setReducedMotion(value: boolean): void;
   /** Pauses frame rendering and texture animation while the canvas pane is hidden (tab switches); resuming re-sizes and renders once. */
   setVisible(value: boolean): void;
+  /** Brief bounded glow pulse for construction events (round completed, focus started); skipped under reduced motion. */
+  playConstructionPulse(strength?: number): void;
   resetCamera(): void;
   resize(): void;
   getDiagnostics(): RendererDiagnostics;
@@ -447,6 +450,10 @@ export function createVoxelRenderer(
   let frame = 0;
   /** False while the canvas pane is hidden (tab switch); frame rendering pauses until setVisible(true). */
   let paneVisible = true;
+  let constructionPulseUntilMs = 0;
+  let constructionPulseStartedMs = 0;
+  let constructionPulseStrength = 0;
+  let constructionPulseCount = 0;
   let contentBounds = defaultContentBounds();
   let visibilityBounds = defaultContentBounds();
   let visibilityNearestDistance = 0;
@@ -653,6 +660,15 @@ export function createVoxelRenderer(
       nativeInputRenderedSequence = nativeInputLastSequence;
     }
     const cameraStillMoving = applyPendingCameraUpdate(frameStarted);
+    const pulseActive = frameStarted < constructionPulseUntilMs;
+    let pulseGlow = 0;
+    if (pulseActive) {
+      const duration = Math.max(1, constructionPulseUntilMs - constructionPulseStartedMs);
+      const progress = THREE.MathUtils.clamp((frameStarted - constructionPulseStartedMs) / duration, 0, 1);
+      pulseGlow = Math.sin(Math.PI * progress) * constructionPulseStrength;
+      renderer.toneMappingExposure *= 1 + pulseGlow * 0.35;
+      for (const entry of emissiveMaterials) entry.material.emissiveIntensity *= 1 + pulseGlow * 0.8;
+    }
     pollGpuTimer();
     beginGpuTimer();
     const started = performance.now();
@@ -692,6 +708,13 @@ export function createVoxelRenderer(
       interactionTotalMaxMs = Math.max(interactionTotalMaxMs, totalElapsed);
     } else lastInteractionAnimationFrameMs = null;
     maybeDowngradeQuality();
+    if (pulseActive) {
+      renderer.toneMappingExposure /= 1 + pulseGlow * 0.35;
+      for (const entry of emissiveMaterials) entry.material.emissiveIntensity /= 1 + pulseGlow * 0.8;
+    } else if (constructionPulseUntilMs !== 0) {
+      constructionPulseUntilMs = 0;
+      updateLighting(new Date());
+    }
     return cameraStillMoving;
   }
 
@@ -700,7 +723,7 @@ export function createVoxelRenderer(
     frame = requestAnimationFrame(() => {
       frame = 0;
       const cameraStillMoving = renderFrame(performance.now());
-      if (interacting || nativeInputActive || cameraStillMoving) requestRender();
+      if (interacting || nativeInputActive || cameraStillMoving || performance.now() < constructionPulseUntilMs) requestRender();
     });
   }
 
@@ -1968,6 +1991,7 @@ export function createVoxelRenderer(
       atlasPageCount: activeResourcePack?.atlas.pages.length ?? 0,
       texturedBatchCount,
       texturedVoxelCount,
+      constructionPulseCount,
       fallbackVoxelCount,
       originalMaterialTextureCount: originalMaterialTextures.size,
       transformedUvVoxelCount,
@@ -2330,6 +2354,15 @@ export function createVoxelRenderer(
         updateWeather(localDateForDate(new Date()));
         resize();
       }
+    },
+    playConstructionPulse(strength = 1) {
+      if (reducedMotion || disposed) return;
+      constructionPulseStrength = Math.max(0.25, Math.min(1.5, strength));
+      constructionPulseStartedMs = performance.now();
+      constructionPulseUntilMs = constructionPulseStartedMs + 900;
+      constructionPulseCount += 1;
+      canvas.dataset.constructionPulseCount = String(constructionPulseCount);
+      requestRender();
     },
     resetCamera: resetView,
     resize,

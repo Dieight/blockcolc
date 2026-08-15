@@ -341,3 +341,11 @@
 /* V19 SW-01: the idle-workbench scroll lock uses :has(.world-screen...), which the now-resident hidden world pane also satisfies and would lock every tab. Restore free scrolling whenever the world pane is hidden. */
 @media(max-width:699px){html:has(.world-pane.is-hidden .world-screen),body:has(.world-pane.is-hidden .world-screen),#root:has(.world-pane.is-hidden .world-screen){height:auto!important;overflow:auto!important}}
 @media(min-width:700px) and (max-height:620px){html:has(.world-pane.is-hidden .world-screen),body:has(.world-pane.is-hidden .world-screen),#root:has(.world-pane.is-hidden .world-screen){height:auto!important;overflow:auto!important}}
+
+/* V19 IF-02: immersive focus UI in the V18 language — quiet text hierarchy, hairline separators, no boxed pills. */
+.focus-task-context span{text-transform:none;font-weight:600;font-size:12px;letter-spacing:0}
+.rest-summary{display:grid;gap:3px;padding:6px 0 6px 10px;border:0;border-left:3px solid #276749;border-radius:0;background:none;text-align:left}
+.rest-summary span,.rest-summary small{color:#58635d;font-size:12px}
+.focus-immersive .is-focusing .focus-integrity-warning{border:0;border-radius:0;background:none;padding:4px 0;color:#58635d;font-weight:600}
+.focus-immersive .is-focusing .focus-integrity-warning.active{background:none;color:#8a5a14}
+.focus-immersive .is-focusing .focus-integrity-ended{border:0;background:none;padding:4px 0}

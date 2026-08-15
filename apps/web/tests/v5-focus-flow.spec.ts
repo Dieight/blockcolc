@@ -20,6 +20,9 @@ test('one-round early completion records the task and ends the plan without a br
 
   await expect(page.getByText('任务已完成 · 休息时间')).toBeHidden();
   await expect(page.locator('.construction-feedback')).toContainText('材料已送达');
+  // IF-01: the round completion fires a bounded construction pulse on the world.
+  await expect(page.getByLabel('项目建筑世界')).toHaveAttribute('data-construction-pulse-count', /[1-9]/);
+  await expect(page.getByLabel('项目建筑世界')).toHaveAttribute('data-continuous-rendering', 'false');
   await expect(page.getByRole('button', { name: '开始 1 轮' })).toBeVisible();
   await expect(page.getByText('今日 1 / 8 轮')).toBeVisible();
   await page.getByRole('button', { name: '统计' }).click();
