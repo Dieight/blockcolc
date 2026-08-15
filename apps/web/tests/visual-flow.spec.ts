@@ -579,6 +579,17 @@ test('renames an imported building blueprint without changing its stored snapsho
   await page.reload();
   await page.getByRole('button', { name: '设置' }).click();
   await expect(page.locator('.building-blueprint-list strong')).toHaveText('V13 阅读大厅');
+
+  // BL-01: the world speaks the library label, not the stored blueprint title.
+  await page.getByRole('button', { name: '任务', exact: true }).click();
+  await page.getByRole('button', { name: '新增任务' }).click();
+  await page.getByRole('radio', { name: /V13 阅读大厅/ }).check();
+  await page.getByLabel('大型任务').fill('标签世界');
+  await page.getByRole('button', { name: '开始建造' }).click();
+  await page.getByRole('button', { name: '任务', exact: true }).click();
+  await page.getByRole('button', { name: '查看建筑' }).first().click();
+  await expect(page.locator('.world-building-details')).toContainText('V13 阅读大厅');
+  await page.screenshot({ path: testInfo.outputPath('v19-blueprint-label-world.png'), fullPage: true });
 });
 
 test('exports, previews, imports, and restores a local backup', async ({ page }, testInfo) => {
