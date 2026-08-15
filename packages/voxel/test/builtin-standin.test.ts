@@ -54,7 +54,7 @@ it("resolves every built-in stand-in block through the real 16x ZIP parser", () 
   }
   const manifest = parseJava16xResourcePack(zipSync(files, { level: 6 }));
   const atlas = buildResourcePackAtlas(manifest);
-  for (const materialId of ["stone", "wood", "plank", "roof", "glass", "accent"]) {
+  for (const materialId of ["stone", "wood", "plank", "roof", "glass", "accent"] as const) {
     const voxel: BlueprintVoxel = { x: 0, y: 0, z: 0, materialId, buildOrder: 10000 };
     const plan = planTexturedVoxel(voxel, manifest, atlas);
     expect(plan, `${materialId} should resolve through ${builtinMaterialBlockId(materialId)}`).toBeDefined();
