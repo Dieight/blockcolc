@@ -203,6 +203,8 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
   const [planOpen, setPlanOpen] = useState(false);
   const [controlsVisible, setControlsVisible] = useState(false);
   const [hintVisible, setHintVisible] = useState(false);
+  const [integrityFlash, setIntegrityFlash] = useState(false);
+  const lastExcursionsRef = useRef<number | null>(null);
   const lastTapRef = useRef<{ time: number; x: number; y: number } | null>(null);
   const revealTimerRef = useRef<number | null>(null);
   const [constructionFeedback, setConstructionFeedback] = useState(0);
@@ -282,6 +284,19 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
       }
     }
   }, [session, controlsVisible]);
+  // The integrity count pops up only when the session starts and when a new
+  // excursion is consumed (returning from an app switch); the rest of the time
+  // the band stays quiet.
+  useEffect(() => {
+    if (!session || !state.focusIntegrityPolicy.enabled) return;
+    const count = session.integrity.effectiveExcursions;
+    const previous = lastExcursionsRef.current;
+    lastExcursionsRef.current = count;
+    if (previous !== null && count <= previous) return;
+    setIntegrityFlash(true);
+    const timer = window.setTimeout(() => setIntegrityFlash(false), 6_000);
+    return () => window.clearTimeout(timer);
+  }, [session?.id, session?.integrity.effectiveExcursions, state.focusIntegrityPolicy.enabled]);
   useEffect(() => {
     if (!roundPlansEqual(plan, reconciledPlan)) setPlan(reconciledPlan);
   }, [plan, reconciledPlan, setPlan]);
@@ -389,14 +404,14 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
          {session && <div className="focus-task-context"><span>{isHabit ? '本轮习惯' : '本轮任务'}</span><strong>{isHabit ? active.project.title : subtask!.title}</strong></div>}
         {isBreak && <div className="rest-summary"><span>休息时间</span><strong>{reconciledPlan?.endAfterBreak ? '小任务已完成' : '下一轮准备中'}</strong><small>{dailySummary}</small></div>}
         {(isBreak || session || reconciledPlan?.status === 'ready') && <div className={isBreak ? 'session-kind rest' : 'session-kind'}>{isBreak ? '放松一下，结束后会回到下一步。' : session ? `第 ${(reconciledPlan?.completedRounds ?? 0) + 1} / ${reconciledPlan?.totalRounds ?? 1} 轮专注` : `准备第 ${reconciledPlan!.completedRounds + 1} / ${reconciledPlan!.totalRounds} 轮`}</div>}
-        {session && state.focusIntegrityPolicy.enabled && <div className={session.integrity.effectiveExcursions > 0 ? 'focus-integrity-warning active' : 'focus-integrity-warning'}><AlertTriangle/>有效离开 {session.integrity.effectiveExcursions} / {state.focusIntegrityPolicy.maxEffectiveExcursions} 次</div>}
+        {session && state.focusIntegrityPolicy.enabled && integrityFlash && <div className={session.integrity.effectiveExcursions > 0 ? 'focus-integrity-warning flash active' : 'focus-integrity-warning flash'} role="status"><AlertTriangle/>有效离开 {session.integrity.effectiveExcursions} / {state.focusIntegrityPolicy.maxEffectiveExcursions} 次</div>}
         {integrityFailure && <div className="focus-integrity-ended" role="alert"><AlertTriangle/>本轮专注因达到离开应用次数上限而结束。下次可以从这里继续。</div>}
          <FocusTimer mode={timerMode} endsAt={timerEndsAt} fallbackMs={timerFallbackMs} onElapsed={session ? reconcile : finishBreak}/>
         {isBreak ? <button className="primary secondary-action" onClick={() => { if (reconciledPlan?.endAfterBreak) setPlan(null); else { const { breakEndsAt: _breakEndsAt, ...withoutBreak } = reconciledPlan!; setPlan({ ...withoutBreak, status: 'ready' }); } }}>跳过休息</button>
           : reconciledPlan?.status === 'ready' ? <button className="primary" onClick={() => void startFocus()}><Clock3/>开始下一轮</button>
-            : session ? (controlsVisible
+            : session ? <div className="immersive-controls">{controlsVisible
               ? <button className="destructive primary" onClick={() => void setEnding(true)}><Square/>结束本次专注</button>
-              : <p className={hintVisible ? 'immersive-hint' : 'immersive-hint is-faded'} role="status">双击下方空白处唤出结束按钮</p>)
+              : <p className={hintVisible ? 'immersive-hint' : 'immersive-hint is-faded'} role="status">双击下方空白处唤出结束按钮</p>}</div>
             : <button className="primary" onClick={() => void startFocus()}><Clock3/>开始 {reconciledPlan?.totalRounds ?? rounds} 轮</button>}
       </>}
       {ending && session && (
