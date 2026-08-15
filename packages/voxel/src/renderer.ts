@@ -1264,7 +1264,7 @@ export function createVoxelRenderer(
       const [kind, heightText] = key.split("|");
       const height = Number(heightText);
       const mesh = new THREE.InstancedMesh(
-        new THREE.BoxGeometry(0.97, height, 0.97),
+        new THREE.BoxGeometry(0.995, height, 0.995),
         material(kind === "lava" ? "terrainLava" : "terrainWater"),
         entries.length,
       );

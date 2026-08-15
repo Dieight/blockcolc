@@ -416,7 +416,9 @@ function addV2CellSide(
   addQuad: (vertices: readonly number[], material: TerrainMaterial) => void,
 ): void {
   const neighbor = sampleAt(x + dx * cellSize, z + dz * cellSize);
-  const top = sample.height - 0.5;
+  // Water surfaces sit 0.16 above land tops; side faces must start at the actual
+  // surface height so the shoreline never leaves a sky-visible slit.
+  const top = sample.height - (sample.material === "water" ? 0.34 : 0.5);
   const bottom = neighbor.height - 0.5;
   if (bottom >= top - 0.01) return;
   const half = cellSize / 2;

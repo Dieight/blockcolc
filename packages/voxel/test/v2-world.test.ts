@@ -137,6 +137,68 @@ describe("merged stepped terrain", () => {
     expect(roadGeometry.positions.length).toBe(roads.length * 12);
   });
 
+  it("leaves no sky-visible slit between water surfaces and their shoreline sides", () => {
+    const placements = layoutWorlds(snapshots);
+    const roads = roadCellsForVillage(placements);
+    const terrain = createSteppedTerrainData(placements, roads, [], undefined, {
+      environmentStyle: "natural-valley",
+      worldSeed: "stable-world",
+    });
+    expect(terrain.indicesByMaterial.water.length).toBeGreaterThan(0);
+
+    const round = (value: number) => Math.round(value * 1000) / 1000;
+    const vertex = (index: number) => ({
+      x: round(terrain.positions[index * 3]!),
+      y: round(terrain.positions[index * 3 + 1]!),
+      z: round(terrain.positions[index * 3 + 2]!),
+    });
+    const edgeKey = (a: { x: number; z: number }, b: { x: number; z: number }) => {
+      const minX = Math.min(a.x, b.x); const maxX = Math.max(a.x, b.x);
+      const minZ = Math.min(a.z, b.z); const maxZ = Math.max(a.z, b.z);
+      return `${minX}|${minZ}|${maxX}|${maxZ}`;
+    };
+    type Quad = { vertices: Array<{ x: number; y: number; z: number }>; material: string };
+    const quadsOf = (indices: readonly number[], material: string): Quad[] => {
+      const quads: Quad[] = [];
+      for (let offset = 0; offset < indices.length; offset += 6) {
+        const unique = [...new Set([indices[offset]!, indices[offset + 1]!, indices[offset + 2]!, indices[offset + 3]!, indices[offset + 5]!])];
+        quads.push({ vertices: unique.map((index) => vertex(index)), material });
+      }
+      return quads;
+    };
+    const waterQuads = quadsOf(terrain.indicesByMaterial.water, "water");
+    const sideQuads = [
+      ...quadsOf(terrain.indicesByMaterial.grass, "grass"),
+      ...quadsOf(terrain.indicesByMaterial.dirt, "dirt"),
+      ...quadsOf(terrain.indicesByMaterial.stone, "stone"),
+    ];
+    const waterEdgeUsers = new Map<string, number>();
+    for (const quad of waterQuads) {
+      for (let corner = 0; corner < 4; corner += 1) {
+        const a = quad.vertices[corner]!;
+        const b = quad.vertices[(corner + 1) % 4]!;
+        const key = edgeKey(a, b);
+        waterEdgeUsers.set(key, (waterEdgeUsers.get(key) ?? 0) + 1);
+      }
+    }
+    for (const quad of waterQuads) {
+      for (let corner = 0; corner < 4; corner += 1) {
+        const a = quad.vertices[corner]!;
+        const b = quad.vertices[(corner + 1) % 4]!;
+        const key = edgeKey(a, b);
+        if ((waterEdgeUsers.get(key) ?? 0) > 1) continue; // interior water edge: neighboring surface closes it
+        const covered = sideQuads.some((side) => {
+          const matching = side.vertices.filter((v) => (v.x === a.x && v.z === a.z) || (v.x === b.x && v.z === b.z));
+          if (matching.length < 2) return false;
+          const topY = Math.max(...side.vertices.map((v) => v.y));
+          const bottomY = Math.min(...side.vertices.map((v) => v.y));
+          return topY >= a.y - 0.01 && bottomY <= a.y + 0.01;
+        });
+        expect(covered, `shoreline water edge ${key} at y=${a.y} must be closed by a side face`).toBe(true);
+      }
+    }
+  });
+
   it("adds deterministic natural scenery outside the unchanged settlement frame", () => {
     const placements = layoutWorlds(snapshots);
     const roads = roadCellsForVillage(placements);
