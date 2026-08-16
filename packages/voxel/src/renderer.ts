@@ -580,6 +580,7 @@ export function createVoxelRenderer(
           emissive: flatDebugColorFor(id),
           emissiveIntensity: 1,
           roughness: 1,
+          fog: false,
         });
         materials.set(id, found);
         return found;
@@ -633,7 +634,7 @@ export function createVoxelRenderer(
   }
 
   function flatDebugMaterial(color: number): THREE.MeshStandardMaterial {
-    return new THREE.MeshStandardMaterial({ color: 0x000000, emissive: color, emissiveIntensity: 1, roughness: 1 });
+    return new THREE.MeshStandardMaterial({ color: 0x000000, emissive: color, emissiveIntensity: 1, roughness: 1, fog: false });
   }
 
   function pollGpuTimer(): void {
@@ -1770,6 +1771,16 @@ export function createVoxelRenderer(
   }
 
   function applyAtmosphere(): void {
+    if (options.debugFlatColors) {
+      // Diagnostics: pure-black background, no sky/clouds, so any dark pixel
+      // inside the terrain silhouette is a real hole, never an AA blend that
+      // happens to match the sampled sky color.
+      renderer.setClearColor(0x000000, 1);
+      scene.fog = null;
+      skyGroup.visible = false;
+      atmosphereGroup.visible = false;
+      return;
+    }
     const weatherTint = currentWeather.kind === "clear" ? null : currentWeather.kind === "mist" ? 0xaeb8b1 : 0x9eada8;
     const sky = new THREE.Color(currentLighting.skyColor);
     const fog = new THREE.Color(currentLighting.fogColor);
