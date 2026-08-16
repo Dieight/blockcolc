@@ -129,8 +129,8 @@ describe("merged stepped terrain", () => {
     expect(terrain.triangleCount).toBeGreaterThan(terrain.cellCount * 2);
     expect(terrain.triangleCount).toBeLessThan(40_000);
     expect(terrain.indicesByMaterial.grass.length).toBe(terrain.cellCount * 6);
-    expect(terrain.indicesByMaterial.dirt.length).toBeGreaterThan(0);
-    expect(terrain.indicesByMaterial.stone.length).toBeGreaterThan(0);
+    expect(terrain.sideIndices.dirt.length).toBeGreaterThan(0);
+    expect(terrain.sideIndices.stone.length).toBeGreaterThan(0);
 
     const roadGeometry = createRoadGeometryData(roads, placements);
     expect(roadGeometry.triangleCount).toBe(roads.length * 2);

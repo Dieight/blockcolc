@@ -112,10 +112,16 @@ export function createSteppedTerrainData(
 
   const positions: number[] = [];
   const indicesByMaterial: Record<TerrainMaterial, number[]> = { grass: [], dirt: [], stone: [], water: [] };
+  const sideIndices: { dirt: number[]; stone: number[] } = { dirt: [], stone: [] };
   const addQuad = (vertices: readonly number[], material: TerrainMaterial): void => {
     const start = positions.length / 3;
     positions.push(...vertices);
     indicesByMaterial[material].push(start, start + 1, start + 2, start, start + 2, start + 3);
+  };
+  const addSideQuad = (vertices: readonly number[], material: "dirt" | "stone"): void => {
+    const start = positions.length / 3;
+    positions.push(...vertices);
+    sideIndices[material].push(start, start + 1, start + 2, start, start + 2, start + 3);
   };
 
   for (const [key, height] of cells) {
@@ -129,16 +135,17 @@ export function createSteppedTerrainData(
       x + half, top, z + half, x + half, top, z - half,
     ], waterCells.has(key) ? "water" : "grass");
     const sideStride = natural ? 2 : 1;
-    addExposedSide(x, z, height, -1, 0, cellSize, sideStride, cells, addQuad);
-    addExposedSide(x, z, height, 1, 0, cellSize, sideStride, cells, addQuad);
-    addExposedSide(x, z, height, 0, -1, cellSize, sideStride, cells, addQuad);
-    addExposedSide(x, z, height, 0, 1, cellSize, sideStride, cells, addQuad);
+    addExposedSide(x, z, height, -1, 0, cellSize, sideStride, cells, addSideQuad);
+    addExposedSide(x, z, height, 1, 0, cellSize, sideStride, cells, addSideQuad);
+    addExposedSide(x, z, height, 0, -1, cellSize, sideStride, cells, addSideQuad);
+    addExposedSide(x, z, height, 0, 1, cellSize, sideStride, cells, addSideQuad);
   }
-  const indexCount = Object.values(indicesByMaterial).reduce((sum, indices) => sum + indices.length, 0);
+  const indexCount = Object.values(indicesByMaterial).reduce((sum, indices) => sum + indices.length, 0)
+    + sideIndices.dirt.length + sideIndices.stone.length;
   return {
     positions,
     indicesByMaterial,
-    sideIndices: { dirt: [], stone: [] },
+    sideIndices,
     cellCount: cells.size,
     triangleCount: indexCount / 3,
     bounds: { minX: -radiusX, maxX: radiusX, minY: minHeight - 0.5, maxY: maxHeight + 0.5, minZ: -radiusZ, maxZ: radiusZ },
@@ -386,7 +393,8 @@ function createNaturalTerrainDataV2(
   addV2LodSquare(middleExtent, nearExtent, 4, (x, z) => addCell(x, z, 4, "middle"));
   addV2LodSquare(farExtent, middleExtent, 16, (x, z) => addCell(x, z, 16, "far"));
 
-  const indexCount = Object.values(indicesByMaterial).reduce((sum, indices) => sum + indices.length, 0);
+  const indexCount = Object.values(indicesByMaterial).reduce((sum, indices) => sum + indices.length, 0)
+    + sideIndices.dirt.length + sideIndices.stone.length;
   return {
     positions,
     indicesByMaterial,
@@ -1266,7 +1274,7 @@ function addExposedSide(
   cellSize: number,
   sideStride: number,
   cells: ReadonlyMap<string, number>,
-  addQuad: (vertices: readonly number[], material: TerrainMaterial) => void,
+  addQuad: (vertices: readonly number[], material: "dirt" | "stone") => void,
 ): void {
   const neighbor = cells.get(`${x + dx * cellSize}:${z + dz * cellSize}`) ?? -2;
   if (neighbor >= height) return;
@@ -1274,7 +1282,7 @@ function addExposedSide(
   for (let layer = neighbor; layer < height; layer += sideStride) {
     const bottom = layer - 0.5;
     const top = Math.min(height - 0.5, layer + sideStride - 0.5);
-    const material: TerrainMaterial = layer >= 0 ? "dirt" : "stone";
+    const material: "dirt" | "stone" = layer >= 0 ? "dirt" : "stone";
     if (dx < 0) addQuad([x - half, bottom, z + half, x - half, top, z + half, x - half, top, z - half, x - half, bottom, z - half], material);
     else if (dx > 0) addQuad([x + half, bottom, z - half, x + half, top, z - half, x + half, top, z + half, x + half, bottom, z + half], material);
     else if (dz < 0) addQuad([x - half, bottom, z - half, x - half, top, z - half, x + half, top, z - half, x + half, bottom, z - half], material);
