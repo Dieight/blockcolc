@@ -343,7 +343,15 @@ function createNaturalTerrainDataV2(
       x - half, top, z - half, x - half, top, z + half,
       x + half, top, z + half, x + half, top, z - half,
     ], sample.material);
-    const neighborAt = (neighborX: number, neighborZ: number) => sampleCellAt(neighborX, neighborZ, size);
+    // Neighbors must be sampled at THEIR ring's cell size: sampling a ring
+    // boundary neighbor with this cell's size hides real steps and leaves a
+    // sky-visible slit between the two rings.
+    const neighborAt = (neighborX: number, neighborZ: number) => {
+      const insideNear = Math.abs(neighborX) <= nearExtent && Math.abs(neighborZ) <= nearExtent;
+      const insideMiddle = Math.abs(neighborX) <= middleExtent && Math.abs(neighborZ) <= middleExtent;
+      const neighborSize = insideNear ? 2 : insideMiddle ? 4 : 16;
+      return sampleCellAt(neighborX, neighborZ, neighborSize);
+    };
     addV2CellSide(x, z, size, sample, -1, 0, neighborAt, addQuad);
     addV2CellSide(x, z, size, sample, 1, 0, neighborAt, addQuad);
     addV2CellSide(x, z, size, sample, 0, -1, neighborAt, addQuad);

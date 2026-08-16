@@ -1574,7 +1574,7 @@ export function createVoxelRenderer(
     const contentArea = Math.max(1, contentSize.x * contentSize.z);
     const spreadRatio = Math.min(24, Math.max(1, (visibleSize.x * visibleSize.z) / contentArea));
     canvas.dataset.cloudSpanX = String(Math.round(spanX));
-    const cloudCount = Math.min(170, Math.max(1, Math.round(currentWeather.cloudCount * qualityProfile.weatherDensity * spreadRatio)));
+    const cloudCount = Math.min(85, Math.max(1, Math.round(currentWeather.cloudCount * qualityProfile.weatherDensity * spreadRatio)));
     const cloudGeometry = new THREE.BoxGeometry(1, 1, 1);
     cloudMaterial = new THREE.MeshLambertMaterial({
       color: currentLighting.cloudColor,
@@ -1588,7 +1588,7 @@ export function createVoxelRenderer(
     const cloudBlocks: number[] = [];
     const raining = currentWeather.kind === "rain";
     const instanceCap = 900;
-    const distantCount = raining ? 3 : Math.min(10, 3 + Math.round(qualityProfile.weatherDensity * 4));
+    const distantCount = raining ? 2 : Math.min(5, 2 + Math.round(qualityProfile.weatherDensity * 2));
     const distantBudget = distantCount * 16;
     let totalInstances = 0;
     for (let cloudIndex = 0; cloudIndex < cloudCount; cloudIndex += 1) {

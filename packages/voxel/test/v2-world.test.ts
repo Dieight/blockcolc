@@ -199,6 +199,94 @@ describe("merged stepped terrain", () => {
     }
   }, 15_000);
 
+  it("leaves no sky-visible vertical gap at any terrain step", () => {
+    const placements = layoutWorlds(snapshots);
+    const roads = roadCellsForVillage(placements);
+    const terrain = createSteppedTerrainData(placements, roads, [], undefined, {
+      environmentStyle: "natural-valley",
+      worldSeed: "stable-world",
+    });
+
+    const round = (value: number) => Math.round(value * 1000) / 1000;
+    const vertex = (index: number) => ({
+      x: round(terrain.positions[index * 3]!),
+      y: round(terrain.positions[index * 3 + 1]!),
+      z: round(terrain.positions[index * 3 + 2]!),
+    });
+    const edgeKey = (a: { x: number; z: number }, b: { x: number; z: number }) => {
+      const minX = Math.min(a.x, b.x); const maxX = Math.max(a.x, b.x);
+      const minZ = Math.min(a.z, b.z); const maxZ = Math.max(a.z, b.z);
+      return `${minX}|${minZ}|${maxX}|${maxZ}`;
+    };
+    type Quad = { vertices: Array<{ x: number; y: number; z: number }>; material: string };
+    const quadsOf = (indices: readonly number[], material: string): Quad[] => {
+      const quads: Quad[] = [];
+      for (let offset = 0; offset < indices.length; offset += 6) {
+        const unique = [...new Set([indices[offset]!, indices[offset + 1]!, indices[offset + 2]!, indices[offset + 3]!, indices[offset + 5]!])];
+        quads.push({ vertices: unique.map((index) => vertex(index)), material });
+      }
+      return quads;
+    };
+    const allQuads = [
+      ...quadsOf(terrain.indicesByMaterial.grass, "grass"),
+      ...quadsOf(terrain.indicesByMaterial.dirt, "dirt"),
+      ...quadsOf(terrain.indicesByMaterial.stone, "stone"),
+      ...quadsOf(terrain.indicesByMaterial.water, "water"),
+    ];
+    const isHorizontal = (quad: Quad) => {
+      const ys = quad.vertices.map((v) => v.y);
+      return Math.max(...ys) - Math.min(...ys) < 0.01;
+    };
+    const surfaces = allQuads.filter(isHorizontal);
+    const sides = allQuads.filter((quad) => !isHorizontal(quad));
+    // Index side quads by their footprint edge so the closure check stays fast.
+    const sideSpans = new Map<string, Array<{ bottom: number; top: number }>>();
+    for (const side of sides) {
+      const key = edgeKey(side.vertices[0]!, side.vertices[2]!);
+      const spans = sideSpans.get(key) ?? [];
+      spans.push({ bottom: Math.min(...side.vertices.map((v) => v.y)), top: Math.max(...side.vertices.map((v) => v.y)) });
+      sideSpans.set(key, spans);
+    }
+    // Every shared edge must be shared by exactly the two adjacent surfaces;
+    // when their heights differ, side faces must span the whole step.
+    const edgeSurfaces = new Map<string, Quad[]>();
+    for (const surface of surfaces) {
+      for (let corner = 0; corner < 4; corner += 1) {
+        const a = surface.vertices[corner]!;
+        const b = surface.vertices[(corner + 1) % 4]!;
+        const key = edgeKey(a, b);
+        const list = edgeSurfaces.get(key) ?? [];
+        if (!list.includes(surface)) list.push(surface);
+        edgeSurfaces.set(key, list);
+      }
+    }
+    let checked = 0;
+    for (const [key, sharing] of edgeSurfaces) {
+      if (sharing.length < 2) continue; // outer boundary edge
+      const heights = [...new Set(sharing.map((surface) => surface.vertices[0]!.y))];
+      if (heights.length < 2) continue;
+      const low = Math.min(...heights);
+      const high = Math.max(...heights);
+      const [minX, minZ, maxX, maxZ] = key.split("|").map(Number) as [number, number, number, number];
+      // Both adjacent cells add sides at the boundary; each may cover only part
+      // of the step, so the union of their vertical spans must close it.
+      const spans = sideSpans.get(key) ?? [];
+      const closed = (() => {
+        let cursor = low;
+        for (let pass = 0; pass < spans.length + 1; pass += 1) {
+          const next = Math.max(cursor, ...spans.filter((span) => span.bottom <= cursor + 0.011).map((span) => span.top));
+          if (next >= high - 0.011) return true;
+          if (next <= cursor) return false;
+          cursor = next;
+        }
+        return false;
+      })();
+      expect(closed, `terrain step ${key} between ${low} and ${high} must be closed by side faces`).toBe(true);
+      checked += 1;
+    }
+    expect(checked).toBeGreaterThan(20);
+  }, 15_000);
+
   it("adds deterministic natural scenery outside the unchanged settlement frame", () => {
     const placements = layoutWorlds(snapshots);
     const roads = roadCellsForVillage(placements);
