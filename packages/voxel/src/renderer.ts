@@ -1671,8 +1671,10 @@ export function createVoxelRenderer(
     };
     cloudKinds.forEach((kind, cloudIndex) => {
       // Start right above the settlement so the short non-focus world window
-      // sees clouds too, and spread all the way to the far horizon.
-      const radius = 0.03 + 0.95 * Math.pow(random(), 0.85);
+      // sees clouds too, and spread all the way to the far horizon. Small worlds
+      // (classic island) bias the spread inward so most clouds stay over the land.
+      const spreadBias = spanX > 400 ? 0.85 : 1.6;
+      const radius = 0.03 + 0.95 * Math.pow(random(), spreadBias);
       placeBlocks(kind, cloudBlocks[cloudIndex]!, radius);
     });
     for (const blocks of distantBlocks) placeBlocks("distant", blocks, 0.72 + random() * 0.26);

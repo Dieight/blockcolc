@@ -135,10 +135,10 @@ export function createSteppedTerrainData(
       x + half, top, z + half, x + half, top, z - half,
     ], waterCells.has(key) ? "water" : "grass");
     const sideStride = natural ? 2 : 1;
-    addExposedSide(x, z, height, -1, 0, cellSize, sideStride, cells, addSideQuad);
-    addExposedSide(x, z, height, 1, 0, cellSize, sideStride, cells, addSideQuad);
-    addExposedSide(x, z, height, 0, -1, cellSize, sideStride, cells, addSideQuad);
-    addExposedSide(x, z, height, 0, 1, cellSize, sideStride, cells, addSideQuad);
+    addExposedSide(x, z, top, -1, 0, cellSize, sideStride, cells, waterCells, addSideQuad);
+    addExposedSide(x, z, top, 1, 0, cellSize, sideStride, cells, waterCells, addSideQuad);
+    addExposedSide(x, z, top, 0, -1, cellSize, sideStride, cells, waterCells, addSideQuad);
+    addExposedSide(x, z, top, 0, 1, cellSize, sideStride, cells, waterCells, addSideQuad);
   }
   const indexCount = Object.values(indicesByMaterial).reduce((sum, indices) => sum + indices.length, 0)
     + sideIndices.dirt.length + sideIndices.stone.length;
@@ -1268,25 +1268,35 @@ function heightForCell(x: number, z: number, placements: readonly VillagePlaceme
 function addExposedSide(
   x: number,
   z: number,
-  height: number,
+  surfaceTop: number,
   dx: number,
   dz: number,
   cellSize: number,
   sideStride: number,
   cells: ReadonlyMap<string, number>,
+  waterCells: ReadonlySet<string>,
   addQuad: (vertices: readonly number[], material: "dirt" | "stone") => void,
 ): void {
-  const neighbor = cells.get(`${x + dx * cellSize}:${z + dz * cellSize}`) ?? -2;
-  if (neighbor >= height) return;
+  const neighborKey = `${x + dx * cellSize}:${z + dz * cellSize}`;
+  const neighbor = cells.get(neighborKey) ?? -2;
+  // Compare SURFACE levels: water sits 0.16 above the land top at equal heights,
+  // so an equal-height water neighbor still needs a closing face.
+  const neighborSurface = neighbor >= 0
+    ? (waterCells.has(neighborKey) ? neighbor - 0.34 : neighbor - 0.5)
+    : neighbor - 0.5;
+  if (neighborSurface >= surfaceTop - 0.01) return;
   const half = cellSize / 2;
-  for (let layer = neighbor; layer < height; layer += sideStride) {
-    const bottom = layer - 0.5;
-    const top = Math.min(height - 0.5, layer + sideStride - 0.5);
-    const material: "dirt" | "stone" = layer >= 0 ? "dirt" : "stone";
+  // Lay side bands from the neighbor surface up to this cell's surface; this
+  // also covers the thin band of an equal-height water-land pair.
+  let bottom = neighborSurface;
+  while (bottom < surfaceTop - 0.01) {
+    const top = Math.min(surfaceTop, bottom + sideStride);
+    const material: "dirt" | "stone" = bottom + 0.5 >= 0 ? "dirt" : "stone";
     if (dx < 0) addQuad([x - half, bottom, z + half, x - half, top, z + half, x - half, top, z - half, x - half, bottom, z - half], material);
     else if (dx > 0) addQuad([x + half, bottom, z - half, x + half, top, z - half, x + half, top, z + half, x + half, bottom, z + half], material);
     else if (dz < 0) addQuad([x - half, bottom, z - half, x - half, top, z - half, x + half, top, z - half, x + half, bottom, z - half], material);
     else addQuad([x + half, bottom, z + half, x + half, top, z + half, x - half, top, z + half, x - half, bottom, z + half], material);
+    bottom = top;
   }
 }
 

@@ -20,7 +20,7 @@ it("scans legacy terrain paths for sky-visible vertical gaps", () => {
     const roads = roadCellsForVillage(placements);
     const terrain = createSteppedTerrainData(placements, roads, [], undefined, {
       environmentStyle: style,
-      worldSeed: "stable-world",
+      worldSeed: style === "natural-valley" ? "probe-seed-16" : "stable-world",
       terrainGenerationVersion: 1,
     });
     const round = (value: number) => Math.round(value * 1000) / 1000;
