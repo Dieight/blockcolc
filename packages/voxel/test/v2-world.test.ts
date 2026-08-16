@@ -168,9 +168,8 @@ describe("merged stepped terrain", () => {
     };
     const waterQuads = quadsOf(terrain.indicesByMaterial.water, "water");
     const sideQuads = [
-      ...quadsOf(terrain.indicesByMaterial.grass, "grass"),
-      ...quadsOf(terrain.indicesByMaterial.dirt, "dirt"),
-      ...quadsOf(terrain.indicesByMaterial.stone, "stone"),
+      ...quadsOf(terrain.sideIndices.dirt, "dirt"),
+      ...quadsOf(terrain.sideIndices.stone, "stone"),
     ];
     const waterEdgeUsers = new Map<string, number>();
     for (const quad of waterQuads) {
@@ -238,7 +237,10 @@ describe("merged stepped terrain", () => {
       return Math.max(...ys) - Math.min(...ys) < 0.01;
     };
     const surfaces = allQuads.filter(isHorizontal);
-    const sides = allQuads.filter((quad) => !isHorizontal(quad));
+    const sides = [
+      ...quadsOf(terrain.sideIndices.dirt, "dirt"),
+      ...quadsOf(terrain.sideIndices.stone, "stone"),
+    ];
     // Index side quads by their footprint edge so the closure check stays fast.
     const sideSpans = new Map<string, Array<{ bottom: number; top: number }>>();
     for (const side of sides) {

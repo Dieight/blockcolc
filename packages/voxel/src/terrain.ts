@@ -15,6 +15,8 @@ export interface NaturalTreePlacement {
 export interface MergedGeometryData {
   positions: number[];
   indicesByMaterial: Record<TerrainMaterial, number[]>;
+  /** Vertical step faces, separated so the renderer can shade them darker than the sunlit tops. */
+  sideIndices: { dirt: number[]; stone: number[] };
   cellCount: number;
   triangleCount: number;
   bounds: { minX: number; maxX: number; minY: number; maxY: number; minZ: number; maxZ: number };
@@ -136,6 +138,7 @@ export function createSteppedTerrainData(
   return {
     positions,
     indicesByMaterial,
+    sideIndices: { dirt: [], stone: [] },
     cellCount: cells.size,
     triangleCount: indexCount / 3,
     bounds: { minX: -radiusX, maxX: radiusX, minY: minHeight - 0.5, maxY: maxHeight + 0.5, minZ: -radiusZ, maxZ: radiusZ },
@@ -273,6 +276,12 @@ function createNaturalTerrainDataV2(
     : null;
   const positions: number[] = [];
   const indicesByMaterial: Record<TerrainMaterial, number[]> = { grass: [], dirt: [], stone: [], water: [] };
+  const sideIndices: { dirt: number[]; stone: number[] } = { dirt: [], stone: [] };
+  const addSideQuad = (vertices: readonly number[], material: "dirt" | "stone"): void => {
+    const start = positions.length / 3;
+    positions.push(...vertices);
+    sideIndices[material].push(start, start + 1, start + 2, start, start + 2, start + 3);
+  };
   const naturalTrees: NaturalTreePlacement[] = [];
   const lodCellCounts = { near: 0, middle: 0, far: 0 };
   let minHeight = Number.POSITIVE_INFINITY;
@@ -352,10 +361,10 @@ function createNaturalTerrainDataV2(
       const neighborSize = insideNear ? 2 : insideMiddle ? 4 : 16;
       return sampleCellAt(neighborX, neighborZ, neighborSize);
     };
-    addV2CellSide(x, z, size, sample, -1, 0, neighborAt, addQuad);
-    addV2CellSide(x, z, size, sample, 1, 0, neighborAt, addQuad);
-    addV2CellSide(x, z, size, sample, 0, -1, neighborAt, addQuad);
-    addV2CellSide(x, z, size, sample, 0, 1, neighborAt, addQuad);
+    addV2CellSide(x, z, size, sample, -1, 0, neighborAt, addSideQuad);
+    addV2CellSide(x, z, size, sample, 1, 0, neighborAt, addSideQuad);
+    addV2CellSide(x, z, size, sample, 0, -1, neighborAt, addSideQuad);
+    addV2CellSide(x, z, size, sample, 0, 1, neighborAt, addSideQuad);
     lodCellCounts[lod] += 1;
     terrainSurfaceArea += size * size;
     minHeight = Math.min(minHeight, sample.height);
@@ -381,6 +390,7 @@ function createNaturalTerrainDataV2(
   return {
     positions,
     indicesByMaterial,
+    sideIndices,
     cellCount: lodCellCounts.near + lodCellCounts.middle + lodCellCounts.far,
     triangleCount: indexCount / 3,
     bounds: { minX: -farExtent, maxX: farExtent, minY: minHeight - 0.5, maxY: maxHeight + 0.5, minZ: -farExtent, maxZ: farExtent },
@@ -421,7 +431,7 @@ function addV2CellSide(
   dx: number,
   dz: number,
   sampleAt: (x: number, z: number) => V2TerrainSample,
-  addQuad: (vertices: readonly number[], material: TerrainMaterial) => void,
+  addQuad: (vertices: readonly number[], material: "dirt" | "stone") => void,
 ): void {
   const neighbor = sampleAt(x + dx * cellSize, z + dz * cellSize);
   // Water surfaces sit 0.16 above land tops; side faces must start at the actual

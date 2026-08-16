@@ -887,6 +887,16 @@ export function createVoxelRenderer(
       geometry.addGroup(combined.length, indices.length, materialIndex);
       for (const index of indices) combined.push(index);
     });
+    // Vertical step faces share the geometry but render with darkened materials:
+    // the original textures are low-contrast light gray and a thin edge-on face
+    // reads nearly white against the terrain, so the sides get their own groups.
+    const sideIds: Array<"dirt" | "stone"> = ["dirt", "stone"];
+    sideIds.forEach((id, offset) => {
+      const indices = data.sideIndices?.[id] ?? [];
+      const materialIndex = materialIds.length + offset;
+      geometry.addGroup(combined.length, indices.length, materialIndex);
+      for (const index of indices) combined.push(index);
+    });
     geometry.setIndex(combined);
     geometry.computeVertexNormals();
     // Terrain surfaces retexture through pack tiles when the pack provides them;
@@ -895,11 +905,20 @@ export function createVoxelRenderer(
     const dirtPack = packTileMaterial("minecraft:dirt", "up");
     const stonePack = packTileMaterial("minecraft:stone", "up");
     canvas.dataset.terrainPackTextured = String(grassPack !== null || dirtPack !== null || stonePack !== null);
+    const shadeSide = (base: THREE.Material): THREE.Material => {
+      const clone = base.clone();
+      if (clone instanceof THREE.MeshStandardMaterial || clone instanceof THREE.MeshLambertMaterial) {
+        clone.color = clone.color.clone().multiplyScalar(0.72);
+      }
+      return clone;
+    };
     const mesh = new THREE.Mesh(geometry, [
       grassPack ?? material("grass"),
       dirtPack ?? material("dirt"),
       stonePack ?? material("terrainStone"),
       material("terrainWater"),
+      shadeSide(dirtPack ?? material("dirt")),
+      shadeSide(stonePack ?? material("terrainStone")),
     ]);
     mesh.receiveShadow = true;
     mesh.castShadow = false;
