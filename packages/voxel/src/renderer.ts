@@ -457,6 +457,7 @@ export function createVoxelRenderer(
   let constructionPulseCount = 0;
   let contentBounds = defaultContentBounds();
   let visibilityBounds = defaultContentBounds();
+  let terrainBoundsBox = defaultContentBounds();
   let visibilityNearestDistance = 0;
   let visibilityFarthestDistance = 0;
   let currentWeather: WeatherState = weatherForLocalDate(localDateForDate(new Date()));
@@ -880,6 +881,10 @@ export function createVoxelRenderer(
   }
 
   function addTerrain(data: MergedGeometryData): void {
+    terrainBoundsBox = new THREE.Box3(
+      new THREE.Vector3(data.bounds.minX, data.bounds.minY, data.bounds.minZ),
+      new THREE.Vector3(data.bounds.maxX, data.bounds.maxY, data.bounds.maxZ),
+    );
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute("position", new THREE.Float32BufferAttribute(data.positions, 3));
     geometry.setAttribute("uv", new THREE.Float32BufferAttribute(createPlanarQuadUvs(data.positions), 2));
@@ -1584,8 +1589,13 @@ export function createVoxelRenderer(
     // V16 expanded the world far beyond contentBounds and the sky must follow it.
     const contentSize = contentBounds.getSize(new THREE.Vector3());
     const visibleSize = visibilityBounds.getSize(new THREE.Vector3());
-    const spanX = Math.max(32, visibleSize.x + 24);
-    const spanZ = Math.max(28, visibleSize.z + 24);
+    // Compact worlds (classic island) have no natural ring: the sky must hug the
+    // island instead of spreading over the settlement framing, which can be wider
+    // than the island itself.
+    const compact = visibleSize.x < contentSize.x * 2.2 && visibleSize.z < contentSize.z * 2.2;
+    const terrainSize = terrainBoundsBox.getSize(new THREE.Vector3());
+    const spanX = compact ? Math.max(32, terrainSize.x * 1.05) : Math.max(32, visibleSize.x + 24);
+    const spanZ = compact ? Math.max(28, terrainSize.z * 1.05) : Math.max(28, visibleSize.z + 24);
     const cloudBase = Math.max(20, visibilityBounds.max.y + 9);
     // Rebuild when the terrain envelope changed (environment style switch resizes
     // the whole visible world), not only when the date rolls over.
@@ -1600,7 +1610,7 @@ export function createVoxelRenderer(
     const contentArea = Math.max(1, contentSize.x * contentSize.z);
     const spreadRatio = Math.min(24, Math.max(1, (visibleSize.x * visibleSize.z) / contentArea));
     canvas.dataset.cloudSpanX = String(Math.round(spanX));
-    const cloudCount = Math.min(85, Math.max(1, Math.round(currentWeather.cloudCount * qualityProfile.weatherDensity * spreadRatio)));
+    const cloudCount = Math.min(compact ? 40 : 85, Math.max(1, Math.round(currentWeather.cloudCount * qualityProfile.weatherDensity * spreadRatio)));
     const cloudGeometry = new THREE.BoxGeometry(1, 1, 1);
     cloudMaterial = new THREE.MeshLambertMaterial({
       color: currentLighting.cloudColor,
@@ -1614,7 +1624,7 @@ export function createVoxelRenderer(
     const cloudBlocks: number[] = [];
     const raining = currentWeather.kind === "rain";
     const instanceCap = 900;
-    const distantCount = raining ? 2 : Math.min(5, 2 + Math.round(qualityProfile.weatherDensity * 2));
+    const distantCount = compact ? 0 : raining ? 2 : Math.min(5, 2 + Math.round(qualityProfile.weatherDensity * 2));
     const distantBudget = distantCount * 16;
     let totalInstances = 0;
     for (let cloudIndex = 0; cloudIndex < cloudCount; cloudIndex += 1) {
@@ -1673,7 +1683,7 @@ export function createVoxelRenderer(
       // Start right above the settlement so the short non-focus world window
       // sees clouds too, and spread all the way to the far horizon. Small worlds
       // (classic island) bias the spread inward so most clouds stay over the land.
-      const spreadBias = spanX > 400 ? 0.85 : 1.6;
+      const spreadBias = compact ? 2.1 : spanX > 400 ? 0.85 : 1.6;
       const radius = 0.03 + 0.95 * Math.pow(random(), spreadBias);
       placeBlocks(kind, cloudBlocks[cloudIndex]!, radius);
     });
