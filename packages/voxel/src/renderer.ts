@@ -325,6 +325,8 @@ export function createVoxelRenderer(
     previewMode?: boolean;
     /** Diagnostic mode: every part renders in a flat distinct color so visual bugs can be attributed. */
     debugFlatColors?: boolean;
+    /** Diagnostic mode: real materials against a pure-black backdrop with fog off, so geometric holes read as black pixels and fog-faded faces keep their material color. */
+    debugVoidScan?: boolean;
     readNativeInput?: () => NativeInputSample | null;
     subscribeNativeInput?: (listener: (sample: NativeInputSample) => void) => Promise<() => Promise<void>>;
   } = {},
@@ -1771,10 +1773,10 @@ export function createVoxelRenderer(
   }
 
   function applyAtmosphere(): void {
-    if (options.debugFlatColors) {
-      // Diagnostics: pure-black background, no sky/clouds, so any dark pixel
+    if (options.debugFlatColors || options.debugVoidScan) {
+      // Diagnostics: pure-black background, no sky/clouds/fog, so any dark pixel
       // inside the terrain silhouette is a real hole, never an AA blend that
-      // happens to match the sampled sky color.
+      // happens to match the sampled sky color, and never a fog-faded face.
       renderer.setClearColor(0x000000, 1);
       scene.fog = null;
       skyGroup.visible = false;
@@ -1793,7 +1795,19 @@ export function createVoxelRenderer(
 
   function updateFogDistances(): void {
     if (!(scene.fog instanceof THREE.Fog)) return;
-    const radius = Math.max(6, contentBounds.getSize(new THREE.Vector3()).length() / 2);
+    const coreRadius = Math.max(6, contentBounds.getSize(new THREE.Vector3()).length() / 2);
+    // The fog horizon must track the actual terrain extent. Natural valleys
+    // reach far past the settlement framing (up to 720 units) while the camera
+    // fit stays tied to the settlement core; a core-sized fog range then fades
+    // every distant mountain face into a flat void-colored wall. Terrain half
+    // extent / 6 keeps the six-radius weather formula while placing full fog
+    // just past the terrain edge. Compact islands keep the core radius, which
+    // is larger than their terrain extent, so their fog is unchanged.
+    const terrainHalfExtent = Math.max(
+      Math.abs(terrainBoundsBox.min.x), Math.abs(terrainBoundsBox.max.x),
+      Math.abs(terrainBoundsBox.min.z), Math.abs(terrainBoundsBox.max.z),
+    );
+    const radius = Math.max(coreRadius, terrainHalfExtent / 6);
     const range = fogRangeForView(currentWeather.kind, cameraDistance, radius);
     scene.fog.near = range.near;
     scene.fog.far = range.far;

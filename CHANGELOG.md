@@ -5,11 +5,12 @@ User-facing release notes are kept here; internal diagnosis and per-run evidence
 ## v1.4.0 - unreleased
 
 - The settlement world now stays resident across tab switches: returning to the timer shows the world instantly with the same camera, and nothing renders in the background while you are away.
-- The focus screen becomes fully immersive: the world fills the whole screen, the info band floats on a soft gradient, and the end control hides until a double-tap on the band (a one-time hint explains the gesture).
+- The focus screen becomes fully immersive: the world fills the whole screen behind a frosted-glass band, the end control hides until a double-tap on the band (a one-time hint explains the gesture), and the integrity count pops up as a chip only when it changes.
 - Starting a round and finishing it now pulse the construction site, and each finished round grows the current building.
 - Imported resource packs now visibly retexture the settlement terrain and trees, and switching packs applies immediately without leaving the page.
 - Renamed blueprint labels now appear everywhere the world speaks a building's name.
-- Shoreline water surfaces no longer show thin bright seams, and the typed cloud clusters now spread across the whole visible terrain.
+- Shoreline water surfaces no longer show thin bright seams. Typed cloud clusters (cirrus, cumulus, stratus, storm) keep their researched shapes but render as crisp stacked blocks again, spread across the whole visible sky with a few large thick clouds hugging the far horizon.
+- Natural-valley mountains no longer bleach into flat void-colored walls: the fog horizon now follows the terrain extent, distant slopes keep their material colors under a light haze, and compact islands keep their original fog. The double-tap hint on the focus screen now fades on the same five-second rhythm as the end control.
 
 ## v1.3.2 - 2026-08-14
 

@@ -126,6 +126,11 @@ test('creates a project, renders the world and persists focus state', async ({ p
   const canvasPng = await canvas.screenshot();
   expect(canvasPng.byteLength).toBeGreaterThan(2_000);
   await startFocus(page);
+  // The double-tap hint follows the same five-second rhythm as the end control.
+  const hint = page.locator('.immersive-hint');
+  await expect(hint).not.toHaveClass(/is-faded/);
+  await page.waitForTimeout(5_500);
+  await expect(hint).toHaveClass(/is-faded/);
   await revealFocusControls(page);
   // The revealed end control auto-hides after five seconds.
   await expect(page.getByRole('button', { name: '结束本次专注' })).toBeVisible();
