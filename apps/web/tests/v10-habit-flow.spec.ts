@@ -26,7 +26,11 @@ async function revealFocusControls(page: import('@playwright/test').Page) {
   throw new Error('Focus controls did not reveal after repeated double-taps');
 }
 test('runs a repeatable habit building cycle with frozen targets and stable completed buildings', async ({ page }, testInfo) => {
-  test.setTimeout(60_000); // Ten early-completed rounds plus a second WebGL preview renderer for the next-building picker exceed the default budget on shared GPUs.
+  // Ten early-completed rounds plus a second WebGL preview renderer for the
+  // next-building picker exceed the default budget on shared GPUs; the local
+  // gate machine can additionally drift with thermal/background state, so the
+  // budget stays above the measured 41-72 s spread.
+  test.setTimeout(90_000);
   await page.setViewportSize({ width: 412, height: 915 });
   await page.goto('/');
   await page.getByRole('button', { name: '习惯任务' }).click();

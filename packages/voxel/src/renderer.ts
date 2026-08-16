@@ -947,7 +947,11 @@ export function createVoxelRenderer(
     const shadeSide = (base: THREE.Material): THREE.Material => {
       const clone = base.clone();
       if (clone instanceof THREE.MeshStandardMaterial || clone instanceof THREE.MeshLambertMaterial) {
-        clone.color = clone.color.clone().multiplyScalar(0.72);
+        // Side textures are near-white (229 base) procedural grays. A gentle
+        // multiplier still clips to pure white under the low-sun directional
+        // light, which is exactly the reported "white step faces"; 0.4 keeps
+        // the same faces in the mid-gray range under any sun angle.
+        clone.color = clone.color.clone().multiplyScalar(0.4);
       }
       return clone;
     };

@@ -12,6 +12,7 @@ User-facing release notes are kept here; internal diagnosis and per-run evidence
 - Shoreline water surfaces no longer show thin bright seams. Typed cloud clusters (cirrus, cumulus, stratus, storm) keep their researched shapes but render as crisp stacked blocks again, spread across the whole visible sky with a few large thick clouds hugging the far horizon.
 - Natural-valley mountains no longer bleach into flat void-colored walls: the fog horizon now follows the terrain extent, distant slopes keep their material colors under a light haze, and compact islands keep their original fog. The double-tap hint on the focus screen now fades on the same five-second rhythm as the end control.
 - Step faces in natural valleys no longer leave hairline gaps at cell corners: bright sky no longer bleeds through staircase corners by day (or stars by night), in both new worlds and existing worlds.
+- Terrain step faces no longer bloom white: their near-white procedural textures are shaded down so low-sun light and settlement lamps keep them in mid-gray instead of clipping to pure white.
 
 ## v1.3.2 - 2026-08-14
 
