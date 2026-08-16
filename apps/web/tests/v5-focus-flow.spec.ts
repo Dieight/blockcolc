@@ -147,15 +147,17 @@ test('keeps the ordinary timer workbench within a mobile viewport', async ({ pag
   await page.setViewportSize({ width: 412, height: 915 });
   const primary = page.getByRole('button', { name: '开始 1 轮' });
   const navigation = page.getByRole('button', { name: '计时', exact: true });
-  const [primaryBox, navigationBox, pageOffset] = await Promise.all([
+  const [primaryBox, navigationBox] = await Promise.all([
     primary.boundingBox(),
     navigation.boundingBox(),
-    page.evaluate(() => { window.scrollTo(0, document.documentElement.scrollHeight); return window.scrollY; }),
   ]);
   expect(primaryBox).not.toBeNull();
   expect(navigationBox).not.toBeNull();
   expect(primaryBox!.y + primaryBox!.height).toBeLessThanOrEqual(navigationBox!.y + 1);
-  expect(pageOffset).toBe(0);
+  await expect.poll(async () => page.evaluate(() => {
+    window.scrollTo(0, document.documentElement.scrollHeight);
+    return window.scrollY;
+  })).toBe(0);
   await expect(page.locator('.timer')).toHaveCSS('font-size', '64px');
   await page.screenshot({ path: testInfo.outputPath('v8-timer-portrait.png'), fullPage: true });
 });
@@ -185,14 +187,16 @@ test('keeps the ordinary timer workbench within a mobile landscape viewport', as
   await page.setViewportSize({ width: 915, height: 412 });
   await createDefaultProject(page);
   const primary = page.getByRole('button', { name: '开始 1 轮' });
-  const [primaryBox, pageOffset, viewportHeight] = await Promise.all([
+  const [primaryBox, viewportHeight] = await Promise.all([
     primary.boundingBox(),
-    page.evaluate(() => { window.scrollTo(0, document.documentElement.scrollHeight); return window.scrollY; }),
     page.evaluate(() => window.innerHeight),
   ]);
   expect(primaryBox).not.toBeNull();
   expect(primaryBox!.y + primaryBox!.height).toBeLessThanOrEqual(viewportHeight + 1);
-  expect(pageOffset).toBe(0);
+  await expect.poll(async () => page.evaluate(() => {
+    window.scrollTo(0, document.documentElement.scrollHeight);
+    return window.scrollY;
+  })).toBe(0);
   await page.screenshot({ path: testInfo.outputPath('v8-timer-landscape.png'), fullPage: true });
 });
 

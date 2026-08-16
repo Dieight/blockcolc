@@ -207,6 +207,7 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
   const lastExcursionsRef = useRef<number | null>(null);
   const lastTapRef = useRef<{ time: number; x: number; y: number } | null>(null);
   const revealTimerRef = useRef<number | null>(null);
+  const hideTimerRef = useRef<number | null>(null);
   const [constructionFeedback, setConstructionFeedback] = useState(0);
   const reconciling = useRef(false);
   const latestSuccess = lastSuccessfulSession(state.focusHistory);
@@ -261,6 +262,8 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
     // timer can never surface the end button inside the next session.
     if (revealTimerRef.current !== null) window.clearTimeout(revealTimerRef.current);
     revealTimerRef.current = null;
+    if (hideTimerRef.current !== null) window.clearTimeout(hideTimerRef.current);
+    hideTimerRef.current = null;
     lastTapRef.current = null;
     setControlsVisible(false);
     if (!session) return;
@@ -268,6 +271,14 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
     const timer = window.setTimeout(() => setHintVisible(false), 20_000);
     return () => window.clearTimeout(timer);
   }, [session?.id]);
+  // The revealed end control stays for five seconds and then hides itself, so a
+  // focused session never keeps the red button hanging around.
+  useEffect(() => {
+    if (hideTimerRef.current !== null) window.clearTimeout(hideTimerRef.current);
+    hideTimerRef.current = null;
+    if (!controlsVisible || !session) return;
+    hideTimerRef.current = window.setTimeout(() => setControlsVisible(false), 5_000);
+  }, [controlsVisible, session?.id]);
   const handlePanelTap = useCallback((event: { target: EventTarget | null; clientX: number; clientY: number }) => {
     if (!session || (event.target instanceof Element && event.target.closest('button'))) return;
     const now = performance.now();
@@ -297,7 +308,7 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
     lastExcursionsRef.current = count;
     if (previous !== null && count <= previous) return;
     setIntegrityFlash(true);
-    const timer = window.setTimeout(() => setIntegrityFlash(false), 6_000);
+    const timer = window.setTimeout(() => setIntegrityFlash(false), 5_000);
     return () => window.clearTimeout(timer);
   }, [session?.id, session?.integrity.effectiveExcursions, state.focusIntegrityPolicy.enabled]);
   useEffect(() => {

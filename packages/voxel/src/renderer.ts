@@ -926,6 +926,12 @@ export function createVoxelRenderer(
     texture.wrapT = THREE.RepeatWrapping;
     texture.repeat.set(rect.u1 - rect.u0, rect.v1 - rect.v0);
     texture.offset.set(rect.u0, rect.v0);
+    // Sample only the tile rect at full resolution: mipmaps blend across the
+    // atlas gutter (white padding) and bleach distant terrain sides white.
+    texture.generateMipmaps = false;
+    texture.minFilter = THREE.LinearFilter;
+    texture.magFilter = THREE.LinearFilter;
+    texture.anisotropy = 1;
     texture.needsUpdate = true;
     terrainPackTextures.push(texture);
     return new THREE.MeshStandardMaterial({ color: 0xffffff, map: texture, roughness: 0.94, metalness: 0 });
@@ -1568,7 +1574,7 @@ export function createVoxelRenderer(
     const contentArea = Math.max(1, contentSize.x * contentSize.z);
     const spreadRatio = Math.min(24, Math.max(1, (visibleSize.x * visibleSize.z) / contentArea));
     canvas.dataset.cloudSpanX = String(Math.round(spanX));
-    const cloudCount = Math.min(320, Math.max(1, Math.round(currentWeather.cloudCount * qualityProfile.weatherDensity * spreadRatio)));
+    const cloudCount = Math.min(170, Math.max(1, Math.round(currentWeather.cloudCount * qualityProfile.weatherDensity * spreadRatio)));
     const cloudGeometry = new THREE.BoxGeometry(1, 1, 1);
     cloudMaterial = new THREE.MeshLambertMaterial({
       color: currentLighting.cloudColor,
@@ -1582,7 +1588,7 @@ export function createVoxelRenderer(
     const cloudBlocks: number[] = [];
     const raining = currentWeather.kind === "rain";
     const instanceCap = 900;
-    const distantCount = raining ? 4 : Math.min(14, 5 + Math.round(qualityProfile.weatherDensity * 5));
+    const distantCount = raining ? 3 : Math.min(10, 3 + Math.round(qualityProfile.weatherDensity * 4));
     const distantBudget = distantCount * 16;
     let totalInstances = 0;
     for (let cloudIndex = 0; cloudIndex < cloudCount; cloudIndex += 1) {
@@ -1639,7 +1645,9 @@ export function createVoxelRenderer(
       }
     };
     cloudKinds.forEach((kind, cloudIndex) => {
-      const radius = 0.3 + 0.68 * Math.pow(random(), 0.8);
+      // Start right above the settlement so the short non-focus world window
+      // sees clouds too, and spread all the way to the far horizon.
+      const radius = 0.03 + 0.95 * Math.pow(random(), 0.85);
       placeBlocks(kind, cloudBlocks[cloudIndex]!, radius);
     });
     for (const blocks of distantBlocks) placeBlocks("distant", blocks, 0.72 + random() * 0.26);

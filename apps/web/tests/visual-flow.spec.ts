@@ -127,6 +127,10 @@ test('creates a project, renders the world and persists focus state', async ({ p
   expect(canvasPng.byteLength).toBeGreaterThan(2_000);
   await startFocus(page);
   await revealFocusControls(page);
+  // The revealed end control auto-hides after five seconds.
+  await expect(page.getByRole('button', { name: '结束本次专注' })).toBeVisible();
+  await page.waitForTimeout(5_500);
+  await expect(page.getByRole('button', { name: '结束本次专注' })).toBeHidden();
   await page.reload();
   await revealFocusControls(page);
   await interruptFocus(page);
