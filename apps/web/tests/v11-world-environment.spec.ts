@@ -8,6 +8,8 @@ test('switches the derived world environment without moving project data', async
   await expect(canvas).toHaveAttribute('data-environment-style', 'natural-valley');
   await expect.poll(async () => Number(await canvas.getAttribute('data-natural-tree-count'))).toBeGreaterThan(0);
   await expect.poll(async () => Number(await canvas.getAttribute('data-terrain-water-triangles'))).toBeGreaterThan(0);
+  const naturalSpan = Number(await canvas.getAttribute('data-cloud-span-x'));
+  expect(naturalSpan).toBeGreaterThan(1_000);
   const natural = await canvas.screenshot({ path: testInfo.outputPath('v11-natural-valley.png') });
   expect(natural.byteLength).toBeGreaterThan(2_000);
 
@@ -21,6 +23,9 @@ test('switches the derived world environment without moving project data', async
   await page.getByRole('button', { name: '计时', exact: true }).click();
   await expect(canvas).toHaveAttribute('data-environment-style', 'classic-island');
   await expect(canvas).toHaveAttribute('data-natural-tree-count', '0');
+  // The sky rebuilds with the environment: clouds must match the small island,
+  // not keep the natural valley's wide envelope.
+  await expect.poll(async () => Number(await canvas.getAttribute('data-cloud-span-x'))).toBeLessThan(naturalSpan / 2);
   await expect(page.getByText('林边聚落 · 1 栋')).toBeVisible();
 });
 

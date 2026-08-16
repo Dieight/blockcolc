@@ -560,6 +560,9 @@ export function createVoxelRenderer(
   let shadowExtent = 18;
   let cloudMaterial: THREE.MeshLambertMaterial | null = null;
   let cloudBlockCount = 0;
+  let cloudsBuiltSpanX = 0;
+  let cloudsBuiltSpanZ = 0;
+  let cloudsBuiltBaseY = 0;
   const previewMode = options.previewMode === true;
   let naturalTreeMeshes: { trunks: THREE.InstancedMesh; crowns: THREE.InstancedMesh; total: number } | null = null;
   let rainAnimation: { mesh: THREE.InstancedMesh; drops: readonly { x: number; z: number; phase: number }[]; baseY: number; spanY: number; elapsedMs: number; lastUpdateMs: number } | null = null;
@@ -1577,19 +1580,23 @@ export function createVoxelRenderer(
   }
 
   function updateWeather(localDate: string, force = false): void {
-    if (!force && currentWeather.localDate === localDate) return;
-    currentWeather = weatherForLocalDate(localDate);
-    clearGroup(atmosphereGroup, true);
-    cloudMaterial = null;
-    rainAnimation = null;
-    cloudBlockCount = 0;
-    const random = seededRandom(currentWeather.seed);
     // Clouds and rain cover the full visible terrain, not just the settlement core:
     // V16 expanded the world far beyond contentBounds and the sky must follow it.
     const contentSize = contentBounds.getSize(new THREE.Vector3());
     const visibleSize = visibilityBounds.getSize(new THREE.Vector3());
     const spanX = Math.max(32, visibleSize.x + 24);
     const spanZ = Math.max(28, visibleSize.z + 24);
+    const cloudBase = Math.max(20, visibilityBounds.max.y + 9);
+    // Rebuild when the terrain envelope changed (environment style switch resizes
+    // the whole visible world), not only when the date rolls over.
+    if (!force && currentWeather.localDate === localDate
+      && cloudsBuiltSpanX === spanX && cloudsBuiltSpanZ === spanZ && cloudsBuiltBaseY === cloudBase) return;
+    currentWeather = weatherForLocalDate(localDate);
+    clearGroup(atmosphereGroup, true);
+    cloudMaterial = null;
+    rainAnimation = null;
+    cloudBlockCount = 0;
+    const random = seededRandom(currentWeather.seed);
     const contentArea = Math.max(1, contentSize.x * contentSize.z);
     const spreadRatio = Math.min(24, Math.max(1, (visibleSize.x * visibleSize.z) / contentArea));
     canvas.dataset.cloudSpanX = String(Math.round(spanX));
@@ -1636,7 +1643,6 @@ export function createVoxelRenderer(
     // the terrain silhouette: near ones float in the middle of the frame and far
     // ones ride the fogged horizon. Fog is off on the material so even the far
     // clouds stay crisp white against the hazy sky instead of dissolving into it.
-    const cloudBase = Math.max(20, visibilityBounds.max.y + 9);
     let instanceIndex = 0;
     const placeBlocks = (kind: "cirrus" | "cumulus" | "stratus" | "storm" | "distant", blocks: number, radius: number): void => {
       const angle = random() * Math.PI * 2;
@@ -1694,6 +1700,9 @@ export function createVoxelRenderer(
     }
     applyAtmosphere();
     cacheStaticTransformTree(atmosphereGroup);
+    cloudsBuiltSpanX = spanX;
+    cloudsBuiltSpanZ = spanZ;
+    cloudsBuiltBaseY = cloudBase;
   }
 
   function updateRainAnimation(nowMs: number): void {
