@@ -140,6 +140,7 @@ export function createSteppedTerrainData(
     addExposedSide(x, z, top, 0, -1, cellSize, sideStride, cells, waterCells, addSideQuad);
     addExposedSide(x, z, top, 0, 1, cellSize, sideStride, cells, waterCells, addSideQuad);
   }
+  closeV2CornerSlits(positions, indicesByMaterial, sideIndices);
   const indexCount = Object.values(indicesByMaterial).reduce((sum, indices) => sum + indices.length, 0)
     + sideIndices.dirt.length + sideIndices.stone.length;
   return {
@@ -393,6 +394,8 @@ function createNaturalTerrainDataV2(
   addV2LodSquare(middleExtent, nearExtent, 4, (x, z) => addCell(x, z, 4, "middle"));
   addV2LodSquare(farExtent, middleExtent, 16, (x, z) => addCell(x, z, 16, "far"));
 
+  closeV2CornerSlits(positions, indicesByMaterial, sideIndices);
+
   const indexCount = Object.values(indicesByMaterial).reduce((sum, indices) => sum + indices.length, 0)
     + sideIndices.dirt.length + sideIndices.stone.length;
   return {
@@ -428,6 +431,134 @@ function addV2LodSquare(extent: number, innerExtent: number, cellSize: number, a
       if (innerExtent > 0 && Math.abs(x) < innerExtent && Math.abs(z) < innerExtent) continue;
       add(x, z);
     }
+  }
+}
+
+/**
+ * Closes the sky-visible slits left at cell corners. Step side faces are built
+ * per edge, so when cells of different heights meet at a corner (diagonal
+ * steps, or the near/middle/far ring boundaries where the cell grids do not
+ * align), the vertical column at the corner can stay uncovered between two
+ * surface levels: bright sky bleeds through by day, stars by night. A scan
+ * over the built quads finds every uncovered band and seals it with a
+ * hairline double-sided sliver, which is sub-pixel at phone scale.
+ */
+function closeV2CornerSlits(
+  positions: number[],
+  indicesByMaterial: Record<TerrainMaterial, number[]>,
+  sideIndices: { dirt: number[]; stone: number[] },
+): void {
+  const round = (value: number) => Math.round(value * 1000) / 1000;
+  const key = (x: number, z: number) => `${x}|${z}`;
+  type Span = { bottom: number; top: number };
+  const cornerHeights = new Map<string, number[]>();
+  const collectTops = (indices: readonly number[]) => {
+    for (let offset = 0; offset < indices.length; offset += 6) {
+      const unique = [...new Set([indices[offset]!, indices[offset + 1]!, indices[offset + 2]!, indices[offset + 3]!, indices[offset + 5]!])];
+      for (const index of unique) {
+        const x = round(positions[index * 3]!);
+        const y = round(positions[index * 3 + 1]!);
+        const z = round(positions[index * 3 + 2]!);
+        const k = key(x, z);
+        const list = cornerHeights.get(k) ?? [];
+        if (!list.includes(y)) list.push(y);
+        cornerHeights.set(k, list);
+      }
+    }
+  };
+  collectTops(indicesByMaterial.grass);
+  collectTops(indicesByMaterial.dirt);
+  collectTops(indicesByMaterial.stone);
+  collectTops(indicesByMaterial.water);
+  const cornerSpans = new Map<string, Span[]>();
+  const register = (x: number, z: number, bottom: number, top: number) => {
+    const k = key(x, z);
+    const spans = cornerSpans.get(k) ?? [];
+    spans.push({ bottom, top });
+    cornerSpans.set(k, spans);
+  };
+  // Index the corner positions by plan line so half-integer grids (legacy
+  // cell size 1) and integer grids (V2 rings) both resolve exactly.
+  const cornersByX = new Map<number, Array<{ z: number }>>();
+  const cornersByZ = new Map<number, Array<{ x: number }>>();
+  for (const k of cornerHeights.keys()) {
+    const [x, z] = k.split("|").map(Number) as [number, number];
+    const byX = cornersByX.get(x) ?? [];
+    byX.push({ z });
+    cornersByX.set(x, byX);
+    const byZ = cornersByZ.get(z) ?? [];
+    byZ.push({ x });
+    cornersByZ.set(z, byZ);
+  }
+  const collectSides = (indices: readonly number[]) => {
+    for (let offset = 0; offset < indices.length; offset += 6) {
+      const unique = [...new Set([indices[offset]!, indices[offset + 1]!, indices[offset + 2]!, indices[offset + 3]!, indices[offset + 5]!])];
+      const corners = unique.map((index) => ({
+        x: round(positions[index * 3]!),
+        y: round(positions[index * 3 + 1]!),
+        z: round(positions[index * 3 + 2]!),
+      }));
+      const ends: Array<{ x: number; z: number }> = [];
+      for (let corner = 0; corner < 4; corner += 1) {
+        const a = corners[corner]!;
+        const b = corners[(corner + 1) % 4]!;
+        if (a.x === b.x && a.z === b.z) ends.push(a);
+      }
+      if (ends.length !== 2) continue;
+      const ys = corners.map((corner) => corner.y);
+      const bottom = Math.min(...ys);
+      const top = Math.max(...ys);
+      const [p0, p1] = ends as [{ x: number; z: number }, { x: number; z: number }];
+      const minX = Math.min(p0.x, p1.x);
+      const maxX = Math.max(p0.x, p1.x);
+      const minZ = Math.min(p0.z, p1.z);
+      const maxZ = Math.max(p0.z, p1.z);
+      if (minX === maxX) {
+        for (const { z } of cornersByX.get(minX) ?? []) {
+          if (z >= minZ - 0.011 && z <= maxZ + 0.011) register(minX, z, bottom, top);
+        }
+      } else if (minZ === maxZ) {
+        for (const { x } of cornersByZ.get(minZ) ?? []) {
+          if (x >= minX - 0.011 && x <= maxX + 0.011) register(x, minZ, bottom, top);
+        }
+      } else {
+        register(round(p0.x), round(p0.z), bottom, top);
+        register(round(p1.x), round(p1.z), bottom, top);
+      }
+    }
+  };
+  collectSides(sideIndices.dirt);
+  collectSides(sideIndices.stone);
+  const sliverWidth = 0.05;
+  for (const [k, heights] of cornerHeights) {
+    if (heights.length < 2) continue;
+    const low = Math.min(...heights);
+    const high = Math.max(...heights);
+    const spans = cornerSpans.get(k) ?? [];
+    let cursor = low;
+    let closed = false;
+    for (let pass = 0; pass < spans.length + 1; pass += 1) {
+      const next = Math.max(cursor, ...spans.filter((span) => span.bottom <= cursor + 0.011).map((span) => span.top));
+      if (next >= high - 0.011) { closed = true; break; }
+      if (next <= cursor) break;
+      cursor = next;
+    }
+    if (closed) continue;
+    const [cx, cz] = k.split("|").map(Number) as [number, number];
+    const material: "dirt" | "stone" = (cursor + high) / 2 >= 12 ? "stone" : "dirt";
+    const start = positions.length / 3;
+    positions.push(
+      cx, cursor, cz,
+      cx, high, cz,
+      cx + sliverWidth, high, cz,
+      cx + sliverWidth, cursor, cz,
+    );
+    // Double-sided hairline: both windings so the corner reads sealed from
+    // either side.
+    sideIndices[material].push(
+      start, start + 1, start + 2, start, start + 2, start + 3,
+      start, start + 3, start + 2, start, start + 2, start + 1,
+    );
   }
 }
 
