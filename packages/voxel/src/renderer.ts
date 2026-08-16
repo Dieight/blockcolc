@@ -1572,6 +1572,7 @@ export function createVoxelRenderer(
     const cloudGeometry = new THREE.BoxGeometry(1, 1, 1);
     cloudMaterial = new THREE.MeshLambertMaterial({
       color: currentLighting.cloudColor,
+      fog: false,
     });
     // Typed clouds keep the researched shapes (cirrus wisps high up, puffy cumulus,
     // flat stratus bands, tall storm towers) but render as crisp stacked blocks like
@@ -1606,7 +1607,11 @@ export function createVoxelRenderer(
     const clouds = new THREE.InstancedMesh(cloudGeometry, cloudMaterial, totalInstances);
     const matrix = new THREE.Matrix4();
     const quaternion = new THREE.Quaternion();
-    const cloudBase = Math.max(14, visibilityBounds.max.y + 7);
+    // The camera always looks down at the settlement, so clouds live just above
+    // the terrain silhouette: near ones float in the middle of the frame and far
+    // ones ride the fogged horizon. Fog is off on the material so even the far
+    // clouds stay crisp white against the hazy sky instead of dissolving into it.
+    const cloudBase = Math.max(20, visibilityBounds.max.y + 9);
     let instanceIndex = 0;
     const placeBlocks = (kind: "cirrus" | "cumulus" | "stratus" | "storm" | "distant", blocks: number, radius: number): void => {
       const angle = random() * Math.PI * 2;
@@ -1616,18 +1621,18 @@ export function createVoxelRenderer(
         cloudBase + altitudeOffset + random() * 1.5,
         Math.sin(angle) * spanZ * radius,
       );
-      const spanLocal = kind === "distant" ? 4.6 : kind === "cirrus" ? 3.4 : kind === "stratus" ? 4.4 : 3.2;
+      const spanLocal = kind === "distant" ? 7 : kind === "cirrus" ? 5 : kind === "stratus" ? 6 : 4.6;
       const layers = kind === "distant" ? 4 + Math.floor(random() * 3) : kind === "storm" ? 3 + Math.floor(random() * 2) : kind === "cirrus" ? 1 : 2;
       for (let block = 0; block < blocks; block += 1) {
         const gx = (random() * 2 - 1) * spanLocal * (kind === "stratus" ? 0.95 : 0.75);
         const gz = (random() * 2 - 1) * spanLocal * 0.62;
         const layer = Math.floor(random() * layers);
-        const gy = layer * 0.92 + random() * 0.25;
-        const blockSize = (kind === "distant" ? 2.6 : 1.5) + random() * (kind === "distant" ? 1.6 : 1.0);
+        const gy = layer * 1.0 + random() * 0.3;
+        const blockSize = (kind === "distant" ? 5 : 3.2) + random() * (kind === "distant" ? 3 : 2.4);
         matrix.compose(
           new THREE.Vector3(center.x + gx, center.y + gy, center.z + gz),
           quaternion,
-          new THREE.Vector3(blockSize, blockSize * (0.8 + random() * 0.25), blockSize * (0.85 + random() * 0.3)),
+          new THREE.Vector3(blockSize, blockSize * (0.72 + random() * 0.3), blockSize * (0.85 + random() * 0.3)),
         );
         clouds.setMatrixAt(instanceIndex, matrix);
         instanceIndex += 1;
@@ -1646,15 +1651,18 @@ export function createVoxelRenderer(
       const rainMaterial = new THREE.MeshBasicMaterial({ color: 0xa8c5cf, transparent: true, opacity: 0.62 });
       const rain = new THREE.InstancedMesh(new THREE.BoxGeometry(0.035, 1.5, 0.035), rainMaterial, rainCount);
       const drops = Array.from({ length: rainCount }, () => ({ x: (random() - 0.5) * spanX, z: (random() - 0.5) * spanZ, phase: random() }));
+      const rainSpanY = cloudBase + 8;
       for (let index = 0; index < drops.length; index += 1) {
         const drop = drops[index]!;
-        matrix.makeTranslation(drop.x, -2 + drop.phase * 17, drop.z);
+        matrix.makeTranslation(drop.x, -2 + drop.phase * rainSpanY, drop.z);
         rain.setMatrixAt(index, matrix);
       }
       rain.instanceMatrix.needsUpdate = true;
       rain.userData.ownedMaterial = rainMaterial;
       atmosphereGroup.add(rain);
-      rainAnimation = { mesh: rain, drops, baseY: -2, spanY: 17, elapsedMs: 0, lastUpdateMs: performance.now() };
+      // Rain falls from the storm base all the way to the ground so it stays
+      // visually connected to the clouds above the camera.
+      rainAnimation = { mesh: rain, drops, baseY: -2, spanY: rainSpanY, elapsedMs: 0, lastUpdateMs: performance.now() };
       canvas.dataset.rainPhaseMs = "0";
     }
     applyAtmosphere();
