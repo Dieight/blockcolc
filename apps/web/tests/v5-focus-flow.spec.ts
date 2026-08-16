@@ -271,9 +271,11 @@ test('categorized interruption appears in local statistics', async ({ page }) =>
   await page.getByRole('button', { name: '中断本轮' }).click();
   await page.getByRole('button', { name: '任务受阻' }).click();
 
-  await expect(page.getByRole('status')).toContainText('本轮已记录');
+  // The toast announces the recorded interruption; the transient integrity chip
+  // is a separate role=status element, so scope to the toast.
+  await expect(page.locator('.toast')).toContainText('本轮已记录');
   await page.waitForTimeout(5_100);
-  await expect(page.getByRole('status')).toHaveCount(0);
+  await expect(page.locator('.toast')).toHaveCount(0);
 
   await page.getByRole('button', { name: '统计' }).click();
   const reasons = page.getByRole('heading', { name: '中断原因' }).locator('..');
