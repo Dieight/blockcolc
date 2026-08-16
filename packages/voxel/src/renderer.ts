@@ -323,6 +323,8 @@ export function createVoxelRenderer(
     onSelectProject?: (projectId: string) => void;
     /** Previews keep the camera fitted to the building while terrain extends past the viewport. */
     previewMode?: boolean;
+    /** Diagnostic mode: every part renders in a flat distinct color so visual bugs can be attributed. */
+    debugFlatColors?: boolean;
     readNativeInput?: () => NativeInputSample | null;
     subscribeNativeInput?: (listener: (sample: NativeInputSample) => void) => Promise<() => Promise<void>>;
   } = {},
@@ -572,6 +574,16 @@ export function createVoxelRenderer(
   function material(id: string): THREE.MeshStandardMaterial {
     let found = materials.get(id);
     if (!found) {
+      if (options.debugFlatColors) {
+        found = new THREE.MeshStandardMaterial({
+          color: 0x000000,
+          emissive: flatDebugColorFor(id),
+          emissiveIntensity: 1,
+          roughness: 1,
+        });
+        materials.set(id, found);
+        return found;
+      }
       const fallbackVisual = parseFallbackVisualKey(id);
       const response = materialResponse(fallbackVisual?.response ?? materialResponseForMaterialId(id));
       const terrainWater = id === "terrainWater";
@@ -606,6 +618,22 @@ export function createVoxelRenderer(
       originalMaterialTextures.set(pattern, found);
     }
     return found;
+  }
+
+  function flatDebugColorFor(id: string): number {
+    if (id === "grass") return 0x2ecc40;
+    if (id === "dirt") return 0x8b5a2b;
+    if (id === "stone" || id === "terrainStone") return 0x7f8c8d;
+    if (id === "terrainWater") return 0x2a7fff;
+    if (id === "path") return 0xff3333;
+    if (id === "wood") return 0xffff00;
+    if (id === "leaves") return 0x33cc33;
+    if (id === "terrainLava") return 0xff4400;
+    return 0xff00e0;
+  }
+
+  function flatDebugMaterial(color: number): THREE.MeshStandardMaterial {
+    return new THREE.MeshStandardMaterial({ color: 0x000000, emissive: color, emissiveIntensity: 1, roughness: 1 });
   }
 
   function pollGpuTimer(): void {
@@ -920,7 +948,14 @@ export function createVoxelRenderer(
       }
       return clone;
     };
-    const mesh = new THREE.Mesh(geometry, [
+    const mesh = new THREE.Mesh(geometry, options.debugFlatColors ? [
+      flatDebugMaterial(0x2ecc40), // grass
+      flatDebugMaterial(0x8b5a2b), // dirt
+      flatDebugMaterial(0x7f8c8d), // stone
+      flatDebugMaterial(0x2a7fff), // water
+      flatDebugMaterial(0xff00e0), // side dirt (magenta)
+      flatDebugMaterial(0xff7b00), // side stone (orange)
+    ] : [
       grassPack ?? material("grass"),
       dirtPack ?? material("dirt"),
       stonePack ?? material("terrainStone"),

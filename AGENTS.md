@@ -29,6 +29,7 @@
 - 每次改动：`npm run typecheck`、`npm test`、相关 E2E（`npm run test:e2e -w @tomato-clock/web -- --workers=1 <specs>`）。
 - 每个版本必须在授权真机上完成人工验收（OnePlus PJX110 `a50247d1` 与小米 22011211C `8LN7KRR4UCV4S8OJ`，以当时接入的设备为准）；候选 APK 在每个边界（构建→拷贝→装机→GitHub 重下载）核对 SHA-256。
 - **设备占用检查**：任何真机验收/发布脚本在启动应用前会检查前台应用，设备被占用时拒绝执行（发布脚本可用 `-AllowBusyDevice` 显式豁免）。手动验收连点前先跑 `.\tools\Precheck-Device.ps1`，横屏或前台是第三方应用时禁止 tap。
+- **多用户/分身安装冲突（2026-08-16 排查结论）**：OnePlus 系统分身（`system_clone`，User 10）/ 小米 XSpace（User 999）会保留应用自己的安装副本；`adb install` 只作用于机主（User 0）。当分身里装着更高版本时，向机主安装低版本报「已安装高版本无法安装」，即使机主已卸载。**与软件无关**（APK 未声明任何多用户特性），是厂商分身 + Android 跨用户版本一致性检查。处理：`adb shell pm list users` + `pm list packages --user all com.blockcolc.app` 定位，`adb shell pm uninstall --user <分身ID> com.blockcolc.app` 后再安装。
 - 版本号提升与正式发布必须得到用户**明确授权**；日常开发不提升版本号。
 - 发布流程：改 `version.json` → `node tools/sync-version.mjs --write` → 更新 `CHANGELOG.md` 与 `docs/versions/V*.md` → 全部 stage → `.\tools\Prepare-Release.ps1`（跑全部门禁并装机）→ 用户授权后 `.\tools\Publish-Release.ps1 -ConfirmPublish -ReleaseNotesPath <path>`（提交、打 tag、GitHub Release、重下载校验）。
 - **CI 绿色门槛**：`Publish-Release.ps1` 默认要求发布前 HEAD 的 CI 运行已 success，并等待发布提交自己的 CI 运行结束并记入 evidence；红色分支禁止发布，确认为环境性偶发的失败须用 `-AllowRedCi` 豁免并记录原因。
