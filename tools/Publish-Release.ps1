@@ -85,7 +85,7 @@ try {
         while ((Get-Date) -lt $deadline) {
             $releaseRun = Get-CiRunForCommit -CommitSha $commit
             if ($releaseRun -and $releaseRun.status -eq 'completed') {
-                $releaseCiRunId = [int]$releaseRun.databaseId
+                $releaseCiRunId = [long]$releaseRun.databaseId
                 $releaseCiConclusion = [string]$releaseRun.conclusion
                 break
             }
