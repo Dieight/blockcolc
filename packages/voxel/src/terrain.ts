@@ -271,7 +271,15 @@ function createNaturalTerrainDataV2(
   terrainGenerationVersion: 2 | 3 | 4,
 ): MergedGeometryData {
   const nearExtent = alignTo(Math.max(80, coreRadius + 28), 8);
-  const middleExtent = alignTo(Math.max(160, nearExtent + 64), 8);
+  // Every ring boundary must land exactly on the next ring's cell lattice or
+  // the rings overlap (far cells intruding into the middle square leave
+  // interior steps whose sides nobody builds — the reported boundary rows of
+  // white faces at whatever extent a large settlement pushes the rings to).
+  // Near cells are odd-centered (edges on multiples of 2, so nearExtent
+  // aligns to 8), middle cells are 2 mod 4 (edges on multiples of 4), and far
+  // cells are 8 mod 16 (edges on multiples of 16) — the middle extent must
+  // therefore be a multiple of 16 and the near extent a multiple of 4/8.
+  const middleExtent = alignTo(Math.max(160, nearExtent + 64), 16);
   // The camera can see well beyond the settlement framing box on tall mobile
   // viewports. Keep the far envelope outside that frustum so the square LOD
   // boundary never becomes the visual horizon.
