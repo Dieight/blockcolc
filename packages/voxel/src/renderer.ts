@@ -811,7 +811,6 @@ export function createVoxelRenderer(
   let ambientFrameIntervalMs = 250;
   let lastAmbientFrameStartedMs = Number.NEGATIVE_INFINITY;
   let ambientFrameInFlight = false;
-  let ambientLogTick = 0;
   function requestAmbientRender(nowMs: number): void {
     if (disposed || frame !== 0 || !paneVisible || nowMs - lastAmbientFrameStartedMs < ambientFrameIntervalMs) return;
     lastAmbientFrameStartedMs = nowMs;
@@ -2054,13 +2053,6 @@ export function createVoxelRenderer(
     updateTreeSway(nowMs);
     updateConstructionReveals(nowMs);
     canvas.dataset.ambientMotionActive = String(ambientMotionAllowed());
-    // Low-frequency on-device diagnostic (V20 tuning; removed before release):
-    // WebView console output lands in `adb logcat` under the chromium tag, which
-    // is the only DOM-free way to read the ambient gate on a real device.
-    ambientLogTick += 1;
-    if (ambientLogTick % 50 === 0) {
-      console.log(`[ambient] tier=${qualityTier} reduced=${reducedMotion} pane=${paneVisible} hidden=${document.hidden} clouds=${cloudDrift !== null} trees=${naturalTreeSway !== null} driftMs=${cloudDrift ? Math.round(cloudDrift.elapsedMs) : 0} swayMs=${naturalTreeSway ? Math.round(naturalTreeSway.elapsedMs) : 0} interval=${ambientFrameIntervalMs} frame=${frame}`);
-    }
   }
 
   function applyAtmosphere(): void {

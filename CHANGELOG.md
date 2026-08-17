@@ -2,6 +2,15 @@
 
 User-facing release notes are kept here; internal diagnosis and per-run evidence belong in `docs/QA-BASELINES.md` or ignored artifacts.
 
+## v1.5.0 - 2026-08-17
+
+- The world now breathes: clouds drift slowly across the sky and trees sway gently around their planted bases while the app is in the foreground, stopping immediately when the pane hides or the app backgrounds. System reduced-motion and the performance lighting tier keep the world still.
+- A finished focus round now assembles its building increment block by block from the ground up over about 3.5 seconds, each block popping in with a light rebound; reduced motion keeps instant growth.
+- Timer digits slide into place as they change, primary buttons dip and spring back on press, and the active bottom-nav icon pops lightly.
+- Pop-in controls (immersive end button, progress report, dialogs, plan sheet, integrity chip) fade up on entry and fade down on exit with one shared visual language.
+- The white-edged flash on rivers when the lighting tier downgraded under load is gone: runtime downgrades now only trim pixel ratio and post-processing, keeping materials, shadows, and clouds untouched until the next scene rebuild.
+- The current-task card's green accent is now a true vertical bar.
+
 ## v1.4.0 - 2026-08-17
 
 - The settlement world now stays resident across tab switches: returning to the timer shows the world instantly with the same camera, and nothing renders in the background while you are away.

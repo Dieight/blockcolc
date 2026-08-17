@@ -84,7 +84,11 @@ test('retains drag gestures in the selected-building view', async ({ page }) => 
   });
   await canvas.dispatchEvent('pointerdown', { pointerId: 1, pointerType: 'touch', isPrimary: true, clientX: box.x + box.width * 0.35, clientY: box.y + box.height * 0.5, buttons: 1 });
   await canvas.dispatchEvent('pointermove', { pointerId: 1, pointerType: 'touch', isPrimary: true, clientX: box.x + box.width * 0.65, clientY: box.y + box.height * 0.5, buttons: 1 });
-  console.log('DRAG-LOG:', await page.evaluate(() => (window as unknown as { __canvasLog: string[] }).__canvasLog.join(' | ')));
   await canvas.dispatchEvent('pointerup', { pointerId: 1, pointerType: 'touch', isPrimary: true, clientX: box.x + box.width * 0.65, clientY: box.y + box.height * 0.5, buttons: 0 });
   await expect.poll(async () => Number(await canvas.getAttribute('data-camera-azimuth'))).not.toBe(before);
+  // Read the attach log only after the gesture settles: while the drag drives
+  // continuous software-WebGL frames, an in-flight page.evaluate can starve
+  // behind the render loop on a loaded machine; the log is time-stamped and
+  // equally meaningful afterwards.
+  console.log('DRAG-LOG:', await page.evaluate(() => (window as unknown as { __canvasLog: string[] }).__canvasLog.join(' | ')));
 });
