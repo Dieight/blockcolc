@@ -17,7 +17,19 @@ async function interruptFocus(page: import('@playwright/test').Page) {
 
 async function revealFocusControls(page: import('@playwright/test').Page) {
   const endButton = page.getByRole('button', { name: '结束本次专注' });
-  if (await endButton.isVisible().catch(() => false)) return;
+  if (await endButton.isVisible().catch(() => false)) {
+    // A still-visible control carries an armed five-second auto-hide timer from
+    // an earlier reveal; reusing it lets that timer expire mid-measurement.
+    // Force a fresh reveal: double-tap the panel's empty top band (never the
+    // button itself — the gesture detector ignores taps on buttons) to hide,
+    // then fall through to the standard reveal below, which restarts the
+    // full five-second window.
+    const panel = await page.locator('.focus-panel').boundingBox();
+    if (panel) {
+      await page.mouse.dblclick(panel.x + 24, panel.y + 20);
+      await page.waitForTimeout(400);
+    }
+  }
   // Aim the double-tap at the hint paragraph, never at a fixed band offset:
   // a tap that lands on the end button would open the end dialog, and the
   // band moves between panel layouts, so pixel offsets can hit other controls.

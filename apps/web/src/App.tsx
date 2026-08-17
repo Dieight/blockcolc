@@ -210,6 +210,7 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
   const revealTimerRef = useRef<number | null>(null);
   const hideTimerRef = useRef<number | null>(null);
   const [constructionFeedback, setConstructionFeedback] = useState(0);
+  const [ceremony, setCeremony] = useState<{ id: number; kind: 'focus-start' | 'round-complete' | 'break-over' } | null>(null);
   const reconciling = useRef(false);
   const latestSuccess = lastSuccessfulSession(state.focusHistory);
   const latestSuccessRef = useRef(latestSuccess?.id);
@@ -244,8 +245,11 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
     if (!latestSuccess || latestSuccess.id === latestSuccessRef.current) return;
     latestSuccessRef.current = latestSuccess.id;
     setConstructionFeedback((value) => value + 1);
+    // V20 FX-03: a round completing is a ceremony beat, not just a data change.
+    setCeremony({ id: performance.now(), kind: 'round-complete' });
     const timer = window.setTimeout(() => setConstructionFeedback(0), 1800);
-    return () => window.clearTimeout(timer);
+    const ceremonyTimer = window.setTimeout(() => setCeremony(null), 1_500);
+    return () => { window.clearTimeout(timer); window.clearTimeout(ceremonyTimer); };
   }, [latestSuccess?.id]);
 
   const session = state.activeFocusSession;
@@ -405,6 +409,22 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
   const timerMode = isBreak ? 'break' : session ? 'focus' : reconciledPlan?.status === 'ready' ? 'ready' : 'plan';
   const timerFallbackMs = timerMode === 'plan' ? fullPlanDurationMs : focusMinutes * 60_000;
   const planSummary = `${plannedRounds} 轮 · 总计 ${formatDurationSummary(fullPlanDurationMs)}`;
+  // V20 FX-03: entering a focus round and leaving a break are transition beats.
+  // The initial mount initializes the ref to the current mode, so reloading into
+  // an active session never fires a spurious "focus started" beat.
+  const previousTimerModeRef = useRef(timerMode);
+  useEffect(() => {
+    const previous = previousTimerModeRef.current;
+    previousTimerModeRef.current = timerMode;
+    if (previous === timerMode) return;
+    const kind = timerMode === 'focus' && previous !== 'focus' ? 'focus-start'
+      : (timerMode === 'ready' || timerMode === 'plan') && previous === 'break' ? 'break-over'
+      : null;
+    if (!kind) return;
+    setCeremony({ id: performance.now(), kind });
+    const timer = window.setTimeout(() => setCeremony(null), 1_500);
+    return () => window.clearTimeout(timer);
+  }, [timerMode]);
 
   return <div className={session ? 'world-screen is-focusing' : pending.length > 0 ? 'world-screen has-report' : habitAwaiting ? 'world-screen is-choosing-habit-building' : 'world-screen'}>
     <WorldCanvasV7 service={service} resourcePacks={resourcePacks} lightingQuality={preferences.lightingQuality} constructionOutlineVisibility={preferences.constructionOutlineVisibility} environmentStyle={state.worldSettings.environmentStyle} worldSeed={state.worldSettings.worldSeed} terrainGenerationVersion={state.worldSettings.terrainGenerationVersion} constructionFeedback={constructionFeedback} sessionActive={!!session} focusedProjectId={focusedProjectId} onSelectProject={onFocusWorldProject} onClearWorldFocus={onClearWorldFocus} visible={visible} onPickTerrain={setPickedCell} pickedCell={pickedCell}/>
@@ -438,6 +458,7 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
         ? <HabitFocusPlanSheet rounds={rounds} focusMinutes={preferences.habitFocusMinutes} breakMinutes={preferences.breakMinutes} locked={Boolean(reconciledPlan)} onRoundsChange={setRounds} onClose={() => setPlanOpen(false)}/>
         : <FocusPlanSheet subtasks={active.project.subtasks} selectedId={reconciledPlan?.subtaskId ?? selected!} rounds={rounds} focusMinutes={preferences.focusMinutes} breakMinutes={preferences.breakMinutes} locked={Boolean(reconciledPlan)} onSelect={setSelected} onRoundsChange={setRounds} onClose={() => setPlanOpen(false)}/>)}
     </section>}
+    {ceremony && <div key={ceremony.id} className={`round-ceremony ${ceremony.kind}`} aria-hidden="true"><span>{ceremony.kind === 'round-complete' ? '本轮完成' : ceremony.kind === 'break-over' ? '休息结束' : '专注开始'}</span></div>}
   </div>;
 }
 
@@ -578,7 +599,9 @@ function FocusTimer({ mode, endsAt, fallbackMs, onElapsed }: { mode?: FocusTimer
   const clock = formatClockDuration(remaining);
   return <div className={`timer timer-${timerMode}`} role={endsAt ? 'timer' : undefined} aria-label={`${label} ${clock}`}>
     <span className="timer-label">{label}</span>
-    <strong className="timer-value">{clock}</strong>
+    <strong className="timer-value" aria-hidden="true">{clock.split('').map((char, index) => (
+      <span key={`${index}:${char}`} className={`timer-digit${char === ':' ? ' is-colon' : ''}`}>{char}</span>
+    ))}</strong>
   </div>;
 }
 

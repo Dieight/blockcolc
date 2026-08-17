@@ -53,6 +53,7 @@ import {
 } from "./resource-textures";
 import { applyMaterialEffects, type MaterialEffectsPatch } from "./material-effects";
 import { atlasShadowPolicy, createAtlasCutoutDepthMaterial, disposeAtlasDepthMaterial } from "./atlas-depth-material";
+import { constructionRevealPlans, constructionWaveSchedule } from "./construction-reveal";
 import { createAtlasAnimationController, type AtlasAnimationController } from "./atlas-animation";
 import {
   createAtlasGeometry,
@@ -213,6 +214,10 @@ export interface RendererDiagnostics {
   postProcessBypassCount: number;
   postProcessSampleCount: number;
   continuousRendering: false;
+  /** V20: whether the throttled ambient motion pump is currently allowed to animate. */
+  ambientMotionActive: boolean;
+  /** V20: blocks still waiting to pop in the block-by-block construction reveal. */
+  constructionRevealCount: number;
   lowLatencyWebGl: boolean;
   nativeInputReceivedCount: number;
   nativeInputLastSequence: number;
@@ -573,6 +578,28 @@ export function createVoxelRenderer(
   const previewMode = options.previewMode === true;
   let naturalTreeMeshes: { trunks: THREE.InstancedMesh; crowns: THREE.InstancedMesh; total: number } | null = null;
   let rainAnimation: { mesh: THREE.InstancedMesh; drops: readonly { x: number; z: number; phase: number }[]; baseY: number; spanY: number; elapsedMs: number; lastUpdateMs: number } | null = null;
+  // V20 ambient motion: the world breathes while the pane is visible and the tab
+  // is foreground. Each cloud drifts along its own slow sine path; each tree crown
+  // and trunk tilts around its planted base; newly completed buildings grow
+  // block by block. Everything is driven by one throttled interval pump (never a
+  // continuous rAF loop), stays silent under reduced motion and on the
+  // performance tier, and stops the moment the pane hides or the tab backgrounds.
+  let cloudDrift: {
+    mesh: THREE.InstancedMesh;
+    clouds: Array<{ first: number; count: number; phase: number; periodMs: number; amp: number; angle: number }>;
+    basePositions: Float32Array;
+    elapsedMs: number;
+    lastUpdateMs: number;
+  } | null = null;
+  let naturalTreeSway: {
+    trunks: THREE.InstancedMesh;
+    crowns: THREE.InstancedMesh;
+    trees: Array<{ pivotX: number; pivotY: number; pivotZ: number; trunkY: number; crownY: number; scale: number; phase: number; periodMs: number; amp: number; axisAngle: number }>;
+    elapsedMs: number;
+    lastUpdateMs: number;
+  } | null = null;
+  let constructionReveals: Array<{ mesh: THREE.InstancedMesh; index: number; popAtMs: number; done: boolean }> = [];
+  let constructionRevealStartedMs = 0;
   const terrainPackTextures: THREE.Texture[] = [];
   let terrainMeshForPicking: THREE.Mesh | null = null;
 
@@ -731,6 +758,13 @@ export function createVoxelRenderer(
     canvas.dataset.postProcessRenderCount = String(postProcessRenderCount);
     canvas.dataset.postProcessBypassCount = String(postProcessBypassCount);
     const elapsed = performance.now() - started;
+    if (ambientFrameInFlight) {
+      // Adapt the ambient cadence to the measured frame cost so a slow
+      // environment never turns the living world into a render-hogging loop.
+      ambientFrameInFlight = false;
+      ambientFrameIntervalMs = THREE.MathUtils.clamp(Math.round(elapsed * 1.6), 250, 1_000);
+      canvas.dataset.ambientFrameIntervalMs = String(ambientFrameIntervalMs);
+    }
     if (interacting) {
       if (lastInteractionAnimationFrameMs !== null) {
         const interval = frameStarted - lastInteractionAnimationFrameMs;
@@ -767,6 +801,23 @@ export function createVoxelRenderer(
     });
   }
 
+  // V20 CT-01: ambient frames (cloud drift, tree sway) share the same single rAF
+  // slot as interaction frames, and the next ambient frame is only requested once
+  // the previous one finished AND the adaptive interval elapsed. The interval
+  // scales with the measured frame cost (250 ms on fast devices, up to 1 s when a
+  // single cinematic frame is expensive), so the ambient loop can never saturate
+  // the render pipeline — on software WebGL it simply breathes slower instead of
+  // starving the compositor and every screenshot/tap behind it.
+  let ambientFrameIntervalMs = 250;
+  let lastAmbientFrameStartedMs = Number.NEGATIVE_INFINITY;
+  let ambientFrameInFlight = false;
+  function requestAmbientRender(nowMs: number): void {
+    if (disposed || frame !== 0 || !paneVisible || nowMs - lastAmbientFrameStartedMs < ambientFrameIntervalMs) return;
+    lastAmbientFrameStartedMs = nowMs;
+    ambientFrameInFlight = true;
+    requestRender();
+  }
+
   function animationControllersFor(atlas: ResourcePackAtlas): Array<AtlasAnimationController | null> {
     const startedAtMs = performance.now();
     return atlas.pages.map((page) => page.animationLookup
@@ -785,10 +836,15 @@ export function createVoxelRenderer(
     referencedAnimatedTextureIndices.set(page, indices);
   }
 
-  function rebuild(worlds: readonly WorldSnapshot[]): void {
+  function rebuild(worlds: readonly WorldSnapshot[], previousWorlds: readonly WorldSnapshot[] = lastWorlds): void {
     sceneRevision += 1;
     clearGroup(buildingGroup);
     clearGroup(terrainGroup);
+    // A rebuild invalidates every per-frame animation state whose meshes just got
+    // disposed: stale reveal entries must never write into freed instanced meshes.
+    constructionReveals = [];
+    cloudDrift = null;
+    naturalTreeSway = null;
     for (const texture of terrainPackTextures) texture.dispose();
     terrainPackTextures.length = 0;
     clearGroup(roadGroup);
@@ -822,6 +878,23 @@ export function createVoxelRenderer(
     sceneVoxelCount = voxelCount;
     qualityTier = selectQualityTierForLighting(deviceSignals(renderer, voxelCount), requestedLightingQuality);
     applyQuality(qualityTier);
+
+    // V20 BX-01: when a focus round completes, the finished building grows block
+    // by block instead of popping in whole. Reveal only applies to buildings whose
+    // completion actually advanced between rebuilds (never the initial load, never
+    // environment or resource-pack swaps), and is skipped under reduced motion and
+    // in diagnostic screenshot modes where the world must render complete
+    // immediately.
+    const revealPlans = constructionRevealPlans(
+      previousWorlds,
+      worlds,
+      // The reveal is a bounded one-shot ceremony (like the construction pulse),
+      // so it is not gated on the lighting tier — only reduced motion and the
+      // diagnostic screenshot modes skip it. Idle ambient motion (clouds, trees)
+      // is what the performance tier disables.
+      !reducedMotion && !options.debugFlatColors && !options.debugVoidScan && !previewMode,
+    );
+    if (revealPlans.size > 0) constructionRevealStartedMs = performance.now();
 
     const roads = roadCellsForVillage(positioned);
     const importedDecorations = placeImportedDecorations(
@@ -870,7 +943,7 @@ export function createVoxelRenderer(
     addRoads(roads, positioned, [...buildingPads, ...decorationPads]);
     const emissivePoints: EmissivePoint[] = [];
     addRoadLamps(roads, positioned, emissivePoints);
-    for (const world of positioned) addBuilding(world, emissivePoints);
+    for (const world of positioned) addBuilding(world, emissivePoints, revealPlans.get(world.projectId) ?? null);
     for (const decoration of importedDecorations) addImportedDecoration(decoration, emissivePoints);
     activeResourcePack?.atlas.pages.forEach((page, pageIndex) => {
       const controller = atlasAnimationControllers[pageIndex];
@@ -1052,6 +1125,28 @@ export function createVoxelRenderer(
     trunks.receiveShadow = true;
     crowns.receiveShadow = true;
     naturalTreeMeshes = { trunks, crowns, total: data.naturalTrees.length };
+    // V20 WX-01: trunk-pivot sway. Each tree rocks a fraction of a degree around
+    // a horizontal axis through its planted base, trunk and crown together, so the
+    // base stays rooted. Phases and periods are deterministic per tree index, which
+    // keeps repeated rebuilds stable while the motion itself stays alive.
+    naturalTreeSway = {
+      trunks,
+      crowns,
+      trees: data.naturalTrees.map((tree, index) => ({
+        pivotX: tree.x,
+        pivotY: tree.y,
+        pivotZ: tree.z,
+        trunkY: tree.y + 1.2 * tree.scale,
+        crownY: tree.y + 2.8 * tree.scale,
+        scale: tree.scale,
+        phase: (index * 0.6180339887) % 1,
+        periodMs: 8_000 + ((index * 137) % 7_000),
+        amp: 0.016 + ((index * 97) % 12) / 12 * 0.02,
+        axisAngle: ((index * 53) % 360) * (Math.PI / 180),
+      })),
+      elapsedMs: 0,
+      lastUpdateMs: performance.now(),
+    };
     updateNaturalTreeDensity();
     terrainGroup.add(trunks, crowns);
   }
@@ -1107,7 +1202,7 @@ export function createVoxelRenderer(
     roadGroup.add(poles, lanterns);
   }
 
-  function addBuilding(world: PositionedWorldSnapshot, emissivePoints: EmissivePoint[]): void {
+  function addBuilding(world: PositionedWorldSnapshot, emissivePoints: EmissivePoint[], reveal: { previousCompletionBasisPoints: number } | null): void {
     const root = new THREE.Group();
     root.position.set(world.worldPosition.x, world.worldPosition.y, world.worldPosition.z);
     root.rotation.y = world.rotationY;
@@ -1133,11 +1228,26 @@ export function createVoxelRenderer(
         });
       }
     }
-    const texturePlan = activeResourcePack
+    // V20 BX-01: the increment this round just built appears block by block, from
+    // the ground up. Waves of consecutive blocks pop in over ~3.5 s so every block
+    // is individually visible; anything already standing renders immediately.
+    const newVoxels = reveal !== null
+      ? conditionVisual.intactVoxels.filter((voxel) => voxel.buildOrder > reveal.previousCompletionBasisPoints)
+      : [];
+    const orderedNew = newVoxels.length > 0
+      ? [...newVoxels].sort((left, right) => left.y - right.y || left.x - right.x || left.z - right.z)
+      : [];
+    const revealing = orderedNew.length > 0;
+    const revealOrderIndex = revealing ? new Map(orderedNew.map((voxel, index) => [voxel, index])) : null;
+    const revealSchedule = constructionWaveSchedule(orderedNew.length);
+    // While a building reveals, its voxels render through the per-instance fallback
+    // path so each block's scale can animate independently; the merged atlas
+    // batches cannot hide single voxels. The next rebuild re-batches it normally.
+    const texturePlan = activeResourcePack && !revealing
       ? createTextureBatches(conditionVisual.intactVoxels, activeResourcePack.manifest, activeResourcePack.atlas, occlusionField)
       : { batches: [], fallbackVoxels: conditionVisual.intactVoxels };
     addTexturedBatches(structure, texturePlan.batches, conditionVisual.weathering);
-    const geometryPlan = activeResourcePack
+    const geometryPlan = activeResourcePack && !revealing
       ? createGeometryBatches(texturePlan.fallbackVoxels, activeResourcePack.manifest, activeResourcePack.atlas, occlusionField)
       : { batches: [], fallbackVoxels: texturePlan.fallbackVoxels };
     addGeometryBatches(structure, geometryPlan.batches, conditionVisual.weathering);
@@ -1160,7 +1270,25 @@ export function createVoxelRenderer(
       }
       const mesh = new THREE.InstancedMesh(new THREE.BoxGeometry(0.97, 0.97, 0.97), meshMaterial, voxels.length);
       const matrix = new THREE.Matrix4();
-      voxels.forEach((voxel, index) => { matrix.makeTranslation(voxel.x, voxel.y, voxel.z); mesh.setMatrixAt(index, matrix); });
+      const hiddenMatrix = new THREE.Matrix4();
+      voxels.forEach((voxel, index) => {
+        const orderIndex = revealOrderIndex?.get(voxel);
+        if (orderIndex !== undefined) {
+          // Zero scale hides the block until its pop moment; the pop animation
+          // (updateConstructionReveals) writes the settling scale afterwards.
+          hiddenMatrix.makeTranslation(voxel.x, voxel.y, voxel.z).scale(new THREE.Vector3(0.0001, 0.0001, 0.0001));
+          mesh.setMatrixAt(index, hiddenMatrix);
+          constructionReveals.push({
+            mesh,
+            index,
+            popAtMs: revealSchedule.popAtMsFor(constructionRevealStartedMs, orderIndex),
+            done: false,
+          });
+          return;
+        }
+        matrix.makeTranslation(voxel.x, voxel.y, voxel.z);
+        mesh.setMatrixAt(index, matrix);
+      });
       mesh.instanceMatrix.needsUpdate = true;
       applyFallbackOcclusion(mesh, voxels, occlusionField);
       mesh.castShadow = !translucent;
@@ -1651,6 +1779,7 @@ export function createVoxelRenderer(
     clearGroup(atmosphereGroup, true);
     cloudMaterial = null;
     rainAnimation = null;
+    cloudDrift = null;
     cloudBlockCount = 0;
     const random = seededRandom(currentWeather.seed);
     const contentArea = Math.max(1, contentSize.x * contentSize.z);
@@ -1695,6 +1824,10 @@ export function createVoxelRenderer(
     const clouds = new THREE.InstancedMesh(cloudGeometry, cloudMaterial, totalInstances);
     const matrix = new THREE.Matrix4();
     const quaternion = new THREE.Quaternion();
+    // V20 WX-02: every cloud remembers its block positions and its own drift
+    // rhythm so the ambient pump can move each one along a slow sine path.
+    const driftClouds: Array<{ first: number; count: number; phase: number; periodMs: number; amp: number; angle: number }> = [];
+    const cloudBasePositions = new Float32Array(totalInstances * 3);
     // The camera always looks down at the settlement, so clouds live just above
     // the terrain silhouette: near ones float in the middle of the frame and far
     // ones ride the fogged horizon. Fog is off on the material so even the far
@@ -1710,6 +1843,7 @@ export function createVoxelRenderer(
       );
       const spanLocal = kind === "distant" ? 7 : kind === "cirrus" ? 5 : kind === "stratus" ? 6 : 4.6;
       const layers = kind === "distant" ? 4 + Math.floor(random() * 3) : kind === "storm" ? 3 + Math.floor(random() * 2) : kind === "cirrus" ? 1 : 2;
+      const first = instanceIndex;
       for (let block = 0; block < blocks; block += 1) {
         const gx = (random() * 2 - 1) * spanLocal * (kind === "stratus" ? 0.95 : 0.75);
         const gz = (random() * 2 - 1) * spanLocal * 0.62;
@@ -1722,7 +1856,20 @@ export function createVoxelRenderer(
           new THREE.Vector3(blockSize, blockSize * (0.72 + random() * 0.3), blockSize * (0.85 + random() * 0.3)),
         );
         clouds.setMatrixAt(instanceIndex, matrix);
+        cloudBasePositions[instanceIndex * 3] = center.x + gx;
+        cloudBasePositions[instanceIndex * 3 + 1] = center.y + gy;
+        cloudBasePositions[instanceIndex * 3 + 2] = center.z + gz;
         instanceIndex += 1;
+      }
+      if (instanceIndex > first) {
+        driftClouds.push({
+          first,
+          count: instanceIndex - first,
+          phase: random() * Math.PI * 2,
+          periodMs: 90_000 + random() * 150_000,
+          amp: kind === "distant" ? 0.9 + random() * 1.6 : 1.6 + random() * 2.2,
+          angle: random() * Math.PI * 2,
+        });
       }
     };
     cloudKinds.forEach((kind, cloudIndex) => {
@@ -1737,6 +1884,7 @@ export function createVoxelRenderer(
     clouds.instanceMatrix.needsUpdate = true;
     clouds.userData.ownedMaterial = cloudMaterial;
     atmosphereGroup.add(clouds);
+    cloudDrift = { mesh: clouds, clouds: driftClouds, basePositions: cloudBasePositions, elapsedMs: 0, lastUpdateMs: performance.now() };
     const rainCount = Math.min(600, Math.round(currentWeather.rainDropCount * qualityProfile.weatherDensity * spreadRatio));
     if (rainCount > 0) {
       const rainMaterial = new THREE.MeshBasicMaterial({ color: 0xa8c5cf, transparent: true, opacity: 0.62 });
@@ -1778,6 +1926,131 @@ export function createVoxelRenderer(
     rain.lastUpdateMs = nowMs;
     canvas.dataset.rainPhaseMs = String(Math.round(rain.elapsedMs));
     requestRender();
+  }
+
+  // V20 CT-01: the amended render contract. The world may animate while its pane
+  // is visible and the tab is foreground, but never under reduced motion and never
+  // on the performance lighting tier (battery-first). The pump below drives it:
+  // one throttled interval, not a continuous rAF loop, so `continuousRendering`
+  // stays false and a hidden pane stops all motion on the next tick.
+  function ambientMotionAllowed(): boolean {
+    return paneVisible && !document.hidden && !reducedMotion && qualityTier !== "low"
+      && !options.debugFlatColors && !options.debugVoidScan;
+  }
+
+  function updateCloudDrift(nowMs: number): void {
+    const drift = cloudDrift;
+    if (!drift || !ambientMotionAllowed() || interacting || nowMs - drift.lastUpdateMs < 100) return;
+    drift.elapsedMs += nowMs - drift.lastUpdateMs;
+    const matrix = new THREE.Matrix4();
+    const position = new THREE.Vector3();
+    const quaternion = new THREE.Quaternion();
+    const scale = new THREE.Vector3();
+    for (const cloud of drift.clouds) {
+      const wave = Math.sin((drift.elapsedMs / cloud.periodMs) * Math.PI * 2 + cloud.phase);
+      const offsetX = Math.cos(cloud.angle) * cloud.amp * wave;
+      const offsetZ = Math.sin(cloud.angle) * cloud.amp * wave;
+      for (let block = 0; block < cloud.count; block += 1) {
+        const instance = cloud.first + block;
+        drift.mesh.getMatrixAt(instance, matrix);
+        matrix.decompose(position, quaternion, scale);
+        position.set(
+          drift.basePositions[instance * 3]! + offsetX,
+          drift.basePositions[instance * 3 + 1]!,
+          drift.basePositions[instance * 3 + 2]! + offsetZ,
+        );
+        matrix.compose(position, quaternion, scale);
+        drift.mesh.setMatrixAt(instance, matrix);
+      }
+    }
+    drift.mesh.instanceMatrix.needsUpdate = true;
+    drift.lastUpdateMs = nowMs;
+    canvas.dataset.cloudDriftMs = String(Math.round(drift.elapsedMs));
+    requestAmbientRender(nowMs);
+  }
+
+  function updateTreeSway(nowMs: number): void {
+    const sway = naturalTreeSway;
+    if (!sway || !ambientMotionAllowed() || interacting || nowMs - sway.lastUpdateMs < 100) return;
+    sway.elapsedMs += nowMs - sway.lastUpdateMs;
+    const visible = Math.min(sway.trees.length, sway.trunks.count);
+    const axis = new THREE.Vector3();
+    const quaternionSway = new THREE.Quaternion();
+    const rotation = new THREE.Matrix4();
+    const pivotTo = new THREE.Matrix4();
+    const pivotBack = new THREE.Matrix4();
+    const place = new THREE.Matrix4();
+    const size = new THREE.Matrix4();
+    const composed = new THREE.Matrix4();
+    for (let index = 0; index < visible; index += 1) {
+      const tree = sway.trees[index];
+      if (!tree) break;
+      const angle = tree.amp * Math.sin((sway.elapsedMs / tree.periodMs) * Math.PI * 2 + tree.phase * Math.PI * 2);
+      axis.set(Math.cos(tree.axisAngle), 0, Math.sin(tree.axisAngle));
+      quaternionSway.setFromAxisAngle(axis, angle);
+      rotation.makeRotationFromQuaternion(quaternionSway);
+      pivotTo.makeTranslation(tree.pivotX, tree.pivotY, tree.pivotZ);
+      pivotBack.makeTranslation(-tree.pivotX, -tree.pivotY, -tree.pivotZ);
+      place.makeTranslation(tree.pivotX, tree.trunkY, tree.pivotZ);
+      size.makeScale(tree.scale, tree.scale, tree.scale);
+      composed.multiplyMatrices(pivotTo, rotation).multiply(pivotBack).multiply(place).multiply(size);
+      sway.trunks.setMatrixAt(index, composed);
+      place.makeTranslation(tree.pivotX, tree.crownY, tree.pivotZ);
+      composed.multiplyMatrices(pivotTo, rotation).multiply(pivotBack).multiply(place).multiply(size);
+      sway.crowns.setMatrixAt(index, composed);
+    }
+    sway.trunks.instanceMatrix.needsUpdate = true;
+    sway.crowns.instanceMatrix.needsUpdate = true;
+    sway.lastUpdateMs = nowMs;
+    requestAmbientRender(nowMs);
+  }
+
+  function updateConstructionReveals(nowMs: number): void {
+    if (disposed) return;
+    if (constructionReveals.length === 0) {
+      // Keep the diagnostic dataset present even when no reveal is running so
+      // automated probes can assert the zero state deterministically.
+      canvas.dataset.constructionRevealCount = "0";
+      return;
+    }
+    if (!paneVisible || document.hidden) return;
+    const matrix = new THREE.Matrix4();
+    const position = new THREE.Vector3();
+    const quaternion = new THREE.Quaternion();
+    const scale = new THREE.Vector3();
+    let remaining = 0;
+    for (const reveal of constructionReveals) {
+      if (reveal.done) continue;
+      const elapsed = nowMs - reveal.popAtMs;
+      if (elapsed <= 0) {
+        remaining += 1;
+        continue;
+      }
+      const progress = Math.min(1, elapsed / 240);
+      // Underdamped settle: rises fast, overshoots to ~1.04, lands on 0.97.
+      const settle = 1 - Math.exp(-7 * progress) * Math.cos(6 * progress);
+      const size = Math.max(0.0001, 0.97 * settle);
+      reveal.mesh.getMatrixAt(reveal.index, matrix);
+      matrix.decompose(position, quaternion, scale);
+      scale.setScalar(size);
+      matrix.compose(position, quaternion, scale);
+      reveal.mesh.setMatrixAt(reveal.index, matrix);
+      reveal.mesh.instanceMatrix.needsUpdate = true;
+      if (progress < 1) remaining += 1;
+      else reveal.done = true;
+    }
+    canvas.dataset.constructionRevealCount = String(remaining);
+    if (remaining === 0) constructionReveals = [];
+    else requestRender();
+  }
+
+  function updateAmbientMotion(nowMs: number): void {
+    if (disposed) return;
+    updateRainAnimation(nowMs);
+    updateCloudDrift(nowMs);
+    updateTreeSway(nowMs);
+    updateConstructionReveals(nowMs);
+    canvas.dataset.ambientMotionActive = String(ambientMotionAllowed());
   }
 
   function applyAtmosphere(): void {
@@ -2281,6 +2554,8 @@ export function createVoxelRenderer(
       constructionOutlineVisibility,
       plannedOutlineVoxelCount,
       continuousRendering: false,
+      ambientMotionActive: ambientMotionAllowed(),
+      constructionRevealCount: constructionReveals.filter((reveal) => !reveal.done).length,
       lowLatencyWebGl,
       nativeInputReceivedCount,
       nativeInputLastSequence,
@@ -2382,6 +2657,8 @@ export function createVoxelRenderer(
     canvas.dataset.constructionOutlineVisibility = diagnostics.constructionOutlineVisibility;
     canvas.dataset.plannedOutlineVoxelCount = String(diagnostics.plannedOutlineVoxelCount);
     canvas.dataset.continuousRendering = String(diagnostics.continuousRendering);
+    canvas.dataset.ambientMotionActive = String(diagnostics.ambientMotionActive);
+    canvas.dataset.constructionRevealCount = String(diagnostics.constructionRevealCount);
     canvas.dataset.lowLatencyWebGl = String(diagnostics.lowLatencyWebGl);
     canvas.dataset.nativeInputReceivedCount = String(diagnostics.nativeInputReceivedCount);
     canvas.dataset.nativeInputLastSequence = String(diagnostics.nativeInputLastSequence);
@@ -2518,17 +2795,19 @@ export function createVoxelRenderer(
     updateLighting(now);
     updateWeather(localDateForDate(now));
   }, 120_000);
-  const weatherMotionTimer = window.setInterval(() => updateRainAnimation(performance.now()), 80);
+  const ambientMotionTimer = window.setInterval(() => updateAmbientMotion(performance.now()), 100);
   resize();
 
   return {
     setWorld(world) {
+      const previous = lastWorlds;
       lastWorlds = world === null ? [] : [world];
-      rebuild(lastWorlds);
+      rebuild(lastWorlds, previous);
     },
     setWorlds(worlds) {
+      const previous = lastWorlds;
       lastWorlds = [...worlds];
-      rebuild(lastWorlds);
+      rebuild(lastWorlds, previous);
     },
     focusProject(projectId) {
       focusedProjectId = projectId;
@@ -2604,7 +2883,7 @@ export function createVoxelRenderer(
       for (const controller of atlasAnimationControllers) controller?.dispose();
       atlasAnimationControllers = [];
       window.clearInterval(lightingTimer);
-      window.clearInterval(weatherMotionTimer);
+      window.clearInterval(ambientMotionTimer);
       observer.disconnect();
       document.removeEventListener("visibilitychange", visibilityChange);
       canvas.removeEventListener("webglcontextlost", contextLost);

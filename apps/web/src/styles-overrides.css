@@ -388,3 +388,34 @@
    quiet mono chip under the HUD, so defects can be pinned to exact blocks. */
 .world-pick-chip{position:absolute;left:12px;top:76px;z-index:3;margin:0;padding:6px 10px;border-radius:8px;background:rgba(20,29,25,.82);color:#d8e4da;font:12px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace;pointer-events:none}
 .world-pick-chip::before{content:"▦ ";color:#8fb89b}
+
+/* V20 FX-01: timer digit transitions. Every changed digit rises into place with a
+   soft settle; colons stay still so the rhythm reads as ticking, not jittering. */
+.timer-value{font-variant-numeric:tabular-nums}
+.timer-digit{display:inline-block}
+@media(prefers-reduced-motion:no-preference){
+.timer-digit:not(.is-colon){animation:timer-digit-rise .24s cubic-bezier(.22,.9,.36,1) both}
+}
+@keyframes timer-digit-rise{0%{opacity:.3;transform:translateY(.38em)}60%{opacity:1;transform:translateY(-.06em)}100%{opacity:1;transform:translateY(0)}}
+
+/* V20 FX-02: press rebound. Buttons dip under the finger and spring back instead
+   of snapping; the overshoot bezier lives on the release so the bounce reads as
+   one continuous gesture. Gated on no-preference so reduced motion keeps plain
+   presses. */
+@media(prefers-reduced-motion:no-preference){
+.primary,.destructive,.secondary-action,.task-switch-action,.plan-summary,.round-picker button,.choice-menu button,.report-options button,.duration button,.dialog-close,.dialog-back,.check-update,.habit-building-confirm,.task-section-actions .icon-action,.subtask-group-toggle,.project-portfolio-row>button{transition:transform .16s cubic-bezier(.34,1.56,.64,1),background-color .16s ease,border-color .16s ease,color .16s ease,opacity .16s ease}
+.primary:active,.destructive:active,.secondary-action:active,.task-switch-action:active,.plan-summary:active,.round-picker button:active,.choice-menu button:active,.report-options button:active,.duration button:active,.dialog-close:active,.dialog-back:active,.check-update:active,.habit-building-confirm:active,.task-section-actions .icon-action:active,.subtask-group-toggle:active,.project-portfolio-row>button:active{transform:scale(.955)}
+}
+
+/* V20 FX-03: round/break ceremony. A one-and-a-half-second beat floats over the
+   screen when a round completes, a break ends, or a round starts; it never
+   intercepts input and vanishes by itself. */
+.round-ceremony{position:fixed;inset:0;z-index:45;display:grid;place-items:center;pointer-events:none}
+.round-ceremony span{display:flex;flex-direction:column;align-items:center;gap:4px;color:#17211c;font-size:15px;font-weight:800;letter-spacing:.08em;text-shadow:0 1px 0 rgba(255,255,255,.65)}
+@media(prefers-reduced-motion:no-preference){
+.round-ceremony span{animation:ceremony-beat 1.4s ease both}
+.round-ceremony span::before{content:"";width:52px;height:52px;border-radius:50%;background:radial-gradient(circle,rgba(226,175,88,.5),rgba(226,175,88,0) 70%);animation:ceremony-glow 1.4s ease both}
+}
+@keyframes ceremony-beat{0%{opacity:0;transform:translateY(12px) scale(.94)}18%{opacity:1;transform:translateY(0) scale(1.03)}32%{transform:scale(1)}76%{opacity:1}100%{opacity:0;transform:translateY(-10px)}}
+@keyframes ceremony-glow{0%{opacity:0;transform:scale(.45)}20%{opacity:1}58%{opacity:.7;transform:scale(1.22)}100%{opacity:0;transform:scale(1.55)}}
+@media(prefers-reduced-motion:reduce){.round-ceremony{display:none}}

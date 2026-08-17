@@ -390,7 +390,7 @@ describe("merged stepped terrain", () => {
       return (sorted[1]! + sorted[2]!) / 2;
     };
     expect(median(ratios.current)).toBeLessThan(median(ratios.previous) * 0.82);
-  });
+  }, 15_000); // Eight full terrain builds (4 seeds × v3/v4); the default 5 s budget flakes under machine load.
 
   it.each([30, 60, 100])("keeps a %i-building natural world inside the merged-mesh budget", (count) => {
     const many = Array.from({ length: count }, (_, settlementIndex): WorldSnapshot => ({
