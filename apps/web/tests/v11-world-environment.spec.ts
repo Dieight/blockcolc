@@ -56,6 +56,11 @@ test('retains drag gestures in the selected-building view', async ({ page }) => 
   test.skip(Boolean(process.env.CI), 'Physical-device and local GPU gates own synchronous 3D gesture coverage.');
   // The software-WebGL renderer starves under sustained local-gate load; the
   // canvas attach alone has measured beyond the default budget on warm runs.
+  // V20's ambient loop adds a low constant render load that turns the historic
+  // local flake deterministic, so this gesture probe runs under reduced motion
+  // (which only gates idle ambient/pulse animation — camera gestures still
+  // render every interaction frame).
+  await page.emulateMedia({ reducedMotion: 'reduce' });
   test.setTimeout(120_000);
   page.on('pageerror', (error) => console.log('PAGEERROR:', error.message));
   page.on('console', (message) => { if (message.type() === 'error') console.log('CONSOLE-ERROR:', message.text()); });

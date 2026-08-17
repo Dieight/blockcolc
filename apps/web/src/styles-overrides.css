@@ -420,11 +420,23 @@
 .focus-task-context,
 .rest-summary,
 .focus-integrity-ended,
+.focus-integrity-warning:not(.flash),
 .report,
 .confirm-dialog,
 .focus-plan-sheet,
 .habit-building-selection,
 .v7-progress-report{animation:ui-fade-in .18s cubic-bezier(.22,.9,.36,1) both}
 .dialog-backdrop{animation:ui-fade-in .14s ease-out both}
+/* FX-04 exit: closing controls mirror the entrance with a fade-down so
+   pop-in and pop-out read as one symmetric move. */
+.dialog-leave .confirm-dialog,
+.dialog-leave .focus-plan-sheet,
+.dialog-leave .habit-building-selection,
+.immersive-controls.is-leaving .primary.destructive,
+.focus-integrity-warning.is-leaving,
+.focus-integrity-warning.flash.is-leaving{animation:ui-fade-out .16s ease-in both}
+.focus-immersive .is-focusing .focus-integrity-warning.flash.is-leaving{animation:ui-fade-out .16s ease-in both}
+.dialog-leave .dialog-backdrop{animation:ui-fade-out .14s ease-in both}
 }
 @keyframes ui-fade-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+@keyframes ui-fade-out{from{opacity:1;transform:translateY(0)}to{opacity:0;transform:translateY(8px)}}

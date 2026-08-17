@@ -205,6 +205,17 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
   const [hintVisible, setHintVisible] = useState(false);
   const [pickedCell, setPickedCell] = useState<{ x: number; y: number; z: number } | null>(null);
   const [integrityFlash, setIntegrityFlash] = useState(false);
+  // V20 FX-04 exit: conditional controls stay mounted for a ~180 ms fade-down
+  // after their close/hide action so enter and exit read as one symmetric move.
+  const [controlsLeaving, setControlsLeaving] = useState(false);
+  const [integrityLeaving, setIntegrityLeaving] = useState(false);
+  const [endingLeaving, setEndingLeaving] = useState(false);
+  const [planLeaving, setPlanLeaving] = useState(false);
+  const exitTimersRef = useRef<number[]>([]);
+  const exitAfter = (ms: number, done: () => void): void => {
+    const timer = window.setTimeout(done, ms);
+    exitTimersRef.current.push(timer);
+  };
   const lastExcursionsRef = useRef<number | null>(null);
   const lastTapRef = useRef<{ time: number; x: number; y: number } | null>(null);
   const revealTimerRef = useRef<number | null>(null);
@@ -267,6 +278,7 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
     hideTimerRef.current = null;
     lastTapRef.current = null;
     setControlsVisible(false);
+    setControlsLeaving(false);
     if (!session) return;
     setHintVisible(true);
     // Match the five-second reveal rhythm of the end control: the 1.2 s CSS
@@ -276,12 +288,16 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
   }, [session?.id]);
   // The revealed end control stays for five seconds and then hides itself, so a
   // focused session never keeps the red button hanging around.
+  const hideControls = useCallback(() => {
+    setControlsLeaving(true);
+    exitAfter(180, () => { setControlsVisible(false); setControlsLeaving(false); });
+  }, []);
   useEffect(() => {
     if (hideTimerRef.current !== null) window.clearTimeout(hideTimerRef.current);
     hideTimerRef.current = null;
     if (!controlsVisible || !session) return;
-    hideTimerRef.current = window.setTimeout(() => setControlsVisible(false), 5_000);
-  }, [controlsVisible, session?.id]);
+    hideTimerRef.current = window.setTimeout(hideControls, 5_000);
+  }, [controlsVisible, session?.id, hideControls]);
   const handlePanelTap = useCallback((event: { target: EventTarget | null; clientX: number; clientY: number }) => {
     if (!session || (event.target instanceof Element && event.target.closest('button'))) return;
     const now = performance.now();
@@ -290,14 +306,14 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
     if (previous && now - previous.time < 450 && Math.hypot(event.clientX - previous.x, event.clientY - previous.y) < 48) {
       lastTapRef.current = null;
       // Reveal after a beat so the second tap's trailing click lands on empty space
-      // instead of the freshly shown button; hiding stays immediate.
-      if (controlsVisible) setControlsVisible(false);
+      // instead of the freshly shown button; hiding plays the symmetric fade-down.
+      if (controlsVisible) hideControls();
       else {
         if (revealTimerRef.current !== null) window.clearTimeout(revealTimerRef.current);
         revealTimerRef.current = window.setTimeout(() => setControlsVisible(true), 250);
       }
     }
-  }, [session, controlsVisible]);
+  }, [session, controlsVisible, hideControls]);
   // The integrity count pops up only when the session starts and when a new
   // excursion is consumed (returning from an app switch); the rest of the time
   // the band stays quiet.
@@ -310,8 +326,12 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
     const previous = lastExcursionsRef.current;
     lastExcursionsRef.current = count;
     if (previous !== null && count <= previous) return;
+    setIntegrityLeaving(false);
     setIntegrityFlash(true);
-    const timer = window.setTimeout(() => setIntegrityFlash(false), 5_000);
+    const timer = window.setTimeout(() => {
+      setIntegrityLeaving(true);
+      exitAfter(180, () => { setIntegrityFlash(false); setIntegrityLeaving(false); });
+    }, 5_000);
     return () => window.clearTimeout(timer);
   }, [session?.id, session?.integrity.effectiveExcursions, state.focusIntegrityPolicy.enabled]);
   useEffect(() => {
@@ -352,29 +372,39 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
       setPlan({ ...withoutBreak, status: 'focus', currentSessionId: started?.sessionId });
     }
   };
+  // FX-04 exit: close actions play the symmetric fade-down before unmounting.
+  const closeEnding = useCallback(() => {
+    setEndingLeaving(true);
+    exitAfter(180, () => { setEnding(false); setEndingLeaving(false); });
+  }, []);
+  const closePlan = useCallback(() => {
+    setPlanLeaving(true);
+    exitAfter(180, () => { setPlanOpen(false); setPlanLeaving(false); });
+  }, []);
+  useEffect(() => () => { for (const timer of exitTimersRef.current) window.clearTimeout(timer); }, []);
   const interruptFocus = async (interruptionCategory: FocusInterruptionCategory | null) => {
     const current = service.snapshot().activeFocusSession;
     if (current && Date.parse(current.endsAt) <= Date.now()) {
-      setEnding(false);
+      closeEnding();
       await reconcile();
       return;
     }
     const result = await run({ type: 'CancelFocus', interruptionCategory });
     if (result?.ok) {
       setPlan(null);
-      setEnding(false);
+      closeEnding();
     }
   };
   const completeEarly = async () => {
     const current = service.snapshot().activeFocusSession;
     if (current && Date.parse(current.endsAt) <= Date.now()) {
-      setEnding(false);
+      closeEnding();
       await reconcile();
       return;
     }
     const result = await run({ type: 'CompleteFocusEarly' });
     if (!result?.ok) return;
-    setEnding(false);
+    closeEnding();
     const sealed = result.events.some((event: { type: string }) => event.type === 'ProjectSealedAsMonument' || event.type === 'HabitBuildingCompleted');
     const currentPlan = reconciledPlan;
     if (sealed || !currentPlan || currentPlan.totalRounds === 1 || preferences.breakMinutes === 0) {
@@ -421,22 +451,24 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
          {session && <div className="focus-task-context"><span>{isHabit ? '本轮习惯' : '本轮任务'}</span><strong>{isHabit ? active.project.title : subtask!.title}</strong></div>}
         {isBreak && <div className="rest-summary"><span>休息时间</span><strong>{reconciledPlan?.endAfterBreak ? '小任务已完成' : '下一轮准备中'}</strong><small>{dailySummary}</small></div>}
         {(isBreak || session || reconciledPlan?.status === 'ready') && <div className={isBreak ? 'session-kind rest' : 'session-kind'}>{isBreak ? '放松一下，结束后会回到下一步。' : session ? `第 ${(reconciledPlan?.completedRounds ?? 0) + 1} / ${reconciledPlan?.totalRounds ?? 1} 轮专注` : `准备第 ${reconciledPlan!.completedRounds + 1} / ${reconciledPlan!.totalRounds} 轮`}</div>}
-        {session && state.focusIntegrityPolicy.enabled && integrityFlash && <div className={session.integrity.effectiveExcursions > 0 ? 'focus-integrity-warning flash active' : 'focus-integrity-warning flash'} role="status"><AlertTriangle/>有效离开 {session.integrity.effectiveExcursions} / {state.focusIntegrityPolicy.maxEffectiveExcursions} 次</div>}
+        {(session && state.focusIntegrityPolicy.enabled && (integrityFlash || integrityLeaving)) && <div className={`${session.integrity.effectiveExcursions > 0 ? 'focus-integrity-warning flash active' : 'focus-integrity-warning flash'}${integrityLeaving ? ' is-leaving' : ''}`} role="status"><AlertTriangle/>有效离开 {session.integrity.effectiveExcursions} / {state.focusIntegrityPolicy.maxEffectiveExcursions} 次</div>}
         {integrityFailure && <div className="focus-integrity-ended" role="alert"><AlertTriangle/>本轮专注因达到离开应用次数上限而结束。下次可以从这里继续。</div>}
          <FocusTimer mode={timerMode} endsAt={timerEndsAt} fallbackMs={timerFallbackMs} onElapsed={session ? reconcile : finishBreak}/>
         {isBreak ? <button className="primary secondary-action" onClick={() => { if (reconciledPlan?.endAfterBreak) setPlan(null); else { const { breakEndsAt: _breakEndsAt, ...withoutBreak } = reconciledPlan!; setPlan({ ...withoutBreak, status: 'ready' }); } }}>跳过休息</button>
           : reconciledPlan?.status === 'ready' ? <button className="primary" onClick={() => void startFocus()}><Clock3/>开始下一轮</button>
-            : session ? <div className="immersive-controls">{controlsVisible
+            : session ? <div className={`immersive-controls${controlsLeaving ? ' is-leaving' : ''}`}>{(controlsVisible || controlsLeaving)
               ? <button className="destructive primary" onClick={() => void setEnding(true)}><Square/>结束本次专注</button>
               : <p className={hintVisible ? 'immersive-hint' : 'immersive-hint is-faded'} role="status">双击下方空白处唤出结束按钮</p>}</div>
             : <button className="primary" onClick={() => void startFocus()}><Clock3/>开始 {reconciledPlan?.totalRounds ?? rounds} 轮</button>}
       </>}
       {ending && session && (
-         <EndFocusDialog taskTitle={isHabit ? active.project.title : subtask!.title} habit={isHabit} onClose={() => setEnding(false)} onInterrupt={interruptFocus} onCompleteEarly={completeEarly}/>
+        <div className={endingLeaving ? 'dialog-leave' : undefined}>
+          <EndFocusDialog taskTitle={isHabit ? active.project.title : subtask!.title} habit={isHabit} onClose={closeEnding} onInterrupt={interruptFocus} onCompleteEarly={completeEarly}/>
+        </div>
       )}
-      {planOpen && !session && (isHabit
-        ? <HabitFocusPlanSheet rounds={rounds} focusMinutes={preferences.habitFocusMinutes} breakMinutes={preferences.breakMinutes} locked={Boolean(reconciledPlan)} onRoundsChange={setRounds} onClose={() => setPlanOpen(false)}/>
-        : <FocusPlanSheet subtasks={active.project.subtasks} selectedId={reconciledPlan?.subtaskId ?? selected!} rounds={rounds} focusMinutes={preferences.focusMinutes} breakMinutes={preferences.breakMinutes} locked={Boolean(reconciledPlan)} onSelect={setSelected} onRoundsChange={setRounds} onClose={() => setPlanOpen(false)}/>)}
+      {(planOpen || planLeaving) && !session && <div className={planLeaving ? 'dialog-leave' : undefined}>{isHabit
+        ? <HabitFocusPlanSheet rounds={rounds} focusMinutes={preferences.habitFocusMinutes} breakMinutes={preferences.breakMinutes} locked={Boolean(reconciledPlan)} onRoundsChange={setRounds} onClose={closePlan}/>
+        : <FocusPlanSheet subtasks={active.project.subtasks} selectedId={reconciledPlan?.subtaskId ?? selected!} rounds={rounds} focusMinutes={preferences.focusMinutes} breakMinutes={preferences.breakMinutes} locked={Boolean(reconciledPlan)} onSelect={setSelected} onRoundsChange={setRounds} onClose={closePlan}/>}</div>}
     </section>}
   </div>;
 }

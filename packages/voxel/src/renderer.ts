@@ -811,6 +811,7 @@ export function createVoxelRenderer(
   let ambientFrameIntervalMs = 250;
   let lastAmbientFrameStartedMs = Number.NEGATIVE_INFINITY;
   let ambientFrameInFlight = false;
+  let ambientLogTick = 0;
   function requestAmbientRender(nowMs: number): void {
     if (disposed || frame !== 0 || !paneVisible || nowMs - lastAmbientFrameStartedMs < ambientFrameIntervalMs) return;
     lastAmbientFrameStartedMs = nowMs;
@@ -1140,8 +1141,8 @@ export function createVoxelRenderer(
         crownY: tree.y + 2.8 * tree.scale,
         scale: tree.scale,
         phase: (index * 0.6180339887) % 1,
-        periodMs: 6_000 + ((index * 137) % 5_000),
-        amp: 0.045 + ((index * 97) % 12) / 12 * 0.03,
+        periodMs: 5_000 + ((index * 137) % 4_000),
+        amp: 0.06 + ((index * 97) % 12) / 12 * 0.04,
         axisAngle: ((index * 53) % 360) * (Math.PI / 180),
       })),
       elapsedMs: 0,
@@ -1868,8 +1869,8 @@ export function createVoxelRenderer(
           phase: random() * Math.PI * 2,
           // Amplitudes are sized against the 3.2-8 unit cloud blocks so the
           // drift reads clearly at a glance instead of hiding in the haze.
-          periodMs: kind === "distant" ? 60_000 + random() * 60_000 : 45_000 + random() * 45_000,
-          amp: kind === "distant" ? 3 + random() * 3 : 6 + random() * 6,
+          periodMs: kind === "distant" ? 45_000 + random() * 45_000 : 30_000 + random() * 30_000,
+          amp: kind === "distant" ? 5 + random() * 4 : 10 + random() * 8,
           angle: random() * Math.PI * 2,
         });
       }
@@ -2053,6 +2054,13 @@ export function createVoxelRenderer(
     updateTreeSway(nowMs);
     updateConstructionReveals(nowMs);
     canvas.dataset.ambientMotionActive = String(ambientMotionAllowed());
+    // Low-frequency on-device diagnostic (V20 tuning; removed before release):
+    // WebView console output lands in `adb logcat` under the chromium tag, which
+    // is the only DOM-free way to read the ambient gate on a real device.
+    ambientLogTick += 1;
+    if (ambientLogTick % 50 === 0) {
+      console.log(`[ambient] tier=${qualityTier} reduced=${reducedMotion} pane=${paneVisible} hidden=${document.hidden} clouds=${cloudDrift !== null} trees=${naturalTreeSway !== null} driftMs=${cloudDrift ? Math.round(cloudDrift.elapsedMs) : 0} swayMs=${naturalTreeSway ? Math.round(naturalTreeSway.elapsedMs) : 0} interval=${ambientFrameIntervalMs} frame=${frame}`);
+    }
   }
 
   function applyAtmosphere(): void {
@@ -2417,7 +2425,7 @@ export function createVoxelRenderer(
     requestRender();
   }
 
-  function applyQuality(tier: QualityTier): void {
+  function applyQuality(tier: QualityTier, runtimeDowngrade = false): void {
     qualityTier = tier;
     qualityProfile = QUALITY_PROFILES[tier];
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, qualityProfile.maxPixelRatio));
@@ -2429,24 +2437,32 @@ export function createVoxelRenderer(
     sun.shadow.intensity = 0.62 + LIGHTWEIGHT_SHADING_PROFILES[tier].shadowStrength * 0.25;
     sun.shadow.bias = -0.00035;
     sun.shadow.normalBias = tier === "low" ? 0.024 : tier === "balanced" ? 0.018 : 0.013;
-    if (sun.shadow.mapSize.x !== qualityProfile.shadowMapSize) {
-      sun.shadow.map?.dispose();
-      sun.shadow.mapSize.set(qualityProfile.shadowMapSize, qualityProfile.shadowMapSize);
+    // A runtime downgrade must stay visually silent: disposing the shadow map,
+    // rewriting water/glass materials, culling trees and lights, or rebuilding
+    // the cloud layer mid-session reads as a white-edged flash on rivers and a
+    // sky pop. Those structural changes wait for the next scene rebuild, which
+    // applies the full profile anyway; the runtime step only trims the costly
+    // post-process and pixel ratio.
+    if (!runtimeDowngrade) {
+      if (sun.shadow.mapSize.x !== qualityProfile.shadowMapSize) {
+        sun.shadow.map?.dispose();
+        sun.shadow.mapSize.set(qualityProfile.shadowMapSize, qualityProfile.shadowMapSize);
+      }
+      updateMaterialEffects(currentLighting);
+      updateReflectiveMaterials(currentLighting);
+      for (const mesh of cutoutShadowMeshes) mesh.castShadow = LIGHTWEIGHT_SHADING_PROFILES[tier].features.cutoutShadows;
+      requestShadowRefresh(new Date(), true);
+      while (localLights.length > qualityProfile.maxLocalLights) {
+        const removed = localLights.pop();
+        if (removed) localLightGroup.remove(removed.light);
+      }
+      while (glowSprites.length > qualityProfile.maxGlowSprites) {
+        const removed = glowSprites.pop();
+        if (removed) localLightGroup.remove(removed.sprite);
+      }
+      updateNaturalTreeDensity();
+      if (atmosphereGroup.children.length > 0) updateWeather(currentWeather.localDate, true);
     }
-    updateMaterialEffects(currentLighting);
-    updateReflectiveMaterials(currentLighting);
-    for (const mesh of cutoutShadowMeshes) mesh.castShadow = LIGHTWEIGHT_SHADING_PROFILES[tier].features.cutoutShadows;
-    requestShadowRefresh(new Date(), true);
-    while (localLights.length > qualityProfile.maxLocalLights) {
-      const removed = localLights.pop();
-      if (removed) localLightGroup.remove(removed.light);
-    }
-    while (glowSprites.length > qualityProfile.maxGlowSprites) {
-      const removed = glowSprites.pop();
-      if (removed) localLightGroup.remove(removed.sprite);
-    }
-    updateNaturalTreeDensity();
-    if (atmosphereGroup.children.length > 0) updateWeather(currentWeather.localDate, true);
     canvas.dataset.qualityTier = tier;
     updateDiagnosticsDataset();
   }
@@ -2458,7 +2474,7 @@ export function createVoxelRenderer(
     const sustainedSlow = interactionFrameDurations.length >= 24 && p95 !== null && p95 > 22;
     const sceneHeavy = render.calls > 180 || render.triangles > 340_000;
     if (!sustainedSlow && !sceneHeavy) return;
-    applyQuality(lowerQualityTier(qualityTier));
+    applyQuality(lowerQualityTier(qualityTier), true);
     interactionFrameDurations = [];
     resize();
   }
