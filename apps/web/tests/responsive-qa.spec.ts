@@ -41,6 +41,10 @@ async function revealFocusControls(page: import('@playwright/test').Page) {
   throw new Error('Focus controls did not reveal after repeated double-taps');
 }
 test('keeps setup and the focus world usable across the target viewport matrix', async ({ page }, testInfo) => {
+  // Ten full-page world screenshots across five viewports plus the immersive
+  // reveal cycle exceed the default budget once the local gate machine drifts
+  // into its slower thermal state.
+  test.setTimeout(60_000);
   await page.goto('/');
   await page.getByLabel('大型任务').fill('完成一个包含非常长名称与 EnglishIdentifierWithoutSpaces1234567890 的重要大型任务');
   await page.getByRole('button', { name: '清空小任务' }).click();
@@ -102,6 +106,10 @@ test('keeps setup and the focus world usable across the target viewport matrix',
   for (const viewport of VIEWPORTS) {
     await page.setViewportSize({ width: viewport.width, height: viewport.height });
     await page.waitForTimeout(100);
+    // The revealed end control auto-hides after five seconds; a slow software
+    // renderer can take longer than that across the viewport screenshots, so
+    // re-reveal before each measurement (idempotent when already visible).
+    await revealFocusControls(page);
     const layout = await page.evaluate(() => {
       const worldRect = document.querySelector('.is-focusing .world')?.getBoundingClientRect();
       const panelRect = document.querySelector('.is-focusing .focus-panel')?.getBoundingClientRect();

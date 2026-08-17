@@ -116,6 +116,10 @@ async function revealFocusControls(page: import('@playwright/test').Page) {
   throw new Error('Focus controls did not reveal after repeated double-taps');
 }
 test('creates a project, renders the world and persists focus state', async ({ page }, testInfo) => {
+  // The hint-fade assertion adds a five-second rhythm check on top of the
+  // world render and the reveal/hide cycle; the local gate machine measures
+  // this between 24 and 34 seconds depending on thermal state.
+  test.setTimeout(45_000);
   await page.goto('/');
   await expect(page.getByRole('heading', { name: '建立你的第一项任务' })).toBeVisible();
   await page.getByRole('button', { name: '开始建造' }).click();

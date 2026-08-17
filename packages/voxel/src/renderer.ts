@@ -321,6 +321,8 @@ export function createVoxelRenderer(
     worldSeed?: string;
     terrainGenerationVersion?: TerrainGenerationVersion;
     onSelectProject?: (projectId: string) => void;
+    /** Diagnostic: a light tap reports the terrain cell under the pointer. */
+    onPickTerrain?: (position: { x: number; y: number; z: number }) => void;
     /** Previews keep the camera fitted to the building while terrain extends past the viewport. */
     previewMode?: boolean;
     /** Diagnostic mode: every part renders in a flat distinct color so visual bugs can be attributed. */
@@ -572,6 +574,7 @@ export function createVoxelRenderer(
   let naturalTreeMeshes: { trunks: THREE.InstancedMesh; crowns: THREE.InstancedMesh; total: number } | null = null;
   let rainAnimation: { mesh: THREE.InstancedMesh; drops: readonly { x: number; z: number; phase: number }[]; baseY: number; spanY: number; elapsedMs: number; lastUpdateMs: number } | null = null;
   const terrainPackTextures: THREE.Texture[] = [];
+  let terrainMeshForPicking: THREE.Mesh | null = null;
 
   function material(id: string): THREE.MeshStandardMaterial {
     let found = materials.get(id);
@@ -974,6 +977,7 @@ export function createVoxelRenderer(
     mesh.castShadow = false;
     mesh.userData.terrainTriangles = data.triangleCount;
     terrainGroup.add(mesh);
+    terrainMeshForPicking = mesh;
     addNaturalBackdrop(data);
     addNaturalTrees(data);
   }
@@ -2062,6 +2066,7 @@ export function createVoxelRenderer(
       requestRender();
     }
     if (wasSinglePointer && start && Math.hypot(event.clientX - start.x, event.clientY - start.y) <= 8) {
+      pickTerrainAt(event.clientX, event.clientY);
       selectProjectAt(event.clientX, event.clientY);
     }
   };
@@ -2080,9 +2085,27 @@ export function createVoxelRenderer(
     previousPinchCenterY = (first!.y + second!.y) / 2;
   }
 
-  function selectProjectAt(clientX: number, clientY: number): void {
-    if (!options.onSelectProject || positionedWorlds.length === 0) return;
+  function pickTerrainAt(clientX: number, clientY: number): void {
+    if (!options.onPickTerrain || !terrainMeshForPicking) return;
     const rect = canvas.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return;
+    const pointer = new THREE.Vector2(
+      ((clientX - rect.left) / rect.width) * 2 - 1,
+      -((clientY - rect.top) / rect.height) * 2 + 1,
+    );
+    const raycaster = new THREE.Raycaster();
+    raycaster.setFromCamera(pointer, camera);
+    const hit = raycaster.intersectObject(terrainMeshForPicking, false)[0];
+    if (!hit) return;
+    options.onPickTerrain({
+      x: Math.round(hit.point.x),
+      y: Math.round(hit.point.y),
+      z: Math.round(hit.point.z),
+    });
+  }
+
+  function selectProjectAt(clientX: number, clientY: number): void {
+    if (!options.onSelectProject || positionedWorlds.length === 0) return;    const rect = canvas.getBoundingClientRect();
     if (rect.width <= 0 || rect.height <= 0) return;
     const pointer = new THREE.Vector2(
       ((clientX - rect.left) / rect.width) * 2 - 1,

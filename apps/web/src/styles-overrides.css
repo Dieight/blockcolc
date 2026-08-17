@@ -383,3 +383,8 @@
 .focus-immersive .is-focusing .focus-panel{position:absolute;left:auto;right:0;top:0;bottom:0;height:100dvh;width:clamp(288px,34vw,330px);border-top:0;border-left:1px solid rgba(203,210,205,.85);background:rgba(243,245,242,.66);backdrop-filter:blur(18px) saturate(1.2);-webkit-backdrop-filter:blur(18px) saturate(1.2);padding:max(16px,var(--safe-top)) max(18px,var(--safe-right)) max(16px,var(--safe-bottom)) 18px;align-content:center}
 .focus-immersive .is-focusing .timer{margin:14px 0 10px}
 .focus-immersive .is-focusing .focus-integrity-warning.flash{top:auto;bottom:max(16px,var(--safe-bottom));left:50%}}
+
+/* V19 diagnosis: a light tap on the world reports the terrain cell coordinates in a
+   quiet mono chip under the HUD, so defects can be pinned to exact blocks. */
+.world-pick-chip{position:absolute;left:12px;top:76px;z-index:3;margin:0;padding:6px 10px;border-radius:8px;background:rgba(20,29,25,.82);color:#d8e4da;font:12px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace;pointer-events:none}
+.world-pick-chip::before{content:"▦ ";color:#8fb89b}
