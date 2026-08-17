@@ -245,7 +245,7 @@
 .workbench-heading h1{margin:0;font-size:22px;font-weight:700;line-height:1.25;overflow-wrap:anywhere}
 .task-switch-action{min-height:44px;flex:0 0 auto;display:inline-flex;align-items:center;gap:6px;padding:0 4px;border:0;background:none;color:#276749;font-weight:700}
 .task-switch-action svg{width:18px}
-.workbench-context{border:0;border-left:3px solid #4b8a5c;background:transparent;padding:2px 0 2px 12px;display:grid;gap:5px;grid-template-columns:minmax(0,1fr)}
+.workbench-context{border:0;border-left:3px solid #4b8a5c;border-radius:0;background:transparent;padding:2px 0 2px 12px;display:grid;gap:5px;grid-template-columns:minmax(0,1fr)}
 .workbench-context span,.workbench-context small{color:#58635d;font-size:12px;line-height:1.4}
 .workbench-context strong{min-width:0;font-size:21px;font-weight:700;color:#17211c;line-height:1.3;overflow-wrap:anywhere;white-space:normal}
 .plan-summary{min-height:44px;width:100%;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:0;border:0;background:none;color:#17211c;text-align:left;font-size:13px}
@@ -428,15 +428,24 @@
 .v7-progress-report{animation:ui-fade-in .18s cubic-bezier(.22,.9,.36,1) both}
 .dialog-backdrop{animation:ui-fade-in .14s ease-out both}
 /* FX-04 exit: closing controls mirror the entrance with a fade-down so
-   pop-in and pop-out read as one symmetric move. */
+   pop-in and pop-out read as one symmetric move. The immersive integrity chip
+   centers itself with translateX(-50%), so its exit keeps that offset instead
+   of jumping right before fading. */
 .dialog-leave .confirm-dialog,
 .dialog-leave .focus-plan-sheet,
 .dialog-leave .habit-building-selection,
 .immersive-controls.is-leaving .primary.destructive,
-.focus-integrity-warning.is-leaving,
-.focus-integrity-warning.flash.is-leaving{animation:ui-fade-out .16s ease-in both}
-.focus-immersive .is-focusing .focus-integrity-warning.flash.is-leaving{animation:ui-fade-out .16s ease-in both}
+.focus-integrity-warning.is-leaving{animation:ui-fade-out .16s ease-in both}
+.focus-immersive .is-focusing .focus-integrity-warning.is-leaving{animation:ui-fade-out-centered .16s ease-in both}
 .dialog-leave .dialog-backdrop{animation:ui-fade-out .14s ease-in both}
 }
 @keyframes ui-fade-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
 @keyframes ui-fade-out{from{opacity:1;transform:translateY(0)}to{opacity:0;transform:translateY(8px)}}
+@keyframes ui-fade-out-centered{from{opacity:1;transform:translate(-50%,0)}to{opacity:0;transform:translate(-50%,8px)}}
+
+/* V20 FX-05: the active bottom-nav icon pops into place when a tab activates,
+   the only other owner-approved micro-motion beyond the press rebound. */
+@media(prefers-reduced-motion:no-preference){
+.bottom-nav .nav-active svg{animation:nav-icon-pop .2s cubic-bezier(.34,1.56,.64,1)}
+}
+@keyframes nav-icon-pop{from{transform:scale(.82)}to{transform:scale(1)}}
