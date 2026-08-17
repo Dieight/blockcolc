@@ -2,7 +2,7 @@
 
 User-facing release notes are kept here; internal diagnosis and per-run evidence belong in `docs/QA-BASELINES.md` or ignored artifacts.
 
-## v1.4.0 - unreleased
+## v1.4.0 - 2026-08-17
 
 - The settlement world now stays resident across tab switches: returning to the timer shows the world instantly with the same camera, and nothing renders in the background while you are away.
 - The focus screen becomes fully immersive: the world fills the whole screen behind a frosted-glass band, the end control hides until a double-tap on the band (a one-time hint explains the gesture), and the integrity count pops up as a chip only when it changes.
@@ -13,6 +13,7 @@ User-facing release notes are kept here; internal diagnosis and per-run evidence
 - Natural-valley mountains no longer bleach into flat void-colored walls: the fog horizon now follows the terrain extent, distant slopes keep their material colors under a light haze, and compact islands keep their original fog. The double-tap hint on the focus screen now fades on the same five-second rhythm as the end control.
 - Step faces in natural valleys no longer leave hairline gaps at cell corners: bright sky no longer bleeds through staircase corners by day (or stars by night), in both new worlds and existing worlds.
 - Terrain step faces no longer bloom white: their near-white procedural textures are shaded down so low-sun light and settlement lamps keep them in mid-gray instead of clipping to pure white.
+- LOD ring boundaries are now watertight at any settlement size: the detail rings stitch onto their neighbors' cell lattice, so the world no longer shows bright boundary rows of sky (by day) or stars (by night) at the ring lines, in new worlds and existing worlds alike.
 
 ## v1.3.2 - 2026-08-14
 
