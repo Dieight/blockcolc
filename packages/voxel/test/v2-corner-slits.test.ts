@@ -49,14 +49,31 @@ function collectCornerSlits(seed: string, terrainGenerationVersion: 1 | 4): stri
     ...quadsOf(terrain.sideIndices.stone, "stone"),
   ];
   const key = (x: number, z: number) => `${x}|${z}`;
-  // Top surfaces meeting at each corner position.
+  // Top surfaces meeting at every lattice position: register each top quad's
+  // height along its full edges, not just at the corners, so continuous slits
+  // running along ring boundary lines are caught too.
   const cornerHeights = new Map<string, number[]>();
+  const registerHeight = (x: number, z: number, y: number) => {
+    const k = key(x, z);
+    const list = cornerHeights.get(k) ?? [];
+    if (!list.includes(y)) list.push(y);
+    cornerHeights.set(k, list);
+  };
   for (const quad of tops) {
-    for (const corner of quad.vertices) {
-      const k = key(corner.x, corner.z);
-      const list = cornerHeights.get(k) ?? [];
-      if (!list.includes(corner.y)) list.push(corner.y);
-      cornerHeights.set(k, list);
+    for (let corner = 0; corner < 4; corner += 1) {
+      const a = quad.vertices[corner]!;
+      const b = quad.vertices[(corner + 1) % 4]!;
+      // Half-unit steps cover both the integer ring lattices (V2/V3/V4) and
+      // the half-integer legacy lattice (V1).
+      if (a.x === b.x) {
+        for (let z = Math.ceil(Math.min(a.z, b.z) * 2) / 2; z <= Math.floor(Math.max(a.z, b.z) * 2) / 2 + 0.001; z += 0.5) {
+          registerHeight(a.x, Math.round(z * 2) / 2, a.y);
+        }
+      } else if (a.z === b.z) {
+        for (let x = Math.ceil(Math.min(a.x, b.x) * 2) / 2; x <= Math.floor(Math.max(a.x, b.x) * 2) / 2 + 0.001; x += 0.5) {
+          registerHeight(Math.round(x * 2) / 2, a.z, a.y);
+        }
+      }
     }
   }
   // Vertical coverage spans: a side quad covers every corner position along

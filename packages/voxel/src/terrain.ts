@@ -360,19 +360,14 @@ function createNaturalTerrainDataV2(
       x - half, top, z - half, x - half, top, z + half,
       x + half, top, z + half, x + half, top, z - half,
     ], sample.material);
-    // Neighbors must be sampled at THEIR ring's cell size: sampling a ring
-    // boundary neighbor with this cell's size hides real steps and leaves a
-    // sky-visible slit between the two rings.
-    const neighborAt = (neighborX: number, neighborZ: number) => {
-      const insideNear = Math.abs(neighborX) <= nearExtent && Math.abs(neighborZ) <= nearExtent;
-      const insideMiddle = Math.abs(neighborX) <= middleExtent && Math.abs(neighborZ) <= middleExtent;
-      const neighborSize = insideNear ? 2 : insideMiddle ? 4 : 16;
-      return sampleCellAt(neighborX, neighborZ, neighborSize);
-    };
-    addV2CellSide(x, z, size, sample, -1, 0, neighborAt, addSideQuad);
-    addV2CellSide(x, z, size, sample, 1, 0, neighborAt, addSideQuad);
-    addV2CellSide(x, z, size, sample, 0, -1, neighborAt, addSideQuad);
-    addV2CellSide(x, z, size, sample, 0, 1, neighborAt, addSideQuad);
+    // Neighbors must be sampled at THEIR ring's cell size AND at their ring's
+    // lattice centers: sampling a ring boundary neighbor at this cell's size or
+    // at an off-lattice position hides real steps and leaves a sky-visible slit
+    // along the whole boundary line between the two rings.
+    addV2CellSide(x, z, size, sample, -1, 0, sampleCellAt, nearExtent, middleExtent, addSideQuad);
+    addV2CellSide(x, z, size, sample, 1, 0, sampleCellAt, nearExtent, middleExtent, addSideQuad);
+    addV2CellSide(x, z, size, sample, 0, -1, sampleCellAt, nearExtent, middleExtent, addSideQuad);
+    addV2CellSide(x, z, size, sample, 0, 1, sampleCellAt, nearExtent, middleExtent, addSideQuad);
     lodCellCounts[lod] += 1;
     terrainSurfaceArea += size * size;
     minHeight = Math.min(minHeight, sample.height);
@@ -569,21 +564,52 @@ function addV2CellSide(
   sample: V2TerrainSample,
   dx: number,
   dz: number,
-  sampleAt: (x: number, z: number) => V2TerrainSample,
+  sampleCellAt: (x: number, z: number, size: number) => V2TerrainSample,
+  nearExtent: number,
+  middleExtent: number,
   addQuad: (vertices: readonly number[], material: "dirt" | "stone") => void,
 ): void {
-  const neighbor = sampleAt(x + dx * cellSize, z + dz * cellSize);
   // Water surfaces sit 0.16 above land tops; side faces must start at the actual
   // surface height so the shoreline never leaves a sky-visible slit.
   const top = sample.height - (sample.material === "water" ? 0.34 : 0.5);
-  const bottom = neighbor.height - 0.5;
-  if (bottom >= top - 0.01) return;
   const half = cellSize / 2;
+  const acrossX = x + dx * cellSize;
+  const acrossZ = z + dz * cellSize;
+  const insideNear = Math.abs(acrossX) <= nearExtent && Math.abs(acrossZ) <= nearExtent;
+  const insideMiddle = Math.abs(acrossX) <= middleExtent && Math.abs(acrossZ) <= middleExtent;
+  const neighborSize = insideNear ? 2 : insideMiddle ? 4 : 16;
+  // Ring lattices: near cells sit on odd coordinates, middle cells at 2 mod 4,
+  // far cells at 8 mod 16. Snap the neighbor sample to a real cell center of
+  // ITS ring instead of the off-lattice adjacent position, and split this
+  // cell's edge at the neighbor lattice so every segment's bottom rests on
+  // the actual neighbor top. This closes the boundary-line slits that used to
+  // run along x/z = ±80 (and ±160) between the rings.
+  const latticeOffset = neighborSize === 16 ? 8 : neighborSize === 4 ? 2 : 1;
+  const snap = (value: number) => latticeOffset + neighborSize * Math.round((value - latticeOffset) / neighborSize);
+  // The neighbor cell across the edge is the lattice cell whose edge contains
+  // this cell's boundary line: the boundary coordinate shifted half a neighbor
+  // cell toward the neighbor side, snapped onto the neighbor lattice.
+  const boundaryX = x + dx * half;
+  const boundaryZ = z + dz * half;
+  const snappedAcrossX = dx !== 0 ? snap(boundaryX + dx * neighborSize / 2) : x;
+  const snappedAcrossZ = dz !== 0 ? snap(boundaryZ + dz * neighborSize / 2) : z;
+  const edgeStart = dx !== 0 ? z - half : x - half;
+  const edgeEnd = dx !== 0 ? z + half : x + half;
   const material: TerrainMaterial = top > 12 ? "stone" : "dirt";
-  if (dx < 0) addQuad([x - half, bottom, z + half, x - half, top, z + half, x - half, top, z - half, x - half, bottom, z - half], material);
-  else if (dx > 0) addQuad([x + half, bottom, z - half, x + half, top, z - half, x + half, top, z + half, x + half, bottom, z + half], material);
-  else if (dz < 0) addQuad([x - half, bottom, z - half, x - half, top, z - half, x + half, top, z - half, x + half, bottom, z - half], material);
-  else addQuad([x + half, bottom, z + half, x + half, top, z + half, x - half, top, z + half, x - half, bottom, z + half], material);
+  for (let center = snap(edgeStart); center - neighborSize / 2 < edgeEnd + 0.001; center += neighborSize) {
+    const segStart = Math.max(edgeStart, center - neighborSize / 2);
+    const segEnd = Math.min(edgeEnd, center + neighborSize / 2);
+    if (segEnd - segStart < 0.001) continue;
+    const neighborX = dx !== 0 ? snappedAcrossX : center;
+    const neighborZ = dz !== 0 ? snappedAcrossZ : center;
+    const neighbor = sampleCellAt(neighborX, neighborZ, neighborSize);
+    const bottom = neighbor.height - 0.5;
+    if (bottom >= top - 0.01) continue;
+    if (dx < 0) addQuad([x - half, bottom, segEnd, x - half, top, segEnd, x - half, top, segStart, x - half, bottom, segStart], material);
+    else if (dx > 0) addQuad([x + half, bottom, segStart, x + half, top, segStart, x + half, top, segEnd, x + half, bottom, segEnd], material);
+    else if (dz < 0) addQuad([segStart, bottom, z - half, segStart, top, z - half, segEnd, top, z - half, segEnd, bottom, z - half], material);
+    else addQuad([segEnd, bottom, z + half, segEnd, top, z + half, segStart, top, z + half, segStart, bottom, z + half], material);
+  }
 }
 
 function sampleNaturalTerrainV2(

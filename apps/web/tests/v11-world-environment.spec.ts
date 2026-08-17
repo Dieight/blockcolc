@@ -54,7 +54,9 @@ test('selects a building with a light tap', async ({ page }, testInfo) => {
 
 test('retains drag gestures in the selected-building view', async ({ page }) => {
   test.skip(Boolean(process.env.CI), 'Physical-device and local GPU gates own synchronous 3D gesture coverage.');
-  test.setTimeout(60_000);
+  // The software-WebGL renderer starves under sustained local-gate load; the
+  // canvas attach alone has measured beyond the default budget on warm runs.
+  test.setTimeout(120_000);
   page.on('pageerror', (error) => console.log('PAGEERROR:', error.message));
   page.on('console', (message) => { if (message.type() === 'error') console.log('CONSOLE-ERROR:', message.text()); });
   page.on('framenavigated', (frame) => console.log('NAVIGATED:', frame.url()));
