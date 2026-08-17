@@ -1,7 +1,8 @@
 import { expect, test } from '@playwright/test';
 
 test('reports terrain cell coordinates on a light tap', async ({ page }) => {
-  await page.goto('/');
+  // V19 diagnostic cell picking is opt-in behind ?pick.
+  await page.goto('/?pick');
   await page.getByRole('button', { name: '开始建造' }).click();
   const canvas = page.getByLabel('项目建筑世界');
   await expect(canvas).toHaveAttribute('data-terrain-generation-version', '4');

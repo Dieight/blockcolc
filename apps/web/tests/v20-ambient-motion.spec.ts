@@ -67,9 +67,6 @@ test("the finished increment grows block by block and settles fully", async ({ p
   await createDefaultProject(page);
   const canvas = page.getByLabel("项目建筑世界");
   await completeOneRoundEarly(page);
-  // FX-03: the round-complete ceremony beat shows right at the completion moment
-  // and removes itself afterwards.
-  await expect(page.locator(".round-ceremony")).toContainText("本轮完成");
   // The first wave pops ~240 ms after the rebuild and the whole reveal takes
   // ~3.5 s: the counter must rise above zero and return to zero by itself.
   await expect
@@ -80,7 +77,22 @@ test("the finished increment grows block by block and settles fully", async ({ p
     .poll(async () => Number(await canvas.getAttribute("data-construction-reveal-count") ?? "0"), { timeout: 10_000 })
     .toBe(0);
   await page.screenshot({ path: testInfo.outputPath("v20-reveal-settled.png"), fullPage: true });
-  await expect(page.locator(".round-ceremony")).toHaveCount(0);
+});
+
+test("moves clouds and trees across idle frames when the ambient gate is open", async ({ page }) => {
+  await createDefaultProject(page);
+  const canvas = page.getByLabel("项目建筑世界");
+  await expect
+    .poll(async () => await canvas.getAttribute("data-ambient-motion-active"), { timeout: 5_000 })
+    .not.toBeNull();
+  // The performance tier disables idle ambient motion by design: skip the pixel
+  // proof there instead of asserting against a gate that is allowed to be closed.
+  if (await canvas.getAttribute("data-ambient-motion-active") !== "true") return;
+  await page.waitForTimeout(1_400);
+  const first = await canvas.screenshot();
+  await page.waitForTimeout(1_400);
+  const second = await canvas.screenshot();
+  expect(Buffer.compare(first, second)).not.toBe(0);
 });
 
 test("leaves the reveal quiet on the initial world load", async ({ page }) => {

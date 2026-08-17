@@ -407,15 +407,24 @@
 .primary:active,.destructive:active,.secondary-action:active,.task-switch-action:active,.plan-summary:active,.round-picker button:active,.choice-menu button:active,.report-options button:active,.duration button:active,.dialog-close:active,.dialog-back:active,.check-update:active,.habit-building-confirm:active,.task-section-actions .icon-action:active,.subtask-group-toggle:active,.project-portfolio-row>button:active{transform:scale(.955)}
 }
 
-/* V20 FX-03: round/break ceremony. A one-and-a-half-second beat floats over the
-   screen when a round completes, a break ends, or a round starts; it never
-   intercepts input and vanishes by itself. */
-.round-ceremony{position:fixed;inset:0;z-index:45;display:grid;place-items:center;pointer-events:none}
-.round-ceremony span{display:flex;flex-direction:column;align-items:center;gap:4px;color:#17211c;font-size:15px;font-weight:800;letter-spacing:.08em;text-shadow:0 1px 0 rgba(255,255,255,.65)}
+/* V20 FX-03 (owner feedback, dropped): the round/break ceremony overlay was
+   removed — the existing construction-feedback beat already marks a completed
+   round, and the extra floating text was unwanted. */
+
+/* V20 FX-04: conditional controls enter with the same quiet fade-up the
+   immersive end control already uses for its hint, so every pop-in panel and
+   button reads as one visual language. Mount-triggered, 160-200 ms, gated on
+   no-preference. */
 @media(prefers-reduced-motion:no-preference){
-.round-ceremony span{animation:ceremony-beat 1.4s ease both}
-.round-ceremony span::before{content:"";width:52px;height:52px;border-radius:50%;background:radial-gradient(circle,rgba(226,175,88,.5),rgba(226,175,88,0) 70%);animation:ceremony-glow 1.4s ease both}
+.immersive-controls .primary.destructive,
+.focus-task-context,
+.rest-summary,
+.focus-integrity-ended,
+.report,
+.confirm-dialog,
+.focus-plan-sheet,
+.habit-building-selection,
+.v7-progress-report{animation:ui-fade-in .18s cubic-bezier(.22,.9,.36,1) both}
+.dialog-backdrop{animation:ui-fade-in .14s ease-out both}
 }
-@keyframes ceremony-beat{0%{opacity:0;transform:translateY(12px) scale(.94)}18%{opacity:1;transform:translateY(0) scale(1.03)}32%{transform:scale(1)}76%{opacity:1}100%{opacity:0;transform:translateY(-10px)}}
-@keyframes ceremony-glow{0%{opacity:0;transform:scale(.45)}20%{opacity:1}58%{opacity:.7;transform:scale(1.22)}100%{opacity:0;transform:scale(1.55)}}
-@media(prefers-reduced-motion:reduce){.round-ceremony{display:none}}
+@keyframes ui-fade-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}

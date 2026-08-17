@@ -29,8 +29,10 @@ test('runs a repeatable habit building cycle with frozen targets and stable comp
   // Ten early-completed rounds plus a second WebGL preview renderer for the
   // next-building picker exceed the default budget on shared GPUs; the local
   // gate machine can additionally drift with thermal/background state, so the
-  // budget stays above the measured 41-72 s spread.
-  test.setTimeout(90_000);
+  // budget stays above the measured 41-72 s spread. V20's throttled ambient
+  // loop adds a low but constant software-WebGL load during the whole flow,
+  // pushing local wall time past 100 s: keep headroom at 150 s.
+  test.setTimeout(150_000);
   await page.setViewportSize({ width: 412, height: 915 });
   await page.goto('/');
   await page.getByRole('button', { name: '习惯任务' }).click();

@@ -1140,8 +1140,8 @@ export function createVoxelRenderer(
         crownY: tree.y + 2.8 * tree.scale,
         scale: tree.scale,
         phase: (index * 0.6180339887) % 1,
-        periodMs: 8_000 + ((index * 137) % 7_000),
-        amp: 0.016 + ((index * 97) % 12) / 12 * 0.02,
+        periodMs: 6_000 + ((index * 137) % 5_000),
+        amp: 0.045 + ((index * 97) % 12) / 12 * 0.03,
         axisAngle: ((index * 53) % 360) * (Math.PI / 180),
       })),
       elapsedMs: 0,
@@ -1866,8 +1866,10 @@ export function createVoxelRenderer(
           first,
           count: instanceIndex - first,
           phase: random() * Math.PI * 2,
-          periodMs: 90_000 + random() * 150_000,
-          amp: kind === "distant" ? 0.9 + random() * 1.6 : 1.6 + random() * 2.2,
+          // Amplitudes are sized against the 3.2-8 unit cloud blocks so the
+          // drift reads clearly at a glance instead of hiding in the haze.
+          periodMs: kind === "distant" ? 60_000 + random() * 60_000 : 45_000 + random() * 45_000,
+          amp: kind === "distant" ? 3 + random() * 3 : 6 + random() * 6,
           angle: random() * Math.PI * 2,
         });
       }
