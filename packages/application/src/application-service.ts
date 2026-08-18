@@ -411,6 +411,8 @@ function materialize(command: ApplicationCommand, ids: IdGenerator): DomainComma
       return { ...command, sessionId: ids.next("focus-session") };
     case "ReportSubtaskProgress":
       return { ...command, reportId: ids.next("progress-report") };
+    case "ReportMarathonFocus":
+      return { ...command, entries: command.entries.map((entry) => ({ ...entry, reportId: ids.next("progress-report") })) };
     case "CompleteFocusEarly":
       return { ...command, reportId: ids.next("progress-report") };
     default:

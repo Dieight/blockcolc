@@ -814,3 +814,80 @@ describe("decay policy, calendar, and per-project runtime", () => {
     expect(countPlannedFocusDaysAfter("2026-03-06", "2026-03-09", { timeZone: "America/New_York", restWeekdays: [0, 6] })).toBe(1);
   });
 });
+
+describe("V21 marathon final report", () => {
+  it("attributes a block of completed sessions to multiple subtasks atomically", () => {
+    const f = fixture();
+    f.create("p1", ["a", "b", "c"]);
+    f.complete("s1", "a");
+    f.complete("s2", "a");
+    const result = f.run({
+      type: "ReportMarathonFocus",
+      entries: [
+        { reportId: "m1", subtaskId: "a", progressBasisPoints: 5_000 },
+        { reportId: "m2", subtaskId: "b", progressBasisPoints: 2_500 },
+      ],
+      focusSessionIds: ["s1", "s2"],
+    });
+    expect(result).toMatchObject({ ok: true });
+    const project = activeProject(f.state());
+    expect(project.subtasks.find((item) => item.id === "a")).toMatchObject({ progressBasisPoints: 5_000 });
+    expect(project.subtasks.find((item) => item.id === "b")).toMatchObject({ progressBasisPoints: 2_500 });
+    expect(project.subtasks.find((item) => item.id === "c")).toMatchObject({ progressBasisPoints: 0 });
+    expect(f.state().progressReports).toHaveLength(2);
+    expect(project.subtaskStructureLocked).toBe(true);
+  });
+
+  it("rejects reused sessions, decreasing progress, unknown subtasks, and empty sessions", () => {
+    const f = fixture();
+    f.create("p1", ["a", "b"]);
+    f.complete("s1", "a");
+    expect(f.run({
+      type: "ReportMarathonFocus",
+      entries: [{ reportId: "m1", subtaskId: "a", progressBasisPoints: 1_000 }],
+      focusSessionIds: ["s1"],
+    })).toMatchObject({ ok: true });
+    expect(f.run({
+      type: "ReportMarathonFocus",
+      entries: [{ reportId: "m2", subtaskId: "b", progressBasisPoints: 1_000 }],
+      focusSessionIds: ["s1"],
+    })).toMatchObject({ ok: false, code: "FOCUS_ALREADY_REPORTED" });
+    expect(f.run({
+      type: "ReportMarathonFocus",
+      entries: [{ reportId: "m3", subtaskId: "a", progressBasisPoints: 500 }],
+      focusSessionIds: ["s1"],
+    })).toMatchObject({ ok: false, code: "PROGRESS_CANNOT_DECREASE" });
+    expect(f.run({
+      type: "ReportMarathonFocus",
+      entries: [{ reportId: "m4", subtaskId: "nope", progressBasisPoints: 1_000 }],
+      focusSessionIds: ["s2"],
+    })).toMatchObject({ ok: false, code: "SUBTASK_NOT_FOUND" });
+    expect(f.run({
+      type: "ReportMarathonFocus",
+      entries: [{ reportId: "m5", subtaskId: "a", progressBasisPoints: 2_500 }],
+      focusSessionIds: ["s2"],
+    })).toMatchObject({ ok: false, code: "PROGRESS_REQUIRES_COMPLETED_FOCUS" });
+    expect(f.run({
+      type: "ReportMarathonFocus",
+      entries: [{ reportId: "m6", subtaskId: "a", progressBasisPoints: 2_500 }],
+      focusSessionIds: [],
+    })).toMatchObject({ ok: false, code: "PROGRESS_REQUIRES_COMPLETED_FOCUS" });
+  });
+
+  it("seals the project when the marathon completes every subtask", () => {
+    const f = fixture();
+    f.create("p1", ["a", "b"]);
+    f.complete("s1", "a");
+    f.complete("s2", "b");
+    const result = f.run({
+      type: "ReportMarathonFocus",
+      entries: [
+        { reportId: "m1", subtaskId: "a", progressBasisPoints: 10_000 },
+        { reportId: "m2", subtaskId: "b", progressBasisPoints: 10_000 },
+      ],
+      focusSessionIds: ["s1", "s2"],
+    });
+    const events = result.ok ? result.events.map((event) => event.type) : [];
+    expect(events).toContain("ProjectSealedAsMonument");
+  });
+});

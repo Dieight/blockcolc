@@ -54,7 +54,7 @@ export interface NativeFilePickerPlugin {
 
 const NativeFilePicker = registerPlugin<NativeFilePickerPlugin>('LitematicFilePicker');
 
-export const DEFAULT_NATIVE_LITEMATIC_MAX_BYTES = 10 * 1024 * 1024;
+export const DEFAULT_NATIVE_LITEMATIC_MAX_BYTES = 64 * 1024 * 1024;
 export const DEFAULT_NATIVE_RESOURCE_PACK_MAX_BYTES = 32 * 1024 * 1024;
 export const NATIVE_RESOURCE_PACK_CHUNK_MAX_BYTES = 256 * 1024;
 /** @deprecated Use the kind-specific limit. Retained for Litematic callers. */

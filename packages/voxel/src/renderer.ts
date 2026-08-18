@@ -243,6 +243,13 @@ export interface VoxelRenderer {
   setVisible(value: boolean): void;
   /** Brief bounded glow pulse for construction events (round completed, focus started); skipped under reduced motion. */
   playConstructionPulse(strength?: number): void;
+  /**
+   * V21 immersive composition: when a frosted band covers the lower part of the
+   * full-screen world, aim the camera slightly downward so the settlement sits
+   * in the visible window's center instead of the full-canvas center. The value
+   * is the band height as a fraction of the viewport height (0 = no band).
+   */
+  setImmersiveBandFraction(fraction: number): void;
   resetCamera(): void;
   resize(): void;
   getDiagnostics(): RendererDiagnostics;
@@ -540,6 +547,9 @@ export function createVoxelRenderer(
   let targetCameraAzimuth = cameraAzimuth;
   let lastCameraUpdateMs = performance.now();
   const cameraTarget = new THREE.Vector3(0, 3, 0);
+  const settlementProjectedY = new THREE.Vector3();
+  /** V21: fraction of the viewport covered by the immersive bottom band (0 = none). */
+  let immersiveBandFraction = 0;
   const pointers = new Map<number, { x: number; y: number }>();
   const pointerStarts = new Map<number, { x: number; y: number }>();
   let previousPinchDistance: number | null = null;
@@ -2201,6 +2211,23 @@ export function createVoxelRenderer(
     updateCamera();
   }
 
+  const immersiveLookTargetValue = new THREE.Vector3();
+  function immersiveLookTarget(): THREE.Vector3 {
+    immersiveLookTargetValue.copy(cameraTarget);
+    if (immersiveBandFraction <= 0) return immersiveLookTargetValue;
+    // The immersive band hides the lower part of the full-screen world. Tilt the
+    // view axis downward so the settlement (the look-at centroid) lands in the
+    // visible window's center: a fractional screen offset f above the canvas
+    // center maps to the aim angle atan(f * tan(halfFov)).
+    const halfFov = THREE.MathUtils.degToRad(camera.fov) / 2;
+    const aimDown = Math.atan(immersiveBandFraction * Math.tan(halfFov));
+    const view = new THREE.Vector3().subVectors(cameraTarget, camera.position).normalize();
+    const axis = new THREE.Vector3().crossVectors(view, camera.up).normalize();
+    if (axis.lengthSq() < 1e-6) return immersiveLookTargetValue;
+    const offset = view.applyAxisAngle(axis, -aimDown);
+    return immersiveLookTargetValue.copy(camera.position).addScaledVector(offset, camera.position.distanceTo(cameraTarget));
+  }
+
   function updateCamera(): void {
     const horizontal = Math.cos(cameraPitch) * cameraDistance;
     camera.position.set(
@@ -2223,8 +2250,14 @@ export function createVoxelRenderer(
       camera.near * STAR_NEAR_CLIP_MARGIN / (STAR_RADIUS_RATIO * SKY_FAR_CLIP_RATIO),
     );
     camera.updateProjectionMatrix();
-    camera.lookAt(cameraTarget);
+    const immersiveLook = immersiveLookTarget();
+    canvas.dataset.cameraLookYOffset = (immersiveLook.y - cameraTarget.y).toFixed(3);
+    camera.lookAt(immersiveLook);
     camera.updateMatrixWorld(true);
+    // V21 diagnostic: where does the settlement centroid actually land on screen?
+    // NDC y = 0 is the canvas center; +1 top, -1 bottom.
+    settlementProjectedY.copy(cameraTarget).project(camera);
+    canvas.dataset.settlementProjectedY = settlementProjectedY.y.toFixed(3);
     const skyDistance = Math.min(
       camera.far * SKY_FAR_CLIP_RATIO,
       Math.max(SKY_RADIUS, camera.near * STAR_NEAR_CLIP_MARGIN / STAR_RADIUS_RATIO),
@@ -2883,6 +2916,14 @@ export function createVoxelRenderer(
       requestRender();
     },
     resetCamera: resetView,
+    setImmersiveBandFraction(fraction) {
+      const next = Number.isFinite(fraction) ? Math.max(0, Math.min(0.75, fraction)) : 0;
+      canvas.dataset.immersiveBandFraction = next.toFixed(3);
+      if (next === immersiveBandFraction) return;
+      immersiveBandFraction = next;
+      updateCamera();
+      requestRender();
+    },
     resize,
     getDiagnostics,
     dispose() {

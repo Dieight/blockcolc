@@ -21,15 +21,15 @@ export interface LitematicLimits {
 }
 
 export const DEFAULT_LITEMATIC_LIMITS: Readonly<LitematicLimits> = Object.freeze({
-  maxCompressedBytes: 10 * 1024 * 1024,
-  maxUncompressedBytes: 32 * 1024 * 1024,
+  maxCompressedBytes: 64 * 1024 * 1024,
+  maxUncompressedBytes: 256 * 1024 * 1024,
   maxRegions: 64,
-  maxHorizontalAxisLength: 48,
-  maxVerticalAxisLength: 128,
-  maxRegionVolume: 2_097_152,
-  maxTotalVolume: 2_097_152,
+  maxHorizontalAxisLength: 96,
+  maxVerticalAxisLength: 256,
+  maxRegionVolume: 16_777_216,
+  maxTotalVolume: 16_777_216,
   maxPaletteEntries: 4096,
-  maxOutputVoxels: 100_000,
+  maxOutputVoxels: 300_000,
 });
 
 export type LitematicErrorCode =

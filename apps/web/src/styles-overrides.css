@@ -389,14 +389,9 @@
 .world-pick-chip{position:absolute;left:12px;top:76px;z-index:3;margin:0;padding:6px 10px;border-radius:8px;background:rgba(20,29,25,.82);color:#d8e4da;font:12px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace;pointer-events:none}
 .world-pick-chip::before{content:"▦ ";color:#8fb89b}
 
-/* V20 FX-01: timer digit transitions. Every changed digit rises into place with a
-   soft settle; colons stay still so the rhythm reads as ticking, not jittering. */
+/* V20 FX-01 (owner feedback, dropped in V21): the per-digit rise animation was
+   removed — the timer now renders as one static string and ticks quietly. */
 .timer-value{font-variant-numeric:tabular-nums}
-.timer-digit{display:inline-block}
-@media(prefers-reduced-motion:no-preference){
-.timer-digit:not(.is-colon){animation:timer-digit-rise .24s cubic-bezier(.22,.9,.36,1) both}
-}
-@keyframes timer-digit-rise{0%{opacity:.3;transform:translateY(.38em)}60%{opacity:1;transform:translateY(-.06em)}100%{opacity:1;transform:translateY(0)}}
 
 /* V20 FX-02: press rebound. Buttons dip under the finger and spring back instead
    of snapping; the overshoot bezier lives on the release so the bounce reads as
@@ -449,3 +444,41 @@
 .bottom-nav .nav-active svg{animation:nav-icon-pop .2s cubic-bezier(.34,1.56,.64,1)}
 }
 @keyframes nav-icon-pop{from{transform:scale(.82)}to{transform:scale(1)}}
+
+/* V21 marathon scheduling: an end-time plan mode with the same quiet sheet
+   language as the round picker, plus the per-subtask final report rows. */
+.plan-mode{display:flex;gap:2px;margin-bottom:16px}
+.plan-mode button{min-height:44px;padding:9px 14px;border:0;background:transparent;border-radius:6px;color:#58635d;font-weight:500;font-size:14px}
+.plan-mode button[aria-pressed="true"]{color:#17211c;font-weight:750;text-decoration:underline;text-decoration-thickness:2px;text-decoration-color:#276749;text-underline-offset:7px}
+.plan-mode button:disabled{opacity:.5}
+.marathon-end-field{display:grid;gap:8px;margin-top:2px}
+.marathon-end-field span{color:#58635d;font-size:12px}
+.marathon-end-field input[type="time"]{min-height:48px;padding:9px 12px;border:1px solid #aeb8b1;border-radius:6px;background:#fff;color:#17211c;font:inherit;font-size:16px}
+.marathon-end-field input[type="time"]:disabled{opacity:.55}
+.plan-sheet-error{margin:16px 0;color:#8b1e26;font-size:13px;line-height:1.55}
+.marathon-progress-report .report-options{grid-template-columns:repeat(2,minmax(0,1fr))}
+.marathon-report-rows{display:grid;gap:10px;margin:16px 0}
+.marathon-report-row{padding:11px 0;border-top:1px solid #d7ddd8;display:grid;gap:9px;text-align:left}
+.marathon-report-copy{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
+.marathon-report-copy strong{min-width:0;overflow-wrap:anywhere;font-size:15px}
+.marathon-report-copy small{flex:0 0 auto;color:#58635d;font-size:12px}
+.marathon-report-options{display:flex;flex-wrap:wrap;gap:6px}
+.marathon-report-options button{min-height:40px;padding:0 11px;border:1px solid #aeb8b1;border-radius:5px;background:#fff;color:#27342e;font-size:13px}
+.marathon-report-options button[aria-pressed="true"]{border-color:#276749;background:#e2efe5;color:#276749;font-weight:700}
+.marathon-report-options button:last-child{border-color:#276749}
+.marathon-report-submit{width:min(100%,340px);min-height:48px;margin:4px auto 0}
+@media(max-width:480px){.marathon-report-options button{flex:1 1 40%}.marathon-progress-report .report-options{grid-template-columns:1fr}}
+
+/* V21 immersive top-right view control: a small tap zone on the corner reveals
+   the same kind of transient chip as the integrity count, and the reset button
+   hides itself again with the familiar 5-second dwell + 160 ms fade-out. The
+   world HUD is hidden during focus, so this is the only camera control. */
+.immersive-view-tapzone{position:absolute;top:0;right:0;width:112px;height:88px;z-index:6;touch-action:manipulation}
+.immersive-view-controls{position:absolute;top:max(12px,var(--safe-top));right:max(12px,var(--safe-right));z-index:7}
+.immersive-reset-view{width:44px;height:44px;padding:0;border:0;border-radius:10px;background:rgba(20,29,25,.9);color:#fff;display:grid;place-items:center;box-shadow:0 2px 12px rgba(0,0,0,.25)}
+.immersive-reset-view svg{width:20px;height:20px}
+@media(prefers-reduced-motion:no-preference){
+.immersive-view-controls .immersive-reset-view{animation:ui-fade-in .18s cubic-bezier(.22,.9,.36,1) both}
+.immersive-view-controls.is-leaving .immersive-reset-view{animation:ui-fade-out .16s ease-in both}
+}
+@media(prefers-reduced-motion:reduce){.immersive-reset-view{transition:none}}

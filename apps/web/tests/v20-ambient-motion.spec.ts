@@ -103,9 +103,7 @@ test("leaves the reveal quiet on the initial world load", async ({ page }) => {
     .toBe(0);
   // And the tab itself keeps the no-continuous-loop guarantee.
   await expect(canvas).toHaveAttribute("data-continuous-rendering", "false");
-  // FX-01: the clock renders as per-character digits so changed digits can
-  // transition independently; "45:00" is five characters.
+  // V21 dropped the per-digit rise animation, so the timer is one static string.
   const timer = page.locator(".timer");
   await expect(timer.locator(".timer-value")).toContainText(/^4[45]:\d{2}$/);
-  await expect(timer.locator(".timer-value .timer-digit")).toHaveCount(5);
 });

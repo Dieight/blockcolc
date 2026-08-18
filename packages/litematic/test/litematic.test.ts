@@ -193,17 +193,25 @@ describe("Litematic decoding boundaries", () => {
     );
   });
 
-  it("enforces separate 48-block horizontal and 128-block vertical bounds", async () => {
+  it("enforces separate 96-block horizontal and 256-block vertical bounds", async () => {
     const tooWide = makeLitematic({ regions: { wide: makeRegion({
-      position: { x: 0, y: 0, z: 0 }, size: { x: 49, y: 1, z: 1 },
-      palette: ["minecraft:air", "minecraft:stone"], values: Array(49).fill(1),
+      position: { x: 0, y: 0, z: 0 }, size: { x: 97, y: 1, z: 1 },
+      palette: ["minecraft:air", "minecraft:stone"], values: Array(97).fill(1),
     }) } });
     const tooTall = makeLitematic({ regions: { tall: makeRegion({
-      position: { x: 0, y: 0, z: 0 }, size: { x: 1, y: 129, z: 1 },
-      palette: ["minecraft:air", "minecraft:stone"], values: Array(129).fill(1),
+      position: { x: 0, y: 0, z: 0 }, size: { x: 1, y: 257, z: 1 },
+      palette: ["minecraft:air", "minecraft:stone"], values: Array(257).fill(1),
+    }) } });
+    const maxAllowed = makeLitematic({ regions: { max: makeRegion({
+      position: { x: 0, y: 0, z: 0 }, size: { x: 96, y: 256, z: 96 },
+      // Only a thin ground floor is non-air so the 300k output-voxel cap is not
+      // the thing being exercised; the region dimensions carry the size checks.
+      palette: ["minecraft:air", "minecraft:stone"],
+      values: Array.from({ length: 96 * 256 * 96 }, (_, index) => Math.floor(index / (96 * 96)) % 256 === 0 ? 1 : 0),
     }) } });
     await expect(parseLitematic(tooWide)).rejects.toEqual(expect.objectContaining({ code: "LIMIT_EXCEEDED" }));
     await expect(parseLitematic(tooTall)).rejects.toEqual(expect.objectContaining({ code: "LIMIT_EXCEEDED" }));
+    await expect(parseLitematic(maxAllowed)).resolves.toBeTruthy();
   });
 
   it("rejects a packed array whose length cannot represent the region", async () => {

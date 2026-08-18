@@ -228,6 +228,7 @@ export type DomainCommand =
   | { type: "RecordFocusBackgrounded"; reason: FocusBackgroundReason }
   | { type: "RecordFocusForegrounded" }
   | { type: "ReportSubtaskProgress"; reportId: string; subtaskId: string; focusSessionIds: string[]; progressBasisPoints: number }
+  | { type: "ReportMarathonFocus"; entries: Array<{ reportId: string; subtaskId: string; progressBasisPoints: number }>; focusSessionIds: string[] }
   | { type: "SetDailyGoal"; date: ISODate; targetPomodoros: number }
   | { type: "DisableDailyGoal"; date: ISODate }
   | { type: "ConfigureCalendar"; timeZone: string; restWeekdays: number[] }

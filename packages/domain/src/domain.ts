@@ -476,6 +476,67 @@ function handle(state: DomainState, command: DomainCommand, clock: Clock): Comma
       }
       return ok(state, events);
     }
+    case "ReportMarathonFocus": {
+      // V21: a marathon (end-time scheduled) plan finishes every round before the
+      // user reports progress. One combined command attributes the whole block of
+      // completed sessions to the subtasks the user actually advanced, atomically.
+      const project = activeProject(state);
+      if (project.kind === "habit") return fail(state, "SUBTASK_NOT_FOUND", "Habit projects do not have subtasks");
+      if (!Array.isArray(command.entries) || command.entries.length === 0) throw new Error("Marathon report needs at least one subtask entry");
+      const subtaskIds = command.entries.map((entry) => entry.subtaskId);
+      if (new Set(subtaskIds).size !== subtaskIds.length) return fail(state, "DUPLICATE_ID", "Marathon report subtasks must be unique");
+      const reportIds = command.entries.map((entry) => entry.reportId);
+      if (new Set(reportIds).size !== reportIds.length || reportIds.some((reportId) => state.progressReports.some((report) => report.id === reportId))) {
+        return fail(state, "DUPLICATE_ID", "Marathon report ID already exists");
+      }
+      for (const entry of command.entries) {
+        requireNonBlank(entry.subtaskId, "subtaskId");
+        requireNonBlank(entry.reportId, "reportId");
+        if (!Number.isInteger(entry.progressBasisPoints) || entry.progressBasisPoints < 0 || entry.progressBasisPoints > 10_000) {
+          throw new Error("progressBasisPoints must be an integer from 0 through 10000");
+        }
+        if (!project.subtasks.some((item) => item.id === entry.subtaskId)) return fail(state, "SUBTASK_NOT_FOUND", "Subtask does not exist");
+      }
+      for (const entry of command.entries) {
+        const subtask = project.subtasks.find((item) => item.id === entry.subtaskId)!;
+        if (entry.progressBasisPoints < subtask.progressBasisPoints) {
+          return fail(state, "PROGRESS_CANNOT_DECREASE", "Reported task progress cannot decrease");
+        }
+      }
+      const sessionIds = [...new Set(command.focusSessionIds)];
+      if (sessionIds.length === 0 || sessionIds.length !== command.focusSessionIds.length) {
+        return fail(state, "PROGRESS_REQUIRES_COMPLETED_FOCUS", "A marathon report needs unique completed focus sessions");
+      }
+      for (const id of sessionIds) {
+        const session = state.focusHistory.find((candidate) => candidate.id === id);
+        if (!session || session.status !== "completed" || session.projectId !== project.id) {
+          return fail(state, "PROGRESS_REQUIRES_COMPLETED_FOCUS", "Every supporting session must be completed for this project");
+        }
+      }
+      const reportedSessions = new Set(state.progressReports.flatMap((report) => report.focusSessionIds));
+      if (sessionIds.some((id) => reportedSessions.has(id))) return fail(state, "FOCUS_ALREADY_REPORTED", "A completed focus session can support only one progress report");
+      const events: DomainEvent[] = [];
+      for (const entry of command.entries) {
+        const subtask = project.subtasks.find((item) => item.id === entry.subtaskId)!;
+        subtask.progressBasisPoints = entry.progressBasisPoints;
+        state.progressReports.push({
+          id: entry.reportId, projectId: project.id, subtaskId: entry.subtaskId,
+          focusSessionIds: [...sessionIds], progressBasisPoints: entry.progressBasisPoints, reportedAt: now,
+        });
+        events.push({ type: "SubtaskProgressReported", subtaskId: entry.subtaskId, progressBasisPoints: entry.progressBasisPoints });
+        if (entry.progressBasisPoints > 0 && !project.subtaskStructureLocked) {
+          project.subtaskStructureLocked = true;
+          events.push({ type: "SubtaskStructureLocked" });
+        }
+      }
+      if (project.subtasks.every((item) => item.progressBasisPoints === 10_000)) {
+        if (state.activeFocusSession !== null) return fail(state, "ACTIVE_FOCUS_PREVENTS_SEALING", "Cancel or complete active focus before sealing the project");
+        project.status = "monument";
+        state.activeProjectId = null;
+        events.push({ type: "ProjectSealedAsMonument", projectId: project.id });
+      }
+      return ok(state, events);
+    }
     case "SetDailyGoal": {
       assertISODate(command.date);
       if (!Number.isInteger(command.targetPomodoros) || command.targetPomodoros <= 0) throw new Error("targetPomodoros must be a positive integer");
@@ -715,8 +776,8 @@ function grantDecorationReward(state: DomainState, date: string, at: string, eve
   const resource = resources[seed % resources.length]!;
   const angle = (seed >>> 8) % 4 as 0 | 1 | 2 | 3;
   const side = (seed >>> 10) % 4;
-  // Clears a centered 48x48 main blueprint plus a 12x12 decoration.
-  const offset = 34 + ((seed >>> 12) % 8);
+  // Clears a centered 96x96 main blueprint (V21 import range) plus a 12x12 decoration.
+  const offset = 58 + ((seed >>> 12) % 8);
   const lateral = ((seed >>> 16) % 13) - 6;
   const position = side === 0 ? { x: offset, z: lateral }
     : side === 1 ? { x: lateral, z: offset }

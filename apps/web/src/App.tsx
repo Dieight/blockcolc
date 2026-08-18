@@ -14,7 +14,7 @@ import { ChoiceMenu } from './ChoiceMenu';
 import { LITEMATIC_MAX_COMPRESSED_BYTES, readBrowserFileBytes, saveBackupFile } from './browser-adapters';
 import { APPLICATION_STATE_CHANGED_EVENT } from './bootstrap';
 import { effectiveFocusMillisecondsByDate, focusHeatmapLevel, focusHourDistribution, focusSessionEndedAt, focusSessionLocalDate, focusWindowSummary, projectFocusAllocation, settlementTotals } from './focus-stats';
-import { parseRoundPlan, plannedDurationMs, reconcileRoundPlan, roundPlansEqual, type RoundPlan } from './round-plan';
+import { MAX_MARATHON_ROUNDS, parseRoundPlan, planRoundsForDuration, plannedDurationMs, reconcileRoundPlan, roundPlansEqual, type RoundPlan } from './round-plan';
 import releaseVersion from '../../../version.json';
 
 type Tab = 'world' | 'tasks' | 'stats' | 'settings';
@@ -29,6 +29,7 @@ const INITIAL_PROJECT_SETUP_DRAFT: ProjectSetupDraft = { kind: 'finite', title: 
 let voxelModulePromise:Promise<typeof import('@tomato-clock/voxel')>|null=null;
 function loadVoxelModule(){voxelModulePromise??=import('@tomato-clock/voxel');return voxelModulePromise;}
 function resourcePackAtlasMaximumSizeForTest():number|undefined{if(!import.meta.env.DEV)return undefined;const value=Number(new URLSearchParams(location.search).get('__atlasPageSize'));return Number.isSafeInteger(value)&&value>=32&&value<=2048?value:undefined;}
+function immersiveBandTestOverride():number|undefined{if(!import.meta.env.DEV)return undefined;const raw=new URLSearchParams(location.search).get('__immersiveBand');if(raw===null)return undefined;const value=Number(raw);return Number.isFinite(value)&&value>=0&&value<=0.75?value:undefined;}
 let litematicModulePromise:Promise<typeof import('@tomato-clock/litematic')>|null=null;
 function loadLitematicModule(){litematicModulePromise??=import('@tomato-clock/litematic');return litematicModulePromise;}
 function useBlueprintCatalog(){const [catalog,setCatalog]=useState<readonly BlueprintCatalogEntry[]>([]);useEffect(()=>{let active=true;void loadVoxelModule().then(module=>{if(active)setCatalog(module.BUILTIN_BLUEPRINT_CATALOG);});return()=>{active=false;};},[]);return catalog;}
@@ -201,6 +202,13 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
   const [plan, setPlanState] = useState<RoundPlan | null>(() => loadRoundPlan(active.project.id));
   const [ending, setEnding] = useState(false);
   const [planOpen, setPlanOpen] = useState(false);
+  // V21 marathon scheduling draft: the user picks only an end time; rounds and
+  // breaks are derived from the remaining duration with the normal per-round
+  // settings, and progress is reported once after the last round.
+  const [planMode, setPlanMode] = useState<'rounds' | 'marathon'>('rounds');
+  const [endAtDraft, setEndAtDraft] = useState('18:00');
+  const focusPanelRef = useRef<HTMLElement>(null);
+  const [immersiveBandFraction, setImmersiveBandFraction] = useState(0);
   const [controlsVisible, setControlsVisible] = useState(false);
   const [hintVisible, setHintVisible] = useState(false);
   const [pickedCell, setPickedCell] = useState<{ x: number; y: number; z: number } | null>(null);
@@ -250,6 +258,7 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
     setSelected(active.project.kind === 'habit' ? null : active.project.subtasks.find((subtask) => subtask.progressBasisPoints < 10000)?.id ?? active.project.subtasks[0]!.id);
     setPlan(loadRoundPlan(active.project.id));
     setPlanOpen(false);
+    setPlanMode('rounds');
   }, [active.project.id, setPlan]);
   useEffect(() => {
     if (!latestSuccess || latestSuccess.id === latestSuccessRef.current) return;
@@ -264,7 +273,7 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
   const integrityFailure = !session && lastFocus?.status === 'interrupted' && lastFocus.interruptionReason === 'app-switch-limit';
   const pending = active.unreportedCompletedSessions;
   const habitAwaiting = isHabit && habit?.awaitingNextBuilding === true;
-  const reconciledPlan = reconcileRoundPlan(plan, state, active.project.id, Date.now(), preferences.breakMinutes * 60_000);
+  const reconciledPlan = reconcileRoundPlan(plan, state, active.project.id, Date.now(), preferences.breakMinutes * 60_000, preferences.breakMinutes * 60_000);
   const isBreak = reconciledPlan?.status === 'break' && !!reconciledPlan.breakEndsAt;
   // Immersive design A: the end control stays hidden so the world is the whole
   // screen; a double-tap on the bottom band reveals it. A one-time hint explains
@@ -314,6 +323,33 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
       }
     }
   }, [session, controlsVisible, hideControls]);
+  // V21: in immersive focus the world fills the screen but a frosted band covers
+  // its lower part. Measure that band so the renderer can lift the world into
+  // the visible window instead of the full-screen center.
+  useEffect(() => {
+    if (!session) {
+      setImmersiveBandFraction(0);
+      return;
+    }
+    const override = immersiveBandTestOverride();
+    if (override !== undefined) {
+      setImmersiveBandFraction(override);
+      return;
+    }
+    const panel = focusPanelRef.current;
+    if (!panel) return;
+    const measure = () => {
+      const rect = panel.getBoundingClientRect();
+      const bottomBand = rect.width >= window.innerWidth * 0.6;
+      setImmersiveBandFraction(bottomBand ? Math.min(0.62, rect.height / window.innerHeight) : 0);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(panel);
+    window.addEventListener('resize', measure);
+    return () => { observer.disconnect(); window.removeEventListener('resize', measure); };
+  }, [session?.id]);
+
   // The integrity count pops up only when the session starts and when a new
   // excursion is consumed (returning from an app switch); the rest of the time
   // the band stays quiet.
@@ -363,8 +399,23 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
 
   const startFocus = async (total = reconciledPlan?.totalRounds ?? rounds) => {
     if (habitAwaiting) return;
-    const next: RoundPlan = reconciledPlan ?? { projectId: active.project.id, subtaskId: isHabit ? null : subtask!.id, totalRounds: total, completedRounds: 0, status: 'focus', reportedSessionIds: [] };
     const focusMinutes = isHabit ? preferences.habitFocusMinutes : preferences.focusMinutes;
+    const marathonDraft = planMode === 'marathon' && !reconciledPlan;
+    let marathonTotal = total;
+    let marathonEndAt: string | undefined = reconciledPlan?.endAt;
+    if (marathonDraft) {
+      const endMs = marathonEndInstant(endAtDraft);
+      const schedule = endMs === null ? null : planRoundsForDuration(endMs - Date.now(), preferences.focusMinutes, preferences.breakMinutes);
+      if (!schedule || schedule.rounds < 1) return;
+      marathonTotal = schedule.rounds;
+      marathonEndAt = new Date(endMs!).toISOString();
+    }
+    const targetSubtaskId = reconciledPlan?.mode === 'marathon' || marathonDraft
+      ? active.project.subtasks.find((item) => item.progressBasisPoints < 10000)?.id ?? active.project.subtasks[0]!.id
+      : (reconciledPlan?.subtaskId ?? (isHabit ? null : subtask!.id));
+    const next: RoundPlan = reconciledPlan ?? { projectId: active.project.id, subtaskId: isHabit ? null : targetSubtaskId, totalRounds: marathonTotal, completedRounds: 0, status: 'focus', reportedSessionIds: [] };
+    if (next.subtaskId !== targetSubtaskId) next.subtaskId = targetSubtaskId;
+    if (marathonDraft) { next.mode = 'marathon'; next.endAt = marathonEndAt; }
     const result = await run({ type: 'StartFocus', subtaskId: next.subtaskId, plannedDurationMs: focusMinutes * 60000 });
     if (result?.ok) {
       const { breakEndsAt: _breakEndsAt, ...withoutBreak } = next;
@@ -407,12 +458,31 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
     closeEnding();
     const sealed = result.events.some((event: { type: string }) => event.type === 'ProjectSealedAsMonument' || event.type === 'HabitBuildingCompleted');
     const currentPlan = reconciledPlan;
-    if (sealed || !currentPlan || currentPlan.totalRounds === 1 || preferences.breakMinutes === 0) {
+    if (sealed || !currentPlan || currentPlan.totalRounds === 1) {
       setPlan(null);
       return;
     }
     const completedSession = result.events.find((event: { type: string; sessionId?: string }) => event.type === 'FocusCompletedEarly');
-    setPlan({ ...currentPlan, completedRounds: currentPlan.completedRounds + 1, status: 'break', endAfterBreak: true, breakEndsAt: new Date(Date.now() + preferences.breakMinutes * 60000).toISOString(), currentSessionId: undefined, reportedSessionIds: completedSession?.sessionId ? [...currentPlan.reportedSessionIds, completedSession.sessionId] : currentPlan.reportedSessionIds });
+    const sessionId = completedSession?.sessionId;
+    if (currentPlan.mode === 'marathon') {
+      const completed = currentPlan.completedRounds + 1;
+      const reportedSessionIds = sessionId && !currentPlan.reportedSessionIds.includes(sessionId)
+        ? [...currentPlan.reportedSessionIds, sessionId]
+        : currentPlan.reportedSessionIds;
+      if (completed >= currentPlan.totalRounds) {
+        setPlan({ ...currentPlan, completedRounds: completed, status: 'report', currentSessionId: undefined, reportedSessionIds });
+      } else if (preferences.breakMinutes === 0) {
+        setPlan({ ...currentPlan, completedRounds: completed, status: 'ready', currentSessionId: undefined, reportedSessionIds });
+      } else {
+        setPlan({ ...currentPlan, completedRounds: completed, status: 'break', breakEndsAt: new Date(Date.now() + preferences.breakMinutes * 60000).toISOString(), currentSessionId: undefined, reportedSessionIds });
+      }
+      return;
+    }
+    if (preferences.breakMinutes === 0) {
+      setPlan(null);
+      return;
+    }
+    setPlan({ ...currentPlan, completedRounds: currentPlan.completedRounds + 1, status: 'break', endAfterBreak: true, breakEndsAt: new Date(Date.now() + preferences.breakMinutes * 60000).toISOString(), currentSessionId: undefined, reportedSessionIds: sessionId && !currentPlan.reportedSessionIds.includes(sessionId) ? [...currentPlan.reportedSessionIds, sessionId] : currentPlan.reportedSessionIds });
   };
   const afterReport = (sessionId: string) => {
     if (!reconciledPlan) return;
@@ -430,24 +500,51 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
     setPlan({ ...reconciledPlan, completedRounds: completed, status: 'break', breakEndsAt: new Date(Date.now() + preferences.breakMinutes * 60000).toISOString(), currentSessionId: undefined, reportedSessionIds });
   };
   const focusMinutes = isHabit ? preferences.habitFocusMinutes : preferences.focusMinutes;
+  const marathonPlan = reconciledPlan?.mode === 'marathon';
+  const marathonReportPhase = reconciledPlan?.status === 'report';
+  const marathonDraftEndMs = planMode === 'marathon' && !reconciledPlan ? marathonEndInstant(endAtDraft) : null;
+  const marathonDraftSchedule = marathonDraftEndMs === null
+    ? null
+    : planRoundsForDuration(marathonDraftEndMs - Date.now(), focusMinutes, preferences.breakMinutes);
   const plannedRounds = reconciledPlan?.totalRounds ?? rounds;
   const fullPlanDurationMs = plannedDurationMs(focusMinutes, preferences.breakMinutes, plannedRounds);
   const timerMode = isBreak ? 'break' : session ? 'focus' : reconciledPlan?.status === 'ready' ? 'ready' : 'plan';
-  const timerFallbackMs = timerMode === 'plan' ? fullPlanDurationMs : focusMinutes * 60_000;
-  const planSummary = `${plannedRounds} 轮 · 总计 ${formatDurationSummary(fullPlanDurationMs)}`;
+  const timerFallbackMs = timerMode === 'plan'
+    ? (planMode === 'marathon' && !reconciledPlan && marathonDraftSchedule ? marathonDraftSchedule.usableMs : fullPlanDurationMs)
+    : focusMinutes * 60_000;
+  const marathonSummary = marathonPlan && reconciledPlan?.endAt
+    ? `${reconciledPlan.totalRounds} 轮 · 结束 ${formatClockTime(reconciledPlan.endAt)}`
+    : marathonDraftEndMs !== null && marathonDraftSchedule
+      ? `${marathonDraftSchedule.rounds} 轮 · 结束 ${formatClockTime(marathonDraftEndMs)}`
+      : '按结束时间排程';
+  const planSummary = marathonPlan || planMode === 'marathon'
+    ? marathonSummary
+    : `${plannedRounds} 轮 · 总计 ${formatDurationSummary(fullPlanDurationMs)}`;
+  const startLabel = marathonPlan && reconciledPlan?.endAt
+    ? `开始到 ${formatClockTime(reconciledPlan.endAt)}`
+    : planMode === 'marathon' && !reconciledPlan
+      ? (marathonDraftEndMs !== null && marathonDraftSchedule ? `开始到 ${formatClockTime(marathonDraftEndMs)}` : '选择结束时间')
+      : `开始 ${plannedRounds} 轮`;
+  const startDisabled = planMode === 'marathon' && !reconciledPlan && !(marathonDraftEndMs !== null && marathonDraftSchedule);
+
+  const currentBuildingLabel = state.buildingBlueprintResources.find(resource => resource.id === active.project.blueprintId)?.displayName
+    ?? active.project.importedBlueprint?.title
+    ?? blueprintName(blueprintCatalog, active.project.blueprintId);
 
   return <div className={session ? 'world-screen is-focusing' : pending.length > 0 ? 'world-screen has-report' : habitAwaiting ? 'world-screen is-choosing-habit-building' : 'world-screen'}>
-    <WorldCanvasV7 service={service} resourcePacks={resourcePacks} lightingQuality={preferences.lightingQuality} constructionOutlineVisibility={preferences.constructionOutlineVisibility} environmentStyle={state.worldSettings.environmentStyle} worldSeed={state.worldSettings.worldSeed} terrainGenerationVersion={state.worldSettings.terrainGenerationVersion} constructionFeedback={constructionFeedback} sessionActive={!!session} focusedProjectId={focusedProjectId} onSelectProject={onFocusWorldProject} onClearWorldFocus={onClearWorldFocus} visible={visible} onPickTerrain={setPickedCell} pickedCell={pickedCell}/>
-    {visible && <section className="focus-panel v7-focus-panel" onPointerUp={(event) => handlePanelTap({ target: event.target, clientX: event.clientX, clientY: event.clientY })}>
+    <WorldCanvasV7 service={service} resourcePacks={resourcePacks} lightingQuality={preferences.lightingQuality} constructionOutlineVisibility={preferences.constructionOutlineVisibility} environmentStyle={state.worldSettings.environmentStyle} worldSeed={state.worldSettings.worldSeed} terrainGenerationVersion={state.worldSettings.terrainGenerationVersion} constructionFeedback={constructionFeedback} sessionActive={!!session} immersiveBandFraction={immersiveBandFraction} focusedProjectId={focusedProjectId} onSelectProject={onFocusWorldProject} onClearWorldFocus={onClearWorldFocus} visible={visible} onPickTerrain={setPickedCell} pickedCell={pickedCell}/>
+    {visible && <section ref={focusPanelRef} className="focus-panel v7-focus-panel" onPointerUp={(event) => handlePanelTap({ target: event.target, clientX: event.clientX, clientY: event.clientY })}>
       {!session && <div className="workbench-heading">
         <h1>{active.project.title}</h1>
         <button className="task-switch-action" type="button" aria-label="切换当前工作" onClick={onOpenTasks}><ListTodo/><span>切换任务</span></button>
       </div>}
        {!session && !isBreak && pending.length === 0 && !habitAwaiting && <>
-         {isHabit ? <div className="workbench-context"><span>当前习惯建筑 · 第 {habit!.cycleNumber} 座</span><strong>{blueprintName(blueprintCatalog, active.project.blueprintId)}</strong><small>本周期 {habit!.completedFocusSessionIds.length} / {habit!.targetRounds} 轮 · {dailySummary}</small></div> : <div className="workbench-context"><span>当前小任务</span><strong>{subtask!.title}</strong><small>已完成 {Math.round(subtask!.progressBasisPoints / 100)}% · {dailySummary}</small></div>}
+         {isHabit ? <div className="workbench-context"><span>当前习惯建筑 · 第 {habit!.cycleNumber} 座</span><strong>{currentBuildingLabel}</strong><small>本周期 {habit!.completedFocusSessionIds.length} / {habit!.targetRounds} 轮 · {dailySummary}</small></div> : <div className="workbench-context"><span>当前小任务</span><strong>{subtask!.title}</strong><small>已完成 {Math.round(subtask!.progressBasisPoints / 100)}% · {dailySummary}</small></div>}
          <button type="button" className="plan-summary" aria-label="调整本次计划" aria-expanded={planOpen} onClick={() => setPlanOpen(true)}><span>{planSummary}</span><span>调整</span></button>
        </>}
-       {habitAwaiting ? <HabitBuildingSelection state={state} active={active} resourcePacks={resourcePacks} run={run} targetRounds={preferences.habitTargetRounds}/> : pending.length > 0 ? <ProgressReportV7 active={active} run={run} onSubmitted={afterReport}/> : <>
+       {habitAwaiting ? <HabitBuildingSelection state={state} active={active} resourcePacks={resourcePacks} run={run} targetRounds={preferences.habitTargetRounds}/>
+        : marathonReportPhase ? <MarathonProgressReport active={active} run={run} onSubmitted={() => setPlan(null)}/>
+        : pending.length > 0 && !marathonPlan ? <ProgressReportV7 active={active} run={run} onSubmitted={afterReport}/> : <>
          {session && <div className="focus-task-context"><span>{isHabit ? '本轮习惯' : '本轮任务'}</span><strong>{isHabit ? active.project.title : subtask!.title}</strong></div>}
         {isBreak && <div className="rest-summary"><span>休息时间</span><strong>{reconciledPlan?.endAfterBreak ? '小任务已完成' : '下一轮准备中'}</strong><small>{dailySummary}</small></div>}
         {(isBreak || session || reconciledPlan?.status === 'ready') && <div className={isBreak ? 'session-kind rest' : 'session-kind'}>{isBreak ? '放松一下，结束后会回到下一步。' : session ? `第 ${(reconciledPlan?.completedRounds ?? 0) + 1} / ${reconciledPlan?.totalRounds ?? 1} 轮专注` : `准备第 ${reconciledPlan!.completedRounds + 1} / ${reconciledPlan!.totalRounds} 轮`}</div>}
@@ -459,38 +556,61 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
             : session ? <div className={`immersive-controls${controlsLeaving ? ' is-leaving' : ''}`}>{(controlsVisible || controlsLeaving)
               ? <button className="destructive primary" onClick={() => void setEnding(true)}><Square/>结束本次专注</button>
               : <p className={hintVisible ? 'immersive-hint' : 'immersive-hint is-faded'} role="status">双击下方空白处唤出结束按钮</p>}</div>
-            : <button className="primary" onClick={() => void startFocus()}><Clock3/>开始 {reconciledPlan?.totalRounds ?? rounds} 轮</button>}
+            : <button className="primary" disabled={startDisabled} onClick={() => void startFocus()}><Clock3/>{startLabel}</button>}
       </>}
-      {ending && session && (
-        <div className={endingLeaving ? 'dialog-leave' : undefined}>
-          <EndFocusDialog taskTitle={isHabit ? active.project.title : subtask!.title} habit={isHabit} onClose={closeEnding} onInterrupt={interruptFocus} onCompleteEarly={completeEarly}/>
-        </div>
-      )}
-      {(planOpen || planLeaving) && !session && <div className={planLeaving ? 'dialog-leave' : undefined}>{isHabit
-        ? <HabitFocusPlanSheet rounds={rounds} focusMinutes={preferences.habitFocusMinutes} breakMinutes={preferences.breakMinutes} locked={Boolean(reconciledPlan)} onRoundsChange={setRounds} onClose={closePlan}/>
-        : <FocusPlanSheet subtasks={active.project.subtasks} selectedId={reconciledPlan?.subtaskId ?? selected!} rounds={rounds} focusMinutes={preferences.focusMinutes} breakMinutes={preferences.breakMinutes} locked={Boolean(reconciledPlan)} onSelect={setSelected} onRoundsChange={setRounds} onClose={closePlan}/>}</div>}
     </section>}
+    {ending && session && (
+      <div className={endingLeaving ? 'dialog-leave' : undefined}>
+        <EndFocusDialog taskTitle={isHabit ? active.project.title : subtask!.title} habit={isHabit} onClose={closeEnding} onInterrupt={interruptFocus} onCompleteEarly={completeEarly}/>
+      </div>
+    )}
+    {(planOpen || planLeaving) && !session && <div className={planLeaving ? 'dialog-leave' : undefined}>{isHabit
+      ? <HabitFocusPlanSheet rounds={rounds} focusMinutes={preferences.habitFocusMinutes} breakMinutes={preferences.breakMinutes} locked={Boolean(reconciledPlan)} onRoundsChange={setRounds} onClose={closePlan}/>
+      : <FocusPlanSheet subtasks={active.project.subtasks} selectedId={reconciledPlan?.subtaskId ?? selected!} rounds={rounds} focusMinutes={preferences.focusMinutes} breakMinutes={preferences.breakMinutes} locked={Boolean(reconciledPlan)} mode={reconciledPlan?.mode ?? planMode} endAtDraft={endAtDraft} onModeChange={setPlanMode} onEndAtDraftChange={setEndAtDraft} onSelect={setSelected} onRoundsChange={setRounds} onClose={closePlan}/>}</div>}
   </div>;
 }
 
-function FocusPlanSheet({ subtasks, selectedId, rounds, focusMinutes, breakMinutes, locked, onSelect, onRoundsChange, onClose }: {
+function FocusPlanSheet({ subtasks, selectedId, rounds, focusMinutes, breakMinutes, locked, mode, endAtDraft, onModeChange, onEndAtDraftChange, onSelect, onRoundsChange, onClose }: {
   subtasks: Array<{ id: string; title: string; progressBasisPoints: number }>;
   selectedId: string;
   rounds: number;
   focusMinutes: number;
   breakMinutes: number;
   locked: boolean;
+  mode: 'rounds' | 'marathon';
+  endAtDraft: string;
+  onModeChange: (mode: 'rounds' | 'marathon') => void;
+  onEndAtDraftChange: (draft: string) => void;
   onSelect: (id: string) => void;
   onRoundsChange: (rounds: number) => void;
   onClose: () => void;
 }) {
+  const endMs = mode === 'marathon' ? marathonEndInstant(endAtDraft) : null;
+  const schedule = endMs === null ? null : planRoundsForDuration(endMs - Date.now(), focusMinutes, breakMinutes);
+  const rawSchedule = endMs === null ? null : planRoundsForDuration(endMs - Date.now(), focusMinutes, breakMinutes, 1_000_000);
+  const capped = schedule !== null && rawSchedule !== null && rawSchedule.rounds > schedule.rounds;
+  const marathonValid = endMs !== null && schedule !== null;
+  const note = locked ? ' 当前计划已开始，轮数和任务将在本轮计划结束后生效。' : '';
   return <div className="dialog-backdrop plan-sheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
     <section className="focus-plan-sheet" role="dialog" aria-modal="true" aria-labelledby="focus-plan-title">
       <div className="sheet-heading"><div><span className="eyebrow">本次计划</span><h2 id="focus-plan-title">安排下一轮</h2></div><button type="button" className="dialog-close" aria-label="关闭本次计划" onClick={onClose}><X/></button></div>
-      <ChoiceMenu label="本次专注" value={selectedId} disabled={locked} onChange={onSelect} options={subtasks.map((subtask) => ({ id: subtask.id, label: subtask.title, detail: `已完成 ${Math.round(subtask.progressBasisPoints / 100)}%` }))}/>
-      <div className="round-picker" aria-label="专注轮数"><span>计划轮数</span><div>{[1, 2, 3, 4].map((value) => <button key={value} type="button" aria-pressed={rounds === value} disabled={locked} onClick={() => onRoundsChange(value)}>{value} 轮</button>)}</div></div>
-      <p className="plan-sheet-note">每轮 {focusMinutes} 分钟专注{breakMinutes > 0 ? `；多轮之间休息 ${breakMinutes} 分钟。` : '；休息已关闭。'}{locked ? ' 当前计划已开始，轮数和任务将在本轮计划结束后生效。' : ''}</p>
-      <button type="button" className="primary" onClick={onClose}>确认计划</button>
+      <div className="plan-mode" role="group" aria-label="排程方式">
+        <button type="button" aria-pressed={mode === 'rounds'} disabled={locked} onClick={() => onModeChange('rounds')}>固定轮次</button>
+        <button type="button" aria-pressed={mode === 'marathon'} disabled={locked} onClick={() => onModeChange('marathon')}>按结束时间</button>
+      </div>
+      {mode === 'rounds' ? <>
+        <ChoiceMenu label="本次专注" value={selectedId} disabled={locked} onChange={onSelect} options={subtasks.map((subtask) => ({ id: subtask.id, label: subtask.title, detail: `已完成 ${Math.round(subtask.progressBasisPoints / 100)}%` }))}/>
+        <div className="round-picker" aria-label="专注轮数"><span>计划轮数</span><div>{[1, 2, 3, 4].map((value) => <button key={value} type="button" aria-pressed={rounds === value} disabled={locked} onClick={() => onRoundsChange(value)}>{value} 轮</button>)}</div></div>
+        <p className="plan-sheet-note">每轮 {focusMinutes} 分钟专注{breakMinutes > 0 ? `；多轮之间休息 ${breakMinutes} 分钟。` : '；休息已关闭。'}{note}</p>
+      </> : <>
+        <label className="marathon-end-field"><span>结束时间</span><input type="time" aria-label="结束时间" value={endAtDraft} disabled={locked} onChange={(event) => onEndAtDraftChange(event.target.value)}/></label>
+        {endMs === null
+          ? <p className="plan-sheet-error">请先选择结束时间。</p>
+          : schedule === null
+            ? <p className="plan-sheet-error">从现在到 {formatClockTime(endMs)} 不足一轮专注（{focusMinutes} 分钟），请选择更晚的时间。</p>
+            : <p className="plan-sheet-note">到 {formatClockTime(endMs)} 共约 {Math.max(1, Math.round((endMs - Date.now()) / 60000))} 分钟：安排 {schedule.rounds} 轮专注{schedule.breaks > 0 ? `、${schedule.breaks} 次休息` : ''}，全部结束后再统一汇报推进了哪些小任务。{capped ? `时间超过上限 ${MAX_MARATHON_ROUNDS} 轮，按前 ${schedule.rounds} 轮（约 ${formatDurationSummary(schedule.usableMs)}）排程。` : ''}{note}</p>}
+      </>}
+      <button type="button" className="primary" disabled={mode === 'marathon' && !marathonValid} onClick={onClose}>确认计划</button>
     </section>
   </div>;
 }
@@ -564,18 +684,88 @@ function ProgressReportV7({active,run,onSubmitted}:{active:NonNullable<ReturnTyp
   return <div className="report v7-progress-report"><Check/><span className="eyebrow">本轮已记录</span><h2>这次工作推进到哪里？</h2><p><strong>{task.title}</strong><br/>当前总进度 {Math.round(task.progressBasisPoints/100)}%。提交后会更新建筑的永久施工阶段。</p><div className="report-options">{options.map((value)=><button key={value} onClick={()=>void submit(value)}>{value===task.progressBasisPoints?`保持 ${value/100}%`:value===10000?'完成小任务':`推进至 ${value/100}%`}</button>)}</div></div>;
 }
 
-const WorldCanvasV7 = memo(function WorldCanvasV7({service,resourcePacks,lightingQuality,constructionOutlineVisibility,environmentStyle,worldSeed,terrainGenerationVersion,constructionFeedback=0,sessionActive=false,focusedProjectId,onSelectProject,onClearWorldFocus,visible,onPickTerrain,pickedCell}:{service:ApplicationService;resourcePacks:ResourcePackRepository;lightingQuality:VoxelLightingQuality;constructionOutlineVisibility:ConstructionOutlineVisibility;environmentStyle:WorldEnvironmentStyle;worldSeed:string;terrainGenerationVersion:4;constructionFeedback?:number;sessionActive?:boolean;focusedProjectId:string|null;onSelectProject:(projectId:string)=>void;onClearWorldFocus:()=>void;visible:boolean;onPickTerrain:(position:{x:number;y:number;z:number})=>void;pickedCell:{x:number;y:number;z:number}|null}) {
+// V21 marathon final report: after every scheduled round, the user attributes
+// the whole block of completed sessions to the subtasks they actually advanced.
+function MarathonProgressReport({ active, run, onSubmitted }: {
+  active: NonNullable<ReturnType<ApplicationService['activeProjectProjection']>>;
+  run: (command: ApplicationCommand) => Promise<any>;
+  onSubmitted: () => void;
+}) {
+  const sessions = active.unreportedCompletedSessions;
+  const candidates = active.project.subtasks.filter((subtask) => subtask.progressBasisPoints < 10000);
+  const [choices, setChoices] = useState<Record<string, number>>({});
+  const [busy, setBusy] = useState(false);
+  const canReport = sessions.length > 0;
+  const optionsFor = (subtask: typeof active.project.subtasks[number]) =>
+    [subtask.progressBasisPoints, 2500, 5000, 7500, 10000].filter((value, index, all) => value >= subtask.progressBasisPoints && all.indexOf(value) === index);
+  const submit = async () => {
+    const entries = Object.entries(choices)
+      .map(([subtaskId, progressBasisPoints]) => ({ subtaskId, progressBasisPoints }))
+      .filter((entry) => entry.progressBasisPoints > (active.project.subtasks.find((item) => item.id === entry.subtaskId)?.progressBasisPoints ?? 0));
+    if (entries.length > 0) {
+      if (!canReport) return;
+      setBusy(true);
+      try {
+        const result = await run({ type: 'ReportMarathonFocus', entries, focusSessionIds: sessions.map((session) => session.id) });
+        if (!result?.ok) return;
+      } finally {
+        setBusy(false);
+      }
+    }
+    onSubmitted();
+  };
+  return <div className="report v7-progress-report marathon-progress-report">
+    <Check/>
+    <span className="eyebrow">全部 {sessions.length} 轮已结束</span>
+    <h2>这次长时间专注推进了哪些小任务？</h2>
+    <p>每一行选择推进到的进度；未选择的小任务保持原进度，建筑会按新进度更新施工阶段。</p>
+    {!canReport
+      ? <p className="plan-sheet-note">本轮计划的专注已经在各轮提前结束时分别记录，直接结束计划即可。</p>
+      : candidates.length === 0
+        ? <p className="plan-sheet-note">所有小任务都已完成，本轮计划结束。</p>
+        : <div className="marathon-report-rows">{candidates.map((subtask) => {
+            const current = subtask.progressBasisPoints;
+            const chosen = choices[subtask.id] ?? current;
+            return <div className="marathon-report-row" key={subtask.id}>
+              <div className="marathon-report-copy"><strong>{subtask.title}</strong><small>当前 {Math.round(current / 100)}%（{Math.round(current / 100) === 0 ? '尚未推进' : '已有建筑进度'}）</small></div>
+              <div className="marathon-report-options">{optionsFor(subtask).map((value) => (
+                <button key={value} type="button" aria-pressed={chosen === value} disabled={busy} onClick={() => setChoices((prev) => {
+                  const next = { ...prev };
+                  if (value === current) delete next[subtask.id];
+                  else next[subtask.id] = value;
+                  return next;
+                })}>{value === current ? `保持 ${value / 100}%` : value === 10000 ? '完成' : `推进至 ${value / 100}%`}</button>
+              ))}</div>
+            </div>;
+          })}</div>}
+    <button type="button" className="primary marathon-report-submit" disabled={busy} onClick={() => void submit()}>提交本次推进</button>
+  </div>;
+}
+
+const WorldCanvasV7 = memo(function WorldCanvasV7({service,resourcePacks,lightingQuality,constructionOutlineVisibility,environmentStyle,worldSeed,terrainGenerationVersion,constructionFeedback=0,sessionActive=false,immersiveBandFraction=0,focusedProjectId,onSelectProject,onClearWorldFocus,visible,onPickTerrain,pickedCell}:{service:ApplicationService;resourcePacks:ResourcePackRepository;lightingQuality:VoxelLightingQuality;constructionOutlineVisibility:ConstructionOutlineVisibility;environmentStyle:WorldEnvironmentStyle;worldSeed:string;terrainGenerationVersion:4;constructionFeedback?:number;sessionActive?:boolean;immersiveBandFraction?:number;focusedProjectId:string|null;onSelectProject:(projectId:string)=>void;onClearWorldFocus:()=>void;visible:boolean;onPickTerrain:(position:{x:number;y:number;z:number})=>void;pickedCell:{x:number;y:number;z:number}|null}) {
   const ref=useRef<HTMLCanvasElement>(null); const renderer=useRef<VoxelRenderer|null>(null); const catalog=useBlueprintCatalog(); const world=service.worldProjection(); const state=service.snapshot(); const importedRef=useRef(new Map<string,BlueprintV1>()); const focusRef=useRef(focusedProjectId); const selectRef=useRef(onSelectProject); const visibleRef=useRef(visible); const appliedPackRef=useRef<string|null|undefined>(undefined); const sessionActiveRef=useRef(sessionActive); const [ready,setReady]=useState(false);
+  // V21 immersive top-right view control: a tap on the corner reveals the reset
+  // button, which hides itself again with the same fade rhythm as the other
+  // conditional controls (180 ms in, 160 ms out via is-leaving, 5 s dwell).
+  const [viewControlsVisible,setViewControlsVisible]=useState(false);
+  const [viewControlsLeaving,setViewControlsLeaving]=useState(false);
+  const viewTimersRef=useRef<number[]>([]);
+  const immersiveBandRef=useRef(immersiveBandFraction); immersiveBandRef.current=immersiveBandFraction;  useEffect(()=>{for(const timer of viewTimersRef.current)window.clearTimeout(timer);viewTimersRef.current=[];setViewControlsVisible(false);setViewControlsLeaving(false);},[sessionActive]);
+  useEffect(()=>()=>{for(const timer of viewTimersRef.current)window.clearTimeout(timer);},[]);
+  const hideViewControls=useCallback(()=>{setViewControlsLeaving(true);viewTimersRef.current.push(window.setTimeout(()=>{setViewControlsVisible(false);setViewControlsLeaving(false);},180));},[]);
+  const toggleViewControls=useCallback(()=>{if(viewControlsVisible)hideViewControls();else setViewControlsVisible(true);},[viewControlsVisible,hideViewControls]);
+  useEffect(()=>{if(!viewControlsVisible||!sessionActive)return;viewTimersRef.current.push(window.setTimeout(hideViewControls,5000));},[viewControlsVisible,sessionActive,hideViewControls]);
   // V19 diagnostic cell picking stays available behind ?pick but is off by default.
   const pickEnabled=new URLSearchParams(location.search).has('pick');
   importedRef.current=new Map(world.projects.flatMap(project=>project.building.importedBlueprint?[[project.building.blueprintId,project.building.importedBlueprint as BlueprintV1]]:[])); focusRef.current=focusedProjectId; selectRef.current=onSelectProject; visibleRef.current=visible;
   const blueprintLabel=(blueprintId:string,importedTitle?:string)=>state.buildingBlueprintResources.find(resource=>resource.id===blueprintId)?.displayName??importedTitle??blueprintName(catalog,blueprintId);
   const decorationDates=decorationDatesByProject(state); const snapshotKey=world.projects.map(project=>`${project.project.id}:${project.building.blueprintId}:${project.building.completionBasisPoints}:${project.building.conditionBasisPoints}:${project.isActive}:${project.settlementIndex}:${(decorationDates.get(project.project.id)??[]).join(',')}:${project.importedDecorations.map(reward=>`${reward.rewardId}@${reward.localPosition.x},${reward.localPosition.z},${reward.rotationQuarterTurns}`).join(';')}`).join('|'); const snapshots=useMemo(()=>toVoxelWorlds(world.projects,state),[snapshotKey]); const summary=world.projects.map(project=>`${project.project.title}，${blueprintLabel(project.building.blueprintId,project.building.importedBlueprint?.title)}，${project.isActive?'正在建造':project.project.status==='paused'?'暂停建造':'纪念建筑'}，建造进度 ${Math.round(project.building.completionBasisPoints/100)}%，保存状况 ${conditionLabel(project.building.conditionBasisPoints)}`).join('；'); const focusedTitle=world.projects.find(project=>project.project.id===focusedProjectId)?.project.title;
-  useEffect(()=>{let cancelled=false;let current:VoxelRenderer|null=null;setReady(false);let raf=0;let timer=0;const begin=()=>{void loadVoxelModule().then(async({createVoxelRenderer,resolveBuiltinBlueprint})=>{if(cancelled||!ref.current)return;current=createVoxelRenderer(ref.current,{resolveBlueprint:id=>importedRef.current.get(id)??resolveBuiltinBlueprint(id),resourcePackAtlasMaximumSize:resourcePackAtlasMaximumSizeForTest(),lightingQuality,constructionOutlineVisibility,environmentStyle,worldSeed,terrainGenerationVersion,onSelectProject:projectId=>selectRef.current(projectId),onPickTerrain:pickEnabled?onPickTerrain:undefined,debugFlatColors:new URLSearchParams(location.search).has('flat'),debugVoidScan:new URLSearchParams(location.search).has('voidscan')});renderer.current=current;current.setReducedMotion(matchMedia('(prefers-reduced-motion: reduce)').matches);current.setVisible(visibleRef.current);current.setWorlds(toVoxelWorlds(service.worldProjection().projects,service.snapshot()));current.focusProject(focusRef.current);const pack=await resourcePacks.getActive();appliedPackRef.current=pack?`${pack.id}:${pack.manifest.pack.packFormat}`:null;if(!cancelled&&current)await current.setResourcePack(pack?{id:pack.id,manifest:pack.manifest}:null);if(!cancelled)setReady(true);}).catch(error=>{console.error('Voxel world initialization failed',error);if(!cancelled)setReady(true);});};raf=requestAnimationFrame(()=>{timer=window.setTimeout(begin,0);});return()=>{cancelled=true;cancelAnimationFrame(raf);window.clearTimeout(timer);current?.dispose();if(renderer.current===current)renderer.current=null;};},[service,resourcePacks,lightingQuality,constructionOutlineVisibility,environmentStyle,worldSeed,terrainGenerationVersion]);
+  useEffect(()=>{let cancelled=false;let current:VoxelRenderer|null=null;setReady(false);let raf=0;let timer=0;const begin=()=>{void loadVoxelModule().then(async({createVoxelRenderer,resolveBuiltinBlueprint})=>{if(cancelled||!ref.current)return;current=createVoxelRenderer(ref.current,{resolveBlueprint:id=>importedRef.current.get(id)??resolveBuiltinBlueprint(id),resourcePackAtlasMaximumSize:resourcePackAtlasMaximumSizeForTest(),lightingQuality,constructionOutlineVisibility,environmentStyle,worldSeed,terrainGenerationVersion,onSelectProject:projectId=>selectRef.current(projectId),onPickTerrain:pickEnabled?onPickTerrain:undefined,debugFlatColors:new URLSearchParams(location.search).has('flat'),debugVoidScan:new URLSearchParams(location.search).has('voidscan')});renderer.current=current;current.setReducedMotion(matchMedia('(prefers-reduced-motion: reduce)').matches);current.setVisible(visibleRef.current);current.setImmersiveBandFraction(immersiveBandRef.current);current.setWorlds(toVoxelWorlds(service.worldProjection().projects,service.snapshot()));current.focusProject(focusRef.current);const pack=await resourcePacks.getActive();appliedPackRef.current=pack?`${pack.id}:${pack.manifest.pack.packFormat}`:null;if(!cancelled&&current)await current.setResourcePack(pack?{id:pack.id,manifest:pack.manifest}:null);if(!cancelled)setReady(true);}).catch(error=>{console.error('Voxel world initialization failed',error);if(!cancelled)setReady(true);});};raf=requestAnimationFrame(()=>{timer=window.setTimeout(begin,0);});return()=>{cancelled=true;cancelAnimationFrame(raf);window.clearTimeout(timer);current?.dispose();if(renderer.current===current)renderer.current=null;};},[service,resourcePacks,lightingQuality,constructionOutlineVisibility,environmentStyle,worldSeed,terrainGenerationVersion]);
   useEffect(()=>{renderer.current?.setVisible(visible);},[visible]);
   // IF-01: bounded construction pulses — round completed (stronger) and focus started (gentle).
   useEffect(()=>{if(constructionFeedback>0)renderer.current?.playConstructionPulse(1);},[constructionFeedback]);
   useEffect(()=>{const previous=sessionActiveRef.current;sessionActiveRef.current=sessionActive;if(sessionActive&&!previous)renderer.current?.playConstructionPulse(0.6);},[sessionActive]);
+  useEffect(()=>{renderer.current?.setImmersiveBandFraction(immersiveBandRef.current);},[immersiveBandFraction]);
   // MT-02: with the renderer resident, the pack switched in settings must apply when the pane returns; re-apply only when the active pack actually changed.
   useEffect(()=>{if(!visible)return;let cancelled=false;void resourcePacks.getActive().then(pack=>{if(cancelled||!renderer.current)return;const key=pack?`${pack.id}:${pack.manifest.pack.packFormat}`:null;if(appliedPackRef.current===key)return;appliedPackRef.current=key;void renderer.current!.setResourcePack(pack?{id:pack.id,manifest:pack.manifest}:null).then(()=>{if(!cancelled)renderer.current?.setVisible(true);});});return()=>{cancelled=true;};},[visible,resourcePacks]);
   useEffect(()=>{renderer.current?.setWorlds(snapshots);},[snapshots]);
@@ -583,7 +773,7 @@ const WorldCanvasV7 = memo(function WorldCanvasV7({service,resourcePacks,lightin
   const focusedProject=world.projects.find(project=>project.project.id===focusedProjectId);
   const memory=focusedProject?buildingMemory(state,focusedProject.project.id):null;
   const focusedBlueprint=focusedProject?blueprintLabel(focusedProject.building.blueprintId,focusedProject.building.importedBlueprint?.title):'';
-  return <><figure className={focusedProjectId?'world is-project-focused':'world'}><canvas ref={ref} role="img" aria-label="项目建筑世界" aria-describedby="world-summary"/>{visible&&<figcaption id="world-summary" className="sr-only">林边聚落，共 {world.projects.length} 栋建筑。{summary}</figcaption>}{visible&&pickEnabled&&pickedCell&&<div className="world-pick-chip" role="status" data-testid="world-pick">x {pickedCell.x} · z {pickedCell.z} · 高 {pickedCell.y}</div>}{visible&&<div className="world-hud"><span>{focusedTitle?`正在查看 · ${focusedTitle}`:`林边聚落 · ${world.projects.length} 栋`}</span><div className="world-hud-actions">{focusedProjectId&&<button title="返回完整聚落" aria-label="返回完整聚落" onClick={onClearWorldFocus}><MapIcon/></button>}<button title="重置视角" aria-label="重置视角" onClick={()=>renderer.current?.resetCamera()}><RotateCcw/></button></div></div>}{visible&&focusedProject&&<div className="world-building-details" role="status"><div><strong>{focusedProject.project.title}</strong><span>{focusedProject.project.status==='monument'?'纪念建筑':focusedProject.isActive?'正在建造':'暂停建造'} · {conditionLabel(focusedProject.building.conditionBasisPoints)}</span><small>{focusedBlueprint} · {constructionStage(focusedProject.building.completionBasisPoints).replace('施工阶段：','')}</small><small>{memory!.minutes>0?`累计 ${memory!.minutes} 分钟 · ${memory!.successfulRounds} 轮有效完成${memory!.lastDate?` · 最近 ${memory!.lastDate}`:''}`:'还没有有效专注记录'}</small></div><b>{Math.round(focusedProject.building.completionBasisPoints/100)}%</b></div>}{visible&&constructionFeedback>0&&<div key={constructionFeedback} className="construction-feedback" role="status"><Hammer/><span>材料已送达，继续建造</span><i/><i/><i/></div>}</figure>{!ready&&<LoadingPage status="正在建造世界…"/>}</>;
+  return <><figure className={focusedProjectId?'world is-project-focused':'world'}><canvas ref={ref} role="img" aria-label="项目建筑世界" aria-describedby="world-summary"/>{visible&&sessionActive&&<div className="immersive-view-tapzone" aria-hidden="true" onPointerDown={event=>event.stopPropagation()} onPointerUp={event=>{event.stopPropagation();toggleViewControls();}}/>}{visible&&sessionActive&&(viewControlsVisible||viewControlsLeaving)&&<div className={`immersive-view-controls${viewControlsLeaving?' is-leaving':''}`}><button type="button" className="immersive-reset-view" aria-label="重置视角" title="重置视角" onClick={()=>renderer.current?.resetCamera()}><RotateCcw/></button></div>}{visible&&<figcaption id="world-summary" className="sr-only">林边聚落，共 {world.projects.length} 栋建筑。{summary}</figcaption>}{visible&&pickEnabled&&pickedCell&&<div className="world-pick-chip" role="status" data-testid="world-pick">x {pickedCell.x} · z {pickedCell.z} · 高 {pickedCell.y}</div>}{visible&&<div className="world-hud"><span>{focusedTitle?`正在查看 · ${focusedTitle}`:`林边聚落 · ${world.projects.length} 栋`}</span><div className="world-hud-actions">{focusedProjectId&&<button title="返回完整聚落" aria-label="返回完整聚落" onClick={onClearWorldFocus}><MapIcon/></button>}<button title="重置视角" aria-label="重置视角" onClick={()=>renderer.current?.resetCamera()}><RotateCcw/></button></div></div>}{visible&&focusedProject&&<div className="world-building-details" role="status"><div><strong>{focusedProject.project.title}</strong><span>{focusedProject.project.status==='monument'?'纪念建筑':focusedProject.isActive?'正在建造':'暂停建造'} · {conditionLabel(focusedProject.building.conditionBasisPoints)}</span><small>{focusedBlueprint} · {constructionStage(focusedProject.building.completionBasisPoints).replace('施工阶段：','')}</small><small>{memory!.minutes>0?`累计 ${memory!.minutes} 分钟 · ${memory!.successfulRounds} 轮有效完成${memory!.lastDate?` · 最近 ${memory!.lastDate}`:''}`:'还没有有效专注记录'}</small></div><b>{Math.round(focusedProject.building.completionBasisPoints/100)}%</b></div>}{visible&&constructionFeedback>0&&<div key={constructionFeedback} className="construction-feedback" role="status"><Hammer/><span>材料已送达，继续建造</span><i/><i/><i/></div>}</figure>{!ready&&<LoadingPage status="正在建造世界…"/>}</>;
 });
 
 type FocusTimerMode = 'plan' | 'focus' | 'break' | 'ready';
@@ -612,9 +802,7 @@ function FocusTimer({ mode, endsAt, fallbackMs, onElapsed }: { mode?: FocusTimer
   const clock = formatClockDuration(remaining);
   return <div className={`timer timer-${timerMode}`} role={endsAt ? 'timer' : undefined} aria-label={`${label} ${clock}`}>
     <span className="timer-label">{label}</span>
-    <strong className="timer-value" aria-hidden="true">{clock.split('').map((char, index) => (
-      <span key={`${index}:${char}`} className={`timer-digit${char === ':' ? ' is-colon' : ''}`}>{char}</span>
-    ))}</strong>
+    <strong className="timer-value" aria-hidden="true">{clock}</strong>
   </div>;
 }
 
@@ -634,6 +822,29 @@ function formatDurationSummary(milliseconds: number): string {
   return minutes === 0 ? `${hours} 小时` : `${hours} 小时 ${minutes} 分钟`;
 }
 
+function formatClockTime(value: string | number): string {
+  const date = new Date(value);
+  const now = new Date();
+  const sameDay = date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth() && date.getDate() === now.getDate();
+  const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+  const nextDay = date.getFullYear() === tomorrow.getFullYear() && date.getMonth() === tomorrow.getMonth() && date.getDate() === tomorrow.getDate();
+  const time = new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(date);
+  if (sameDay) return time;
+  if (nextDay) return `明天 ${time}`;
+  return `${date.getMonth() + 1}月${date.getDate()}日 ${time}`;
+}
+
+/** Interprets an HH:MM draft as today's clock time, rolling into tomorrow when it already passed. */
+function marathonEndInstant(draft: string, now = Date.now()): number | null {
+  const match = /^(\d{2}):(\d{2})$/.exec(draft);
+  if (!match) return null;
+  const target = new Date(now);
+  target.setHours(Number(match[1]), Number(match[2]), 0, 0);
+  if (!Number.isFinite(target.getTime())) return null;
+  if (target.getTime() <= now) target.setDate(target.getDate() + 1);
+  return target.getTime();
+}
+
 const WorldCanvas = memo(function WorldCanvas({service,resourcePacks,lightingQuality,constructionOutlineVisibility,constructionFeedback=0}:{service:ApplicationService;resourcePacks:ResourcePackRepository;lightingQuality:VoxelLightingQuality;constructionOutlineVisibility:ConstructionOutlineVisibility;constructionFeedback?:number}) {
   const ref=useRef<HTMLCanvasElement>(null); const renderer=useRef<VoxelRenderer|null>(null); const catalog=useBlueprintCatalog(); const world=service.worldProjection(); const state=service.snapshot(); const importedRef=useRef(new Map<string,BlueprintV1>()); importedRef.current=new Map(world.projects.flatMap(project=>project.building.importedBlueprint?[[project.building.blueprintId,project.building.importedBlueprint as BlueprintV1]]:[])); const decorationDates=decorationDatesByProject(state); const snapshotKey=world.projects.map(project=>`${project.project.id}:${project.building.blueprintId}:${project.building.completionBasisPoints}:${project.building.conditionBasisPoints}:${project.isActive}:${project.settlementIndex}:${(decorationDates.get(project.project.id)??[]).join(',')}:${project.importedDecorations.map(reward=>`${reward.rewardId}@${reward.localPosition.x},${reward.localPosition.z},${reward.rotationQuarterTurns}`).join(';')}`).join('|'); const snapshots=useMemo(()=>toVoxelWorlds(world.projects,state),[snapshotKey]); const summary=world.projects.map(project=>`${project.project.title}，${project.building.importedBlueprint?.title??blueprintName(catalog,project.building.blueprintId)}，${project.isActive?'正在建造':project.project.status==='paused'?'暂停建造':'纪念建筑'}，建造进度 ${Math.round(project.building.completionBasisPoints/100)}%，保存状况 ${conditionLabel(project.building.conditionBasisPoints)}`).join('；');
   useEffect(()=>{let cancelled=false;let current:VoxelRenderer|null=null;void loadVoxelModule().then(async({createVoxelRenderer,resolveBuiltinBlueprint})=>{if(cancelled||!ref.current)return;const snapshot=service.snapshot();current=createVoxelRenderer(ref.current,{resolveBlueprint:id=>importedRef.current.get(id)??resolveBuiltinBlueprint(id),resourcePackAtlasMaximumSize:resourcePackAtlasMaximumSizeForTest(),lightingQuality,constructionOutlineVisibility,environmentStyle:snapshot.worldSettings.environmentStyle,worldSeed:snapshot.worldSettings.worldSeed,terrainGenerationVersion:snapshot.worldSettings.terrainGenerationVersion,debugFlatColors:new URLSearchParams(location.search).has('flat'),debugVoidScan:new URLSearchParams(location.search).has('voidscan')});renderer.current=current;current.setReducedMotion(matchMedia('(prefers-reduced-motion: reduce)').matches);current.setWorlds(toVoxelWorlds(service.worldProjection().projects,snapshot));const pack=await resourcePacks.getActive();if(!cancelled&&current)await current.setResourcePack(pack?{id:pack.id,manifest:pack.manifest}:null);}).catch(error=>console.error('Voxel world initialization failed',error));return()=>{cancelled=true;current?.dispose();if(renderer.current===current)renderer.current=null;};},[service,resourcePacks,lightingQuality,constructionOutlineVisibility,state.worldSettings.environmentStyle,state.worldSettings.worldSeed,state.worldSettings.terrainGenerationVersion]);
@@ -646,7 +857,7 @@ function conditionLabel(value:number) { return value>=8000?'完整':value>=5000?
 function toImportedBlueprint(blueprint:BlueprintV1):ImportedBlueprintV1 { return {...blueprint,voxels:blueprint.voxels.map(voxel=>({...voxel,stage:stageForBuildOrder(voxel.buildOrder)}))}; }
 function stageForBuildOrder(value:number):ImportedBlueprintStage { return value<1800?'foundation':value<3800?'frame':value<6500?'walls':value<8800?'roof':'details'; }
 function decorationBlueprintLimitError(blueprint:BlueprintV1):string { const width=blueprint.bounds.maxX-blueprint.bounds.minX+1;const height=blueprint.bounds.maxY-blueprint.bounds.minY+1;const depth=blueprint.bounds.maxZ-blueprint.bounds.minZ+1;if(width>12||depth>12||height>16)return`这份蓝图为 ${width} x ${height} x ${depth}，奖励装饰上限为 12 x 12 x 16。`;if(blueprint.voxels.length>2000)return`这份蓝图含 ${blueprint.voxels.length.toLocaleString('zh-CN')} 个方块，奖励装饰上限为 2,000 个。`;return''; }
-function litematicErrorMessage(error:unknown):string { const code=typeof error==='object'&&error!==null&&'code'in error?String((error as {code:unknown}).code):'';if(code==='INPUT_TOO_LARGE'||code==='NBT_TOO_LARGE'||code==='LIMIT_EXCEEDED')return'图纸超过首版安全限制：文件 10 MB、占地 48 x 48、高度 128、最多 100,000 个方块。';if(code==='NOT_GZIP'||code==='INVALID_GZIP'||code==='INVALID_NBT'||code==='INVALID_LITEMATIC')return'无法读取这份 .litematic，请确认文件完整且由 Litematica 导出。';return error instanceof Error?error.message:'图纸导入失败，请换一份文件重试。'; }
+function litematicErrorMessage(error:unknown):string { const code=typeof error==='object'&&error!==null&&'code'in error?String((error as {code:unknown}).code):'';if(code==='INPUT_TOO_LARGE'||code==='NBT_TOO_LARGE'||code==='LIMIT_EXCEEDED')return'图纸超过安全限制：文件 64 MB、占地 96 x 96、高度 256、最多 300,000 个方块。';if(code==='NOT_GZIP'||code==='INVALID_GZIP'||code==='INVALID_NBT'||code==='INVALID_LITEMATIC')return'无法读取这份 .litematic，请确认文件完整且由 Litematica 导出。';return error instanceof Error?error.message:'图纸导入失败，请换一份文件重试。'; }
 
 function ProgressReport({active,run,onSubmitted}:{active:NonNullable<ReturnType<ApplicationService['activeProjectProjection']>>;run:(c:ApplicationCommand)=>Promise<any>;onSubmitted:()=>void}) { const session=active.unreportedCompletedSessions[0]!; const task=active.project.subtasks.find(s=>s.id===session.subtaskId)!; const submit=async(value:number)=>{const result=await run({type:'ReportSubtaskProgress',subtaskId:task.id,focusSessionIds:[session.id],progressBasisPoints:value});if(result?.ok)onSubmitted();};return <div className="report"><Check/><h2>这次专注完成了多少？</h2><p>{task.title}</p><div className="report-options">{[0,2500,5000,7500,10000].filter(n=>n>=task.progressBasisPoints).map(n=><button key={n} onClick={()=>void submit(n)}>{n===0?'没有进展':`${n/100}%`}</button>)}</div></div>; }
 

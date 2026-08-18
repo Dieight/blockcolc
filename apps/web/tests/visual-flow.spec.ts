@@ -487,6 +487,9 @@ test('edits project and subtasks before progress and persists their order', asyn
   await page.getByRole('textbox', { name: '小任务名称', exact: true }).fill('发布检查');
   await page.getByRole('button', { name: '保存小任务名称' }).click();
   await page.getByLabel('长按拖动“发布检查”排序；使用方向键微调').press('ArrowUp');
+  // Wait for the first reorder to commit before pressing again: consecutive
+  // presses against the same render's subtask list can collapse into one move.
+  await expect(page.locator('.task-editor-row strong')).toHaveText(['确定目标', '完成核心工作', '发布检查', '检查并收尾']);
   await page.getByLabel('长按拖动“发布检查”排序；使用方向键微调').press('ArrowUp');
   await expect(page.locator('.task-editor-row strong')).toHaveText([
     '确定目标',

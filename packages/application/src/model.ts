@@ -17,6 +17,7 @@ export type ApplicationCommand =
   | { type: "AddSubtask"; title: string }
   | { type: "StartFocus"; subtaskId: string | null; plannedDurationMs: number }
   | { type: "ReportSubtaskProgress"; subtaskId: string; focusSessionIds: string[]; progressBasisPoints: number }
+  | { type: "ReportMarathonFocus"; entries: Array<{ subtaskId: string; progressBasisPoints: number }>; focusSessionIds: string[] }
   | { type: "CompleteFocusEarly" }
   | Exclude<DomainCommand, { type: GeneratedCommandType }>;
 

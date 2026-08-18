@@ -1,6 +1,6 @@
 import type { Clock, FocusLifecycleEvent, FocusLifecyclePort, IdGenerator, NotificationCapability, NotificationPort } from '@tomato-clock/application';
 
-export const LITEMATIC_MAX_COMPRESSED_BYTES = 10 * 1024 * 1024;
+export const LITEMATIC_MAX_COMPRESSED_BYTES = 64 * 1024 * 1024;
 
 export class DateClock implements Clock { now() { return new Date(); } }
 export class CryptoIdGenerator implements IdGenerator { next(kind: 'project' | 'subtask' | 'focus-session' | 'progress-report') { return `${kind}-${crypto.randomUUID()}`; } }
