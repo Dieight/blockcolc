@@ -52,9 +52,11 @@ test("marathon mode schedules from an end time and reports once after every roun
   await page.getByRole("button", { name: "调整本次计划" }).click();
   const sheet = page.getByRole("dialog", { name: "安排下一轮" });
   await sheet.getByRole("button", { name: "按结束时间" }).click();
-  // Installed at 16:00 Shanghai; a 16:05 end gives 4-5 rounds regardless of drift.
-  const endField = page.getByLabel("结束时间");
-  await endField.fill("16:05");
+  // Installed at 16:00 Shanghai. The custom stepper starts at 18:00; move it to
+  // 16:05 (two hours back, five minutes forward) for a 4-5 round schedule.
+  await page.getByLabel("减少结束小时").click();
+  await page.getByLabel("减少结束小时").click();
+  await page.getByLabel("增加结束分钟").click();
   await expect(sheet).toContainText(/轮专注/);
   await sheet.getByRole("button", { name: "确认计划" }).click();
 
@@ -99,7 +101,8 @@ test("marathon rounds unlock the wider round count in the plan summary", async (
   const sheet = page.getByRole("dialog", { name: "安排下一轮" });
   await sheet.getByRole("button", { name: "按结束时间" }).click();
   // Four hours out (default 5-minute breaks) is far beyond the old 4-round cap.
-  await page.getByLabel("结束时间").fill("20:00");
+  await page.getByLabel("增加结束小时").click();
+  await page.getByLabel("增加结束小时").click();
   await expect(sheet).toContainText("24 轮");
   await sheet.getByRole("button", { name: "确认计划" }).click();
   await expect(page.locator(".plan-summary")).toContainText(/24 轮 · 结束 20:00/);

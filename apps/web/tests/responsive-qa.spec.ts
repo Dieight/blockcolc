@@ -193,7 +193,9 @@ test('bleeds the focus world under a landscape cutout while keeping controls saf
   expect(layout.world?.left).toBe(0);
   expect(layout.world?.top).toBe(0);
   expect(layout.world?.right).toBeGreaterThanOrEqual(layout.width - 1);
-  expect(layout.hud?.width).toBe(0);
+  // V21: the ordinary HUD is not mounted at all during focus (reveal-only), so a
+  // missing box counts as the hidden HUD.
+  expect(layout.hud?.width ?? 0).toBe(0);
   expect(layout.panel?.width).toBeLessThanOrEqual(330);
   expect(layout.panel?.right).toBeLessThanOrEqual(layout.width);
   expect(layout.action?.right).toBeLessThanOrEqual(layout.width - 8 + 1);

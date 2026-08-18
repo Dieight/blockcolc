@@ -25,7 +25,9 @@ async function completeOneRoundEarly(page: import("@playwright/test").Page) {
   const dialog = page.getByRole("dialog", { name: "如何结束这次专注？" });
   await expect(dialog).toBeVisible();
   await dialog.getByRole("button", { name: /提前完成任务/ }).click();
-  await expect(page.locator(".construction-feedback")).toContainText("材料已送达");
+  // V21: the materials-delivered toast waits for a committed progress choice and
+  // is not triggered by an early completion; the construction reveal still runs.
+  await expect(page.locator(".construction-feedback")).toHaveCount(0);
 }
 
 test("hides the ambient motion pump the moment the world pane is not visible", async ({ page }) => {

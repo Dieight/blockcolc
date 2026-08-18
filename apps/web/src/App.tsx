@@ -29,7 +29,7 @@ const INITIAL_PROJECT_SETUP_DRAFT: ProjectSetupDraft = { kind: 'finite', title: 
 let voxelModulePromise:Promise<typeof import('@tomato-clock/voxel')>|null=null;
 function loadVoxelModule(){voxelModulePromise??=import('@tomato-clock/voxel');return voxelModulePromise;}
 function resourcePackAtlasMaximumSizeForTest():number|undefined{if(!import.meta.env.DEV)return undefined;const value=Number(new URLSearchParams(location.search).get('__atlasPageSize'));return Number.isSafeInteger(value)&&value>=32&&value<=2048?value:undefined;}
-function immersiveBandTestOverride():number|undefined{if(!import.meta.env.DEV)return undefined;const raw=new URLSearchParams(location.search).get('__immersiveBand');if(raw===null)return undefined;const value=Number(raw);return Number.isFinite(value)&&value>=0&&value<=0.75?value:undefined;}
+function immersiveBandTestOverride():{bottom:number;right:number}|undefined{if(!import.meta.env.DEV)return undefined;const read=(key:string)=>{const raw=new URLSearchParams(location.search).get(key);if(raw===null)return undefined;const value=Number(raw);return Number.isFinite(value)&&value>=0&&value<=0.75?value:undefined;};const bottom=read('__immersiveBand');const right=read('__immersiveRightBand');if(bottom===undefined&&right===undefined)return undefined;return{bottom:bottom??0,right:right??0};}
 let litematicModulePromise:Promise<typeof import('@tomato-clock/litematic')>|null=null;
 function loadLitematicModule(){litematicModulePromise??=import('@tomato-clock/litematic');return litematicModulePromise;}
 function useBlueprintCatalog(){const [catalog,setCatalog]=useState<readonly BlueprintCatalogEntry[]>([]);useEffect(()=>{let active=true;void loadVoxelModule().then(module=>{if(active)setCatalog(module.BUILTIN_BLUEPRINT_CATALOG);});return()=>{active=false;};},[]);return catalog;}
@@ -208,7 +208,7 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
   const [planMode, setPlanMode] = useState<'rounds' | 'marathon'>('rounds');
   const [endAtDraft, setEndAtDraft] = useState('18:00');
   const focusPanelRef = useRef<HTMLElement>(null);
-  const [immersiveBandFraction, setImmersiveBandFraction] = useState(0);
+  const [immersiveBand, setImmersiveBand] = useState({ bottom: 0, right: 0 });
   const [controlsVisible, setControlsVisible] = useState(false);
   const [hintVisible, setHintVisible] = useState(false);
   const [pickedCell, setPickedCell] = useState<{ x: number; y: number; z: number } | null>(null);
@@ -230,8 +230,6 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
   const hideTimerRef = useRef<number | null>(null);
   const [constructionFeedback, setConstructionFeedback] = useState(0);
   const reconciling = useRef(false);
-  const latestSuccess = lastSuccessfulSession(state.focusHistory);
-  const latestSuccessRef = useRef(latestSuccess?.id);
 
   const setPlan = useCallback((next: RoundPlan | null) => {
     setPlanState(next);
@@ -260,13 +258,12 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
     setPlanOpen(false);
     setPlanMode('rounds');
   }, [active.project.id, setPlan]);
-  useEffect(() => {
-    if (!latestSuccess || latestSuccess.id === latestSuccessRef.current) return;
-    latestSuccessRef.current = latestSuccess.id;
+  // The "materials delivered" beat fires when the user commits progress (which
+  // is also when the construction blocks land), not when a session merely ends.
+  const fireConstructionFeedback = useCallback(() => {
     setConstructionFeedback((value) => value + 1);
-    const timer = window.setTimeout(() => setConstructionFeedback(0), 1800);
-    return () => window.clearTimeout(timer);
-  }, [latestSuccess?.id]);
+    window.setTimeout(() => setConstructionFeedback(0), 1800);
+  }, []);
 
   const session = state.activeFocusSession;
   const lastFocus = state.focusHistory[state.focusHistory.length - 1];
@@ -324,24 +321,29 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
     }
   }, [session, controlsVisible, hideControls]);
   // V21: in immersive focus the world fills the screen but a frosted band covers
-  // its lower part. Measure that band so the renderer can lift the world into
-  // the visible window instead of the full-screen center.
+  // part of it (bottom on portrait, right-hand column on landscape). Measure that
+  // band so the renderer can center the world on the visible window instead of
+  // the full-screen center.
   useEffect(() => {
     if (!session) {
-      setImmersiveBandFraction(0);
+      setImmersiveBand({ bottom: 0, right: 0 });
       return;
     }
     const override = immersiveBandTestOverride();
     if (override !== undefined) {
-      setImmersiveBandFraction(override);
+      setImmersiveBand(override);
       return;
     }
     const panel = focusPanelRef.current;
     if (!panel) return;
     const measure = () => {
       const rect = panel.getBoundingClientRect();
-      const bottomBand = rect.width >= window.innerWidth * 0.6;
-      setImmersiveBandFraction(bottomBand ? Math.min(0.62, rect.height / window.innerHeight) : 0);
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      const bottomBand = rect.width >= vw * 0.6;
+      setImmersiveBand(bottomBand
+        ? { bottom: Math.min(0.62, rect.height / vh), right: 0 }
+        : { bottom: 0, right: Math.min(0.62, rect.width / vw) });
     };
     measure();
     const observer = new ResizeObserver(measure);
@@ -375,7 +377,6 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
   }, [plan, reconciledPlan, setPlan]);
   const selectedId = reconciledPlan?.subtaskId ?? selected;
   const subtask = active.project.subtasks.find((item) => item.id === selectedId) ?? active.project.subtasks[0]!;
-  const timerEndsAt = session?.endsAt ?? (isBreak ? reconciledPlan?.breakEndsAt : undefined);
   const today = localDateOf(new Date(), state.calendar.timeZone);
   const dailyGoal = dailyGoalForDate(state, today);
   const completedToday = completedPomodorosOn(state, today);
@@ -432,6 +433,10 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
     setPlanLeaving(true);
     exitAfter(180, () => { setPlanOpen(false); setPlanLeaving(false); });
   }, []);
+  const cancelPlan = useCallback(() => {
+    setPlan(null);
+    closePlan();
+  }, [setPlan, closePlan]);
   useEffect(() => () => { for (const timer of exitTimersRef.current) window.clearTimeout(timer); }, []);
   const interruptFocus = async (interruptionCategory: FocusInterruptionCategory | null) => {
     const current = service.snapshot().activeFocusSession;
@@ -442,7 +447,15 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
     }
     const result = await run({ type: 'CancelFocus', interruptionCategory });
     if (result?.ok) {
-      setPlan(null);
+      const currentPlan = reconciledPlan;
+      // A marathon interruption only ends this round; the schedule keeps its
+      // next round. Cancelling the whole plan is done from the plan sheet.
+      if (currentPlan?.mode === 'marathon') {
+        const { breakEndsAt: _breakEndsAt, endAfterBreak: _endAfterBreak, ...withoutBreak } = currentPlan;
+        setPlan({ ...withoutBreak, status: 'ready', currentSessionId: undefined });
+      } else {
+        setPlan(null);
+      }
       closeEnding();
     }
   };
@@ -486,6 +499,7 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
   };
   const afterReport = (sessionId: string) => {
     if (!reconciledPlan) return;
+    fireConstructionFeedback();
     const completed = reconciledPlan.completedRounds + 1;
     const reportedSessionIds = reconciledPlan.reportedSessionIds.includes(sessionId) ? reconciledPlan.reportedSessionIds : [...reconciledPlan.reportedSessionIds, sessionId];
     if (completed >= reconciledPlan.totalRounds) {
@@ -508,10 +522,16 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
     : planRoundsForDuration(marathonDraftEndMs - Date.now(), focusMinutes, preferences.breakMinutes);
   const plannedRounds = reconciledPlan?.totalRounds ?? rounds;
   const fullPlanDurationMs = plannedDurationMs(focusMinutes, preferences.breakMinutes, plannedRounds);
-  const timerMode = isBreak ? 'break' : session ? 'focus' : reconciledPlan?.status === 'ready' ? 'ready' : 'plan';
-  const timerFallbackMs = timerMode === 'plan'
-    ? (planMode === 'marathon' && !reconciledPlan && marathonDraftSchedule ? marathonDraftSchedule.usableMs : fullPlanDurationMs)
-    : focusMinutes * 60_000;
+  // While idle the clock shows the per-round length for the classic schedule,
+  // but for a marathon it keeps counting the total time still left until the
+  // chosen end instant.
+  const isMarathonContext = marathonPlan || planMode === 'marathon';
+  const marathonEndsAt = isMarathonContext
+    ? (reconciledPlan?.endAt ?? (marathonDraftEndMs !== null ? new Date(marathonDraftEndMs).toISOString() : undefined))
+    : undefined;
+  const timerMode = isBreak ? 'break' : session ? 'focus' : isMarathonContext ? 'marathon' : reconciledPlan?.status === 'ready' ? 'ready' : 'plan';
+  const timerEndsAt = session?.endsAt ?? (isBreak ? reconciledPlan?.breakEndsAt : (timerMode === 'marathon' ? marathonEndsAt : undefined));
+  const timerFallbackMs = focusMinutes * 60_000;
   const marathonSummary = marathonPlan && reconciledPlan?.endAt
     ? `${reconciledPlan.totalRounds} 轮 · 结束 ${formatClockTime(reconciledPlan.endAt)}`
     : marathonDraftEndMs !== null && marathonDraftSchedule
@@ -532,7 +552,7 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
     ?? blueprintName(blueprintCatalog, active.project.blueprintId);
 
   return <div className={session ? 'world-screen is-focusing' : pending.length > 0 ? 'world-screen has-report' : habitAwaiting ? 'world-screen is-choosing-habit-building' : 'world-screen'}>
-    <WorldCanvasV7 service={service} resourcePacks={resourcePacks} lightingQuality={preferences.lightingQuality} constructionOutlineVisibility={preferences.constructionOutlineVisibility} environmentStyle={state.worldSettings.environmentStyle} worldSeed={state.worldSettings.worldSeed} terrainGenerationVersion={state.worldSettings.terrainGenerationVersion} constructionFeedback={constructionFeedback} sessionActive={!!session} immersiveBandFraction={immersiveBandFraction} focusedProjectId={focusedProjectId} onSelectProject={onFocusWorldProject} onClearWorldFocus={onClearWorldFocus} visible={visible} onPickTerrain={setPickedCell} pickedCell={pickedCell}/>
+    <WorldCanvasV7 service={service} resourcePacks={resourcePacks} lightingQuality={preferences.lightingQuality} constructionOutlineVisibility={preferences.constructionOutlineVisibility} environmentStyle={state.worldSettings.environmentStyle} worldSeed={state.worldSettings.worldSeed} terrainGenerationVersion={state.worldSettings.terrainGenerationVersion} constructionFeedback={constructionFeedback} sessionActive={!!session} immersiveBand={immersiveBand} focusedProjectId={focusedProjectId} onSelectProject={onFocusWorldProject} onClearWorldFocus={onClearWorldFocus} visible={visible} onPickTerrain={setPickedCell} pickedCell={pickedCell}/>
     {visible && <section ref={focusPanelRef} className="focus-panel v7-focus-panel" onPointerUp={(event) => handlePanelTap({ target: event.target, clientX: event.clientX, clientY: event.clientY })}>
       {!session && <div className="workbench-heading">
         <h1>{active.project.title}</h1>
@@ -543,9 +563,9 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
          <button type="button" className="plan-summary" aria-label="调整本次计划" aria-expanded={planOpen} onClick={() => setPlanOpen(true)}><span>{planSummary}</span><span>调整</span></button>
        </>}
        {habitAwaiting ? <HabitBuildingSelection state={state} active={active} resourcePacks={resourcePacks} run={run} targetRounds={preferences.habitTargetRounds}/>
-        : marathonReportPhase ? <MarathonProgressReport active={active} run={run} onSubmitted={() => setPlan(null)}/>
+        : marathonReportPhase ? <MarathonProgressReport active={active} run={run} onSubmitted={() => { setPlan(null); fireConstructionFeedback(); }}/>
         : pending.length > 0 && !marathonPlan ? <ProgressReportV7 active={active} run={run} onSubmitted={afterReport}/> : <>
-         {session && <div className="focus-task-context"><span>{isHabit ? '本轮习惯' : '本轮任务'}</span><strong>{isHabit ? active.project.title : subtask!.title}</strong></div>}
+         {session && <div className="focus-task-context"><span>{isHabit ? '本轮习惯' : marathonPlan ? '本轮推进' : '本轮任务'}</span><strong>{isHabit ? active.project.title : subtask!.title}</strong></div>}
         {isBreak && <div className="rest-summary"><span>休息时间</span><strong>{reconciledPlan?.endAfterBreak ? '小任务已完成' : '下一轮准备中'}</strong><small>{dailySummary}</small></div>}
         {(isBreak || session || reconciledPlan?.status === 'ready') && <div className={isBreak ? 'session-kind rest' : 'session-kind'}>{isBreak ? '放松一下，结束后会回到下一步。' : session ? `第 ${(reconciledPlan?.completedRounds ?? 0) + 1} / ${reconciledPlan?.totalRounds ?? 1} 轮专注` : `准备第 ${reconciledPlan!.completedRounds + 1} / ${reconciledPlan!.totalRounds} 轮`}</div>}
         {(session && state.focusIntegrityPolicy.enabled && (integrityFlash || integrityLeaving)) && <div className={`${session.integrity.effectiveExcursions > 0 ? 'focus-integrity-warning flash active' : 'focus-integrity-warning flash'}${integrityLeaving ? ' is-leaving' : ''}`} role="status"><AlertTriangle/>有效离开 {session.integrity.effectiveExcursions} / {state.focusIntegrityPolicy.maxEffectiveExcursions} 次</div>}
@@ -561,16 +581,16 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
     </section>}
     {ending && session && (
       <div className={endingLeaving ? 'dialog-leave' : undefined}>
-        <EndFocusDialog taskTitle={isHabit ? active.project.title : subtask!.title} habit={isHabit} onClose={closeEnding} onInterrupt={interruptFocus} onCompleteEarly={completeEarly}/>
+        <EndFocusDialog taskTitle={isHabit ? active.project.title : subtask!.title} habit={isHabit} marathon={reconciledPlan?.mode === 'marathon'} onClose={closeEnding} onInterrupt={interruptFocus} onCompleteEarly={completeEarly}/>
       </div>
     )}
     {(planOpen || planLeaving) && !session && <div className={planLeaving ? 'dialog-leave' : undefined}>{isHabit
-      ? <HabitFocusPlanSheet rounds={rounds} focusMinutes={preferences.habitFocusMinutes} breakMinutes={preferences.breakMinutes} locked={Boolean(reconciledPlan)} onRoundsChange={setRounds} onClose={closePlan}/>
-      : <FocusPlanSheet subtasks={active.project.subtasks} selectedId={reconciledPlan?.subtaskId ?? selected!} rounds={rounds} focusMinutes={preferences.focusMinutes} breakMinutes={preferences.breakMinutes} locked={Boolean(reconciledPlan)} mode={reconciledPlan?.mode ?? planMode} endAtDraft={endAtDraft} onModeChange={setPlanMode} onEndAtDraftChange={setEndAtDraft} onSelect={setSelected} onRoundsChange={setRounds} onClose={closePlan}/>}</div>}
+      ? <HabitFocusPlanSheet rounds={rounds} focusMinutes={preferences.habitFocusMinutes} breakMinutes={preferences.breakMinutes} locked={Boolean(reconciledPlan)} onRoundsChange={setRounds} onClose={closePlan} onCancelPlan={cancelPlan}/>
+      : <FocusPlanSheet subtasks={active.project.subtasks} selectedId={reconciledPlan?.subtaskId ?? selected!} rounds={rounds} focusMinutes={preferences.focusMinutes} breakMinutes={preferences.breakMinutes} locked={Boolean(reconciledPlan)} mode={reconciledPlan?.mode ?? planMode} endAtDraft={endAtDraft} onModeChange={setPlanMode} onEndAtDraftChange={setEndAtDraft} onSelect={setSelected} onRoundsChange={setRounds} onClose={closePlan} onCancelPlan={cancelPlan}/>}</div>}
   </div>;
 }
 
-function FocusPlanSheet({ subtasks, selectedId, rounds, focusMinutes, breakMinutes, locked, mode, endAtDraft, onModeChange, onEndAtDraftChange, onSelect, onRoundsChange, onClose }: {
+function FocusPlanSheet({ subtasks, selectedId, rounds, focusMinutes, breakMinutes, locked, mode, endAtDraft, onModeChange, onEndAtDraftChange, onSelect, onRoundsChange, onClose, onCancelPlan }: {
   subtasks: Array<{ id: string; title: string; progressBasisPoints: number }>;
   selectedId: string;
   rounds: number;
@@ -584,13 +604,24 @@ function FocusPlanSheet({ subtasks, selectedId, rounds, focusMinutes, breakMinut
   onSelect: (id: string) => void;
   onRoundsChange: (rounds: number) => void;
   onClose: () => void;
+  onCancelPlan: () => void;
 }) {
   const endMs = mode === 'marathon' ? marathonEndInstant(endAtDraft) : null;
   const schedule = endMs === null ? null : planRoundsForDuration(endMs - Date.now(), focusMinutes, breakMinutes);
   const rawSchedule = endMs === null ? null : planRoundsForDuration(endMs - Date.now(), focusMinutes, breakMinutes, 1_000_000);
   const capped = schedule !== null && rawSchedule !== null && rawSchedule.rounds > schedule.rounds;
   const marathonValid = endMs !== null && schedule !== null;
-  const note = locked ? ' 当前计划已开始，轮数和任务将在本轮计划结束后生效。' : '';
+  const note = locked ? ' 当前计划已开始，只能取消整个计划；取消后可重新安排。' : '';
+  // Custom end-time picker (hours/minutes steppers) styled to the app, replacing
+  // the native time input that would pop the system picker on Android.
+  const draftMatch = /^(\d{2}):(\d{2})$/.exec(endAtDraft);
+  const draftHour = draftMatch ? Number(draftMatch[1]) : 0;
+  const draftMinute = draftMatch ? Number(draftMatch[2]) : 0;
+  const pad2 = (value: number) => String(value).padStart(2, '0');
+  const stepEndTime = (deltaMinutes: number) => {
+    const total = (((draftHour * 60 + draftMinute + deltaMinutes) % 1440) + 1440) % 1440;
+    onEndAtDraftChange(`${pad2(Math.floor(total / 60))}:${pad2(total % 60)}`);
+  };
   return <div className="dialog-backdrop plan-sheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
     <section className="focus-plan-sheet" role="dialog" aria-modal="true" aria-labelledby="focus-plan-title">
       <div className="sheet-heading"><div><span className="eyebrow">本次计划</span><h2 id="focus-plan-title">安排下一轮</h2></div><button type="button" className="dialog-close" aria-label="关闭本次计划" onClick={onClose}><X/></button></div>
@@ -603,32 +634,37 @@ function FocusPlanSheet({ subtasks, selectedId, rounds, focusMinutes, breakMinut
         <div className="round-picker" aria-label="专注轮数"><span>计划轮数</span><div>{[1, 2, 3, 4].map((value) => <button key={value} type="button" aria-pressed={rounds === value} disabled={locked} onClick={() => onRoundsChange(value)}>{value} 轮</button>)}</div></div>
         <p className="plan-sheet-note">每轮 {focusMinutes} 分钟专注{breakMinutes > 0 ? `；多轮之间休息 ${breakMinutes} 分钟。` : '；休息已关闭。'}{note}</p>
       </> : <>
-        <label className="marathon-end-field"><span>结束时间</span><input type="time" aria-label="结束时间" value={endAtDraft} disabled={locked} onChange={(event) => onEndAtDraftChange(event.target.value)}/></label>
+        <div className="marathon-end-picker" role="group" aria-label="结束时间">
+          <div className="time-stepper"><span>时</span><button type="button" aria-label="减少结束小时" disabled={locked} onClick={() => stepEndTime(-60)}>−</button><strong aria-label="结束小时">{pad2(draftHour)}</strong><button type="button" aria-label="增加结束小时" disabled={locked} onClick={() => stepEndTime(60)}>+</button></div>
+          <span className="time-colon" aria-hidden="true">:</span>
+          <div className="time-stepper"><span>分</span><button type="button" aria-label="减少结束分钟" disabled={locked} onClick={() => stepEndTime(-5)}>−</button><strong aria-label="结束分钟">{pad2(draftMinute)}</strong><button type="button" aria-label="增加结束分钟" disabled={locked} onClick={() => stepEndTime(5)}>+</button></div>
+        </div>
         {endMs === null
           ? <p className="plan-sheet-error">请先选择结束时间。</p>
           : schedule === null
             ? <p className="plan-sheet-error">从现在到 {formatClockTime(endMs)} 不足一轮专注（{focusMinutes} 分钟），请选择更晚的时间。</p>
             : <p className="plan-sheet-note">到 {formatClockTime(endMs)} 共约 {Math.max(1, Math.round((endMs - Date.now()) / 60000))} 分钟：安排 {schedule.rounds} 轮专注{schedule.breaks > 0 ? `、${schedule.breaks} 次休息` : ''}，全部结束后再统一汇报推进了哪些小任务。{capped ? `时间超过上限 ${MAX_MARATHON_ROUNDS} 轮，按前 ${schedule.rounds} 轮（约 ${formatDurationSummary(schedule.usableMs)}）排程。` : ''}{note}</p>}
       </>}
-      <button type="button" className="primary" disabled={mode === 'marathon' && !marathonValid} onClick={onClose}>确认计划</button>
+      <button type="button" className={locked ? 'primary destructive' : 'primary'} disabled={!locked && mode === 'marathon' && !marathonValid} onClick={locked ? onCancelPlan : onClose}>{locked ? '取消计划' : '确认计划'}</button>
     </section>
   </div>;
 }
 
-function HabitFocusPlanSheet({ rounds, focusMinutes, breakMinutes, locked, onRoundsChange, onClose }: {
+function HabitFocusPlanSheet({ rounds, focusMinutes, breakMinutes, locked, onRoundsChange, onClose, onCancelPlan }: {
   rounds: number;
   focusMinutes: number;
   breakMinutes: number;
   locked: boolean;
   onRoundsChange: (rounds: number) => void;
   onClose: () => void;
+  onCancelPlan: () => void;
 }) {
   return <div className="dialog-backdrop plan-sheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
     <section className="focus-plan-sheet" role="dialog" aria-modal="true" aria-labelledby="habit-focus-plan-title">
       <div className="sheet-heading"><div><span className="eyebrow">本次计划</span><h2 id="habit-focus-plan-title">安排习惯专注</h2></div><button type="button" className="dialog-close" aria-label="关闭本次计划" onClick={onClose}><X/></button></div>
       <div className="round-picker" aria-label="习惯专注轮数"><span>计划轮数</span><div>{[1, 2, 3, 4].map((value) => <button key={value} type="button" aria-pressed={rounds === value} disabled={locked} onClick={() => onRoundsChange(value)}>{value} 轮</button>)}</div></div>
-      <p className="plan-sheet-note">每轮 {focusMinutes} 分钟专注{breakMinutes > 0 ? `；多轮之间休息 ${breakMinutes} 分钟。` : '；休息已关闭。'}每个完成或提前完成的轮次都会推进当前建筑。{locked ? ' 当前计划已开始，轮数将在本轮计划结束后生效。' : ''}</p>
-      <button type="button" className="primary" onClick={onClose}>确认计划</button>
+      <p className="plan-sheet-note">每轮 {focusMinutes} 分钟专注{breakMinutes > 0 ? `；多轮之间休息 ${breakMinutes} 分钟。` : '；休息已关闭。'}每个完成或提前完成的轮次都会推进当前建筑。{locked ? ' 当前计划已开始，只能取消整个计划；取消后可重新安排。' : ''}</p>
+      <button type="button" className={locked ? 'primary destructive' : 'primary'} onClick={locked ? onCancelPlan : onClose}>{locked ? '取消计划' : '确认计划'}</button>
     </section>
   </div>;
 }
@@ -742,30 +778,70 @@ function MarathonProgressReport({ active, run, onSubmitted }: {
   </div>;
 }
 
-const WorldCanvasV7 = memo(function WorldCanvasV7({service,resourcePacks,lightingQuality,constructionOutlineVisibility,environmentStyle,worldSeed,terrainGenerationVersion,constructionFeedback=0,sessionActive=false,immersiveBandFraction=0,focusedProjectId,onSelectProject,onClearWorldFocus,visible,onPickTerrain,pickedCell}:{service:ApplicationService;resourcePacks:ResourcePackRepository;lightingQuality:VoxelLightingQuality;constructionOutlineVisibility:ConstructionOutlineVisibility;environmentStyle:WorldEnvironmentStyle;worldSeed:string;terrainGenerationVersion:4;constructionFeedback?:number;sessionActive?:boolean;immersiveBandFraction?:number;focusedProjectId:string|null;onSelectProject:(projectId:string)=>void;onClearWorldFocus:()=>void;visible:boolean;onPickTerrain:(position:{x:number;y:number;z:number})=>void;pickedCell:{x:number;y:number;z:number}|null}) {
+const WorldCanvasV7 = memo(function WorldCanvasV7({service,resourcePacks,lightingQuality,constructionOutlineVisibility,environmentStyle,worldSeed,terrainGenerationVersion,constructionFeedback=0,sessionActive=false,immersiveBand={bottom:0,right:0},focusedProjectId,onSelectProject,onClearWorldFocus,visible,onPickTerrain,pickedCell}:{service:ApplicationService;resourcePacks:ResourcePackRepository;lightingQuality:VoxelLightingQuality;constructionOutlineVisibility:ConstructionOutlineVisibility;environmentStyle:WorldEnvironmentStyle;worldSeed:string;terrainGenerationVersion:4;constructionFeedback?:number;sessionActive?:boolean;immersiveBand?:{bottom:number;right:number};focusedProjectId:string|null;onSelectProject:(projectId:string)=>void;onClearWorldFocus:()=>void;visible:boolean;onPickTerrain:(position:{x:number;y:number;z:number})=>void;pickedCell:{x:number;y:number;z:number}|null}) {
   const ref=useRef<HTMLCanvasElement>(null); const renderer=useRef<VoxelRenderer|null>(null); const catalog=useBlueprintCatalog(); const world=service.worldProjection(); const state=service.snapshot(); const importedRef=useRef(new Map<string,BlueprintV1>()); const focusRef=useRef(focusedProjectId); const selectRef=useRef(onSelectProject); const visibleRef=useRef(visible); const appliedPackRef=useRef<string|null|undefined>(undefined); const sessionActiveRef=useRef(sessionActive); const [ready,setReady]=useState(false);
-  // V21 immersive top-right view control: a tap on the corner reveals the reset
-  // button, which hides itself again with the same fade rhythm as the other
-  // conditional controls (180 ms in, 160 ms out via is-leaving, 5 s dwell).
-  const [viewControlsVisible,setViewControlsVisible]=useState(false);
+  const immersiveBandRef=useRef(immersiveBand); immersiveBandRef.current=immersiveBand;
+  // V21 top-right HUD reveal: one shared control governs both the immersive
+  // view controls and the ordinary world HUD. Tapping the corner shows them,
+  // then they auto-hide after 5 s with the same fade as the other conditional
+  // controls. The ordinary workbench starts with the HUD visible and only hides
+  // once toggled, so casual use keeps the settlement label.
+  const [viewControlsVisible,setViewControlsVisible]=useState(true);
   const [viewControlsLeaving,setViewControlsLeaving]=useState(false);
-  const viewTimersRef=useRef<number[]>([]);
-  const immersiveBandRef=useRef(immersiveBandFraction); immersiveBandRef.current=immersiveBandFraction;  useEffect(()=>{for(const timer of viewTimersRef.current)window.clearTimeout(timer);viewTimersRef.current=[];setViewControlsVisible(false);setViewControlsLeaving(false);},[sessionActive]);
-  useEffect(()=>()=>{for(const timer of viewTimersRef.current)window.clearTimeout(timer);},[]);
-  const hideViewControls=useCallback(()=>{setViewControlsLeaving(true);viewTimersRef.current.push(window.setTimeout(()=>{setViewControlsVisible(false);setViewControlsLeaving(false);},180));},[]);
-  const toggleViewControls=useCallback(()=>{if(viewControlsVisible)hideViewControls();else setViewControlsVisible(true);},[viewControlsVisible,hideViewControls]);
-  useEffect(()=>{if(!viewControlsVisible||!sessionActive)return;viewTimersRef.current.push(window.setTimeout(hideViewControls,5000));},[viewControlsVisible,sessionActive,hideViewControls]);
+  const viewHideTimerRef=useRef<number|null>(null);
+  const lastViewToggleRef=useRef(0);
+  const viewRevealedAtRef=useRef(0);
+  const prevSessionActiveRef=useRef(sessionActive);
+  useEffect(()=>{
+    if(prevSessionActiveRef.current===sessionActive)return;
+    prevSessionActiveRef.current=sessionActive;
+    if(viewHideTimerRef.current!==null)window.clearTimeout(viewHideTimerRef.current);
+    viewHideTimerRef.current=null;
+    lastViewToggleRef.current=0;
+    setViewControlsLeaving(false);
+    // During focus the control stays hidden until the corner is tapped; back on
+    // the idle workbench the settlement HUD is visible again.
+    setViewControlsVisible(!sessionActive);
+  },[sessionActive]);
+  useEffect(()=>()=>{if(viewHideTimerRef.current!==null)window.clearTimeout(viewHideTimerRef.current);},[]);
+  const hideViewControls=useCallback(()=>{
+    if(viewHideTimerRef.current!==null)window.clearTimeout(viewHideTimerRef.current);
+    viewHideTimerRef.current=null;
+    setViewControlsLeaving(true);
+    viewHideTimerRef.current=window.setTimeout(()=>{setViewControlsVisible(false);setViewControlsLeaving(false);},180);
+  },[]);
+  const revealViewControls=useCallback(()=>{
+    if(viewHideTimerRef.current!==null)window.clearTimeout(viewHideTimerRef.current);
+    setViewControlsVisible(true);
+    setViewControlsLeaving(false);
+    viewRevealedAtRef.current=performance.now();
+    viewHideTimerRef.current=window.setTimeout(hideViewControls,5000);
+  },[hideViewControls]);
+  const toggleViewControls=useCallback(()=>{
+    const now=performance.now();
+    // Debounce rapid corner taps so they cannot queue up and replay later.
+    if(now-lastViewToggleRef.current<250)return;
+    lastViewToggleRef.current=now;
+    if(viewControlsVisible&&!viewControlsLeaving)hideViewControls();
+    else revealViewControls();
+  },[viewControlsVisible,viewControlsLeaving,hideViewControls,revealViewControls]);
+  // Ignore the very tap that revealed the control (the finger may land on a
+  // button) and any taps within a short grace period after it.
+  const runViewAction=useCallback((action:()=>void)=>{
+    if(performance.now()-viewRevealedAtRef.current<400)return;
+    action();
+  },[]);
   // V19 diagnostic cell picking stays available behind ?pick but is off by default.
   const pickEnabled=new URLSearchParams(location.search).has('pick');
   importedRef.current=new Map(world.projects.flatMap(project=>project.building.importedBlueprint?[[project.building.blueprintId,project.building.importedBlueprint as BlueprintV1]]:[])); focusRef.current=focusedProjectId; selectRef.current=onSelectProject; visibleRef.current=visible;
   const blueprintLabel=(blueprintId:string,importedTitle?:string)=>state.buildingBlueprintResources.find(resource=>resource.id===blueprintId)?.displayName??importedTitle??blueprintName(catalog,blueprintId);
   const decorationDates=decorationDatesByProject(state); const snapshotKey=world.projects.map(project=>`${project.project.id}:${project.building.blueprintId}:${project.building.completionBasisPoints}:${project.building.conditionBasisPoints}:${project.isActive}:${project.settlementIndex}:${(decorationDates.get(project.project.id)??[]).join(',')}:${project.importedDecorations.map(reward=>`${reward.rewardId}@${reward.localPosition.x},${reward.localPosition.z},${reward.rotationQuarterTurns}`).join(';')}`).join('|'); const snapshots=useMemo(()=>toVoxelWorlds(world.projects,state),[snapshotKey]); const summary=world.projects.map(project=>`${project.project.title}，${blueprintLabel(project.building.blueprintId,project.building.importedBlueprint?.title)}，${project.isActive?'正在建造':project.project.status==='paused'?'暂停建造':'纪念建筑'}，建造进度 ${Math.round(project.building.completionBasisPoints/100)}%，保存状况 ${conditionLabel(project.building.conditionBasisPoints)}`).join('；'); const focusedTitle=world.projects.find(project=>project.project.id===focusedProjectId)?.project.title;
-  useEffect(()=>{let cancelled=false;let current:VoxelRenderer|null=null;setReady(false);let raf=0;let timer=0;const begin=()=>{void loadVoxelModule().then(async({createVoxelRenderer,resolveBuiltinBlueprint})=>{if(cancelled||!ref.current)return;current=createVoxelRenderer(ref.current,{resolveBlueprint:id=>importedRef.current.get(id)??resolveBuiltinBlueprint(id),resourcePackAtlasMaximumSize:resourcePackAtlasMaximumSizeForTest(),lightingQuality,constructionOutlineVisibility,environmentStyle,worldSeed,terrainGenerationVersion,onSelectProject:projectId=>selectRef.current(projectId),onPickTerrain:pickEnabled?onPickTerrain:undefined,debugFlatColors:new URLSearchParams(location.search).has('flat'),debugVoidScan:new URLSearchParams(location.search).has('voidscan')});renderer.current=current;current.setReducedMotion(matchMedia('(prefers-reduced-motion: reduce)').matches);current.setVisible(visibleRef.current);current.setImmersiveBandFraction(immersiveBandRef.current);current.setWorlds(toVoxelWorlds(service.worldProjection().projects,service.snapshot()));current.focusProject(focusRef.current);const pack=await resourcePacks.getActive();appliedPackRef.current=pack?`${pack.id}:${pack.manifest.pack.packFormat}`:null;if(!cancelled&&current)await current.setResourcePack(pack?{id:pack.id,manifest:pack.manifest}:null);if(!cancelled)setReady(true);}).catch(error=>{console.error('Voxel world initialization failed',error);if(!cancelled)setReady(true);});};raf=requestAnimationFrame(()=>{timer=window.setTimeout(begin,0);});return()=>{cancelled=true;cancelAnimationFrame(raf);window.clearTimeout(timer);current?.dispose();if(renderer.current===current)renderer.current=null;};},[service,resourcePacks,lightingQuality,constructionOutlineVisibility,environmentStyle,worldSeed,terrainGenerationVersion]);
+  useEffect(()=>{let cancelled=false;let current:VoxelRenderer|null=null;setReady(false);let raf=0;let timer=0;const begin=()=>{void loadVoxelModule().then(async({createVoxelRenderer,resolveBuiltinBlueprint})=>{if(cancelled||!ref.current)return;current=createVoxelRenderer(ref.current,{resolveBlueprint:id=>importedRef.current.get(id)??resolveBuiltinBlueprint(id),resourcePackAtlasMaximumSize:resourcePackAtlasMaximumSizeForTest(),lightingQuality,constructionOutlineVisibility,environmentStyle,worldSeed,terrainGenerationVersion,onSelectProject:projectId=>selectRef.current(projectId),onPickTerrain:pickEnabled?onPickTerrain:undefined,debugFlatColors:new URLSearchParams(location.search).has('flat'),debugVoidScan:new URLSearchParams(location.search).has('voidscan')});renderer.current=current;current.setReducedMotion(matchMedia('(prefers-reduced-motion: reduce)').matches);current.setVisible(visibleRef.current);current.setImmersiveBandFraction(immersiveBandRef.current.bottom??0,immersiveBandRef.current.right??0);current.setWorlds(toVoxelWorlds(service.worldProjection().projects,service.snapshot()));current.focusProject(focusRef.current);const pack=await resourcePacks.getActive();appliedPackRef.current=pack?`${pack.id}:${pack.manifest.pack.packFormat}`:null;if(!cancelled&&current)await current.setResourcePack(pack?{id:pack.id,manifest:pack.manifest}:null);if(!cancelled)setReady(true);}).catch(error=>{console.error('Voxel world initialization failed',error);if(!cancelled)setReady(true);});};raf=requestAnimationFrame(()=>{timer=window.setTimeout(begin,0);});return()=>{cancelled=true;cancelAnimationFrame(raf);window.clearTimeout(timer);current?.dispose();if(renderer.current===current)renderer.current=null;};},[service,resourcePacks,lightingQuality,constructionOutlineVisibility,environmentStyle,worldSeed,terrainGenerationVersion]);
   useEffect(()=>{renderer.current?.setVisible(visible);},[visible]);
   // IF-01: bounded construction pulses — round completed (stronger) and focus started (gentle).
   useEffect(()=>{if(constructionFeedback>0)renderer.current?.playConstructionPulse(1);},[constructionFeedback]);
   useEffect(()=>{const previous=sessionActiveRef.current;sessionActiveRef.current=sessionActive;if(sessionActive&&!previous)renderer.current?.playConstructionPulse(0.6);},[sessionActive]);
-  useEffect(()=>{renderer.current?.setImmersiveBandFraction(immersiveBandRef.current);},[immersiveBandFraction]);
+  useEffect(()=>{renderer.current?.setImmersiveBandFraction(immersiveBandRef.current.bottom??0,immersiveBandRef.current.right??0);},[immersiveBand?.bottom,immersiveBand?.right]);
   // MT-02: with the renderer resident, the pack switched in settings must apply when the pane returns; re-apply only when the active pack actually changed.
   useEffect(()=>{if(!visible)return;let cancelled=false;void resourcePacks.getActive().then(pack=>{if(cancelled||!renderer.current)return;const key=pack?`${pack.id}:${pack.manifest.pack.packFormat}`:null;if(appliedPackRef.current===key)return;appliedPackRef.current=key;void renderer.current!.setResourcePack(pack?{id:pack.id,manifest:pack.manifest}:null).then(()=>{if(!cancelled)renderer.current?.setVisible(true);});});return()=>{cancelled=true;};},[visible,resourcePacks]);
   useEffect(()=>{renderer.current?.setWorlds(snapshots);},[snapshots]);
@@ -773,10 +849,10 @@ const WorldCanvasV7 = memo(function WorldCanvasV7({service,resourcePacks,lightin
   const focusedProject=world.projects.find(project=>project.project.id===focusedProjectId);
   const memory=focusedProject?buildingMemory(state,focusedProject.project.id):null;
   const focusedBlueprint=focusedProject?blueprintLabel(focusedProject.building.blueprintId,focusedProject.building.importedBlueprint?.title):'';
-  return <><figure className={focusedProjectId?'world is-project-focused':'world'}><canvas ref={ref} role="img" aria-label="项目建筑世界" aria-describedby="world-summary"/>{visible&&sessionActive&&<div className="immersive-view-tapzone" aria-hidden="true" onPointerDown={event=>event.stopPropagation()} onPointerUp={event=>{event.stopPropagation();toggleViewControls();}}/>}{visible&&sessionActive&&(viewControlsVisible||viewControlsLeaving)&&<div className={`immersive-view-controls${viewControlsLeaving?' is-leaving':''}`}><button type="button" className="immersive-reset-view" aria-label="重置视角" title="重置视角" onClick={()=>renderer.current?.resetCamera()}><RotateCcw/></button></div>}{visible&&<figcaption id="world-summary" className="sr-only">林边聚落，共 {world.projects.length} 栋建筑。{summary}</figcaption>}{visible&&pickEnabled&&pickedCell&&<div className="world-pick-chip" role="status" data-testid="world-pick">x {pickedCell.x} · z {pickedCell.z} · 高 {pickedCell.y}</div>}{visible&&<div className="world-hud"><span>{focusedTitle?`正在查看 · ${focusedTitle}`:`林边聚落 · ${world.projects.length} 栋`}</span><div className="world-hud-actions">{focusedProjectId&&<button title="返回完整聚落" aria-label="返回完整聚落" onClick={onClearWorldFocus}><MapIcon/></button>}<button title="重置视角" aria-label="重置视角" onClick={()=>renderer.current?.resetCamera()}><RotateCcw/></button></div></div>}{visible&&focusedProject&&<div className="world-building-details" role="status"><div><strong>{focusedProject.project.title}</strong><span>{focusedProject.project.status==='monument'?'纪念建筑':focusedProject.isActive?'正在建造':'暂停建造'} · {conditionLabel(focusedProject.building.conditionBasisPoints)}</span><small>{focusedBlueprint} · {constructionStage(focusedProject.building.completionBasisPoints).replace('施工阶段：','')}</small><small>{memory!.minutes>0?`累计 ${memory!.minutes} 分钟 · ${memory!.successfulRounds} 轮有效完成${memory!.lastDate?` · 最近 ${memory!.lastDate}`:''}`:'还没有有效专注记录'}</small></div><b>{Math.round(focusedProject.building.completionBasisPoints/100)}%</b></div>}{visible&&constructionFeedback>0&&<div key={constructionFeedback} className="construction-feedback" role="status"><Hammer/><span>材料已送达，继续建造</span><i/><i/><i/></div>}</figure>{!ready&&<LoadingPage status="正在建造世界…"/>}</>;
+  return <><figure className={focusedProjectId?'world is-project-focused':'world'}><canvas ref={ref} role="img" aria-label="项目建筑世界" aria-describedby="world-summary"/>{visible&&<div className="world-hud-tapzone" aria-hidden="true" onPointerDown={event=>event.stopPropagation()} onPointerUp={event=>{event.stopPropagation();toggleViewControls();}}/>}{visible&&sessionActive&&(viewControlsVisible||viewControlsLeaving)&&<div className={`immersive-view-controls${viewControlsLeaving?' is-leaving':''}`}>{focusedProjectId&&<button type="button" className="immersive-reset-view" aria-label="返回完整聚落" title="返回完整聚落" onClick={()=>runViewAction(onClearWorldFocus)}><MapIcon/></button>}<button type="button" className="immersive-reset-view" aria-label="重置视角" title="重置视角" onClick={()=>runViewAction(()=>renderer.current?.resetCamera())}><RotateCcw/></button></div>}{visible&&<figcaption id="world-summary" className="sr-only">林边聚落，共 {world.projects.length} 栋建筑。{summary}</figcaption>}{visible&&pickEnabled&&pickedCell&&<div className="world-pick-chip" role="status" data-testid="world-pick">x {pickedCell.x} · z {pickedCell.z} · 高 {pickedCell.y}</div>}{visible&&!sessionActive&&(viewControlsVisible||viewControlsLeaving)&&<div className={`world-hud${viewControlsLeaving?' is-leaving':''}`}><span>{focusedTitle?`正在查看 · ${focusedTitle}`:`林边聚落 · ${world.projects.length} 栋`}</span><div className="world-hud-actions">{focusedProjectId&&<button title="返回完整聚落" aria-label="返回完整聚落" onClick={()=>runViewAction(onClearWorldFocus)}><MapIcon/></button>}<button title="重置视角" aria-label="重置视角" onClick={()=>runViewAction(()=>renderer.current?.resetCamera())}><RotateCcw/></button></div></div>}{visible&&focusedProject&&<div className="world-building-details" role="status"><div><strong>{focusedProject.project.title}</strong><span>{focusedProject.project.status==='monument'?'纪念建筑':focusedProject.isActive?'正在建造':'暂停建造'} · {conditionLabel(focusedProject.building.conditionBasisPoints)}</span><small>{focusedBlueprint} · {constructionStage(focusedProject.building.completionBasisPoints).replace('施工阶段：','')}</small><small>{memory!.minutes>0?`累计 ${memory!.minutes} 分钟 · ${memory!.successfulRounds} 轮有效完成${memory!.lastDate?` · 最近 ${memory!.lastDate}`:''}`:'还没有有效专注记录'}</small></div><b>{Math.round(focusedProject.building.completionBasisPoints/100)}%</b></div>}{visible&&constructionFeedback>0&&<div key={constructionFeedback} className="construction-feedback" role="status"><Hammer/><span>材料已送达，继续建造</span><i/><i/><i/></div>}</figure>{!ready&&<LoadingPage status="正在建造世界…"/>}</>;
 });
 
-type FocusTimerMode = 'plan' | 'focus' | 'break' | 'ready';
+type FocusTimerMode = 'plan' | 'focus' | 'break' | 'ready' | 'marathon';
 
 function FocusTimer({ mode, endsAt, fallbackMs, onElapsed }: { mode?: FocusTimerMode; endsAt?: string; fallbackMs: number; onElapsed: () => void }) {
   const [now, setNow] = useState(Date.now());
@@ -798,7 +874,7 @@ function FocusTimer({ mode, endsAt, fallbackMs, onElapsed }: { mode?: FocusTimer
   }, [endsAt, onElapsed]);
   const remaining = endsAt ? Math.max(0, Date.parse(endsAt) - now) : fallbackMs;
   const timerMode = mode ?? (endsAt ? 'focus' : 'ready');
-  const label = timerMode === 'plan' ? '计划总时长' : timerMode === 'break' ? '休息剩余' : timerMode === 'ready' ? '下一轮时长' : '本轮剩余';
+  const label = timerMode === 'plan' ? '每轮时长' : timerMode === 'break' ? '休息剩余' : timerMode === 'ready' ? '下一轮时长' : timerMode === 'marathon' ? '距结束' : '本轮剩余';
   const clock = formatClockDuration(remaining);
   return <div className={`timer timer-${timerMode}`} role={endsAt ? 'timer' : undefined} aria-label={`${label} ${clock}`}>
     <span className="timer-label">{label}</span>
@@ -867,12 +943,14 @@ const INTERRUPTION_OPTIONS:readonly {value:FocusInterruptionCategory|null;label:
   {value:'device-or-app',label:'设备或应用问题'}, {value:'other',label:'其他'}, {value:null,label:'不记录'},
 ];
 
-function EndFocusDialog({taskTitle,habit=false,onClose,onInterrupt,onCompleteEarly}:{taskTitle:string;habit?:boolean;onClose:()=>void;onInterrupt:(reason:FocusInterruptionCategory|null)=>Promise<void>;onCompleteEarly:()=>Promise<void>}){
+function EndFocusDialog({taskTitle,habit=false,marathon=false,onClose,onInterrupt,onCompleteEarly}:{taskTitle:string;habit?:boolean;marathon?:boolean;onClose:()=>void;onInterrupt:(reason:FocusInterruptionCategory|null)=>Promise<void>;onCompleteEarly:()=>Promise<void>}){
   const [mode,setMode]=useState<'choose'|'interrupt'>('choose');const [busy,setBusy]=useState(false);const closeRef=useRef<HTMLButtonElement>(null);
   useEffect(()=>{closeRef.current?.focus();const onKey=(event:KeyboardEvent)=>{if(event.key==='Escape'&&!busy)onClose();};window.addEventListener('keydown',onKey);return()=>window.removeEventListener('keydown',onKey);},[busy,onClose]);
   const early=async()=>{setBusy(true);try{await onCompleteEarly();}finally{setBusy(false);}};
   const interrupt=async(reason:FocusInterruptionCategory|null)=>{setBusy(true);try{await onInterrupt(reason);}finally{setBusy(false);}};
-  return <div className="dialog-backdrop" role="presentation"><div className="confirm-dialog end-focus-dialog" role="dialog" aria-modal="true" aria-labelledby="end-focus-title"><button ref={closeRef} className="dialog-close" aria-label="关闭结束专注窗口" disabled={busy} onClick={onClose}><X/></button><h2 id="end-focus-title">{mode==='choose'?'如何结束这次专注？':'这次为什么中断？'}</h2><p>{mode==='choose'?taskTitle:'选择一项便于以后复盘，也可以不记录。'}</p>{mode==='choose'?<div className="end-focus-choices"><button disabled={busy} onClick={()=>setMode('interrupt')}><Square/><span><strong>中断本轮</strong><small>保留已有任务进度，不计完整轮次</small></span></button><button disabled={busy} onClick={()=>void early()}><Check/><span><strong>{habit?'提前完成本轮':'提前完成任务'}</strong><small>{habit?'推进当前习惯建筑，并结束本轮计划':'将当前小任务标为完成并结束本轮计划'}</small></span></button></div>:<><div className="interruption-options">{INTERRUPTION_OPTIONS.map(option=><button key={option.value??'none'} disabled={busy} onClick={()=>void interrupt(option.value)}>{option.label}</button>)}</div><button className="dialog-back" disabled={busy} onClick={()=>setMode('choose')}>返回</button></>}</div></div>;
+  // A marathon has no per-round subtask concept, so ending early is not offered:
+  // the only outcome is to interrupt this round (the schedule keeps going).
+  return <div className="dialog-backdrop" role="presentation"><div className="confirm-dialog end-focus-dialog" role="dialog" aria-modal="true" aria-labelledby="end-focus-title"><button ref={closeRef} className="dialog-close" aria-label="关闭结束专注窗口" disabled={busy} onClick={onClose}><X/></button><h2 id="end-focus-title">{mode==='choose'?'如何结束这次专注？':'这次为什么中断？'}</h2><p>{mode==='choose'?taskTitle:'选择一项便于以后复盘，也可以不记录。'}</p>{mode==='choose'?<div className="end-focus-choices">{marathon?<button disabled={busy} onClick={()=>setMode('interrupt')}><Square/><span><strong>中断本轮</strong><small>保留已有任务进度，不计完整轮次；本轮计划继续</small></span></button>:<><button disabled={busy} onClick={()=>setMode('interrupt')}><Square/><span><strong>中断本轮</strong><small>保留已有任务进度，不计完整轮次</small></span></button><button disabled={busy} onClick={()=>void early()}><Check/><span><strong>{habit?'提前完成本轮':'提前完成任务'}</strong><small>{habit?'推进当前习惯建筑，并结束本轮计划':'将当前小任务标为完成并结束本轮计划'}</small></span></button></>}</div>:<><div className="interruption-options">{INTERRUPTION_OPTIONS.map(option=><button key={option.value??'none'} disabled={busy} onClick={()=>void interrupt(option.value)}>{option.label}</button>)}</div><button className="dialog-back" disabled={busy} onClick={()=>setMode('choose')}>返回</button></>}</div></div>;
 }
 
 const PROJECT_COLORS=['#276749','#4d8f60','#167a72','#a0652b','#5b7a99','#6b6f4b'] as const;

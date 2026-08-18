@@ -451,10 +451,15 @@
 .plan-mode button{min-height:44px;padding:9px 14px;border:0;background:transparent;border-radius:6px;color:#58635d;font-weight:500;font-size:14px}
 .plan-mode button[aria-pressed="true"]{color:#17211c;font-weight:750;text-decoration:underline;text-decoration-thickness:2px;text-decoration-color:#276749;text-underline-offset:7px}
 .plan-mode button:disabled{opacity:.5}
-.marathon-end-field{display:grid;gap:8px;margin-top:2px}
-.marathon-end-field span{color:#58635d;font-size:12px}
-.marathon-end-field input[type="time"]{min-height:48px;padding:9px 12px;border:1px solid #aeb8b1;border-radius:6px;background:#fff;color:#17211c;font:inherit;font-size:16px}
-.marathon-end-field input[type="time"]:disabled{opacity:.55}
+/* V21 custom end-time picker: app-styled hour/minute steppers replace the native
+   time input so the sheet never opens the system picker on Android. */
+.marathon-end-picker{display:flex;align-items:flex-end;justify-content:center;gap:12px;margin-top:2px}
+.time-stepper{display:grid;justify-items:center;gap:5px}
+.time-stepper>span{color:#58635d;font-size:12px}
+.time-stepper strong{min-width:64px;padding:12px 6px;border:1px solid #aeb8b1;border-radius:6px;background:#fff;color:#17211c;text-align:center;font-size:22px;font-weight:750;font-variant-numeric:tabular-nums}
+.time-stepper button{width:52px;min-height:44px;padding:0;border:1px solid #aeb8b1;border-radius:6px;background:#fff;color:#276749;font-size:20px;font-weight:700}
+.time-stepper button:disabled{opacity:.5}
+.time-colon{align-self:center;font-size:22px;font-weight:750;color:#58635d;margin-bottom:34px}
 .plan-sheet-error{margin:16px 0;color:#8b1e26;font-size:13px;line-height:1.55}
 .marathon-progress-report .report-options{grid-template-columns:repeat(2,minmax(0,1fr))}
 .marathon-report-rows{display:grid;gap:10px;margin:16px 0}
@@ -469,16 +474,30 @@
 .marathon-report-submit{width:min(100%,340px);min-height:48px;margin:4px auto 0}
 @media(max-width:480px){.marathon-report-options button{flex:1 1 40%}.marathon-progress-report .report-options{grid-template-columns:1fr}}
 
-/* V21 immersive top-right view control: a small tap zone on the corner reveals
-   the same kind of transient chip as the integrity count, and the reset button
-   hides itself again with the familiar 5-second dwell + 160 ms fade-out. The
-   world HUD is hidden during focus, so this is the only camera control. */
-.immersive-view-tapzone{position:absolute;top:0;right:0;width:112px;height:88px;z-index:6;touch-action:manipulation}
-.immersive-view-controls{position:absolute;top:max(12px,var(--safe-top));right:max(12px,var(--safe-right));z-index:7}
+/* V21 top-right HUD reveal: one tap zone governs both the immersive view
+   controls and the ordinary world HUD. They fade in/out like the other
+   conditional controls with a 5-second dwell, and the immersive column sits at
+   the world's own top-right (left of the frosted side panel on landscape). */
+.world-hud-tapzone{position:absolute;top:0;right:0;width:112px;height:88px;z-index:5;touch-action:manipulation}
+.world-hud{z-index:7}
+.immersive-view-controls{position:absolute;top:max(12px,var(--safe-top));right:max(12px,var(--safe-right));z-index:7;display:flex;gap:8px}
 .immersive-reset-view{width:44px;height:44px;padding:0;border:0;border-radius:10px;background:rgba(20,29,25,.9);color:#fff;display:grid;place-items:center;box-shadow:0 2px 12px rgba(0,0,0,.25)}
 .immersive-reset-view svg{width:20px;height:20px}
+.world-hud.is-leaving{animation:ui-fade-out .16s ease-in both}
 @media(prefers-reduced-motion:no-preference){
 .immersive-view-controls .immersive-reset-view{animation:ui-fade-in .18s cubic-bezier(.22,.9,.36,1) both}
 .immersive-view-controls.is-leaving .immersive-reset-view{animation:ui-fade-out .16s ease-in both}
+.world-hud{animation:ui-fade-in .18s cubic-bezier(.22,.9,.36,1) both}
 }
 @media(prefers-reduced-motion:reduce){.immersive-reset-view{transition:none}}
+/* On landscape the frosted panel is a right-hand column; the world's top-right
+   corner sits at that column's left edge, so offset the controls and tap zone
+   by the panel width instead of hugging the screen edge. */
+@media(min-width:700px) and (orientation:landscape){
+.immersive-view-controls{right:calc(clamp(288px,34vw,330px) + max(12px,var(--safe-right)))}
+.world-hud-tapzone{right:clamp(288px,34vw,330px)}
+}
+
+/* V21: a started plan's sheet confirm turns into a red "cancel plan" action,
+   matching the immersive end-focus button's destructive colour. */
+.primary.destructive{background:#712a30;border-color:#a84b51;color:#fff}

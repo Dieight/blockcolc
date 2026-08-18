@@ -45,7 +45,10 @@ test('one-round early completion records the task and ends the plan without a br
   await dialog.getByRole('button', { name: /提前完成任务/ }).click();
 
   await expect(page.getByText('任务已完成 · 休息时间')).toBeHidden();
-  await expect(page.locator('.construction-feedback')).toContainText('材料已送达');
+  // V21: the materials-delivered beat waits for a committed progress choice; an
+  // early completion has none, so the toast stays quiet while the pulse still
+  // fires for the round.
+  await expect(page.locator('.construction-feedback')).toHaveCount(0);
   // IF-01: the round completion fires a bounded construction pulse on the world.
   await expect(page.getByLabel('项目建筑世界')).toHaveAttribute('data-construction-pulse-count', /[1-9]/);
   await expect(page.getByLabel('项目建筑世界')).toHaveAttribute('data-continuous-rendering', 'false');
@@ -162,21 +165,24 @@ test('keeps the ordinary timer workbench within a mobile viewport', async ({ pag
   await page.screenshot({ path: testInfo.outputPath('v8-timer-portrait.png'), fullPage: true });
 });
 
-test('shows the complete plan duration before focus and the active stage after start', async ({ page }) => {
+test('shows the per-round length before focus and the active stage after start', async ({ page }) => {
   await createDefaultProject(page);
   const timer = page.locator('.timer');
-  await expect(timer).toContainText('计划总时长');
+  await expect(timer).toContainText('每轮时长');
   await expect(timer).toContainText('45:00');
 
+  // V21: while idle the clock keeps showing the per-round length; the multi-round
+  // total lives in the plan summary row.
   await page.getByRole('button', { name: '调整本次计划' }).click();
   await page.getByRole('button', { name: '2 轮' }).click();
   await page.getByRole('button', { name: '确认计划' }).click();
-  await expect(timer).toContainText('1:35:00');
+  await expect(timer).toContainText('45:00');
+  await expect(page.locator('.plan-summary')).toContainText('总计 1 小时 35 分钟');
 
   await page.getByRole('button', { name: '调整本次计划' }).click();
   await page.getByRole('button', { name: '4 轮' }).click();
   await page.getByRole('button', { name: '确认计划' }).click();
-  await expect(timer).toContainText('3:15:00');
+  await expect(timer).toContainText('45:00');
   await page.getByRole('button', { name: '开始 4 轮' }).click();
   await expect(timer).toContainText('本轮剩余');
   // The live countdown leaves 45:00 within a second; tolerate a few ticks of drift.
