@@ -38,9 +38,18 @@ function fixture(timeZone = "UTC", restWeekdays = [0, 6]) {
     clock.advance(duration);
     return run({ type: "CompleteFocus" });
   };
+  const completeMarathon = (sessionId: string, subtaskId: string, hostProjectId?: string, duration = 1) => {
+    run({
+      type: "StartFocus", sessionId, subtaskId, plannedDurationMs: duration,
+      ...(hostProjectId ? { projectId: hostProjectId } : {}),
+      marathon: true,
+    });
+    clock.advance(duration);
+    return run({ type: "CompleteFocus" });
+  };
   const report = (reportId: string, subtaskId: string, progressBasisPoints: number, focusSessionIds: string[]) =>
     run({ type: "ReportSubtaskProgress", reportId, subtaskId, progressBasisPoints, focusSessionIds });
-  return { clock, run, create, complete, report, state: () => state };
+  return { clock, run, create, complete, completeMarathon, report, state: () => state };
 }
 
 function activeProject(state: DomainState) {
@@ -815,79 +824,264 @@ describe("decay policy, calendar, and per-project runtime", () => {
   });
 });
 
-describe("V21 marathon final report", () => {
-  it("attributes a block of completed sessions to multiple subtasks atomically", () => {
+describe("V22 marathon settlement report", () => {
+  it("shares one remainder block across subtasks on different projects atomically", () => {
     const f = fixture();
-    f.create("p1", ["a", "b", "c"]);
-    f.complete("s1", "a");
-    f.complete("s2", "a");
+    f.create("p1", ["a", "b"]);
+    f.create("p2", ["c"]);
+    f.run({ type: "SwitchActiveProject", projectId: "p2" });
+    f.completeMarathon("s1", "a", "p1");
+    f.completeMarathon("s2", "a", "p1");
     const result = f.run({
       type: "ReportMarathonFocus",
       entries: [
-        { reportId: "m1", subtaskId: "a", progressBasisPoints: 5_000 },
-        { reportId: "m2", subtaskId: "b", progressBasisPoints: 2_500 },
+        { reportId: "m1", projectId: "p1", subtaskId: "a", progressBasisPoints: 5_000 },
+        { reportId: "m2", projectId: "p2", subtaskId: "c", progressBasisPoints: 2_500 },
       ],
+      habitAllocations: [],
       focusSessionIds: ["s1", "s2"],
     });
     expect(result).toMatchObject({ ok: true });
-    const project = activeProject(f.state());
-    expect(project.subtasks.find((item) => item.id === "a")).toMatchObject({ progressBasisPoints: 5_000 });
-    expect(project.subtasks.find((item) => item.id === "b")).toMatchObject({ progressBasisPoints: 2_500 });
-    expect(project.subtasks.find((item) => item.id === "c")).toMatchObject({ progressBasisPoints: 0 });
+    const p1 = f.state().projects.find((item) => item.id === "p1")!;
+    const p2 = f.state().projects.find((item) => item.id === "p2")!;
+    expect(p1.subtasks.find((item) => item.id === "a")).toMatchObject({ progressBasisPoints: 5_000 });
+    expect(p1.subtasks.find((item) => item.id === "b")).toMatchObject({ progressBasisPoints: 0 });
+    expect(p2.subtasks.find((item) => item.id === "c")).toMatchObject({ progressBasisPoints: 2_500 });
     expect(f.state().progressReports).toHaveLength(2);
-    expect(project.subtaskStructureLocked).toBe(true);
+    expect(f.state().progressReports.every((report) => report.shared === true)).toBe(true);
+    expect(f.state().progressReports.every((report) => report.focusSessionIds.join(",") === "s1,s2")).toBe(true);
+    expect(f.state().focusHistory.every((session) => session.marathon === true)).toBe(true);
+    expect(p1.subtaskStructureLocked).toBe(true);
+    expect(p2.subtaskStructureLocked).toBe(true);
+    // The shared reports and marathon flags must pass storage validation.
+    expect(parseDomainState(f.state())).toEqual(f.state());
   });
 
-  it("rejects reused sessions, decreasing progress, unknown subtasks, and empty sessions", () => {
+  it("rejects reused, decreasing, unknown, non-marathon, cross-host, empty, and unbalanced settlements", () => {
     const f = fixture();
     f.create("p1", ["a", "b"]);
-    f.complete("s1", "a");
+    f.completeMarathon("s1", "a");
     expect(f.run({
       type: "ReportMarathonFocus",
-      entries: [{ reportId: "m1", subtaskId: "a", progressBasisPoints: 1_000 }],
+      entries: [{ reportId: "m1", projectId: "p1", subtaskId: "a", progressBasisPoints: 1_000 }],
+      habitAllocations: [],
       focusSessionIds: ["s1"],
     })).toMatchObject({ ok: true });
+    f.completeMarathon("s2", "a");
     expect(f.run({
       type: "ReportMarathonFocus",
-      entries: [{ reportId: "m2", subtaskId: "b", progressBasisPoints: 1_000 }],
-      focusSessionIds: ["s1"],
+      entries: [{ reportId: "m2", projectId: "p1", subtaskId: "b", progressBasisPoints: 1_000 }],
+      habitAllocations: [],
+      focusSessionIds: ["s1", "s2"],
     })).toMatchObject({ ok: false, code: "FOCUS_ALREADY_REPORTED" });
+    f.completeMarathon("s3", "a");
     expect(f.run({
       type: "ReportMarathonFocus",
-      entries: [{ reportId: "m3", subtaskId: "a", progressBasisPoints: 500 }],
-      focusSessionIds: ["s1"],
+      entries: [{ reportId: "m3", projectId: "p1", subtaskId: "a", progressBasisPoints: 500 }],
+      habitAllocations: [],
+      focusSessionIds: ["s3"],
     })).toMatchObject({ ok: false, code: "PROGRESS_CANNOT_DECREASE" });
+    f.completeMarathon("s4", "a");
     expect(f.run({
       type: "ReportMarathonFocus",
-      entries: [{ reportId: "m4", subtaskId: "nope", progressBasisPoints: 1_000 }],
-      focusSessionIds: ["s2"],
+      entries: [{ reportId: "m4", projectId: "p1", subtaskId: "nope", progressBasisPoints: 1_000 }],
+      habitAllocations: [],
+      focusSessionIds: ["s4"],
     })).toMatchObject({ ok: false, code: "SUBTASK_NOT_FOUND" });
+    // Ordinary (non-marathon) sessions cannot settle a marathon.
+    f.complete("s5", "a");
     expect(f.run({
       type: "ReportMarathonFocus",
-      entries: [{ reportId: "m5", subtaskId: "a", progressBasisPoints: 2_500 }],
-      focusSessionIds: ["s2"],
+      entries: [{ reportId: "m5", projectId: "p1", subtaskId: "b", progressBasisPoints: 2_500 }],
+      habitAllocations: [],
+      focusSessionIds: ["s5"],
     })).toMatchObject({ ok: false, code: "PROGRESS_REQUIRES_COMPLETED_FOCUS" });
+    // Empty blocks are rejected.
     expect(f.run({
       type: "ReportMarathonFocus",
-      entries: [{ reportId: "m6", subtaskId: "a", progressBasisPoints: 2_500 }],
+      entries: [{ reportId: "m6", projectId: "p1", subtaskId: "b", progressBasisPoints: 2_500 }],
+      habitAllocations: [],
       focusSessionIds: [],
     })).toMatchObject({ ok: false, code: "PROGRESS_REQUIRES_COMPLETED_FOCUS" });
+    // Sessions must share one host project.
+    f.create("p2", ["c"]);
+    f.completeMarathon("s6", "c", "p2");
+    expect(f.run({
+      type: "ReportMarathonFocus",
+      entries: [{ reportId: "m7", projectId: "p1", subtaskId: "b", progressBasisPoints: 1_000 }],
+      habitAllocations: [],
+      focusSessionIds: ["s5", "s6"],
+    })).toMatchObject({ ok: false, code: "PROGRESS_REQUIRES_COMPLETED_FOCUS" });
+    // With no habit allocation every round must reach a subtask entry.
+    f.completeMarathon("s7", "a");
+    f.completeMarathon("s8", "a");
+    expect(f.run({
+      type: "ReportMarathonFocus",
+      entries: [],
+      habitAllocations: [],
+      focusSessionIds: ["s7", "s8"],
+    })).toMatchObject({ ok: false, code: "MARATHON_SPLIT_INVALID" });
   });
 
-  it("seals the project when the marathon completes every subtask", () => {
+  it("seals every project whose subtasks the marathon completes", () => {
     const f = fixture();
     f.create("p1", ["a", "b"]);
-    f.complete("s1", "a");
-    f.complete("s2", "b");
+    f.create("p2", ["c"]);
+    // Marathon rounds all land on the host project (p1); the settlement may then
+    // attribute the shared remainder block to subtasks on any project.
+    f.completeMarathon("s1", "a", "p1");
+    f.completeMarathon("s2", "b", "p1");
+    f.completeMarathon("s3", "a", "p1");
     const result = f.run({
       type: "ReportMarathonFocus",
       entries: [
-        { reportId: "m1", subtaskId: "a", progressBasisPoints: 10_000 },
-        { reportId: "m2", subtaskId: "b", progressBasisPoints: 10_000 },
+        { reportId: "m1", projectId: "p1", subtaskId: "a", progressBasisPoints: 10_000 },
+        { reportId: "m2", projectId: "p1", subtaskId: "b", progressBasisPoints: 10_000 },
+        { reportId: "m3", projectId: "p2", subtaskId: "c", progressBasisPoints: 10_000 },
       ],
-      focusSessionIds: ["s1", "s2"],
+      habitAllocations: [],
+      focusSessionIds: ["s1", "s2", "s3"],
     });
     const events = result.ok ? result.events.map((event) => event.type) : [];
-    expect(events).toContain("ProjectSealedAsMonument");
+    expect(events.filter((type) => type === "ProjectSealedAsMonument")).toHaveLength(2);
+    expect(f.state().projects.filter((project) => project.id === "p1" || project.id === "p2"))
+      .toEqual([expect.objectContaining({ id: "p1", status: "monument" }), expect.objectContaining({ id: "p2", status: "monument" })]);
+    expect(f.state().activeProjectId).toBeNull();
+  });
+
+  it("allocates the first rounds to habit buildings and shares the remainder with subtasks", () => {
+    const f = fixture();
+    f.create("p1", ["a", "b"]);
+    f.run({ type: "SwitchActiveProject", projectId: "p1" });
+    f.run({ type: "CreateHabitProject", projectId: "habit", title: "Read", blueprintId: "cottage", targetRounds: 10 });
+    f.completeMarathon("s1", "a", "p1");
+    f.completeMarathon("s2", "a", "p1");
+    f.completeMarathon("s3", "a", "p1");
+    f.completeMarathon("s4", "a", "p1");
+    const result = f.run({
+      type: "ReportMarathonFocus",
+      entries: [{ reportId: "m1", projectId: "p1", subtaskId: "b", progressBasisPoints: 5_000 }],
+      habitAllocations: [{ projectId: "habit", rounds: 2 }],
+      focusSessionIds: ["s1", "s2", "s3", "s4"],
+    });
+    expect(result).toMatchObject({ ok: true });
+    const habit = f.state().projects.find((item) => item.id === "habit")!.habit!;
+    expect(habit.completedFocusSessionIds).toEqual(["s1", "s2"]);
+    expect(habit.completedFocusSessionIds.length).toBe(2);
+    const reports = f.state().progressReports;
+    expect(reports).toHaveLength(1);
+    expect(reports[0]!.focusSessionIds).toEqual(["s3", "s4"]);
+    expect(f.state().projects.find((item) => item.id === "p1")!.subtasks.find((item) => item.id === "b"))
+      .toMatchObject({ progressBasisPoints: 5_000 });
+    const eventTypes = result.ok ? result.events.map((event) => event.type) : [];
+    expect(eventTypes.filter((type) => type === "HabitBuildingProgressed")).toHaveLength(2);
+    expect(eventTypes).not.toContain("HabitBuildingCompleted");
+    // Marathon rounds attributed to a habit building must pass storage validation.
+    expect(parseDomainState(f.state())).toEqual(f.state());
+  });
+
+  it("completes the habit building exactly when the allocation reaches the target", () => {
+    const f = fixture();
+    f.run({ type: "CreateHabitProject", projectId: "habit", title: "Read", blueprintId: "cottage", targetRounds: 10 });
+    for (let round = 1; round <= 8; round += 1) {
+      f.run({ type: "StartFocus", sessionId: `normal-${round}`, subtaskId: null, plannedDurationMs: 1 });
+      f.clock.advance(1);
+      f.run({ type: "CompleteFocus" });
+    }
+    f.create("p1", ["a"]); // switching back to a finite host
+    f.run({ type: "SwitchActiveProject", projectId: "p1" });
+    f.completeMarathon("s1", "a", "p1");
+    f.completeMarathon("s2", "a", "p1");
+    const result = f.run({
+      type: "ReportMarathonFocus",
+      entries: [],
+      habitAllocations: [{ projectId: "habit", rounds: 2 }],
+      focusSessionIds: ["s1", "s2"],
+    });
+    expect(result).toMatchObject({ ok: true });
+    const habit = f.state().projects.find((item) => item.id === "habit")!.habit!;
+    expect(habit.awaitingNextBuilding).toBe(true);
+    expect(habit.completedFocusSessionIds).toEqual([]);
+    expect(f.state().habitBuildings).toEqual([expect.objectContaining({
+      habitProjectId: "habit", cycleNumber: 1, focusSessionIds: expect.arrayContaining(["normal-8", "s1", "s2"]),
+    })]);
+    const eventTypes = result.ok ? result.events.map((event) => event.type) : [];
+    expect(eventTypes).toContain("HabitBuildingCompleted");
+  });
+
+  it("rejects habit allocations that exceed the target or unbalance the split", () => {
+    const f = fixture();
+    f.create("p1", ["a", "b"]);
+    f.run({ type: "SwitchActiveProject", projectId: "p1" });
+    f.run({ type: "CreateHabitProject", projectId: "habit", title: "Read", blueprintId: "cottage", targetRounds: 10 });
+    f.completeMarathon("s1", "a", "p1");
+    f.completeMarathon("s2", "a", "p1");
+    // More allocated than completed rounds.
+    expect(f.run({
+      type: "ReportMarathonFocus",
+      entries: [],
+      habitAllocations: [{ projectId: "habit", rounds: 3 }],
+      focusSessionIds: ["s1", "s2"],
+    })).toMatchObject({ ok: false, code: "HABIT_ROUNDS_EXCEED_TARGET" });
+    // All rounds to habits leaves no block for subtask entries.
+    expect(f.run({
+      type: "ReportMarathonFocus",
+      entries: [{ reportId: "m1", projectId: "p1", subtaskId: "b", progressBasisPoints: 2_500 }],
+      habitAllocations: [{ projectId: "habit", rounds: 2 }],
+      focusSessionIds: ["s1", "s2"],
+    })).toMatchObject({ ok: false, code: "MARATHON_SPLIT_INVALID" });
+    // Some rounds to habits but nothing left over for a subtask.
+    expect(f.run({
+      type: "ReportMarathonFocus",
+      entries: [],
+      habitAllocations: [{ projectId: "habit", rounds: 1 }],
+      focusSessionIds: ["s1", "s2"],
+    })).toMatchObject({ ok: false, code: "MARATHON_SPLIT_INVALID" });
+    // More rounds than the current building still needs.
+    for (let round = 1; round <= 9; round += 1) {
+      f.run({ type: "StartFocus", sessionId: `normal-${round}`, subtaskId: null, plannedDurationMs: 1 });
+      f.clock.advance(1);
+      f.run({ type: "CompleteFocus" });
+    }
+    f.completeMarathon("s3", "b", "p1");
+    expect(f.run({
+      type: "ReportMarathonFocus",
+      entries: [],
+      habitAllocations: [{ projectId: "habit", rounds: 2 }],
+      focusSessionIds: ["s3"],
+    })).toMatchObject({ ok: false, code: "HABIT_ROUNDS_EXCEED_TARGET" });
+  });
+
+  it("leaves switch blocked for regular unreported rounds but not marathon rounds", () => {
+    const f = fixture();
+    f.create("p1", ["a", "b"]);
+    f.create("p2", ["c"]);
+    f.completeMarathon("s1", "a");
+    expect(f.run({ type: "SwitchActiveProject", projectId: "p2" })).toMatchObject({ ok: true });
+    f.run({ type: "SwitchActiveProject", projectId: "p1" });
+    f.complete("s2", "b");
+    expect(f.run({ type: "SwitchActiveProject", projectId: "p2" })).toMatchObject({
+      ok: false, code: "UNREPORTED_FOCUS_PREVENTS_PROJECT_SWITCH",
+    });
+  });
+
+  it("starts marathon rounds on an explicit paused host while another project is active", () => {
+    const f = fixture();
+    f.create("p1", ["a"]);
+    f.create("p2", ["b"]);
+    f.run({ type: "SwitchActiveProject", projectId: "p2" });
+    expect(activeProject(f.state())).toMatchObject({ id: "p2" });
+    const started = f.run({
+      type: "StartFocus", sessionId: "s1", subtaskId: "a", plannedDurationMs: 1, projectId: "p1", marathon: true,
+    });
+    expect(started).toMatchObject({ ok: true });
+    expect(f.state().activeFocusSession).toMatchObject({ projectId: "p1", subtaskId: "a", marathon: true });
+    // The persisted marathon session must pass storage validation.
+    expect(parseDomainState(f.state())).toEqual(f.state());
+    f.clock.advance(1);
+    f.run({ type: "CompleteFocus" });
+    // Marathon sessions never block switching away from the host.
+    expect(f.run({ type: "SwitchActiveProject", projectId: "p1" })).toMatchObject({ ok: true });
+    expect(parseDomainState(f.state())).toEqual(f.state());
   });
 });

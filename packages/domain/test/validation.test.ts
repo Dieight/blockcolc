@@ -47,23 +47,23 @@ describe("parseDomainState", () => {
     expect(parsed.projects[0]!.title).toBe("Project");
   });
 
-  it("keeps schema v7 while accepting one active and multiple paused projects", () => {
+  it("keeps schema v8 while accepting one active and multiple paused projects", () => {
     const clock = new ClockStub();
     const first = execute(createInitialState(), { type: "CreateProject", projectId: "p1", title: "First", blueprintId: "cottage", subtasks: [{ id: "a", title: "A" }] }, clock);
     if (!first.ok) throw new Error(first.message);
     const second = execute(first.state, { type: "CreateProject", projectId: "p2", title: "Second", blueprintId: "tower", subtasks: [{ id: "b", title: "B" }] }, clock);
     if (!second.ok) throw new Error(second.message);
 
-    expect(second.state.schemaVersion).toBe(7);
+    expect(second.state.schemaVersion).toBe(8);
     expect(second.state.projects.map((project) => project.status)).toEqual(["paused", "active"]);
     expect(parseDomainState(second.state)).toEqual(second.state);
   });
 
-  it("migrates old v1 focus and project records to schema v7 defaults", () => {
+  it("migrates old v1 focus and project records to schema v8 defaults", () => {
     const raw = asLegacyV1(validState());
     delete raw.projects[0].importedBlueprint;
     const parsed = parseDomainState(raw);
-    expect(parsed.schemaVersion).toBe(7);
+    expect(parsed.schemaVersion).toBe(8);
     expect(parsed.worldSettings).toEqual({ worldSeed: "legacy-p1", terrainGenerationVersion: 4, environmentStyle: "natural-valley" });
     expect(parsed.projects[0]).toMatchObject({ kind: "finite", habit: null });
     expect(parsed.habitBuildings).toEqual([]);
@@ -92,12 +92,12 @@ describe("parseDomainState", () => {
     raw.schemaVersion = 5;
     delete raw.worldSettings;
     const parsed = parseDomainState(raw);
-    expect(parsed.schemaVersion).toBe(7);
+    expect(parsed.schemaVersion).toBe(8);
     expect(parsed.projects).toEqual(raw.projects);
     expect(parsed.worldSettings).toEqual({ worldSeed: "legacy-p1", terrainGenerationVersion: 4, environmentStyle: "natural-valley" });
   });
 
-  it("migrates v6 terrain and building resource names to schema v7", () => {
+  it("migrates v6 terrain and building resource names to schema v8", () => {
     const raw: any = structuredClone(validState());
     raw.schemaVersion = 6;
     raw.worldSettings.terrainGenerationVersion = 2;
@@ -111,13 +111,14 @@ describe("parseDomainState", () => {
       importedAt: "2026-07-20T09:00:00.000Z",
     }];
     const parsed = parseDomainState(raw);
-    expect(parsed.schemaVersion).toBe(7);
+    expect(parsed.schemaVersion).toBe(8);
     expect(parsed.worldSettings.terrainGenerationVersion).toBe(4);
     expect(parsed.buildingBlueprintResources[0]).toMatchObject({ displayName: "Legacy library house" });
   });
 
   it("migrates a schema-v7 terrain-v3 world to v4 without changing user facts", () => {
     const raw: any = structuredClone(validState());
+    raw.schemaVersion = 7;
     raw.worldSettings.terrainGenerationVersion = 3;
     const parsed = parseDomainState(raw);
     expect(parsed.worldSettings).toEqual({ ...raw.worldSettings, terrainGenerationVersion: 4 });

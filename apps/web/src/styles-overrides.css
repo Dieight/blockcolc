@@ -473,6 +473,20 @@
 .marathon-report-options button:last-child{border-color:#276749}
 .marathon-report-submit{width:min(100%,340px);min-height:48px;margin:4px auto 0}
 @media(max-width:480px){.marathon-report-options button{flex:1 1 40%}.marathon-progress-report .report-options{grid-template-columns:1fr}}
+/* V22 marathon settlement: project cards sit side by side, tapping one expands
+   its subtask list (or the habit round stepper); choices accumulate and the
+   whole settlement submits once. */
+.marathon-settlement-list{display:grid;gap:10px;margin:16px 0;text-align:left}
+.marathon-settlement-card{border:1px solid #d7ddd8;border-radius:10px;background:#fbfcfb;overflow:hidden}
+.marathon-settlement-head{width:100%;min-height:52px;padding:10px 14px;display:flex;align-items:center;justify-content:space-between;gap:10px;background:none;border:0;text-align:left}
+.marathon-settlement-copy{display:grid;gap:3px;min-width:0}
+.marathon-settlement-copy strong{font-size:15px;overflow-wrap:anywhere}
+.marathon-settlement-copy small{color:#58635d;font-size:12px}
+.marathon-settlement-toggle{flex:0 0 auto;padding:6px 12px;border:1px solid #aeb8b1;border-radius:5px;background:#fff;color:#276749;font-size:13px}
+.marathon-settlement-body{padding:12px 14px;border-top:1px solid #d7ddd8;display:grid;gap:10px}
+.marathon-settlement-body>small{color:#58635d;font-size:12px}
+.habit-round-stepper{grid-auto-flow:column;align-items:center;justify-content:start;gap:10px}
+.habit-round-stepper strong{min-width:44px}
 
 /* V21 top-right HUD reveal: one tap zone governs both the immersive view
    controls and the ordinary world HUD. They fade in/out like the other

@@ -254,10 +254,18 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
 
   useEffect(() => {
     setSelected(active.project.kind === 'habit' ? null : active.project.subtasks.find((subtask) => subtask.progressBasisPoints < 10000)?.id ?? active.project.subtasks[0]!.id);
-    setPlan(loadRoundPlan(active.project.id));
+    // V22: an end-time plan is its own lane, so switching the active project must
+    // not drop it; only the classic per-project plan reloads.
+    setPlanState((previous) => {
+      if (previous?.mode === 'marathon') return previous;
+      const loaded = loadRoundPlan(active.project.id);
+      if (loaded) localStorage.setItem(ROUND_PLAN_KEY, JSON.stringify(loaded));
+      else localStorage.removeItem(ROUND_PLAN_KEY);
+      return loaded;
+    });
     setPlanOpen(false);
     setPlanMode('rounds');
-  }, [active.project.id, setPlan]);
+  }, [active.project.id]);
   // The "materials delivered" beat fires when the user commits progress (which
   // is also when the construction blocks land), not when a session merely ends.
   const fireConstructionFeedback = useCallback(() => {
@@ -402,22 +410,30 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
     if (habitAwaiting) return;
     const focusMinutes = isHabit ? preferences.habitFocusMinutes : preferences.focusMinutes;
     const marathonDraft = planMode === 'marathon' && !reconciledPlan;
+    // V22: a locked end-time plan keeps its own host project even after the
+    // active project was switched away, so rounds keep landing on the host.
+    const marathonHost = reconciledPlan?.mode === 'marathon'
+      ? state.projects.find((project) => project.id === reconciledPlan.projectId) ?? active.project
+      : active.project;
     let marathonTotal = total;
     let marathonEndAt: string | undefined = reconciledPlan?.endAt;
     if (marathonDraft) {
       const endMs = marathonEndInstant(endAtDraft);
-      const schedule = endMs === null ? null : planRoundsForDuration(endMs - Date.now(), preferences.focusMinutes, preferences.breakMinutes);
+      const schedule = endMs === null ? null : planRoundsForDuration(endMs - Date.now(), focusMinutes, preferences.breakMinutes);
       if (!schedule || schedule.rounds < 1) return;
       marathonTotal = schedule.rounds;
       marathonEndAt = new Date(endMs!).toISOString();
     }
-    const targetSubtaskId = reconciledPlan?.mode === 'marathon' || marathonDraft
-      ? active.project.subtasks.find((item) => item.progressBasisPoints < 10000)?.id ?? active.project.subtasks[0]!.id
-      : (reconciledPlan?.subtaskId ?? (isHabit ? null : subtask!.id));
-    const next: RoundPlan = reconciledPlan ?? { projectId: active.project.id, subtaskId: isHabit ? null : targetSubtaskId, totalRounds: marathonTotal, completedRounds: 0, status: 'focus', reportedSessionIds: [] };
+    const targetSubtaskId = marathonHost.subtasks.find((item) => item.progressBasisPoints < 10000)?.id ?? marathonHost.subtasks[0]!.id;
+    const next: RoundPlan = reconciledPlan ?? { projectId: marathonHost.id, subtaskId: isHabit ? null : targetSubtaskId, totalRounds: marathonTotal, completedRounds: 0, status: 'focus', reportedSessionIds: [] };
     if (next.subtaskId !== targetSubtaskId) next.subtaskId = targetSubtaskId;
     if (marathonDraft) { next.mode = 'marathon'; next.endAt = marathonEndAt; }
-    const result = await run({ type: 'StartFocus', subtaskId: next.subtaskId, plannedDurationMs: focusMinutes * 60000 });
+    const result = await run({
+      type: 'StartFocus',
+      subtaskId: next.subtaskId,
+      plannedDurationMs: focusMinutes * 60000,
+      ...(reconciledPlan?.mode === 'marathon' || marathonDraft ? { projectId: marathonHost.id, marathon: true } : {}),
+    });
     if (result?.ok) {
       const { breakEndsAt: _breakEndsAt, ...withoutBreak } = next;
       const started = result.events.find((event: { type: string; sessionId?: string }) => event.type === 'FocusStarted');
@@ -433,10 +449,71 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
     setPlanLeaving(true);
     exitAfter(180, () => { setPlanOpen(false); setPlanLeaving(false); });
   }, []);
-  const cancelPlan = useCallback(() => {
-    setPlan(null);
+  // V22: cancel is the only exit from a locked end-time plan, and it settles
+  // immediately: the current round (if any) is interrupted and every finished
+  // round enters the cross-project settlement report.
+  const cancelPlan = useCallback(async () => {
+    const currentPlan = reconciledPlan;
+    if (currentPlan?.mode !== 'marathon') {
+      setPlan(null);
+      closePlan();
+      return;
+    }
     closePlan();
-  }, [setPlan, closePlan]);
+    const soon = service.snapshot().activeFocusSession;
+    if (soon) {
+      if (Date.parse(soon.endsAt) <= Date.now()) {
+        await reconcile();
+      } else {
+        await run({ type: 'CancelFocus', interruptionCategory: null });
+      }
+    }
+    const latest = service.snapshot();
+    const reported = new Set(latest.progressReports.flatMap((report) => report.focusSessionIds));
+    const settled = latest.focusHistory.filter((item) =>
+      item.projectId === currentPlan.projectId && item.status === 'completed'
+        && item.marathon === true && !reported.has(item.id));
+    if (settled.length > 0) {
+      setPlan({
+        ...currentPlan,
+        status: 'report',
+        currentSessionId: undefined,
+        breakEndsAt: undefined,
+        endAfterBreak: undefined,
+      });
+    } else {
+      setPlan(null);
+    }
+  }, [reconciledPlan, service, reconcile, run, setPlan, closePlan]);
+  // V22: confirming a marathon draft locks the schedule right away (the sheet
+  // button becomes the red “cancel plan”), without starting the first round.
+  const confirmPlan = useCallback(() => {
+    if (reconciledPlan) {
+      void cancelPlan();
+      return;
+    }
+    if (planMode === 'marathon') {
+      const endMs = marathonEndInstant(endAtDraft);
+      const schedule = endMs === null ? null : planRoundsForDuration(
+        endMs - Date.now(),
+        isHabit ? preferences.habitFocusMinutes : preferences.focusMinutes,
+        preferences.breakMinutes,
+      );
+      if (schedule === null) return;
+      const targetSubtaskId = active.project.subtasks.find((item) => item.progressBasisPoints < 10000)?.id ?? active.project.subtasks[0]!.id;
+      setPlan({
+        projectId: active.project.id,
+        subtaskId: targetSubtaskId,
+        totalRounds: schedule.rounds,
+        completedRounds: 0,
+        status: 'ready',
+        reportedSessionIds: [],
+        mode: 'marathon',
+        endAt: new Date(endMs!).toISOString(),
+      });
+    }
+    closePlan();
+  }, [reconciledPlan, planMode, endAtDraft, isHabit, preferences.focusMinutes, preferences.habitFocusMinutes, preferences.breakMinutes, active.project, setPlan, closePlan, cancelPlan]);
   useEffect(() => () => { for (const timer of exitTimersRef.current) window.clearTimeout(timer); }, []);
   const interruptFocus = async (interruptionCategory: FocusInterruptionCategory | null) => {
     const current = service.snapshot().activeFocusSession;
@@ -514,7 +591,13 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
     setPlan({ ...reconciledPlan, completedRounds: completed, status: 'break', breakEndsAt: new Date(Date.now() + preferences.breakMinutes * 60000).toISOString(), currentSessionId: undefined, reportedSessionIds });
   };
   const focusMinutes = isHabit ? preferences.habitFocusMinutes : preferences.focusMinutes;
+  const [marathonNow, setMarathonNow] = useState(Date.now());
   const marathonPlan = reconciledPlan?.mode === 'marathon';
+  useEffect(() => {
+    if (!marathonPlan) return;
+    const timer = window.setInterval(() => setMarathonNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [marathonPlan]);
   const marathonReportPhase = reconciledPlan?.status === 'report';
   const marathonDraftEndMs = planMode === 'marathon' && !reconciledPlan ? marathonEndInstant(endAtDraft) : null;
   const marathonDraftSchedule = marathonDraftEndMs === null
@@ -533,7 +616,7 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
   const timerEndsAt = session?.endsAt ?? (isBreak ? reconciledPlan?.breakEndsAt : (timerMode === 'marathon' ? marathonEndsAt : undefined));
   const timerFallbackMs = focusMinutes * 60_000;
   const marathonSummary = marathonPlan && reconciledPlan?.endAt
-    ? `${reconciledPlan.totalRounds} 轮 · 结束 ${formatClockTime(reconciledPlan.endAt)}`
+    ? `结束 ${formatClockTime(reconciledPlan.endAt)} · 剩余 ${formatClockDuration(Math.max(0, Date.parse(reconciledPlan.endAt) - marathonNow))} · 约 ${reconciledPlan.totalRounds} 轮`
     : marathonDraftEndMs !== null && marathonDraftSchedule
       ? `${marathonDraftSchedule.rounds} 轮 · 结束 ${formatClockTime(marathonDraftEndMs)}`
       : '按结束时间排程';
@@ -555,24 +638,27 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
     <WorldCanvasV7 service={service} resourcePacks={resourcePacks} lightingQuality={preferences.lightingQuality} constructionOutlineVisibility={preferences.constructionOutlineVisibility} environmentStyle={state.worldSettings.environmentStyle} worldSeed={state.worldSettings.worldSeed} terrainGenerationVersion={state.worldSettings.terrainGenerationVersion} constructionFeedback={constructionFeedback} sessionActive={!!session} immersiveBand={immersiveBand} focusedProjectId={focusedProjectId} onSelectProject={onFocusWorldProject} onClearWorldFocus={onClearWorldFocus} visible={visible} onPickTerrain={setPickedCell} pickedCell={pickedCell}/>
     {visible && <section ref={focusPanelRef} className="focus-panel v7-focus-panel" onPointerUp={(event) => handlePanelTap({ target: event.target, clientX: event.clientX, clientY: event.clientY })}>
       {!session && <div className="workbench-heading">
-        <h1>{active.project.title}</h1>
-        <button className="task-switch-action" type="button" aria-label="切换当前工作" onClick={onOpenTasks}><ListTodo/><span>切换任务</span></button>
+        <h1>{marathonPlan ? '按结束时间排程' : active.project.title}</h1>
+        {!marathonPlan && <button className="task-switch-action" type="button" aria-label="切换当前工作" onClick={onOpenTasks}><ListTodo/><span>切换任务</span></button>}
       </div>}
-       {!session && !isBreak && pending.length === 0 && !habitAwaiting && <>
-         {isHabit ? <div className="workbench-context"><span>当前习惯建筑 · 第 {habit!.cycleNumber} 座</span><strong>{currentBuildingLabel}</strong><small>本周期 {habit!.completedFocusSessionIds.length} / {habit!.targetRounds} 轮 · {dailySummary}</small></div> : <div className="workbench-context"><span>当前小任务</span><strong>{subtask!.title}</strong><small>已完成 {Math.round(subtask!.progressBasisPoints / 100)}% · {dailySummary}</small></div>}
+       {!session && !isBreak && pending.length === 0 && !habitAwaiting && !marathonReportPhase && <>
+         {isHabit ? <div className="workbench-context"><span>当前习惯建筑 · 第 {habit!.cycleNumber} 座</span><strong>{currentBuildingLabel}</strong><small>本周期 {habit!.completedFocusSessionIds.length} / {habit!.targetRounds} 轮 · {dailySummary}</small></div>
+           : marathonPlan
+             ? <div className="workbench-context"><span>本场安排</span><strong>按结束时间排程</strong><small>本场不指定小任务，结束后统一汇报</small></div>
+             : <div className="workbench-context"><span>当前小任务</span><strong>{subtask!.title}</strong><small>已完成 {Math.round(subtask!.progressBasisPoints / 100)}% · {dailySummary}</small></div>}
          <button type="button" className="plan-summary" aria-label="调整本次计划" aria-expanded={planOpen} onClick={() => setPlanOpen(true)}><span>{planSummary}</span><span>调整</span></button>
        </>}
        {habitAwaiting ? <HabitBuildingSelection state={state} active={active} resourcePacks={resourcePacks} run={run} targetRounds={preferences.habitTargetRounds}/>
-        : marathonReportPhase ? <MarathonProgressReport active={active} run={run} onSubmitted={() => { setPlan(null); fireConstructionFeedback(); }}/>
+        : marathonReportPhase ? <MarathonProgressReport state={state} hostProjectId={reconciledPlan!.projectId} run={run} onSubmitted={() => { setPlan(null); fireConstructionFeedback(); }}/>
         : pending.length > 0 && !marathonPlan ? <ProgressReportV7 active={active} run={run} onSubmitted={afterReport}/> : <>
-         {session && <div className="focus-task-context"><span>{isHabit ? '本轮习惯' : marathonPlan ? '本轮推进' : '本轮任务'}</span><strong>{isHabit ? active.project.title : subtask!.title}</strong></div>}
-        {isBreak && <div className="rest-summary"><span>休息时间</span><strong>{reconciledPlan?.endAfterBreak ? '小任务已完成' : '下一轮准备中'}</strong><small>{dailySummary}</small></div>}
+         {session && <div className="focus-task-context"><span>{isHabit ? '本轮习惯' : marathonPlan ? '本场推进' : '本轮任务'}</span><strong>{isHabit ? active.project.title : marathonPlan ? `马拉松 第 ${(reconciledPlan?.completedRounds ?? 0) + 1} / ${reconciledPlan?.totalRounds ?? 1} 轮` : subtask!.title}</strong></div>}
+        {isBreak && <div className="rest-summary"><span>休息时间</span><strong>{marathonPlan ? `第 ${reconciledPlan?.completedRounds ?? 0} / ${reconciledPlan?.totalRounds ?? 1} 轮已结束` : (reconciledPlan?.endAfterBreak ? '小任务已完成' : '下一轮准备中')}</strong><small>{marathonPlan ? '休息结束后自动进入下一轮' : dailySummary}</small></div>}
         {(isBreak || session || reconciledPlan?.status === 'ready') && <div className={isBreak ? 'session-kind rest' : 'session-kind'}>{isBreak ? '放松一下，结束后会回到下一步。' : session ? `第 ${(reconciledPlan?.completedRounds ?? 0) + 1} / ${reconciledPlan?.totalRounds ?? 1} 轮专注` : `准备第 ${reconciledPlan!.completedRounds + 1} / ${reconciledPlan!.totalRounds} 轮`}</div>}
         {(session && state.focusIntegrityPolicy.enabled && (integrityFlash || integrityLeaving)) && <div className={`${session.integrity.effectiveExcursions > 0 ? 'focus-integrity-warning flash active' : 'focus-integrity-warning flash'}${integrityLeaving ? ' is-leaving' : ''}`} role="status"><AlertTriangle/>有效离开 {session.integrity.effectiveExcursions} / {state.focusIntegrityPolicy.maxEffectiveExcursions} 次</div>}
         {integrityFailure && <div className="focus-integrity-ended" role="alert"><AlertTriangle/>本轮专注因达到离开应用次数上限而结束。下次可以从这里继续。</div>}
          <FocusTimer mode={timerMode} endsAt={timerEndsAt} fallbackMs={timerFallbackMs} onElapsed={session ? reconcile : finishBreak}/>
         {isBreak ? <button className="primary secondary-action" onClick={() => { if (reconciledPlan?.endAfterBreak) setPlan(null); else { const { breakEndsAt: _breakEndsAt, ...withoutBreak } = reconciledPlan!; setPlan({ ...withoutBreak, status: 'ready' }); } }}>跳过休息</button>
-          : reconciledPlan?.status === 'ready' ? <button className="primary" onClick={() => void startFocus()}><Clock3/>开始下一轮</button>
+          : reconciledPlan?.status === 'ready' ? <button className="primary" onClick={() => void startFocus()}><Clock3/>{marathonPlan && reconciledPlan.completedRounds === 0 ? startLabel : '开始下一轮'}</button>
             : session ? <div className={`immersive-controls${controlsLeaving ? ' is-leaving' : ''}`}>{(controlsVisible || controlsLeaving)
               ? <button className="destructive primary" onClick={() => void setEnding(true)}><Square/>结束本次专注</button>
               : <p className={hintVisible ? 'immersive-hint' : 'immersive-hint is-faded'} role="status">双击下方空白处唤出结束按钮</p>}</div>
@@ -586,11 +672,11 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
     )}
     {(planOpen || planLeaving) && !session && <div className={planLeaving ? 'dialog-leave' : undefined}>{isHabit
       ? <HabitFocusPlanSheet rounds={rounds} focusMinutes={preferences.habitFocusMinutes} breakMinutes={preferences.breakMinutes} locked={Boolean(reconciledPlan)} onRoundsChange={setRounds} onClose={closePlan} onCancelPlan={cancelPlan}/>
-      : <FocusPlanSheet subtasks={active.project.subtasks} selectedId={reconciledPlan?.subtaskId ?? selected!} rounds={rounds} focusMinutes={preferences.focusMinutes} breakMinutes={preferences.breakMinutes} locked={Boolean(reconciledPlan)} mode={reconciledPlan?.mode ?? planMode} endAtDraft={endAtDraft} onModeChange={setPlanMode} onEndAtDraftChange={setEndAtDraft} onSelect={setSelected} onRoundsChange={setRounds} onClose={closePlan} onCancelPlan={cancelPlan}/>}</div>}
+      : <FocusPlanSheet subtasks={active.project.subtasks} selectedId={reconciledPlan?.subtaskId ?? selected!} rounds={rounds} focusMinutes={preferences.focusMinutes} breakMinutes={preferences.breakMinutes} locked={Boolean(reconciledPlan)} mode={reconciledPlan?.mode ?? planMode} endAtDraft={endAtDraft} onModeChange={setPlanMode} onEndAtDraftChange={setEndAtDraft} onSelect={setSelected} onRoundsChange={setRounds} onClose={closePlan} onConfirm={confirmPlan} onCancelPlan={cancelPlan}/>}</div>}
   </div>;
 }
 
-function FocusPlanSheet({ subtasks, selectedId, rounds, focusMinutes, breakMinutes, locked, mode, endAtDraft, onModeChange, onEndAtDraftChange, onSelect, onRoundsChange, onClose, onCancelPlan }: {
+function FocusPlanSheet({ subtasks, selectedId, rounds, focusMinutes, breakMinutes, locked, mode, endAtDraft, onModeChange, onEndAtDraftChange, onSelect, onRoundsChange, onClose, onConfirm, onCancelPlan }: {
   subtasks: Array<{ id: string; title: string; progressBasisPoints: number }>;
   selectedId: string;
   rounds: number;
@@ -604,7 +690,8 @@ function FocusPlanSheet({ subtasks, selectedId, rounds, focusMinutes, breakMinut
   onSelect: (id: string) => void;
   onRoundsChange: (rounds: number) => void;
   onClose: () => void;
-  onCancelPlan: () => void;
+  onConfirm: () => void;
+  onCancelPlan: () => Promise<void>;
 }) {
   const endMs = mode === 'marathon' ? marathonEndInstant(endAtDraft) : null;
   const schedule = endMs === null ? null : planRoundsForDuration(endMs - Date.now(), focusMinutes, breakMinutes);
@@ -645,7 +732,7 @@ function FocusPlanSheet({ subtasks, selectedId, rounds, focusMinutes, breakMinut
             ? <p className="plan-sheet-error">从现在到 {formatClockTime(endMs)} 不足一轮专注（{focusMinutes} 分钟），请选择更晚的时间。</p>
             : <p className="plan-sheet-note">到 {formatClockTime(endMs)} 共约 {Math.max(1, Math.round((endMs - Date.now()) / 60000))} 分钟：安排 {schedule.rounds} 轮专注{schedule.breaks > 0 ? `、${schedule.breaks} 次休息` : ''}，全部结束后再统一汇报推进了哪些小任务。{capped ? `时间超过上限 ${MAX_MARATHON_ROUNDS} 轮，按前 ${schedule.rounds} 轮（约 ${formatDurationSummary(schedule.usableMs)}）排程。` : ''}{note}</p>}
       </>}
-      <button type="button" className={locked ? 'primary destructive' : 'primary'} disabled={!locked && mode === 'marathon' && !marathonValid} onClick={locked ? onCancelPlan : onClose}>{locked ? '取消计划' : '确认计划'}</button>
+      <button type="button" className={locked ? 'primary destructive' : 'primary'} disabled={!locked && mode === 'marathon' && !marathonValid} onClick={locked ? () => void onCancelPlan() : onConfirm}>{locked ? '取消计划' : '确认计划'}</button>
     </section>
   </div>;
 }
@@ -720,61 +807,168 @@ function ProgressReportV7({active,run,onSubmitted}:{active:NonNullable<ReturnTyp
   return <div className="report v7-progress-report"><Check/><span className="eyebrow">本轮已记录</span><h2>这次工作推进到哪里？</h2><p><strong>{task.title}</strong><br/>当前总进度 {Math.round(task.progressBasisPoints/100)}%。提交后会更新建筑的永久施工阶段。</p><div className="report-options">{options.map((value)=><button key={value} onClick={()=>void submit(value)}>{value===task.progressBasisPoints?`保持 ${value/100}%`:value===10000?'完成小任务':`推进至 ${value/100}%`}</button>)}</div></div>;
 }
 
-// V21 marathon final report: after every scheduled round, the user attributes
-// the whole block of completed sessions to the subtasks they actually advanced.
-function MarathonProgressReport({ active, run, onSubmitted }: {
-  active: NonNullable<ReturnType<ApplicationService['activeProjectProjection']>>;
+// V22 marathon settlement report: after every scheduled round (or when the
+// locked plan is cancelled) the user attributes the completed rounds across ALL
+// projects at once. Habit buildings may take the first K rounds via steppers
+// (earliest rounds first); the remaining N-K rounds form one block shared by
+// every chosen subtask. One combined command applies everything atomically.
+function MarathonProgressReport({ state, hostProjectId, run, onSubmitted }: {
+  state: ReturnType<ApplicationService['snapshot']>;
+  hostProjectId: string;
   run: (command: ApplicationCommand) => Promise<any>;
   onSubmitted: () => void;
 }) {
-  const sessions = active.unreportedCompletedSessions;
-  const candidates = active.project.subtasks.filter((subtask) => subtask.progressBasisPoints < 10000);
+  const reported = new Set(state.progressReports.flatMap((report) => report.focusSessionIds));
+  const sessions = state.focusHistory.filter((item) =>
+    item.projectId === hostProjectId && item.status === 'completed' && item.marathon === true && !reported.has(item.id));
+  const totalRounds = sessions.length;
+  const projects = state.projects.filter((project) =>
+    project.status !== 'deleted' && project.kind === 'finite' && project.subtasks.some((subtask) => subtask.progressBasisPoints < 10000));
+  const habits = state.projects.filter((project) =>
+    project.status !== 'deleted' && project.kind === 'habit' && project.habit !== null && !project.habit.awaitingNextBuilding);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [choices, setChoices] = useState<Record<string, number>>({});
+  const [habitRounds, setHabitRounds] = useState<Record<string, number>>({});
   const [busy, setBusy] = useState(false);
-  const canReport = sessions.length > 0;
-  const optionsFor = (subtask: typeof active.project.subtasks[number]) =>
-    [subtask.progressBasisPoints, 2500, 5000, 7500, 10000].filter((value, index, all) => value >= subtask.progressBasisPoints && all.indexOf(value) === index);
-  const submit = async () => {
-    const entries = Object.entries(choices)
-      .map(([subtaskId, progressBasisPoints]) => ({ subtaskId, progressBasisPoints }))
-      .filter((entry) => entry.progressBasisPoints > (active.project.subtasks.find((item) => item.id === entry.subtaskId)?.progressBasisPoints ?? 0));
-    if (entries.length > 0) {
-      if (!canReport) return;
-      setBusy(true);
-      try {
-        const result = await run({ type: 'ReportMarathonFocus', entries, focusSessionIds: sessions.map((session) => session.id) });
-        if (!result?.ok) return;
-      } finally {
-        setBusy(false);
+  const toggleProject = (projectId: string) => setExpanded((previous) => {
+    const next = new Set(previous);
+    if (next.has(projectId)) next.delete(projectId);
+    else next.add(projectId);
+    return next;
+  });
+  const subtaskProject = new Map<string, string>();
+  const subtaskCurrent = new Map<string, number>();
+  for (const project of projects) {
+    for (const subtask of project.subtasks) {
+      subtaskProject.set(subtask.id, project.id);
+      subtaskCurrent.set(subtask.id, subtask.progressBasisPoints);
+    }
+  }
+  const ownHabitMax = (project: typeof habits[number]): number => {
+    const habit = project.habit!;
+    return Math.max(0, Math.min(totalRounds, habit.targetRounds - habit.completedFocusSessionIds.length));
+  };
+  const allocatedRounds = Object.values(habitRounds).reduce((sum, value) => sum + value, 0);
+  const expandHabit = (projectId: string) => {
+    if (!expanded.has(projectId)) {
+      const next = new Set(expanded);
+      next.add(projectId);
+      setExpanded(next);
+      if (!(projectId in habitRounds)) {
+        const project = habits.find((item) => item.id === projectId);
+        if (!project) return;
+        const max = Math.max(1, Math.min(ownHabitMax(project), totalRounds - allocatedRounds));
+        setHabitRounds((previous) => ({ ...previous, [projectId]: max }));
       }
+    } else {
+      const next = new Set(expanded);
+      next.delete(projectId);
+      setExpanded(next);
+    }
+  };
+  const stepHabit = (projectId: string, delta: number) => {
+    const project = habits.find((item) => item.id === projectId);
+    if (!project) return;
+    const current = habitRounds[projectId] ?? 0;
+    const others = allocatedRounds - current;
+    const max = Math.max(0, Math.min(ownHabitMax(project), totalRounds - others));
+    const nextValue = Math.max(0, Math.min(max, current + delta));
+    setHabitRounds((previous) => {
+      const next = { ...previous };
+      if (nextValue === 0) delete next[projectId];
+      else next[projectId] = nextValue;
+      return next;
+    });
+  };
+  const optionsFor = (current: number) =>
+    [current, 2500, 5000, 7500, 10000].filter((value, index, all) => value >= current && all.indexOf(value) === index);
+  const canPickSubtasks = allocatedRounds < totalRounds;
+  const entries = Object.entries(choices)
+    .map(([subtaskId, progressBasisPoints]) => ({
+      projectId: subtaskProject.get(subtaskId) ?? '',
+      subtaskId,
+      progressBasisPoints,
+    }))
+    .filter((entry) => entry.projectId !== '' && entry.progressBasisPoints > (subtaskCurrent.get(entry.subtaskId) ?? 0));
+  const hasTargets = projects.length > 0 || habits.length > 0;
+  const canSubmit = !busy && (allocatedRounds === totalRounds ? entries.length === 0 : entries.length > 0);
+  const submit = async () => {
+    if (busy) return;
+    if (totalRounds === 0 || !hasTargets) {
+      onSubmitted();
+      return;
+    }
+    if (!canSubmit) return;
+    setBusy(true);
+    try {
+      const habitAllocations = Object.entries(habitRounds)
+        .map(([projectId, rounds]) => ({ projectId, rounds }))
+        .filter((entry) => entry.rounds > 0);
+      const result = await run({
+        type: 'ReportMarathonFocus',
+        entries,
+        habitAllocations,
+        focusSessionIds: sessions.map((session) => session.id),
+      });
+      if (!result?.ok) return;
+    } finally {
+      setBusy(false);
     }
     onSubmitted();
   };
   return <div className="report v7-progress-report marathon-progress-report">
     <Check/>
-    <span className="eyebrow">全部 {sessions.length} 轮已结束</span>
-    <h2>这次长时间专注推进了哪些小任务？</h2>
-    <p>每一行选择推进到的进度；未选择的小任务保持原进度，建筑会按新进度更新施工阶段。</p>
-    {!canReport
-      ? <p className="plan-sheet-note">本轮计划的专注已经在各轮提前结束时分别记录，直接结束计划即可。</p>
-      : candidates.length === 0
-        ? <p className="plan-sheet-note">所有小任务都已完成，本轮计划结束。</p>
-        : <div className="marathon-report-rows">{candidates.map((subtask) => {
-            const current = subtask.progressBasisPoints;
-            const chosen = choices[subtask.id] ?? current;
-            return <div className="marathon-report-row" key={subtask.id}>
-              <div className="marathon-report-copy"><strong>{subtask.title}</strong><small>当前 {Math.round(current / 100)}%（{Math.round(current / 100) === 0 ? '尚未推进' : '已有建筑进度'}）</small></div>
-              <div className="marathon-report-options">{optionsFor(subtask).map((value) => (
-                <button key={value} type="button" aria-pressed={chosen === value} disabled={busy} onClick={() => setChoices((prev) => {
-                  const next = { ...prev };
-                  if (value === current) delete next[subtask.id];
-                  else next[subtask.id] = value;
-                  return next;
-                })}>{value === current ? `保持 ${value / 100}%` : value === 10000 ? '完成' : `推进至 ${value / 100}%`}</button>
-              ))}</div>
-            </div>;
-          })}</div>}
-    <button type="button" className="primary marathon-report-submit" disabled={busy} onClick={() => void submit()}>提交本次推进</button>
+    <span className="eyebrow">{totalRounds} 轮专注已结束</span>
+    <h2>把这次推进汇报给哪些任务？</h2>
+    <p>展开任务选择要推进的小任务；习惯任务可以计入部分轮次（从最早完成的一轮开始）。剩余轮次会同时计入所有勾选的小任务，最后统一提交。</p>
+    {totalRounds === 0
+      ? <p className="plan-sheet-note">这次没有需要汇报的轮次，直接结束计划即可。</p>
+      : !hasTargets
+        ? <p className="plan-sheet-note">没有可推进的任务：所有小任务都已完成，习惯建筑也都在等待选择下一座。直接结束计划即可。</p>
+        : <div className="marathon-settlement-list">
+            {habits.map((project) => {
+              const habit = project.habit!;
+              const rounds = habitRounds[project.id] ?? 0;
+              return <section className="marathon-settlement-card" key={project.id}>
+                <button type="button" className="marathon-settlement-head" aria-expanded={expanded.has(project.id)} onClick={() => expandHabit(project.id)}>
+                  <span className="marathon-settlement-copy"><strong>{project.title}</strong><small>习惯 · 第 {habit.cycleNumber} 座建筑 · {habit.completedFocusSessionIds.length} / {habit.targetRounds} 轮</small></span>
+                  <span className="marathon-settlement-toggle">{expanded.has(project.id) ? '收起' : '计入轮数'}</span>
+                </button>
+                {expanded.has(project.id) && <div className="marathon-settlement-body">
+                  <div className="time-stepper habit-round-stepper"><span>计入</span><button type="button" aria-label="减少计入轮数" disabled={busy || rounds === 0} onClick={() => stepHabit(project.id, -1)}>−</button><strong aria-label="计入轮数">{rounds}</strong><button type="button" aria-label="增加计入轮数" disabled={busy || rounds >= Math.min(ownHabitMax(project), totalRounds - (allocatedRounds - rounds))} onClick={() => stepHabit(project.id, 1)}>+</button><span>轮</span></div>
+                  <small>{allocatedRounds >= totalRounds ? '全部轮次已计入习惯建筑' : `计入后剩余 ${totalRounds - allocatedRounds} 轮可分配给小任务`}</small>
+                </div>}
+              </section>;
+            })}
+            {projects.map((project) => (
+              <section className="marathon-settlement-card" key={project.id}>
+                <button type="button" className="marathon-settlement-head" aria-expanded={expanded.has(project.id)} onClick={() => toggleProject(project.id)}>
+                  <span className="marathon-settlement-copy"><strong>{project.title}</strong><small>{Math.round(project.subtasks.reduce((sum, subtask) => sum + subtask.progressBasisPoints, 0) / project.subtasks.length / 100)}% 总进度</small></span>
+                  <span className="marathon-settlement-toggle">{expanded.has(project.id) ? '收起' : '展开'}</span>
+                </button>
+                {expanded.has(project.id) && <div className="marathon-settlement-body">
+                  {project.subtasks.filter((subtask) => subtask.progressBasisPoints < 10000).map((subtask) => {
+                    const current = subtask.progressBasisPoints;
+                    const chosen = choices[subtask.id] ?? current;
+                    return <div className="marathon-report-row" key={subtask.id}>
+                      <div className="marathon-report-copy"><strong>{subtask.title}</strong><small>当前 {Math.round(current / 100)}%（{Math.round(current / 100) === 0 ? '尚未推进' : '已有建筑进度'}）</small></div>
+                      <div className="marathon-report-options">{optionsFor(current).map((value) => (
+                        <button key={value} type="button" aria-pressed={chosen === value} disabled={busy || !canPickSubtasks} onClick={() => setChoices((previous) => {
+                          const next = { ...previous };
+                          if (value === current) delete next[subtask.id];
+                          else next[subtask.id] = value;
+                          return next;
+                        })}>{value === current ? `保持 ${value / 100}%` : value === 10000 ? '完成' : `推进至 ${value / 100}%`}</button>
+                      ))}</div>
+                    </div>;
+                  })}
+                </div>}
+              </section>
+            ))}
+          </div>}
+    {totalRounds > 0 && allocatedRounds === totalRounds && <p className="plan-sheet-note">全部轮次已计入习惯建筑，不能再勾选小任务。</p>}
+    {totalRounds > 0 && hasTargets && allocatedRounds < totalRounds && entries.length === 0 && <p className="plan-sheet-note">还有 {totalRounds - allocatedRounds} 轮未分配，请至少选择一个小任务。</p>}
+    <button type="button" className="primary marathon-report-submit" disabled={busy || (totalRounds > 0 && hasTargets && !canSubmit)} onClick={() => void submit()}>{totalRounds > 0 && hasTargets ? '提交本次推进' : '直接结束计划'}</button>
   </div>;
 }
 
@@ -819,8 +1013,10 @@ const WorldCanvasV7 = memo(function WorldCanvasV7({service,resourcePacks,lightin
   },[hideViewControls]);
   const toggleViewControls=useCallback(()=>{
     const now=performance.now();
-    // Debounce rapid corner taps so they cannot queue up and replay later.
-    if(now-lastViewToggleRef.current<250)return;
+    // Debounce rapid corner taps so they cannot queue up and replay later, but
+    // never swallow the very first tap (performance.now starts at 0 under the
+    // Playwright clock, which must not read as a repeated tap).
+    if(lastViewToggleRef.current!==0&&now-lastViewToggleRef.current<250)return;
     lastViewToggleRef.current=now;
     if(viewControlsVisible&&!viewControlsLeaving)hideViewControls();
     else revealViewControls();

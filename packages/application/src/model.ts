@@ -15,9 +15,9 @@ export type ApplicationCommand =
   | { type: "CreateHabitProject"; title: string; blueprintId: string; importedBlueprint?: Project["importedBlueprint"]; targetRounds: number }
   | { type: "SelectNextHabitBuilding"; blueprintId: string; importedBlueprint?: Project["importedBlueprint"]; targetRounds: number }
   | { type: "AddSubtask"; title: string }
-  | { type: "StartFocus"; subtaskId: string | null; plannedDurationMs: number }
+  | { type: "StartFocus"; subtaskId: string | null; plannedDurationMs: number; projectId?: string; marathon?: boolean }
   | { type: "ReportSubtaskProgress"; subtaskId: string; focusSessionIds: string[]; progressBasisPoints: number }
-  | { type: "ReportMarathonFocus"; entries: Array<{ subtaskId: string; progressBasisPoints: number }>; focusSessionIds: string[] }
+  | { type: "ReportMarathonFocus"; entries: Array<{ projectId: string; subtaskId: string; progressBasisPoints: number }>; habitAllocations: Array<{ projectId: string; rounds: number }>; focusSessionIds: string[] }
   | { type: "CompleteFocusEarly" }
   | Exclude<DomainCommand, { type: GeneratedCommandType }>;
 
@@ -89,7 +89,8 @@ export function projectActiveState(state: DomainState): ActiveProjectProjection 
   const condition = conditionFor(state, project.id);
   const reported = new Set(state.progressReports.flatMap((report) => report.focusSessionIds));
   const unreportedCompletedSessions = project.kind === "habit" ? [] : state.focusHistory
-    .flatMap((session) => session.status === "completed" && session.projectId === project.id && !reported.has(session.id)
+    .flatMap((session) => session.status === "completed" && session.projectId === project.id
+      && session.marathon !== true && !reported.has(session.id)
       ? [{ id: session.id, subtaskId: session.subtaskId, completedAt: session.completedAt }]
       : []);
 

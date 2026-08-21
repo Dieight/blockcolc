@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 const state = (title: string) => ({
-  schemaVersion: 7 as const,
+  schemaVersion: 8 as const,
   projects: [{ id: "p1", kind: "finite" as const, habit: null, settlementIndex: 0, title, blueprintId: "small", importedBlueprint: null, createdAt: "2026-07-23T08:00:00.000Z", status: "active" as const, subtaskStructureLocked: false, subtasks: [{ id: "s1", title: "First", order: 0, progressBasisPoints: 0 }] }],
   habitBuildings: [],
   activeProjectId: "p1",

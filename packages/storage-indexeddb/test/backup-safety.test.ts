@@ -116,12 +116,12 @@ describe("backup safety", () => {
     const destination = createRepository("old-v1-destination");
     await expect(destination.previewImport(JSON.stringify(oldEnvelope))).resolves.toMatchObject({ schemaVersion: 1 });
     await destination.replaceFromImport(JSON.stringify(oldEnvelope), 0);
-    expect((await destination.load()).state?.schemaVersion).toBe(7);
+    expect((await destination.load()).state?.schemaVersion).toBe(8);
     expect((await destination.load()).state?.focusIntegrityPolicy).toEqual({ enabled: true, maxEffectiveExcursions: 3 });
     expect((await destination.load()).state?.projects[0]!.importedBlueprint).toBeNull();
     const normalized = JSON.parse(await destination.exportBackup()) as any;
     expect(normalized.schemaVersion).toBe(1);
-    expect(normalized.payload.schemaVersion).toBe(7);
+    expect(normalized.payload.schemaVersion).toBe(8);
     expect(normalized.payload.worldSettings).toEqual({ worldSeed: "legacy-project-1", terrainGenerationVersion: 4, environmentStyle: "natural-valley" });
     expect(normalized.payload.projects[0]).toHaveProperty("importedBlueprint", null);
   });

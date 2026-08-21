@@ -85,6 +85,12 @@ export interface FocusSessionBase {
   endsAt: ISOInstant;
   plannedDurationMs: number;
   timeZoneAtStart: string;
+  /**
+   * V22: session belongs to an end-time (marathon) plan. Marathon sessions are
+   * reported together by one settlement report and never block switching the
+   * active project mid-plan.
+   */
+  marathon?: boolean;
 }
 
 export type FocusBackgroundReason = "app-switch" | "screen-lock" | "system-exempt" | "web-visibility";
@@ -130,6 +136,13 @@ export interface ProgressReport {
   focusSessionIds: string[];
   progressBasisPoints: number;
   reportedAt: ISOInstant;
+  /**
+   * V22: marathon settlement reports share one remainder block of sessions across
+   * every chosen subtask (possibly on other projects). Shared reports may
+   * reference the same sessions as each other and need not match the sessions'
+   * own subtask/project ownership; per-subtask monotonic progress still applies.
+   */
+  shared?: boolean;
 }
 
 export interface FocusCalendar {
@@ -189,7 +202,7 @@ export interface WorldSettings {
 }
 
 export interface DomainState {
-  schemaVersion: 7;
+  schemaVersion: 8;
   projects: Project[];
   habitBuildings: HabitBuildingMonument[];
   activeProjectId: string | null;
@@ -219,7 +232,7 @@ export type DomainCommand =
   | { type: "RemoveSubtask"; subtaskId: string }
   | { type: "RenameSubtask"; subtaskId: string; title: string }
   | { type: "ReorderSubtasks"; orderedSubtaskIds: string[] }
-  | { type: "StartFocus"; sessionId: string; subtaskId: string | null; plannedDurationMs: number }
+  | { type: "StartFocus"; sessionId: string; subtaskId: string | null; plannedDurationMs: number; projectId?: string; marathon?: boolean }
   | { type: "CompleteFocus" }
   | { type: "CompleteFocusEarly"; reportId: string }
   | { type: "CancelFocus"; interruptionCategory?: FocusInterruptionCategory | null }
@@ -228,7 +241,12 @@ export type DomainCommand =
   | { type: "RecordFocusBackgrounded"; reason: FocusBackgroundReason }
   | { type: "RecordFocusForegrounded" }
   | { type: "ReportSubtaskProgress"; reportId: string; subtaskId: string; focusSessionIds: string[]; progressBasisPoints: number }
-  | { type: "ReportMarathonFocus"; entries: Array<{ reportId: string; subtaskId: string; progressBasisPoints: number }>; focusSessionIds: string[] }
+  | {
+      type: "ReportMarathonFocus";
+      entries: Array<{ reportId: string; projectId: string; subtaskId: string; progressBasisPoints: number }>;
+      habitAllocations: Array<{ projectId: string; rounds: number }>;
+      focusSessionIds: string[];
+    }
   | { type: "SetDailyGoal"; date: ISODate; targetPomodoros: number }
   | { type: "DisableDailyGoal"; date: ISODate }
   | { type: "ConfigureCalendar"; timeZone: string; restWeekdays: number[] }
@@ -303,6 +321,8 @@ export type DomainErrorCode =
   | "UNREPORTED_FOCUS_PREVENTS_PROJECT_SWITCH"
   | "HABIT_BUILDING_SELECTION_REQUIRED"
   | "SUBTASK_HAS_HISTORY"
+  | "HABIT_ROUNDS_EXCEED_TARGET"
+  | "MARATHON_SPLIT_INVALID"
   | "DECAY_DISABLED";
 
 export const FOCUS_INTEGRITY_GRACE_MS = 3_000;

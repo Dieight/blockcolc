@@ -76,6 +76,13 @@ describe('marathon scheduling from a chosen end time', () => {
     const marathon: RoundPlan = { ...basePlan, mode: 'marathon', endAt: '2026-08-05T12:00:00.000Z', status: 'report' };
     expect(parseRoundPlan(marathon, projectId)).toEqual(marathon);
   });
+
+  it('V22: parses a persisted marathon plan regardless of the caller project', () => {
+    const marathon: RoundPlan = { ...basePlan, mode: 'marathon', endAt: '2026-08-05T12:00:00.000Z', status: 'ready' };
+    expect(parseRoundPlan(marathon, 'project-2')).toEqual(marathon);
+    const classic: RoundPlan = { ...basePlan, status: 'ready' };
+    expect(parseRoundPlan(classic, 'project-2')).toBeNull();
+  });
 });
 
 describe('round-plan recovery', () => {
@@ -176,5 +183,14 @@ describe('round-plan recovery', () => {
       interruptedAt: '2026-08-05T08:20:00.000Z', interruptionReason: 'user-cancelled', interruptionCategory: null, actualDurationMs: 1_200_000,
     }] as DomainState['focusHistory'];
     expect(reconcileRoundPlan(marathon, state({ focusHistory }), projectId, Date.parse('2026-08-05T08:21:00.000Z'), 0, 300_000)).toBeNull();
+  });
+
+  it('V22: keeps a marathon plan while the active project switches away', () => {
+    const marathon: RoundPlan = { ...basePlan, mode: 'marathon', status: 'ready', totalRounds: 3, endAt: '2026-08-05T12:00:00.000Z' };
+    expect(reconcileRoundPlan(marathon, state({}), 'project-2', Date.parse('2026-08-05T09:00:00.000Z'))).toMatchObject({
+      projectId, mode: 'marathon', status: 'ready',
+    });
+    const classic: RoundPlan = { ...basePlan, status: 'ready' };
+    expect(reconcileRoundPlan(classic, state({}), 'project-2', Date.parse('2026-08-05T09:00:00.000Z'))).toBeNull();
   });
 });

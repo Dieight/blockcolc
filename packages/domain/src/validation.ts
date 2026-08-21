@@ -27,15 +27,15 @@ export class DomainStateValidationError extends Error {
 }
 
 export function parseDomainState(raw: unknown): DomainState {
-  const migrated = migrateTerrainV4State(migrateV6State(migrateV5State(migrateV4State(withBuildingBlueprintDefaults(migrateV2State(withDecorationDefaults(migrateV1State(raw))))))));
+  const migrated = migrateV7State(migrateTerrainV4State(migrateV6State(migrateV5State(migrateV4State(withBuildingBlueprintDefaults(migrateV2State(withDecorationDefaults(migrateV1State(raw)))))))));
   const root = object(migrated, "$", [
     "schemaVersion", "projects", "habitBuildings", "activeProjectId", "retiredSubtaskIds", "activeFocusSession",
     "focusHistory", "progressReports", "dailyGoals", "calendar", "decayPolicy", "projectConditions", "focusIntegrityPolicy",
     "decorationBlueprintResources", "decorationRewards", "buildingBlueprintResources", "worldSettings",
   ]);
-  if (root.schemaVersion !== 7) invalid("$.schemaVersion", "must equal 7");
+  if (root.schemaVersion !== 8) invalid("$.schemaVersion", "must equal 8");
   const state: DomainState = {
-    schemaVersion: 7,
+    schemaVersion: 8,
     projects: array(root.projects, "$.projects", parseProject),
     habitBuildings: array(root.habitBuildings, "$.habitBuildings", parseHabitBuilding),
     activeProjectId: nullableString(root.activeProjectId, "$.activeProjectId"),
@@ -292,7 +292,7 @@ function parseSubtask(raw: unknown, path: string): Subtask {
 }
 
 function parseActiveSession(raw: unknown, path: string): ActiveFocusSession {
-  const x = object(raw, path, ["id", "projectId", "subtaskId", "startedAt", "endsAt", "plannedDurationMs", "timeZoneAtStart", "integrity"]);
+  const x = objectWithOptional(raw, path, ["id", "projectId", "subtaskId", "startedAt", "endsAt", "plannedDurationMs", "timeZoneAtStart", "integrity", "marathon"], ["marathon"]);
   const session: ActiveFocusSession = {
     id: nonBlankString(x.id, path + ".id"),
     projectId: nonBlankString(x.projectId, path + ".projectId"),
@@ -301,6 +301,7 @@ function parseActiveSession(raw: unknown, path: string): ActiveFocusSession {
     endsAt: instant(x.endsAt, path + ".endsAt"),
     plannedDurationMs: integer(x.plannedDurationMs, path + ".plannedDurationMs", 1),
     timeZoneAtStart: timeZone(x.timeZoneAtStart, path + ".timeZoneAtStart"),
+    ...(x.marathon === true ? { marathon: true } : {}),
     integrity: parseActiveFocusIntegrity(x.integrity, path + ".integrity"),
   };
   validateScheduledTimes(session, path);
@@ -315,9 +316,9 @@ function parseFocusSession(raw: unknown, path: string): FocusSession {
   const base = record(raw, path);
   const status = enumeration(base.status, path + ".status", ["completed", "completed-early", "interrupted"] as const);
   const keys = status === "interrupted"
-    ? ["id", "projectId", "subtaskId", "startedAt", "endsAt", "plannedDurationMs", "timeZoneAtStart", "status", "interruptedAt", "interruptionReason", "interruptionCategory", "actualDurationMs"]
-    : ["id", "projectId", "subtaskId", "startedAt", "endsAt", "plannedDurationMs", "timeZoneAtStart", "status", "completedAt", "completedLocalDate", "actualDurationMs"];
-  const x = object(raw, path, keys);
+    ? ["id", "projectId", "subtaskId", "startedAt", "endsAt", "plannedDurationMs", "timeZoneAtStart", "status", "interruptedAt", "interruptionReason", "interruptionCategory", "actualDurationMs", "marathon"]
+    : ["id", "projectId", "subtaskId", "startedAt", "endsAt", "plannedDurationMs", "timeZoneAtStart", "status", "completedAt", "completedLocalDate", "actualDurationMs", "marathon"];
+  const x = objectWithOptional(raw, path, keys, ["marathon"]);
   const active = parseActiveSessionFields(x, path);
   if (status === "completed" || status === "completed-early") {
     const completedAt = instant(x.completedAt, path + ".completedAt");
@@ -349,19 +350,21 @@ function parseActiveSessionFields(x: Record<string, unknown>, path: string): Foc
     subtaskId: x.subtaskId === null ? null : nonBlankString(x.subtaskId, path + ".subtaskId"), startedAt: instant(x.startedAt, path + ".startedAt"),
     endsAt: instant(x.endsAt, path + ".endsAt"), plannedDurationMs: integer(x.plannedDurationMs, path + ".plannedDurationMs", 1),
     timeZoneAtStart: timeZone(x.timeZoneAtStart, path + ".timeZoneAtStart"),
+    ...(x.marathon === true ? { marathon: true } : {}),
   };
   validateScheduledTimes(session, path);
   return session;
 }
 
 function parseProgressReport(raw: unknown, path: string): ProgressReport {
-  const x = object(raw, path, ["id", "projectId", "subtaskId", "focusSessionIds", "progressBasisPoints", "reportedAt"]);
+  const x = objectWithOptional(raw, path, ["id", "projectId", "subtaskId", "focusSessionIds", "progressBasisPoints", "reportedAt", "shared"], ["shared"]);
   return {
     id: nonBlankString(x.id, path + ".id"), projectId: nonBlankString(x.projectId, path + ".projectId"),
     subtaskId: nonBlankString(x.subtaskId, path + ".subtaskId"),
     focusSessionIds: array(x.focusSessionIds, path + ".focusSessionIds", nonBlankString),
     progressBasisPoints: integer(x.progressBasisPoints, path + ".progressBasisPoints", 0, 10_000),
     reportedAt: instant(x.reportedAt, path + ".reportedAt"),
+    ...(x.shared === true ? { shared: true } : {}),
   };
 }
 
@@ -467,13 +470,14 @@ function validateReferences(state: DomainState): void {
   if (state.activeFocusSession) {
     if (sessions.has(state.activeFocusSession.id)) invalid("$.activeFocusSession.id", "duplicates a history session");
     validateOwnership(state.activeFocusSession.projectId, state.activeFocusSession.subtaskId, projects, subtasks, "$.activeFocusSession");
-    if (state.activeFocusSession.projectId !== state.activeProjectId) invalid("$.activeFocusSession.projectId", "must belong to the active project");
+    if (state.activeFocusSession.projectId !== state.activeProjectId && state.activeFocusSession.marathon !== true) invalid("$.activeFocusSession.projectId", "must belong to the active project");
     if (state.activeFocusSession.startedAt < projects.get(state.activeFocusSession.projectId)!.createdAt) invalid("$.activeFocusSession.startedAt", "precedes project creation");
   }
   validateFocusTimeline(state);
 
   unique(state.progressReports.map((item) => item.id), "$.progressReports[].id");
   const usedSessions = new Set<string>();
+  const sharedSessions = new Set<string>();
   const reportsBySubtask = new Map<string, ProgressReport[]>();
   for (const [index, report] of state.progressReports.entries()) {
     const path = `$.progressReports[${index}]`;
@@ -483,10 +487,18 @@ function validateReferences(state: DomainState): void {
     for (const id of report.focusSessionIds) {
       const session = sessions.get(id);
       if (!session || (session.status !== "completed" && session.status !== "completed-early")) invalid(path + ".focusSessionIds", `unknown or incomplete session ${id}`);
-      if (session.projectId !== report.projectId || session.subtaskId !== report.subtaskId) invalid(path + ".focusSessionIds", `session ${id} has inconsistent ownership`);
+      if (report.shared === true) {
+        // Marathon settlement reports: one remainder block may support every
+        // chosen subtask (also on other projects), so ownership is not required
+        // to match the session and the block may repeat across shared reports.
+        if (usedSessions.has(id)) invalid(path + ".focusSessionIds", `session ${id} was already consumed by a regular report`);
+        sharedSessions.add(id);
+      } else {
+        if (session.projectId !== report.projectId || session.subtaskId !== report.subtaskId) invalid(path + ".focusSessionIds", `session ${id} has inconsistent ownership`);
+        if (sharedSessions.has(id) || usedSessions.has(id)) invalid(path + ".focusSessionIds", `session ${id} is reused`);
+        usedSessions.add(id);
+      }
       if (session.completedAt > report.reportedAt) invalid(path + ".reportedAt", `precedes session ${id} completion`);
-      if (usedSessions.has(id)) invalid(path + ".focusSessionIds", `session ${id} is reused`);
-      usedSessions.add(id);
     }
     const list = reportsBySubtask.get(report.subtaskId) ?? [];
     list.push(report); reportsBySubtask.set(report.subtaskId, list);
@@ -518,7 +530,7 @@ function validateReferences(state: DomainState): void {
     for (const id of building.focusSessionIds) {
       const session = sessions.get(id);
       if (!session || (session.status !== "completed" && session.status !== "completed-early")) invalid(path + ".focusSessionIds", `unknown or incomplete session ${id}`);
-      if (session.projectId !== building.habitProjectId || session.subtaskId !== null) invalid(path + ".focusSessionIds", `session ${id} has inconsistent habit ownership`);
+      if (session.marathon !== true && (session.projectId !== building.habitProjectId || session.subtaskId !== null)) invalid(path + ".focusSessionIds", `session ${id} has inconsistent habit ownership`);
       if (usedSessions.has(id) || habitSessionIds.has(id)) invalid(path + ".focusSessionIds", `session ${id} is reused`);
       habitSessionIds.add(id);
       if (session.completedAt > latestCompletion) latestCompletion = session.completedAt;
@@ -530,7 +542,7 @@ function validateReferences(state: DomainState): void {
     for (const id of project.habit!.completedFocusSessionIds) {
       const session = sessions.get(id);
       if (!session || (session.status !== "completed" && session.status !== "completed-early")) invalid("$.projects[].habit.completedFocusSessionIds", `unknown or incomplete session ${id}`);
-      if (session.projectId !== project.id || session.subtaskId !== null) invalid("$.projects[].habit.completedFocusSessionIds", `session ${id} has inconsistent habit ownership`);
+      if (session.marathon !== true && (session.projectId !== project.id || session.subtaskId !== null)) invalid("$.projects[].habit.completedFocusSessionIds", `session ${id} has inconsistent habit ownership`);
       if (usedSessions.has(id) || habitSessionIds.has(id)) invalid("$.projects[].habit.completedFocusSessionIds", `session ${id} is reused`);
       habitSessionIds.add(id);
     }
@@ -733,6 +745,35 @@ function migrateV6State(raw: unknown): unknown {
     dailyGoals,
     worldSettings: { ...worldSettings, terrainGenerationVersion: 3 },
   };
+}
+
+function migrateV7State(raw: unknown): unknown {
+  const candidate = record(raw, "$");
+  if (candidate.schemaVersion !== 7) return raw;
+  // V22: marathon settlement reports share one remainder block of sessions across
+  // every chosen subtask. V21 marathon reports already did this, so tag any
+  // report whose sessions also appear in another report as shared before the
+  // stricter uniqueness/ownership rules apply.
+  const reports = Array.isArray(candidate.progressReports) ? candidate.progressReports : [];
+  const uses = new Map<string, number>();
+  const sharedIds = new Set<string>();
+  for (const report of reports) {
+    if (typeof report !== "object" || report === null) continue;
+    const reportIds = (report as Record<string, unknown>).focusSessionIds;
+    if (!Array.isArray(reportIds)) continue;
+    for (const id of reportIds) {
+      if (typeof id !== "string") continue;
+      const count = (uses.get(id) ?? 0) + 1;
+      uses.set(id, count);
+      if (count > 1) sharedIds.add(id);
+    }
+  }
+  const progressReports = sharedIds.size === 0 ? reports : reports.map((report) => {
+    if (typeof report !== "object" || report === null || (report as Record<string, unknown>).shared === true) return report;
+    const ids = (report as Record<string, unknown>).focusSessionIds;
+    return Array.isArray(ids) && ids.some((id) => sharedIds.has(id as string)) ? { ...report, shared: true } : report;
+  });
+  return { ...candidate, schemaVersion: 8, progressReports };
 }
 
 function migrateTerrainV4State(raw: unknown): unknown {

@@ -24,7 +24,7 @@ import type {
 export function createInitialState(timeZone = "UTC", restWeekdays: number[] = [0, 6]): DomainState {
   assertCalendar(timeZone, restWeekdays);
   return {
-    schemaVersion: 7,
+    schemaVersion: 8,
     projects: [],
     habitBuildings: [],
     activeProjectId: null,
@@ -289,10 +289,20 @@ function handle(state: DomainState, command: DomainCommand, clock: Clock): Comma
       return ok(state, [{ type: "SubtasksReordered" }]);
     }
     case "StartFocus": {
-      const project = activeProject(state);
+      const project = command.projectId === undefined
+        ? activeProject(state)
+        : state.projects.find((item) => item.id === command.projectId);
+      if (!project) return fail(state, "PROJECT_NOT_FOUND", "Project does not exist");
+      if (command.projectId !== undefined) {
+        if (project.status === "deleted") return fail(state, "PROJECT_NOT_FOUND", "Project does not exist");
+        if (project.status === "monument") return fail(state, "PROJECT_IS_MONUMENT", "Monuments cannot be focused");
+      }
       if (state.activeFocusSession) return fail(state, "FOCUS_ALREADY_ACTIVE", "A focus session is already active");
       requireNonBlank(command.sessionId, "sessionId");
       if (state.focusHistory.some((item) => item.id === command.sessionId)) return fail(state, "DUPLICATE_ID", "Session ID already exists");
+      if (command.marathon === true && project.kind === "habit") {
+        return fail(state, "SUBTASK_NOT_FOUND", "Marathon sessions need a finite host project");
+      }
       if (project.kind === "habit") {
         if (command.subtaskId !== null) return fail(state, "SUBTASK_NOT_FOUND", "Habit focus cannot target a subtask");
         if (requireHabit(project).awaitingNextBuilding) return fail(state, "HABIT_BUILDING_SELECTION_REQUIRED", "Select the next habit building before focusing");
@@ -309,6 +319,7 @@ function handle(state: DomainState, command: DomainCommand, clock: Clock): Comma
         endsAt,
         plannedDurationMs: command.plannedDurationMs,
         timeZoneAtStart: state.calendar.timeZone,
+        ...(command.marathon === true ? { marathon: true } : {}),
         integrity: {
           effectiveExcursions: 0,
           backgroundedAt: null,
@@ -477,51 +488,103 @@ function handle(state: DomainState, command: DomainCommand, clock: Clock): Comma
       return ok(state, events);
     }
     case "ReportMarathonFocus": {
-      // V21: a marathon (end-time scheduled) plan finishes every round before the
-      // user reports progress. One combined command attributes the whole block of
-      // completed sessions to the subtasks the user actually advanced, atomically.
-      const project = activeProject(state);
-      if (project.kind === "habit") return fail(state, "SUBTASK_NOT_FOUND", "Habit projects do not have subtasks");
-      if (!Array.isArray(command.entries) || command.entries.length === 0) throw new Error("Marathon report needs at least one subtask entry");
-      const subtaskIds = command.entries.map((entry) => entry.subtaskId);
-      if (new Set(subtaskIds).size !== subtaskIds.length) return fail(state, "DUPLICATE_ID", "Marathon report subtasks must be unique");
-      const reportIds = command.entries.map((entry) => entry.reportId);
-      if (new Set(reportIds).size !== reportIds.length || reportIds.some((reportId) => state.progressReports.some((report) => report.id === reportId))) {
-        return fail(state, "DUPLICATE_ID", "Marathon report ID already exists");
-      }
-      for (const entry of command.entries) {
-        requireNonBlank(entry.subtaskId, "subtaskId");
-        requireNonBlank(entry.reportId, "reportId");
-        if (!Number.isInteger(entry.progressBasisPoints) || entry.progressBasisPoints < 0 || entry.progressBasisPoints > 10_000) {
-          throw new Error("progressBasisPoints must be an integer from 0 through 10000");
-        }
-        if (!project.subtasks.some((item) => item.id === entry.subtaskId)) return fail(state, "SUBTASK_NOT_FOUND", "Subtask does not exist");
-      }
-      for (const entry of command.entries) {
-        const subtask = project.subtasks.find((item) => item.id === entry.subtaskId)!;
-        if (entry.progressBasisPoints < subtask.progressBasisPoints) {
-          return fail(state, "PROGRESS_CANNOT_DECREASE", "Reported task progress cannot decrease");
-        }
-      }
+      // V22: marathon settlement. The host project's completed blocks are split:
+      // habitAllocations take the first K rounds (in order) for habit buildings;
+      // the remaining N-K rounds are shared by every chosen subtask across any
+      // finite project (one shared progress report per entry over the same
+      // remainder block).
       const sessionIds = [...new Set(command.focusSessionIds)];
       if (sessionIds.length === 0 || sessionIds.length !== command.focusSessionIds.length) {
         return fail(state, "PROGRESS_REQUIRES_COMPLETED_FOCUS", "A marathon report needs unique completed focus sessions");
       }
-      for (const id of sessionIds) {
-        const session = state.focusHistory.find((candidate) => candidate.id === id);
-        if (!session || session.status !== "completed" || session.projectId !== project.id) {
-          return fail(state, "PROGRESS_REQUIRES_COMPLETED_FOCUS", "Every supporting session must be completed for this project");
-        }
+      const sessions = sessionIds.map((id) => state.focusHistory.find((candidate) => candidate.id === id));
+      if (sessions.some((session) => !session || session.status !== "completed" || session.marathon !== true)) {
+        return fail(state, "PROGRESS_REQUIRES_COMPLETED_FOCUS", "Every supporting session must be a completed marathon round");
+      }
+      const hostId = sessions[0]!.projectId;
+      if (sessions.some((session) => session!.projectId !== hostId)) {
+        return fail(state, "PROGRESS_REQUIRES_COMPLETED_FOCUS", "Every marathon session must belong to the same host project");
       }
       const reportedSessions = new Set(state.progressReports.flatMap((report) => report.focusSessionIds));
-      if (sessionIds.some((id) => reportedSessions.has(id))) return fail(state, "FOCUS_ALREADY_REPORTED", "A completed focus session can support only one progress report");
+      const consumedByHabit = (id: string) => state.habitBuildings.some((building) => building.focusSessionIds.includes(id))
+        || state.projects.some((project) => project.kind === "habit" && project.habit !== null && project.habit.completedFocusSessionIds.includes(id));
+      if (sessionIds.some((id) => reportedSessions.has(id) || consumedByHabit(id))) {
+        return fail(state, "FOCUS_ALREADY_REPORTED", "A completed marathon session can support only one settlement report");
+      }
+      const allocations = Array.isArray(command.habitAllocations) ? command.habitAllocations : [];
+      if (allocations.some((entry) => !Number.isInteger(entry.rounds) || entry.rounds < 1)) {
+        throw new Error("Habit allocation rounds must be positive integers");
+      }
+      if (new Set(allocations.map((entry) => entry.projectId)).size !== allocations.length) {
+        return fail(state, "DUPLICATE_ID", "Habit allocations must reference unique projects");
+      }
+      const totalRounds = sessionIds.length;
+      const habitRounds = allocations.reduce((sum, entry) => sum + entry.rounds, 0);
+      if (habitRounds > totalRounds) {
+        return fail(state, "HABIT_ROUNDS_EXCEED_TARGET", "Habit allocations exceed the number of completed rounds");
+      }
+      for (const entry of allocations) {
+        const project = state.projects.find((candidate) => candidate.id === entry.projectId);
+        if (!project || project.kind !== "habit" || project.status === "deleted") {
+          return fail(state, "PROJECT_NOT_FOUND", "Habit allocation must reference an existing habit project");
+        }
+        const habit = requireHabit(project);
+        if (habit.awaitingNextBuilding) {
+          return fail(state, "HABIT_BUILDING_SELECTION_REQUIRED", "Select the next habit building before allocating rounds");
+        }
+        if (entry.rounds > habit.targetRounds - habit.completedFocusSessionIds.length) {
+          return fail(state, "HABIT_ROUNDS_EXCEED_TARGET", "Habit allocation exceeds the rounds still needed for the current building");
+        }
+      }
+      const entries = Array.isArray(command.entries) ? command.entries : [];
+      if (habitRounds === totalRounds && entries.length > 0) {
+        return fail(state, "MARATHON_SPLIT_INVALID", "All rounds were allocated to habits; no subtask entries are allowed");
+      }
+      if (habitRounds < totalRounds && entries.length === 0) {
+        return fail(state, "MARATHON_SPLIT_INVALID", "Remaining rounds need at least one subtask entry");
+      }
+      if (new Set(entries.map((entry) => entry.subtaskId)).size !== entries.length) {
+        return fail(state, "DUPLICATE_ID", "Marathon report subtasks must be unique");
+      }
+      const reportIds = entries.map((entry) => entry.reportId);
+      if (new Set(reportIds).size !== reportIds.length || reportIds.some((reportId) => state.progressReports.some((report) => report.id === reportId))) {
+        return fail(state, "DUPLICATE_ID", "Marathon report ID already exists");
+      }
+      const entryContexts: Array<{ project: Project; subtask: Project["subtasks"][number] }> = [];
+      for (const entry of entries) {
+        requireNonBlank(entry.reportId, "reportId");
+        requireNonBlank(entry.projectId, "projectId");
+        requireNonBlank(entry.subtaskId, "subtaskId");
+        if (!Number.isInteger(entry.progressBasisPoints) || entry.progressBasisPoints < 0 || entry.progressBasisPoints > 10_000) {
+          throw new Error("progressBasisPoints must be an integer from 0 through 10000");
+        }
+        const project = state.projects.find((candidate) => candidate.id === entry.projectId);
+        if (!project || project.kind !== "finite" || project.status === "deleted") {
+          return fail(state, "SUBTASK_NOT_FOUND", "Entry project does not exist or has no subtasks");
+        }
+        const subtask = project.subtasks.find((item) => item.id === entry.subtaskId);
+        if (!subtask) return fail(state, "SUBTASK_NOT_FOUND", "Subtask does not exist");
+        if (entry.progressBasisPoints < subtask.progressBasisPoints) {
+          return fail(state, "PROGRESS_CANNOT_DECREASE", "Reported task progress cannot decrease");
+        }
+        entryContexts.push({ project, subtask });
+      }
       const events: DomainEvent[] = [];
-      for (const entry of command.entries) {
-        const subtask = project.subtasks.find((item) => item.id === entry.subtaskId)!;
+      let offset = 0;
+      for (const entry of allocations) {
+        const project = state.projects.find((candidate) => candidate.id === entry.projectId)!;
+        for (let index = 0; index < entry.rounds; index += 1) {
+          advanceHabitBuilding(state, project, sessions[offset + index]!, events);
+        }
+        offset += entry.rounds;
+      }
+      const remainder = sessionIds.slice(habitRounds);
+      for (const [index, entry] of entries.entries()) {
+        const { project, subtask } = entryContexts[index]!;
         subtask.progressBasisPoints = entry.progressBasisPoints;
         state.progressReports.push({
           id: entry.reportId, projectId: project.id, subtaskId: entry.subtaskId,
-          focusSessionIds: [...sessionIds], progressBasisPoints: entry.progressBasisPoints, reportedAt: now,
+          focusSessionIds: [...remainder], progressBasisPoints: entry.progressBasisPoints, reportedAt: now, shared: true,
         });
         events.push({ type: "SubtaskProgressReported", subtaskId: entry.subtaskId, progressBasisPoints: entry.progressBasisPoints });
         if (entry.progressBasisPoints > 0 && !project.subtaskStructureLocked) {
@@ -529,10 +592,12 @@ function handle(state: DomainState, command: DomainCommand, clock: Clock): Comma
           events.push({ type: "SubtaskStructureLocked" });
         }
       }
-      if (project.subtasks.every((item) => item.progressBasisPoints === 10_000)) {
+      for (const entry of entries) {
+        const project = state.projects.find((candidate) => candidate.id === entry.projectId)!;
+        if (project.status === "monument" || !project.subtasks.every((item) => item.progressBasisPoints === 10_000)) continue;
         if (state.activeFocusSession !== null) return fail(state, "ACTIVE_FOCUS_PREVENTS_SEALING", "Cancel or complete active focus before sealing the project");
         project.status = "monument";
-        state.activeProjectId = null;
+        if (state.activeProjectId === project.id) state.activeProjectId = null;
         events.push({ type: "ProjectSealedAsMonument", projectId: project.id });
       }
       return ok(state, events);
@@ -836,7 +901,8 @@ function activeProjectHasUnreportedFocus(state: DomainState): boolean {
   if (project?.kind === "habit") return false;
   const reported = new Set(state.progressReports.flatMap((report) => report.focusSessionIds));
   return state.focusHistory.some((session) =>
-    session.status === "completed" && session.projectId === state.activeProjectId && !reported.has(session.id));
+    session.status === "completed" && session.projectId === state.activeProjectId
+      && session.marathon !== true && !reported.has(session.id));
 }
 
 function resetActiveDecayAnchors(state: DomainState, at: string): void {

@@ -82,7 +82,14 @@ export function plannedDurationMs(focusMinutes: number, breakMinutes: number, ro
 export function parseRoundPlan(value: unknown, projectId: string): RoundPlan | null {
   if (!value || typeof value !== 'object') return null;
   const candidate = value as Partial<RoundPlan>;
-  if (candidate.projectId !== projectId || (candidate.subtaskId !== null && typeof candidate.subtaskId !== 'string')) return null;
+  // V22: an end-time (marathon) plan is its own lane and survives switching the
+  // active project, so its host project id need not match the caller's.
+  const isMarathon = candidate.mode === 'marathon';
+  const hostProjectId = isMarathon
+    ? (typeof candidate.projectId === 'string' && candidate.projectId.length > 0 ? candidate.projectId : projectId)
+    : projectId;
+  if (!isMarathon && candidate.projectId !== projectId) return null;
+  if (candidate.subtaskId !== null && typeof candidate.subtaskId !== 'string') return null;
   const totalRounds = candidate.totalRounds;
   const completedRounds = candidate.completedRounds;
   if (typeof totalRounds !== 'number' || !Number.isInteger(totalRounds) || totalRounds < MIN_PLANNED_ROUNDS || totalRounds > MAX_MARATHON_ROUNDS) return null;
@@ -96,7 +103,7 @@ export function parseRoundPlan(value: unknown, projectId: string): RoundPlan | n
   const mode = candidate.mode === 'marathon' ? 'marathon' : candidate.mode === 'rounds' ? 'rounds' : undefined;
   const endAt = typeof candidate.endAt === 'string' && Number.isFinite(Date.parse(candidate.endAt)) ? candidate.endAt : undefined;
   return {
-    projectId,
+    projectId: hostProjectId,
     subtaskId: candidate.subtaskId,
     totalRounds,
     completedRounds,
@@ -130,7 +137,7 @@ export function reconcileRoundPlan(
       reportedSessionIds: [],
     } : null;
   }
-  if (plan.projectId !== activeProjectId) return null;
+  if (plan.projectId !== activeProjectId && plan.mode !== 'marathon') return null;
   // The final marathon report is a durable UI phase: once every round is done,
   // keep the plan alive until the user submits the combined progress report.
   if (plan.status === 'report') return plan;
