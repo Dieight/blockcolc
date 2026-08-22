@@ -49,9 +49,15 @@ test("confirming locks the plan and moves the workbench into the end-time lane; 
   await expect(page.getByRole("button", { name: "切换任务" })).toHaveCount(0);
   await expect(page.locator(".workbench-context")).toContainText("本场不指定小任务，结束后统一汇报");
   const summary = (await page.locator(".plan-summary span").first().textContent()) ?? "";
+  const total = Number(summary.match(/约 (\d+) 轮/)?.[1]);
+  expect(total).toBeGreaterThanOrEqual(4);
   expect(summary).toContain("结束 16:05");
   expect(summary).toContain("剩余 ");
-  expect(summary).toContain("约 ");
+  // The big timer shows the remaining planned work (rounds + breaks), not a
+  // second countdown to the chosen end instant. With one-minute rounds and no
+  // breaks the value is exactly the remaining round count in minutes.
+  await expect(page.locator(".timer-label")).toHaveText("剩余总时长");
+  await expect(page.locator(".timer-value")).toHaveText(`${String(total).padStart(2, '0')}:00`);
   await page.getByRole("button", { name: /^开始到/ }).click();
   await expect(page.locator(".session-kind")).toContainText(/第 1 \/ \d+ 轮专注/);
   await expect(page.locator(".focus-task-context")).toContainText("马拉松");
@@ -67,7 +73,10 @@ test("confirming locks the plan and moves the workbench into the end-time lane; 
   await cancel.click();
 
   // Cancelling a locked marathon settles the finished round into the report.
+  // The settlement is a scrollable report surface (has-report layout), so the
+  // bottom content stays reachable on small screens.
   await expect(page.getByRole("heading", { name: "把这次推进汇报给哪些任务？" })).toBeVisible();
+  await expect(page.locator(".world-screen")).toHaveClass(/has-report/);
   await page.locator(".marathon-settlement-head").first().click();
   await page.locator(".marathon-report-row").first().getByRole("button", { name: /推进至 25%/ }).click();
   await page.getByRole("button", { name: "提交本次推进" }).click();

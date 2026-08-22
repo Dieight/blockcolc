@@ -8,6 +8,9 @@ export interface NativeBackgroundContext {
   keyguardLocked: boolean;
   backgroundedAtEpochMs: number;
   productSystemUi: boolean;
+  /** True when the activity was still in a multi-window surface (split screen /
+   * OEM floating window) at the moment it stopped. */
+  multiWindow: boolean;
 }
 
 interface FocusIntegrityPlugin {
@@ -30,6 +33,7 @@ export function mapNativeBackgroundContext(context: NativeBackgroundContext): Fo
       locked: context.keyguardLocked,
       screenOff: !context.screenInteractive,
       exempt: context.productSystemUi,
+      multiWindow: context.multiWindow,
       backgroundedAtEpochMs: context.backgroundedAtEpochMs,
     },
   };

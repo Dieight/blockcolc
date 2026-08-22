@@ -618,6 +618,13 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
   const timerMode = isBreak ? 'break' : session ? 'focus' : isMarathonContext ? 'marathon' : reconciledPlan?.status === 'ready' ? 'ready' : 'plan';
   const timerEndsAt = session?.endsAt ?? (isBreak ? reconciledPlan?.breakEndsAt : (timerMode === 'marathon' ? marathonEndsAt : undefined));
   const timerFallbackMs = focusMinutes * 60_000;
+  // V22 follow-up: while the locked end-time plan idles, the big timer shows the
+  // remaining planned work (rounds + inter-round breaks) instead of duplicating
+  // the countdown to the chosen end instant (which the plan card already shows).
+  const marathonRemainingTotalMs = marathonPlan && reconciledPlan
+    ? (reconciledPlan.totalRounds - reconciledPlan.completedRounds) * focusMinutes * 60_000
+      + Math.max(0, reconciledPlan.totalRounds - reconciledPlan.completedRounds - 1) * preferences.breakMinutes * 60_000
+    : undefined;
   const marathonSummary = marathonPlan && reconciledPlan?.endAt
     ? `结束 ${formatClockTime(reconciledPlan.endAt)} · 剩余 ${formatClockDuration(Math.max(0, Date.parse(reconciledPlan.endAt) - marathonNow))} · 约 ${reconciledPlan.totalRounds} 轮`
     : marathonDraftEndMs !== null && marathonDraftSchedule
@@ -637,7 +644,7 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
     ?? active.project.importedBlueprint?.title
     ?? blueprintName(blueprintCatalog, active.project.blueprintId);
 
-  return <div className={session ? 'world-screen is-focusing' : pending.length > 0 ? 'world-screen has-report' : habitAwaiting ? 'world-screen is-choosing-habit-building' : 'world-screen'}>
+  return <div className={session ? 'world-screen is-focusing' : marathonReportPhase ? 'world-screen has-report' : pending.length > 0 ? 'world-screen has-report' : habitAwaiting ? 'world-screen is-choosing-habit-building' : 'world-screen'}>
     <WorldCanvasV7 service={service} resourcePacks={resourcePacks} lightingQuality={preferences.lightingQuality} constructionOutlineVisibility={preferences.constructionOutlineVisibility} environmentStyle={state.worldSettings.environmentStyle} worldSeed={state.worldSettings.worldSeed} terrainGenerationVersion={state.worldSettings.terrainGenerationVersion} constructionFeedback={constructionFeedback} sessionActive={!!session} immersiveBand={immersiveBand} focusedProjectId={focusedProjectId} onSelectProject={onFocusWorldProject} onClearWorldFocus={onClearWorldFocus} visible={visible} onPickTerrain={setPickedCell} pickedCell={pickedCell}/>
     {visible && <section ref={focusPanelRef} className="focus-panel v7-focus-panel" onPointerUp={(event) => handlePanelTap({ target: event.target, clientX: event.clientX, clientY: event.clientY })}>
       {!session && <div className="workbench-heading">
@@ -659,7 +666,7 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
         {(isBreak || session || reconciledPlan?.status === 'ready') && <div className={isBreak ? 'session-kind rest' : 'session-kind'}>{isBreak ? '放松一下，结束后会回到下一步。' : session ? `第 ${(reconciledPlan?.completedRounds ?? 0) + 1} / ${reconciledPlan?.totalRounds ?? 1} 轮专注` : `准备第 ${reconciledPlan!.completedRounds + 1} / ${reconciledPlan!.totalRounds} 轮`}</div>}
         {(session && state.focusIntegrityPolicy.enabled && (integrityFlash || integrityLeaving)) && <div className={`${session.integrity.effectiveExcursions > 0 ? 'focus-integrity-warning flash active' : 'focus-integrity-warning flash'}${integrityLeaving ? ' is-leaving' : ''}`} role="status"><AlertTriangle/>有效离开 {session.integrity.effectiveExcursions} / {state.focusIntegrityPolicy.maxEffectiveExcursions} 次</div>}
         {integrityFailure && <div className="focus-integrity-ended" role="alert"><AlertTriangle/>本轮专注因达到离开应用次数上限而结束。下次可以从这里继续。</div>}
-         <FocusTimer mode={timerMode} endsAt={timerEndsAt} fallbackMs={timerFallbackMs} onElapsed={session ? reconcile : finishBreak}/>
+         <FocusTimer mode={timerMode} endsAt={timerEndsAt} fallbackMs={timerFallbackMs} marathonRemainingMs={marathonRemainingTotalMs} onElapsed={session ? reconcile : finishBreak}/>
         {isBreak ? <button className="primary secondary-action" onClick={() => { if (reconciledPlan?.endAfterBreak) setPlan(null); else { const { breakEndsAt: _breakEndsAt, ...withoutBreak } = reconciledPlan!; setPlan({ ...withoutBreak, status: 'ready' }); } }}>跳过休息</button>
           : reconciledPlan?.status === 'ready' ? <button className="primary" onClick={() => void startFocus()}><Clock3/>{marathonPlan && reconciledPlan.completedRounds === 0 ? startLabel : '开始下一轮'}</button>
             : session ? <div className={`immersive-controls${controlsLeaving ? ' is-leaving' : ''}`}>{(controlsVisible || controlsLeaving)
@@ -1053,7 +1060,7 @@ const WorldCanvasV7 = memo(function WorldCanvasV7({service,resourcePacks,lightin
 
 type FocusTimerMode = 'plan' | 'focus' | 'break' | 'ready' | 'marathon';
 
-function FocusTimer({ mode, endsAt, fallbackMs, onElapsed }: { mode?: FocusTimerMode; endsAt?: string; fallbackMs: number; onElapsed: () => void }) {
+function FocusTimer({ mode, endsAt, fallbackMs, marathonRemainingMs, onElapsed }: { mode?: FocusTimerMode; endsAt?: string; fallbackMs: number; marathonRemainingMs?: number; onElapsed: () => void }) {
   const [now, setNow] = useState(Date.now());
   const elapsed = useRef(false);
   useEffect(() => {
@@ -1073,8 +1080,9 @@ function FocusTimer({ mode, endsAt, fallbackMs, onElapsed }: { mode?: FocusTimer
   }, [endsAt, onElapsed]);
   const remaining = endsAt ? Math.max(0, Date.parse(endsAt) - now) : fallbackMs;
   const timerMode = mode ?? (endsAt ? 'focus' : 'ready');
-  const label = timerMode === 'plan' ? '每轮时长' : timerMode === 'break' ? '休息剩余' : timerMode === 'ready' ? '下一轮时长' : timerMode === 'marathon' ? '距结束' : '本轮剩余';
-  const clock = formatClockDuration(remaining);
+  const displayMs = timerMode === 'marathon' && marathonRemainingMs !== undefined ? marathonRemainingMs : remaining;
+  const label = timerMode === 'plan' ? '每轮时长' : timerMode === 'break' ? '休息剩余' : timerMode === 'ready' ? '下一轮时长' : timerMode === 'marathon' ? (marathonRemainingMs !== undefined ? '剩余总时长' : '距结束') : '本轮剩余';
+  const clock = formatClockDuration(displayMs);
   return <div className={`timer timer-${timerMode}`} role={endsAt ? 'timer' : undefined} aria-label={`${label} ${clock}`}>
     <span className="timer-label">{label}</span>
     <strong className="timer-value" aria-hidden="true">{clock}</strong>

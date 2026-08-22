@@ -8,9 +8,10 @@ describe('Capacitor focus lifecycle contract', () => {
       keyguardLocked: false,
       backgroundedAtEpochMs: 1_000,
       productSystemUi: false,
+      multiWindow: false,
     })).toEqual({
       type: 'background', source: 'native',
-      context: { locked: false, screenOff: false, exempt: false, backgroundedAtEpochMs: 1_000 },
+      context: { locked: false, screenOff: false, exempt: false, multiWindow: false, backgroundedAtEpochMs: 1_000 },
     });
   });
 
@@ -20,16 +21,30 @@ describe('Capacitor focus lifecycle contract', () => {
       keyguardLocked: true,
       backgroundedAtEpochMs: 2_000,
       productSystemUi: true,
+      multiWindow: false,
     })).toEqual({
       type: 'background', source: 'native',
-      context: { locked: true, screenOff: true, exempt: true, backgroundedAtEpochMs: 2_000 },
+      context: { locked: true, screenOff: true, exempt: true, multiWindow: false, backgroundedAtEpochMs: 2_000 },
+    });
+  });
+
+  it('marks multi-window stops as exempt so the timer surface stays visible', () => {
+    expect(mapNativeBackgroundContext({
+      screenInteractive: true,
+      keyguardLocked: false,
+      backgroundedAtEpochMs: 3_000,
+      productSystemUi: false,
+      multiWindow: true,
+    })).toEqual({
+      type: 'background', source: 'native',
+      context: { locked: false, screenOff: false, exempt: false, multiWindow: true, backgroundedAtEpochMs: 3_000 },
     });
   });
 
   it('waits for delayed native background context before a later foreground event', async () => {
     const events: string[] = [];
     let release!: (context: {
-      screenInteractive: boolean; keyguardLocked: boolean; backgroundedAtEpochMs: number; productSystemUi: boolean;
+      screenInteractive: boolean; keyguardLocked: boolean; backgroundedAtEpochMs: number; productSystemUi: boolean; multiWindow: boolean;
     }) => void;
     const delayedContext = new Promise<Parameters<typeof release>[0]>(resolve => { release = resolve; });
     const dispatcher = createOrderedLifecycleDispatcher(
@@ -41,7 +56,7 @@ describe('Capacitor focus lifecycle contract', () => {
     dispatcher.foreground();
     await Promise.resolve();
     expect(events).toEqual([]);
-    release({ screenInteractive: true, keyguardLocked: false, backgroundedAtEpochMs: 1_000, productSystemUi: false });
+    release({ screenInteractive: true, keyguardLocked: false, backgroundedAtEpochMs: 1_000, productSystemUi: false, multiWindow: false });
     await dispatcher.drain();
     expect(events).toEqual(['background', 'foreground']);
   });

@@ -92,7 +92,7 @@ export type FocusLifecycleEvent =
   | {
       type: "background";
       source: "native" | "web";
-      context?: { locked?: boolean; screenOff?: boolean; exempt?: boolean; backgroundedAtEpochMs?: number };
+      context?: { locked?: boolean; screenOff?: boolean; exempt?: boolean; multiWindow?: boolean; backgroundedAtEpochMs?: number };
     };
 
 export interface FocusLifecyclePort {

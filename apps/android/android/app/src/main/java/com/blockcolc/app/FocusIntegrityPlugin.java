@@ -1,5 +1,6 @@
 package com.blockcolc.app;
 
+import android.app.Activity;
 import android.app.KeyguardManager;
 import android.content.Context;
 import android.os.PowerManager;
@@ -16,6 +17,7 @@ public class FocusIntegrityPlugin extends Plugin {
     private static volatile long lastBackgroundAtEpochMs = 0L;
     private static volatile boolean productSystemUiOpen = false;
     private static volatile boolean lastBackgroundWasProductSystemUi = false;
+    private static volatile boolean lastBackgroundWasMultiWindow = false;
 
     static void setProductSystemUiOpen(boolean open) {
         productSystemUiOpen = open;
@@ -28,6 +30,10 @@ public class FocusIntegrityPlugin extends Plugin {
         lastKeyguardLocked = keyguardManager != null && keyguardManager.isKeyguardLocked();
         lastBackgroundAtEpochMs = System.currentTimeMillis();
         lastBackgroundWasProductSystemUi = productSystemUiOpen;
+        // V22: a stop while the activity still belongs to a multi-window surface
+        // (split screen, freeform, OEM floating window) keeps the timer visible,
+        // so the web layer exempts it from app-switch counting.
+        lastBackgroundWasMultiWindow = context instanceof Activity && ((Activity) context).isInMultiWindowMode();
     }
 
     @PluginMethod
@@ -37,6 +43,7 @@ public class FocusIntegrityPlugin extends Plugin {
         result.put("keyguardLocked", lastKeyguardLocked);
         result.put("backgroundedAtEpochMs", lastBackgroundAtEpochMs);
         result.put("productSystemUi", lastBackgroundWasProductSystemUi);
+        result.put("multiWindow", lastBackgroundWasMultiWindow);
         call.resolve(result);
     }
 
