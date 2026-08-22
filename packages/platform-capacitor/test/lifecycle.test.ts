@@ -28,7 +28,7 @@ describe('Capacitor focus lifecycle contract', () => {
     });
   });
 
-  it('marks multi-window stops as exempt so the timer surface stays visible', () => {
+  it('passes through multi-window signals for the application-side counting decision', () => {
     expect(mapNativeBackgroundContext({
       screenInteractive: true,
       keyguardLocked: false,

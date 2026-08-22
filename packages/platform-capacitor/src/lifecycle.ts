@@ -72,10 +72,25 @@ export class CapacitorFocusLifecyclePort implements FocusLifecyclePort {
       }
       dispatcher.background();
     });
+    // V22 follow-up: entering/leaving a multi-window surface (split screen,
+    // OEM floating window) does not fire appStateChange, so the native side
+    // pushes its own signal. Both paths deduplicate in the domain layer: one
+    // session can only carry a single pending background instant.
+    const onMultiWindow = (event: Event) => {
+      const active = (event as CustomEvent<{ active: boolean }>).detail?.active;
+      if (active === true) dispatcher.background();
+      else if (active === false) dispatcher.foreground();
+    };
+    window.addEventListener('blockcolc-multi-window', onMultiWindow);
     const notification = await LocalNotifications.addListener('localNotificationActionPerformed', () => {
       dispatcher.foreground();
     });
-    return async () => { await appState.remove(); await notification.remove(); await dispatcher.drain(); };
+    return async () => {
+      await appState.remove();
+      await notification.remove();
+      window.removeEventListener('blockcolc-multi-window', onMultiWindow);
+      await dispatcher.drain();
+    };
   }
 }
 

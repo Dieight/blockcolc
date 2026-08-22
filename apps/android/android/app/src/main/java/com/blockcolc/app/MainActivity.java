@@ -98,6 +98,23 @@ public class MainActivity extends BridgeActivity {
     }
 
     @Override
+    @android.annotation.TargetApi(24)
+    public void onMultiWindowModeChanged(boolean isInMultiWindowMode) {
+        super.onMultiWindowModeChanged(isInMultiWindowMode);
+        if (getBridge() == null || getBridge().getWebView() == null) return;
+        // V22 follow-up: split-screen / floating-window entry does not stop the
+        // activity, so the web layer would never see an app switch. Push an
+        // explicit signal; the domain layer counts it like a background stop and
+        // deduplicates it against a simultaneous onStop (one pending background
+        // instant per session).
+        FocusIntegrityPlugin.recordBackgroundContext(this);
+        getBridge().getWebView().post(() -> getBridge().getWebView().evaluateJavascript(
+            "window.dispatchEvent(new CustomEvent('blockcolc-multi-window',{detail:{active:" + isInMultiWindowMode + "}}));",
+            null
+        ));
+    }
+
+    @Override
     public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);
         if (!hasFocus || getBridge() == null || getBridge().getWebView() == null) return;

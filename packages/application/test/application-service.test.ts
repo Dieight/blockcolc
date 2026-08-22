@@ -449,6 +449,19 @@ describe("lifecycle recovery", () => {
     expect(f.service.snapshot().activeFocusSession?.integrity.effectiveExcursions).toBe(1);
   });
 
+  it("counts multi-window stops as app-switch excursions (split-screen anti-cheat)", async () => {
+    const f = await fixture();
+    const project = await createProject(f.service, ["One"]);
+    await f.service.dispatch({ type: "StartFocus", subtaskId: project.subtasks[0]!.id, plannedDurationMs: 60_000 });
+    await f.service.handleLifecycleEvent({ type: "background", source: "native", context: { multiWindow: true } });
+    expect(f.repository.persisted?.activeFocusSession?.integrity.backgroundReason).toBe("app-switch");
+    f.clock.set("2026-07-20T09:00:04.000Z");
+    await expect(f.service.handleLifecycleEvent({ type: "foreground" })).resolves.toMatchObject({
+      ok: true, events: [{ type: "FocusExcursionRecorded", effectiveExcursions: 1 }],
+    });
+    expect(f.service.snapshot().activeFocusSession?.integrity.effectiveExcursions).toBe(1);
+  });
+
   it("uses the native background instant when context delivery is delayed", async () => {
     const f = await fixture();
     const project = await createProject(f.service, ["One"]);

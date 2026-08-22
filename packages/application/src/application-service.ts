@@ -137,11 +137,11 @@ export class ApplicationService {
   handleLifecycleEvent(event: FocusLifecycleEvent): Promise<ApplicationResult> {
     return this.serial(() => {
       if (event.type === "foreground") return this.resumeInternal();
-      // V22 follow-up: leaving for a multi-window surface (split screen, OEM
-      // floating windows reported as multi-window) keeps the timer visible, so
-      // it must not count as an app-switch excursion; same exemption class as
-      // the product system UI overlays.
-      const reason = event.context?.exempt || event.context?.multiWindow
+      // V22 follow-up: a stop while the activity is in a multi-window surface
+      // (split screen, OEM floating window) still counts as an app switch —
+      // the timer is meant to be watched, not parked in a side window. The
+      // domain layer deduplicates repeated background signals for one session.
+      const reason = event.context?.exempt
         ? "system-exempt"
         : event.context?.locked || event.context?.screenOff
           ? "screen-lock"
