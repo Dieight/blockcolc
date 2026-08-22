@@ -33,7 +33,9 @@ public class FocusIntegrityPlugin extends Plugin {
         // V22: a stop while the activity still belongs to a multi-window surface
         // (split screen, freeform, OEM floating window) keeps the timer visible,
         // so the web layer exempts it from app-switch counting.
-        lastBackgroundWasMultiWindow = context instanceof Activity && ((Activity) context).isInMultiWindowMode();
+        lastBackgroundWasMultiWindow = context instanceof Activity
+            && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N
+            && ((Activity) context).isInMultiWindowMode();
     }
 
     @PluginMethod
