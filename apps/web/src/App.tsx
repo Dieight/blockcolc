@@ -424,9 +424,12 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
       marathonTotal = schedule.rounds;
       marathonEndAt = new Date(endMs!).toISOString();
     }
-    const targetSubtaskId = marathonHost.subtasks.find((item) => item.progressBasisPoints < 10000)?.id ?? marathonHost.subtasks[0]!.id;
+    const marathonRound = reconciledPlan?.mode === 'marathon' || marathonDraft;
+    const targetSubtaskId = marathonRound
+      ? (marathonHost.subtasks.find((item) => item.progressBasisPoints < 10000)?.id ?? marathonHost.subtasks[0]!.id)
+      : (reconciledPlan?.subtaskId ?? (isHabit ? null : subtask!.id));
     const next: RoundPlan = reconciledPlan ?? { projectId: marathonHost.id, subtaskId: isHabit ? null : targetSubtaskId, totalRounds: marathonTotal, completedRounds: 0, status: 'focus', reportedSessionIds: [] };
-    if (next.subtaskId !== targetSubtaskId) next.subtaskId = targetSubtaskId;
+    if (!isHabit && next.subtaskId !== null && next.subtaskId !== targetSubtaskId) next.subtaskId = targetSubtaskId;
     if (marathonDraft) { next.mode = 'marathon'; next.endAt = marathonEndAt; }
     const result = await run({
       type: 'StartFocus',
