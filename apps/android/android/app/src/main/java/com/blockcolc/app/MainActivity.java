@@ -174,9 +174,20 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);
-        if (!hasFocus || getBridge() == null || getBridge().getWebView() == null) return;
-        getBridge().getWebView().postDelayed(() -> getBridge().getWebView().evaluateJavascript(
-            "window.dispatchEvent(new Event('blockcolc-window-focus'));", null
-        ), 180);
+        if (getBridge() == null || getBridge().getWebView() == null) return;
+        if (hasFocus) {
+            // Returning focus settles a pending focus-leave; the domain grace
+            // absorbs quick overlays (notification shade, edge panel).
+            pushMiniWindowSignal(false);
+            getBridge().getWebView().postDelayed(() -> getBridge().getWebView().evaluateJavascript(
+                "window.dispatchEvent(new Event('blockcolc-window-focus'));", null
+            ), 180);
+        } else {
+            // Splitting attention to ANY other window (a floating window of
+            // another app, the notification shade, the recents overview) loses
+            // focus without any lifecycle callback; treat it like a leave and
+            // let the 3 s grace separate glances from actual slacking.
+            pushMiniWindowSignal(true);
+        }
     }
 }
