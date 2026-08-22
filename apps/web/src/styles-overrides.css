@@ -431,6 +431,7 @@
 .dialog-leave .habit-building-selection,
 .immersive-controls.is-leaving .primary.destructive,
 .focus-integrity-warning.is-leaving{animation:ui-fade-out .16s ease-in both}
+.focus-integrity-ended.is-leaving{animation:ui-fade-out .16s ease-in both}
 .focus-immersive .is-focusing .focus-integrity-warning.is-leaving{animation:ui-fade-out-centered .16s ease-in both}
 .dialog-leave .dialog-backdrop{animation:ui-fade-out .14s ease-in both}
 }

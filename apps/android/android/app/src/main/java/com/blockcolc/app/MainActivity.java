@@ -15,6 +15,12 @@ import java.util.Locale;
 
 public class MainActivity extends BridgeActivity {
     private Insets latestSafeInsets = Insets.NONE;
+    // V22 follow-up: OEM side-rail floating windows (ColorOS smart sidebar)
+    // never fire onMultiWindowModeChanged nor onStop, so the window-size fallback
+    // below treats a shrunken activity window like a multi-window surface. The
+    // web layer deduplicates the extra signal against the standard paths.
+    private boolean miniWindowActive = false;
+    private final Runnable miniWindowCheck = this::checkMiniWindowFallback;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -56,6 +62,30 @@ public class MainActivity extends BridgeActivity {
             return windowInsets;
         });
         ViewCompat.requestApplyInsets(content);
+        getWindow().getDecorView().addOnLayoutChangeListener((view, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> {
+            view.removeCallbacks(miniWindowCheck);
+            view.postDelayed(miniWindowCheck, 700);
+        });
+    }
+
+    private void checkMiniWindowFallback() {
+        if (getBridge() == null || getBridge().getWebView() == null) return;
+        View decor = getWindow().getDecorView();
+        int width = decor.getWidth();
+        int height = decor.getHeight();
+        android.graphics.Point size = new android.graphics.Point();
+        getWindowManager().getDefaultDisplay().getSize(size);
+        if (width <= 0 || height <= 0 || size.x <= 0 || size.y <= 0) return;
+        // Floating windows and split panes shrink the visible area well below a
+        // keyboard or gesture bar (which keep width and leave area above 55%).
+        boolean mini = ((float) width * (float) height) / ((float) size.x * (float) size.y) < 0.55f;
+        if (mini == miniWindowActive) return;
+        miniWindowActive = mini;
+        FocusIntegrityPlugin.recordBackgroundContext(this);
+        getBridge().getWebView().post(() -> getBridge().getWebView().evaluateJavascript(
+            "window.dispatchEvent(new CustomEvent('blockcolc-multi-window',{detail:{active:" + mini + "}}));",
+            null
+        ));
     }
 
     private void publishSafeAreaInsets(Insets insets) {

@@ -380,6 +380,24 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
     }, 5_000);
     return () => window.clearTimeout(timer);
   }, [session?.id, session?.integrity.effectiveExcursions, state.focusIntegrityPolicy.enabled]);
+  // V22 follow-up: the app-switch-limit notice plays the same bounded entrance
+  // and fade-out as the other transient controls instead of lingering forever.
+  const [integrityEndedLeaving, setIntegrityEndedLeaving] = useState(false);
+  const [integrityEndedHidden, setIntegrityEndedHidden] = useState(false);
+  useEffect(() => {
+    if (!integrityFailure) {
+      setIntegrityEndedLeaving(false);
+      setIntegrityEndedHidden(false);
+      return;
+    }
+    setIntegrityEndedLeaving(false);
+    setIntegrityEndedHidden(false);
+    const timer = window.setTimeout(() => {
+      setIntegrityEndedLeaving(true);
+      exitAfter(180, () => { setIntegrityEndedHidden(true); setIntegrityEndedLeaving(false); });
+    }, 5_000);
+    return () => window.clearTimeout(timer);
+  }, [integrityFailure]);
   useEffect(() => {
     if (!roundPlansEqual(plan, reconciledPlan)) setPlan(reconciledPlan);
   }, [plan, reconciledPlan, setPlan]);
@@ -665,7 +683,7 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
         {isBreak && <div className="rest-summary"><span>休息时间</span><strong>{marathonPlan ? `第 ${reconciledPlan?.completedRounds ?? 0} / ${reconciledPlan?.totalRounds ?? 1} 轮已结束` : (reconciledPlan?.endAfterBreak ? '小任务已完成' : '下一轮准备中')}</strong><small>{marathonPlan ? '休息结束后自动进入下一轮' : dailySummary}</small></div>}
         {(isBreak || session || reconciledPlan?.status === 'ready') && <div className={isBreak ? 'session-kind rest' : 'session-kind'}>{isBreak ? '放松一下，结束后会回到下一步。' : session ? `第 ${(reconciledPlan?.completedRounds ?? 0) + 1} / ${reconciledPlan?.totalRounds ?? 1} 轮专注` : `准备第 ${reconciledPlan!.completedRounds + 1} / ${reconciledPlan!.totalRounds} 轮`}</div>}
         {(session && state.focusIntegrityPolicy.enabled && (integrityFlash || integrityLeaving)) && <div className={`${session.integrity.effectiveExcursions > 0 ? 'focus-integrity-warning flash active' : 'focus-integrity-warning flash'}${integrityLeaving ? ' is-leaving' : ''}`} role="status"><AlertTriangle/>有效离开 {session.integrity.effectiveExcursions} / {state.focusIntegrityPolicy.maxEffectiveExcursions} 次</div>}
-        {integrityFailure && <div className="focus-integrity-ended" role="alert"><AlertTriangle/>本轮专注因达到离开应用次数上限而结束。下次可以从这里继续。</div>}
+        {integrityFailure && !integrityEndedHidden && <div className={`focus-integrity-ended${integrityEndedLeaving ? ' is-leaving' : ''}`} role="alert"><AlertTriangle/>本轮专注因达到离开应用次数上限而结束。下次可以从这里继续。</div>}
          <FocusTimer mode={timerMode} endsAt={timerEndsAt} fallbackMs={timerFallbackMs} marathonRemainingMs={marathonRemainingTotalMs} onElapsed={session ? reconcile : finishBreak}/>
         {isBreak ? <button className="primary secondary-action" onClick={() => { if (reconciledPlan?.endAfterBreak) setPlan(null); else { const { breakEndsAt: _breakEndsAt, ...withoutBreak } = reconciledPlan!; setPlan({ ...withoutBreak, status: 'ready' }); } }}>跳过休息</button>
           : reconciledPlan?.status === 'ready' ? <button className="primary" onClick={() => void startFocus()}><Clock3/>{marathonPlan && reconciledPlan.completedRounds === 0 ? startLabel : '开始下一轮'}</button>
