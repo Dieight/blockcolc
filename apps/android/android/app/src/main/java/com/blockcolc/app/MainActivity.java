@@ -2,6 +2,8 @@ package com.blockcolc.app;
 
 import android.os.Bundle;
 import android.os.Build;
+import android.os.Handler;
+import android.os.Looper;
 import android.webkit.WebView;
 import android.view.View;
 import android.view.WindowManager;
@@ -15,12 +17,22 @@ import java.util.Locale;
 
 public class MainActivity extends BridgeActivity {
     private Insets latestSafeInsets = Insets.NONE;
-    // V22 follow-up: OEM side-rail floating windows (ColorOS smart sidebar)
-    // never fire onMultiWindowModeChanged nor onStop, so the window-size fallback
-    // below treats a shrunken activity window like a multi-window surface. The
-    // web layer deduplicates the extra signal against the standard paths.
     private boolean miniWindowActive = false;
     private final Runnable miniWindowCheck = this::checkMiniWindowFallback;
+    // V22 follow-up: OEM side-rail floating windows (ColorOS smart sidebar) hide
+    // the host activity without a reliable onStop or multi-window callback, so
+    // three compensating channels exist: onPause/onResume signals, a 1-second
+    // window-area poll, and the standard onMultiWindowModeChanged callback. The
+    // domain layer deduplicates every path (one pending background per session).
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private final Runnable miniWindowPoll = new Runnable() {
+        @Override
+        public void run() {
+            if (isFinishing() || isDestroyed()) return;
+            checkMiniWindowFallback();
+            if (!isFinishing() && !isDestroyed()) mainHandler.postDelayed(this, 1000);
+        }
+    };
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -66,6 +78,16 @@ public class MainActivity extends BridgeActivity {
             view.removeCallbacks(miniWindowCheck);
             view.postDelayed(miniWindowCheck, 700);
         });
+        mainHandler.postDelayed(miniWindowPoll, 500);
+    }
+
+    private void pushMiniWindowSignal(boolean active) {
+        if (getBridge() == null || getBridge().getWebView() == null) return;
+        FocusIntegrityPlugin.recordBackgroundContext(this);
+        getBridge().getWebView().post(() -> getBridge().getWebView().evaluateJavascript(
+            "window.dispatchEvent(new CustomEvent('blockcolc-multi-window',{detail:{active:" + active + "}}));",
+            null
+        ));
     }
 
     private void checkMiniWindowFallback() {
@@ -128,20 +150,25 @@ public class MainActivity extends BridgeActivity {
     }
 
     @Override
+    public void onPause() {
+        super.onPause();
+        // A floating window typically pauses the host without stopping it;
+        // report the pause as a potential leave (the 3 s grace absorbs quick
+        // system overlays) and let the domain layer deduplicate with onStop.
+        pushMiniWindowSignal(true);
+    }
+
+    @Override
+    public void onResume() {
+        super.onResume();
+        pushMiniWindowSignal(false);
+    }
+
+    @Override
     @android.annotation.TargetApi(24)
     public void onMultiWindowModeChanged(boolean isInMultiWindowMode) {
         super.onMultiWindowModeChanged(isInMultiWindowMode);
-        if (getBridge() == null || getBridge().getWebView() == null) return;
-        // V22 follow-up: split-screen / floating-window entry does not stop the
-        // activity, so the web layer would never see an app switch. Push an
-        // explicit signal; the domain layer counts it like a background stop and
-        // deduplicates it against a simultaneous onStop (one pending background
-        // instant per session).
-        FocusIntegrityPlugin.recordBackgroundContext(this);
-        getBridge().getWebView().post(() -> getBridge().getWebView().evaluateJavascript(
-            "window.dispatchEvent(new CustomEvent('blockcolc-multi-window',{detail:{active:" + isInMultiWindowMode + "}}));",
-            null
-        ));
+        pushMiniWindowSignal(isInMultiWindowMode);
     }
 
     @Override
