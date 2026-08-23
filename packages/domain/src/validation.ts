@@ -27,15 +27,15 @@ export class DomainStateValidationError extends Error {
 }
 
 export function parseDomainState(raw: unknown): DomainState {
-  const migrated = migrateV7State(migrateTerrainV4State(migrateV6State(migrateV5State(migrateV4State(withBuildingBlueprintDefaults(migrateV2State(withDecorationDefaults(migrateV1State(raw)))))))));
+  const migrated = migrateV8State(migrateV7State(migrateTerrainV4State(migrateV6State(migrateV5State(migrateV4State(withBuildingBlueprintDefaults(migrateV2State(withDecorationDefaults(migrateV1State(raw))))))))));
   const root = object(migrated, "$", [
     "schemaVersion", "projects", "habitBuildings", "activeProjectId", "retiredSubtaskIds", "activeFocusSession",
     "focusHistory", "progressReports", "dailyGoals", "calendar", "decayPolicy", "projectConditions", "focusIntegrityPolicy",
     "decorationBlueprintResources", "decorationRewards", "buildingBlueprintResources", "worldSettings",
   ]);
-  if (root.schemaVersion !== 8) invalid("$.schemaVersion", "must equal 8");
+  if (root.schemaVersion !== 9) invalid("$.schemaVersion", "must equal 9");
   const state: DomainState = {
-    schemaVersion: 8,
+    schemaVersion: 9,
     projects: array(root.projects, "$.projects", parseProject),
     habitBuildings: array(root.habitBuildings, "$.habitBuildings", parseHabitBuilding),
     activeProjectId: nullableString(root.activeProjectId, "$.activeProjectId"),
@@ -292,7 +292,7 @@ function parseSubtask(raw: unknown, path: string): Subtask {
 }
 
 function parseActiveSession(raw: unknown, path: string): ActiveFocusSession {
-  const x = objectWithOptional(raw, path, ["id", "projectId", "subtaskId", "startedAt", "endsAt", "plannedDurationMs", "timeZoneAtStart", "integrity", "marathon"], ["marathon"]);
+  const x = objectWithOptional(raw, path, ["id", "projectId", "subtaskId", "startedAt", "endsAt", "plannedDurationMs", "timeZoneAtStart", "integrity", "marathon", "settledAt"], ["marathon", "settledAt"]);
   const session: ActiveFocusSession = {
     id: nonBlankString(x.id, path + ".id"),
     projectId: nonBlankString(x.projectId, path + ".projectId"),
@@ -302,6 +302,7 @@ function parseActiveSession(raw: unknown, path: string): ActiveFocusSession {
     plannedDurationMs: integer(x.plannedDurationMs, path + ".plannedDurationMs", 1),
     timeZoneAtStart: timeZone(x.timeZoneAtStart, path + ".timeZoneAtStart"),
     ...(x.marathon === true ? { marathon: true } : {}),
+    ...(x.settledAt === undefined ? {} : { settledAt: instant(x.settledAt, path + ".settledAt") }),
     integrity: parseActiveFocusIntegrity(x.integrity, path + ".integrity"),
   };
   validateScheduledTimes(session, path);
@@ -316,9 +317,9 @@ function parseFocusSession(raw: unknown, path: string): FocusSession {
   const base = record(raw, path);
   const status = enumeration(base.status, path + ".status", ["completed", "completed-early", "interrupted"] as const);
   const keys = status === "interrupted"
-    ? ["id", "projectId", "subtaskId", "startedAt", "endsAt", "plannedDurationMs", "timeZoneAtStart", "status", "interruptedAt", "interruptionReason", "interruptionCategory", "actualDurationMs", "marathon"]
-    : ["id", "projectId", "subtaskId", "startedAt", "endsAt", "plannedDurationMs", "timeZoneAtStart", "status", "completedAt", "completedLocalDate", "actualDurationMs", "marathon"];
-  const x = objectWithOptional(raw, path, keys, ["marathon"]);
+    ? ["id", "projectId", "subtaskId", "startedAt", "endsAt", "plannedDurationMs", "timeZoneAtStart", "status", "interruptedAt", "interruptionReason", "interruptionCategory", "actualDurationMs", "marathon", "settledAt"]
+    : ["id", "projectId", "subtaskId", "startedAt", "endsAt", "plannedDurationMs", "timeZoneAtStart", "status", "completedAt", "completedLocalDate", "actualDurationMs", "marathon", "settledAt"];
+  const x = objectWithOptional(raw, path, keys, ["marathon", "settledAt"]);
   const active = parseActiveSessionFields(x, path);
   if (status === "completed" || status === "completed-early") {
     const completedAt = instant(x.completedAt, path + ".completedAt");
@@ -351,6 +352,7 @@ function parseActiveSessionFields(x: Record<string, unknown>, path: string): Foc
     endsAt: instant(x.endsAt, path + ".endsAt"), plannedDurationMs: integer(x.plannedDurationMs, path + ".plannedDurationMs", 1),
     timeZoneAtStart: timeZone(x.timeZoneAtStart, path + ".timeZoneAtStart"),
     ...(x.marathon === true ? { marathon: true } : {}),
+    ...(x.settledAt === undefined ? {} : { settledAt: instant(x.settledAt, path + ".settledAt") }),
   };
   validateScheduledTimes(session, path);
   return session;
@@ -774,6 +776,15 @@ function migrateV7State(raw: unknown): unknown {
     return Array.isArray(ids) && ids.some((id) => sharedIds.has(id as string)) ? { ...report, shared: true } : report;
   });
   return { ...candidate, schemaVersion: 8, progressReports };
+}
+
+function migrateV8State(raw: unknown): unknown {
+  const candidate = record(raw, "$");
+  if (candidate.schemaVersion !== 8) return raw;
+  // V23: FocusSession gained an optional `settledAt` marker for marathon rounds
+  // that were settled without attribution. Old sessions simply lack the field,
+  // so the migration only bumps the version.
+  return { ...candidate, schemaVersion: 9 };
 }
 
 function migrateTerrainV4State(raw: unknown): unknown {

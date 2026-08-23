@@ -47,12 +47,28 @@ export function createOrderedLifecycleDispatcher(
   const enqueue = (operation: () => void | Promise<void>) => {
     tail = tail.then(operation).catch(error => { console.error('Focus lifecycle reconciliation failed', error); });
   };
+  // V23: several native channels report the same physical transition (Capacitor
+  // appStateChange, onResume/onWindowFocusChanged, notification taps), so the
+  // ordered queue can see background,background or foreground,foreground pairs.
+  // The domain already deduplicates the pending background, but every extra
+  // foreground still reloads and re-validates the whole persisted state on the
+  // JS main thread — that storm made world rotation stutter for seconds after
+  // returning. Coalesce same-direction duplicates that arrive back-to-back.
+  let lastDirection: 'background' | 'foreground' | null = null;
+  let lastDirectionAt = 0;
+  const coalesce = (direction: 'background' | 'foreground', operation: () => void | Promise<void>) => {
+    const now = Date.now();
+    if (direction === lastDirection && now - lastDirectionAt < 600) return;
+    lastDirection = direction;
+    lastDirectionAt = now;
+    enqueue(operation);
+  };
   return {
     background() {
-      enqueue(async () => { await listener(mapNativeBackgroundContext(await readBackgroundContext())); });
+      coalesce('background', async () => { await listener(mapNativeBackgroundContext(await readBackgroundContext())); });
     },
     foreground() {
-      enqueue(async () => { await listener({ type: 'foreground' }); });
+      coalesce('foreground', async () => { await listener({ type: 'foreground' }); });
     },
     drain() { return tail; },
   };

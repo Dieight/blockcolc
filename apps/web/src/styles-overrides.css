@@ -143,6 +143,17 @@
 .stats-page{max-width:780px}.stats-page>h1{margin-bottom:18px}.stats-section-heading{display:flex;align-items:start;justify-content:space-between;gap:14px}.stats-section-heading h2{margin:0;font-size:17px}.stats-section-heading p{margin:4px 0 0;color:#58635d;font-size:12px}.stats-section-heading>span{color:#276749;font-size:13px;font-weight:800;white-space:nowrap}.focus-heatmap-card{margin:0;padding:16px;border:1px solid #b7c8bb;border-radius:6px;background:#fff}.focus-heatmap-scroll{margin:16px -2px 0;overflow-x:auto;overscroll-behavior-x:contain}.focus-heatmap{min-width:570px}.focus-heatmap-months{display:grid;grid-template-columns:repeat(26,minmax(10px,1fr));min-height:16px;margin-left:29px;color:#58635d;font-size:11px}.focus-heatmap-months span{min-width:0;overflow:hidden;white-space:nowrap}.focus-heatmap-content{display:grid;grid-template-columns:21px minmax(0,1fr);gap:8px;margin-top:5px}.focus-heatmap-weekdays{display:grid;grid-template-rows:repeat(7,12px);gap:3px;color:#58635d;font-size:10px;line-height:12px}.focus-heatmap-grid{display:grid;grid-auto-flow:column;grid-template-columns:repeat(26,minmax(10px,1fr));grid-template-rows:repeat(7,12px);gap:3px}.focus-heatmap-cell{display:block;border-radius:2px;background:#e4e9e5}.heat-level-1{background:#c4dfc9}.heat-level-2{background:#8bbd94}.heat-level-3{background:#4d8f60}.heat-level-4{background:#216c40}.focus-heatmap-cell.is-future{background:#f3f5f2;border:1px solid #e5eae6}.focus-heatmap-legend{display:flex;align-items:center;justify-content:flex-end;gap:4px;margin-top:13px;color:#58635d;font-size:11px}.focus-heatmap-legend i{width:12px;height:12px;border-radius:2px}.focus-heatmap-legend .heat-level-0{background:#e4e9e5}.stats-overview{margin-top:24px}.stats-overview .stats-section-heading{margin-bottom:11px}.stats-grid{grid-template-columns:repeat(4,minmax(0,1fr))}.stats-grid>div{padding:12px 10px}.stats-grid .stats-duration strong{font-size:18px;line-height:1.25;white-space:nowrap}.stats-detail-line{display:flex;flex-wrap:wrap;gap:8px 16px;margin-top:12px;color:#58635d;font-size:12px}.stats-detail-line b{color:#27342e}.stats-page .interruption-summary{margin-top:22px}.stats-note{margin-top:18px;font-size:12px;line-height:1.5}
 @media(max-width:699px){.world-screen:not(.is-focusing):not(.has-report) .v7-focus-panel{display:grid;grid-template-rows:auto auto auto minmax(0,1fr) auto;align-content:stretch;padding:14px 20px 16px;gap:10px}.world-screen:not(.is-focusing):not(.has-report) .timer{align-self:center;margin:0;font-size:clamp(48px,calc(7dvh - 8px),56px)}.world-screen:not(.is-focusing):not(.has-report) .primary{align-self:end}.daily-goal-sheet{width:100%}.stats-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.focus-heatmap-card{padding:14px}.focus-heatmap-scroll{margin-right:0;overflow:visible}.focus-heatmap{min-width:0}.focus-heatmap-months{grid-template-columns:repeat(26,minmax(0,1fr));margin-left:29px;font-size:10px}.focus-heatmap-content{grid-template-columns:19px minmax(0,1fr);gap:6px}.focus-heatmap-weekdays{grid-template-rows:repeat(7,10px);gap:2px;line-height:10px}.focus-heatmap-grid{grid-template-columns:repeat(26,minmax(0,1fr));grid-template-rows:repeat(7,10px);gap:2px}.daily-goal-reward-panel{align-items:stretch;flex-direction:column}.daily-goal-reward-panel button{width:100%}}
 
+/* V23 ③: clicking a heatmap cell shows that day's focus detail in a small tip. */
+.focus-heatmap-cell:not(.is-future){cursor:pointer}
+.focus-heatmap-cell:focus-visible{outline:2px solid #216c40;outline-offset:1px}
+.focus-heatmap-cell.is-selected{outline:2px solid #163b2b;outline-offset:1px}
+.focus-heatmap-tip{position:fixed;z-index:60;width:186px;padding:10px 12px;border:1px solid #0d2f21;border-radius:6px;background:#14271d;color:#eaf3ec;box-shadow:0 8px 28px rgba(6,14,10,.38)}
+.focus-heatmap-tip-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:7px;font-size:13px}
+.focus-heatmap-tip-close{flex:0 0 auto;width:22px;height:22px;padding:0;border:1px solid #4a6b57;border-radius:4px;background:transparent;color:#cfe3d4;font-size:15px;line-height:1}
+.focus-heatmap-tip-row{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-top:4px;font-size:12px}
+.focus-heatmap-tip-row span{color:#9db8a6}
+.focus-heatmap-tip-row strong{color:#fff;font-size:13px;font-variant-numeric:tabular-nums}
+
 .stats-rhythm,.project-allocation{margin-top:24px;padding-top:20px;border-top:1px solid var(--line)}.rhythm-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:12px}.rhythm-grid>div{min-height:116px;padding:13px 10px;border:1px solid #c8d2cb;border-radius:6px;background:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;text-align:center}.rhythm-grid span{color:#58635d;font-size:12px;font-weight:700}.rhythm-grid strong{font-size:18px;line-height:1.25;color:#1f5f38;font-variant-numeric:tabular-nums;white-space:nowrap}.rhythm-grid small{color:#58635d;font-size:12px}.rhythm-comparison{margin:10px 0 0;color:#58635d;font-size:12px;text-align:center}.project-allocation>p{color:#58635d;font-size:13px}.project-allocation ul{display:grid;gap:12px;margin:14px 0 0;padding:0;list-style:none}.project-allocation li{display:grid;gap:6px}.project-allocation li>div{display:flex;align-items:baseline;justify-content:space-between;gap:12px}.project-allocation strong{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}.project-allocation span{flex:0 0 auto;color:#58635d;font-size:11px}.project-allocation i{height:7px;overflow:hidden;border-radius:2px;background:#e1e7e2}.project-allocation i b{display:block;height:100%;border-radius:2px;background:#3f8255}@media(min-width:700px){.rhythm-grid strong{font-size:21px}}
 @media(min-width:700px) and (max-height:620px){.world-screen:not(.is-focusing):not(.has-report) .v7-focus-panel{display:grid;grid-template-rows:auto auto auto minmax(0,1fr) auto;align-content:stretch}.world-screen:not(.is-focusing):not(.has-report) .timer{align-self:center}.world-screen:not(.is-focusing):not(.has-report) .primary{align-self:end}}
 
@@ -359,12 +370,20 @@
    band floats at the bottom so the world blurs through it. The end control is hidden
    until a double-tap on the band, and sits in a fixed-height slot so the reveal never
    moves the panel. */
+/* V23 ②: the immersive focus info board now carries only the task name above the
+   time and the double-tap end control below it; the time sits exactly on the board's
+   vertical+horizontal center. The transient chips (本轮习惯 / 第x/x轮专注 / 本轮剩余)
+   are gone, the task-name slot and the control slot share one height so the time stays
+   dead center, and a long task name clamps to two lines instead of growing the board
+   (V23 BUG 1) or colliding with anything else. */
 .focus-immersive .world-screen.is-focusing{display:block;position:relative;width:100%;height:100dvh}
 .focus-immersive .is-focusing .world{position:absolute;inset:0;width:100%;height:100dvh;min-height:0;max-height:none}
 .focus-immersive .is-focusing .world-hud{display:none}
-.focus-immersive .is-focusing .focus-panel{position:absolute;left:0;right:0;bottom:0;border-top:1px solid rgba(203,210,205,.85);background:rgba(243,245,242,.66);backdrop-filter:blur(18px) saturate(1.2);-webkit-backdrop-filter:blur(18px) saturate(1.2);padding:max(16px,var(--safe-bottom)) max(20px,var(--safe-right)) 20px max(20px,var(--safe-left));display:grid;align-content:end;justify-items:center;gap:6px;max-width:none;margin:0}
-.focus-immersive .is-focusing .timer{margin:10px 0 6px;font-size:64px}
-.focus-immersive .is-focusing .focus-task-context strong{font-size:16px}
+.focus-immersive .is-focusing .focus-panel{position:absolute;left:0;right:0;bottom:0;height:clamp(290px,46dvh,470px);border-top:1px solid rgba(203,210,205,.85);background:rgba(243,245,242,.66);backdrop-filter:blur(18px) saturate(1.2);-webkit-backdrop-filter:blur(18px) saturate(1.2);padding:max(16px,var(--safe-bottom)) max(20px,var(--safe-right)) max(16px,var(--safe-bottom)) max(20px,var(--safe-left));display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;max-width:none;margin:0}
+.focus-immersive .is-focusing .focus-task-context{display:flex;align-items:center;justify-content:center;min-height:48px;max-width:100%;padding:0;gap:0}
+.focus-immersive .is-focusing .focus-task-context strong{max-width:100%;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere;font-size:16px;line-height:1.3;text-align:center}
+.focus-immersive .is-focusing .timer{margin:0;font-size:64px}
+.focus-immersive .is-focusing .timer-label{display:none}
 .immersive-controls{width:100%;min-height:48px;display:grid;place-items:center}
 .immersive-controls .primary.destructive{width:min(100%,340px)}
 .immersive-hint{margin:0;font-size:11px;color:#58635d;opacity:1;transition:opacity 1.2s ease}
@@ -380,8 +399,7 @@
 @keyframes integrity-flash-in{from{opacity:0;transform:translate(-50%,6px)}to{opacity:1;transform:translate(-50%,0)}}
 @media(min-width:700px){.focus-immersive .world-screen.is-focusing{display:block;position:relative}
 .focus-immersive .is-focusing .world{position:absolute;inset:0;width:100%;height:100dvh;min-height:0;max-height:none}
-.focus-immersive .is-focusing .focus-panel{position:absolute;left:auto;right:0;top:0;bottom:0;height:100dvh;width:clamp(288px,34vw,330px);border-top:0;border-left:1px solid rgba(203,210,205,.85);background:rgba(243,245,242,.66);backdrop-filter:blur(18px) saturate(1.2);-webkit-backdrop-filter:blur(18px) saturate(1.2);padding:max(16px,var(--safe-top)) max(18px,var(--safe-right)) max(16px,var(--safe-bottom)) 18px;align-content:center}
-.focus-immersive .is-focusing .timer{margin:14px 0 10px}
+.focus-immersive .is-focusing .focus-panel{position:absolute;left:auto;right:0;top:0;bottom:0;height:100dvh;width:clamp(288px,34vw,330px);border-top:0;border-left:1px solid rgba(203,210,205,.85);background:rgba(243,245,242,.66);backdrop-filter:blur(18px) saturate(1.2);-webkit-backdrop-filter:blur(18px) saturate(1.2);padding:max(16px,var(--safe-top)) max(18px,var(--safe-right)) max(16px,var(--safe-bottom)) 18px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px}
 .focus-immersive .is-focusing .focus-integrity-warning.flash{top:auto;bottom:max(16px,var(--safe-bottom));left:50%}}
 
 /* V19 diagnosis: a light tap on the world reports the terrain cell coordinates in a
@@ -516,3 +534,67 @@
 /* V21: a started plan's sheet confirm turns into a red "cancel plan" action,
    matching the immersive end-focus button's destructive colour. */
 .primary.destructive{background:#712a30;border-color:#a84b51;color:#fff}
+
+/* V23 ④: dark theme — <html data-theme="dark"> is set by 设置→外观 (浅色/深色/跟随系统). */
+:root[data-theme="dark"]{color-scheme:dark;--focus:#6fce96;--line:#2c3a31;--muted:#93b0a0;color:#e6efe9;background:#0e1512}
+html[data-theme="dark"],html[data-theme="dark"] body,html[data-theme="dark"] #root{background:#0e1512;color:#e6efe9}
+
+/* Chrome */
+[data-theme="dark"] .topbar{background:rgba(14,21,18,.96);border-color:var(--line)}
+[data-theme="dark"] .bottom-nav{background:#131c17;border-color:var(--line)}
+[data-theme="dark"] .bottom-nav button{color:#8aa295}
+[data-theme="dark"] .world,[data-theme="dark"] .setup-world{background:#0d1712}
+
+/* Inputs & generic buttons */
+[data-theme="dark"] select,[data-theme="dark"] input,[data-theme="dark"] textarea{background:#121a16;color:#e6efe9;border-color:#38473d}
+[data-theme="dark"] input::placeholder,[data-theme="dark"] textarea::placeholder{color:#6c8577}
+[data-theme="dark"] .duration button,[data-theme="dark"] .report-options button,[data-theme="dark"] .setting button,[data-theme="dark"] .dialog-actions button,[data-theme="dark"] .resource-pack-original button,[data-theme="dark"] .resource-pack-list li button,[data-theme="dark"] .resource-pack-import,[data-theme="dark"] .backup-actions button,[data-theme="dark"] .file-button,[data-theme="dark"] .rollback-heading button,[data-theme="dark"] .rollback-list li button,[data-theme="dark"] .setup-kind button,[data-theme="dark"] .blueprint-option,[data-theme="dark"] .danger-outline,[data-theme="dark"] .planned-days button{background:#131c17;color:#e6efe9;border-color:#38473d}
+[data-theme="dark"] .duration .selected,[data-theme="dark"] .blueprint-option.selected{background:#1f3329;border-color:var(--focus);color:var(--focus)}
+[data-theme="dark"] .setup-kind button{color:var(--muted)}
+[data-theme="dark"] .setup-kind button[aria-pressed="true"]{color:#e6efe9}
+[data-theme="dark"] .planned-days button[aria-pressed="true"]{background:#1f3329;color:var(--focus)}
+[data-theme="dark"] .planned-days button:disabled{color:#4a5b52}
+[data-theme="dark"] .primary{color:#0c1410}
+[data-theme="dark"] .switch-control,[data-theme="dark"] .integrity-controls .switch-control{color:#e6efe9}
+[data-theme="dark"] input[type="checkbox"]{accent-color:var(--focus)}
+[data-theme="dark"] .segmented-control{background:#1a241f}
+[data-theme="dark"] .segmented-control button[aria-pressed="true"]{background:#17211c;color:var(--focus)}
+
+/* Cards, dialogs and sheets */
+[data-theme="dark"] .task-list>div,[data-theme="dark"] .blueprint-choice,[data-theme="dark"] .report,[data-theme="dark"] .focus-hour-card,[data-theme="dark"] .focus-heatmap-card,[data-theme="dark"] .rhythm-grid>div,[data-theme="dark"] .stats-grid>div,[data-theme="dark"] .import-preview,[data-theme="dark"] .resource-pack-original,[data-theme="dark"] .resource-pack-list li,[data-theme="dark"] .marathon-settlement-card,[data-theme="dark"] .confirm-dialog,[data-theme="dark"] .focus-plan-sheet,[data-theme="dark"] .daily-goal-sheet,[data-theme="dark"] .daily-goal,[data-theme="dark"] .end-focus-dialog,[data-theme="dark"] .about-dialog,[data-theme="dark"] .current-work{background:#17211c;border-color:var(--line)}
+[data-theme="dark"] .resource-pack-original.active,[data-theme="dark"] .resource-pack-list li.active,[data-theme="dark"] .daily-goal-workbench{background:#1a2920;border-color:#3a5545}
+
+/* Text */
+[data-theme="dark"] .settings-group>h2,[data-theme="dark"] .setting-value,[data-theme="dark"] .workbench-context strong,[data-theme="dark"] .plan-summary,[data-theme="dark"] .number-field input,[data-theme="dark"] .setup-subtasks-head,[data-theme="dark"] .marathon-report-copy{color:#e6efe9}
+[data-theme="dark"] .settings-head p,[data-theme="dark"] .setting-name small,[data-theme="dark"] .task-queue-label,[data-theme="dark"] .stats-intro,[data-theme="dark"] .project-allocation span,[data-theme="dark"] .allocation-legend span,[data-theme="dark"] .focus-hour-axis,[data-theme="dark"] .focus-hour-legend,[data-theme="dark"] .workbench-context span,[data-theme="dark"] .workbench-context small,[data-theme="dark"] .habit-selection-heading p,[data-theme="dark"] .marathon-report-row span,[data-theme="dark"] .interruption-summary p,[data-theme="dark"] .stats-note,[data-theme="dark"] .backup-panel>div>p,[data-theme="dark"] .resource-pack-panel header p,[data-theme="dark"] .number-field,[data-theme="dark"] .text-toggle button{color:var(--muted)}
+
+/* Settings hairline separators */
+[data-theme="dark"] .settings-group,[data-theme="dark"] .building-blueprint-panel,[data-theme="dark"] .resource-pack-panel,[data-theme="dark"] .backup-panel{border-top-color:#24312a}
+[data-theme="dark"] .settings-group>.setting-row{border-bottom-color:#24312a}
+
+/* Accents */
+[data-theme="dark"] .report>svg,[data-theme="dark"] .about-icon,[data-theme="dark"] .task-list b,[data-theme="dark"] .rhythm-grid strong,[data-theme="dark"] .build-percent,[data-theme="dark"] .stats-section-heading>span,[data-theme="dark"] .plan-summary span:last-child,[data-theme="dark"] .task-switch-action,[data-theme="dark"] .project-view-action,[data-theme="dark"] .settings-text-action,[data-theme="dark"] .resource-pack-original button,[data-theme="dark"] .resource-pack-list li button:not(.resource-pack-delete),[data-theme="dark"] .backup-actions button,[data-theme="dark"] .file-button,[data-theme="dark"] .rollback-heading button,[data-theme="dark"] .rollback-list li button{color:var(--focus)}
+[data-theme="dark"] .meter{background:#24312a}
+[data-theme="dark"] .allocation-bar,[data-theme="dark"] .project-allocation i{background:#24312a}
+[data-theme="dark"] .allocation-bar .allocation-other,[data-theme="dark"] .allocation-legend li>i.allocation-other{background:#33463c}
+[data-theme="dark"] .project-allocation i b{background:#4f8f63}
+[data-theme="dark"] .text-toggle button:hover{background:#1a241f}
+[data-theme="dark"] .number-field input:focus-visible{background:#121a16}
+
+/* Danger */
+[data-theme="dark"] .danger-outline,[data-theme="dark"] .primary.destructive,[data-theme="dark"] .dialog-actions .danger-action{border-color:#e26060}
+[data-theme="dark"] .danger-outline,[data-theme="dark"] .blueprint-delete,[data-theme="dark"] .resource-pack-delete,[data-theme="dark"] .project-delete-zone h2,[data-theme="dark"] .plan-sheet-error{color:#ff8a8a}
+[data-theme="dark"] .backup-error{color:#ff9a9a;background:#2c1a1c;border-color:#5c2a2e}
+[data-theme="dark"] .backup-notice{color:#7fd6a1;background:#16271c;border-color:#2d4a37}
+
+/* Heatmap */
+[data-theme="dark"] .focus-heatmap-cell{background:#26312b}
+[data-theme="dark"] .heat-level-1{background:#2e4a37}
+[data-theme="dark"] .heat-level-2{background:#3f6b4c}
+[data-theme="dark"] .heat-level-3{background:#55905f}
+[data-theme="dark"] .heat-level-4{background:#74b37e}
+[data-theme="dark"] .focus-heatmap-cell.is-future{background:#1a221d;border-color:#26312b}
+[data-theme="dark"] .focus-heatmap-legend .heat-level-0{background:#26312b}
+
+/* World HUD already dark; deepen slightly for consistency */
+[data-theme="dark"] .world-hud span,[data-theme="dark"] .world-hud button,[data-theme="dark"] .immersive-reset-view,[data-theme="dark"] .world-building-details,[data-theme="dark"] .world-pick-chip{background:rgba(11,17,14,.92)}

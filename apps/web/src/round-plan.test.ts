@@ -182,7 +182,9 @@ describe('round-plan recovery', () => {
       plannedDurationMs: 2_700_000, timeZoneAtStart: 'Asia/Shanghai',
       interruptedAt: '2026-08-05T08:20:00.000Z', interruptionReason: 'user-cancelled', interruptionCategory: null, actualDurationMs: 1_200_000,
     }] as DomainState['focusHistory'];
-    expect(reconcileRoundPlan(marathon, state({ focusHistory }), projectId, Date.parse('2026-08-05T08:21:00.000Z'), 0, 300_000)).toBeNull();
+    expect(reconcileRoundPlan(marathon, state({ focusHistory }), projectId, Date.parse('2026-08-05T08:21:00.000Z'), 0, 300_000)).toMatchObject({
+      projectId, mode: 'marathon', status: 'ready', completedRounds: 0,
+    });
   });
 
   it('V22: keeps a marathon plan while the active project switches away', () => {

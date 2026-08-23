@@ -13,12 +13,13 @@ import { ResourcePackPanel } from './ResourcePackPanel';
 import { ChoiceMenu } from './ChoiceMenu';
 import { LITEMATIC_MAX_COMPRESSED_BYTES, readBrowserFileBytes, saveBackupFile } from './browser-adapters';
 import { APPLICATION_STATE_CHANGED_EVENT } from './bootstrap';
-import { effectiveFocusMillisecondsByDate, focusHeatmapLevel, focusHourDistribution, focusSessionEndedAt, focusSessionLocalDate, focusWindowSummary, projectFocusAllocation, settlementTotals } from './focus-stats';
+import { effectiveFocusMillisecondsByDate, focusHeatmapLevel, focusHourDistribution, focusSessionCountByDate, focusSessionEndedAt, focusSessionLocalDate, focusWindowSummary, projectFocusAllocation, settlementTotals } from './focus-stats';
 import { MAX_MARATHON_ROUNDS, parseRoundPlan, planRoundsForDuration, plannedDurationMs, reconcileRoundPlan, roundPlansEqual, type RoundPlan } from './round-plan';
 import releaseVersion from '../../../version.json';
 
 type Tab = 'world' | 'tasks' | 'stats' | 'settings';
-interface FocusPreferences { focusMinutes: number; habitFocusMinutes: number; habitTargetRounds: number; breakMinutes: number; lightingQuality: VoxelLightingQuality; constructionOutlineVisibility: ConstructionOutlineVisibility }
+type ThemeMode = 'light' | 'dark' | 'system';
+interface FocusPreferences { focusMinutes: number; habitFocusMinutes: number; habitTargetRounds: number; breakMinutes: number; lightingQuality: VoxelLightingQuality; constructionOutlineVisibility: ConstructionOutlineVisibility; themeMode: ThemeMode }
 type ImportRole = 'building' | 'decoration';
 interface ProjectSetupDraft { kind: 'finite' | 'habit'; title: string; subtasksText: string; blueprintId: string; habitTargetRounds: number; imported: LitematicImportResult | null; packCompatibility: { name: string; textured: number; fallback: number; total: number } | null; importRole: ImportRole }
 const PREFERENCES_KEY = 'blockcolc-focus-preferences-v1';
@@ -48,6 +49,21 @@ export function App({ service, resourcePacks }: { service: ApplicationService; r
   const [aboutOpen,setAboutOpen]=useState(false);
   const [ceremony,setCeremony]=useState<{projectId:string;title:string}|null>(null);
   const [preferences, setPreferences] = useState<FocusPreferences>(loadPreferences);
+  useEffect(() => {
+    const media = window.matchMedia('(prefers-color-scheme: dark)');
+    const apply = () => {
+      const dark = preferences.themeMode === 'dark' || (preferences.themeMode === 'system' && media.matches);
+      const root = document.documentElement;
+      root.dataset.theme = dark ? 'dark' : 'light';
+      root.style.colorScheme = dark ? 'dark' : 'light';
+    };
+    apply();
+    if (preferences.themeMode === 'system') {
+      media.addEventListener('change', apply);
+      return () => media.removeEventListener('change', apply);
+    }
+    return undefined;
+  }, [preferences.themeMode]);
   const refresh = useCallback(() => setVersion(v => v + 1), []);
   const run = useCallback(async (command: ApplicationCommand) => { try { const result = await service.dispatch(command); if (!result.ok) setMessage(result.message); else {if(result.events.some(event=>event.type==='FocusInterrupted'&&event.reason==='app-switch-limit'))setMessage('本轮专注因达到离开应用次数上限而结束。下次可以从这里继续。'); else if(result.events.some(event=>event.type==='FocusInterrupted'))setMessage('本轮已记录，有效专注时间已计入统计。'); else if(result.events.some(event=>event.type==='HabitBuildingCompleted'))setMessage('这座习惯建筑已完成，请选择下一座建筑。'); else if(result.events.some(event=>event.type==='FocusCompletedEarly'))setMessage(result.events.some(event=>event.type==='HabitBuildingProgressed')?'习惯专注已推进一轮，实际专注时间已记录。':'小任务已提前完成，实际专注时间已记录。'); else if(result.warnings.some(warning=>warning.code==='NOTIFICATION_INEXACT'))setMessage('系统提醒已开启，但未获精准闹钟权限，锁屏时可能略有延迟。'); else if (result.warnings.length) setMessage('计时已开始；系统通知当前不可用，回到应用时仍会正确恢复。'); else if (result.events.some(event => event.type === 'ProjectDeleted')) setMessage('任务已删除，已完成的习惯建筑仍保留在聚落中。'); else setMessage(''); const sealed=result.events.find(event=>event.type==='ProjectSealedAsMonument');if(sealed){const project=result.state.projects.find(item=>item.id===sealed.projectId);if(project)setCeremony({projectId:project.id,title:project.title});}} refresh(); return result; } catch (error) { setMessage(error instanceof Error ? error.message : '操作失败，请重试。'); throw error; } }, [service, refresh]);
   useEffect(() => { const resumeFromPageCache = (event:PageTransitionEvent) => { if(event.persisted)void service.resume().then(refresh); }; window.addEventListener('pageshow',resumeFromPageCache);return()=>window.removeEventListener('pageshow',resumeFromPageCache);},[service,refresh]);
@@ -418,9 +434,6 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
   }, [service, reconciledPlan?.status, reconciledPlan?.breakEndsAt]);
 
   useEffect(() => {
-    if (integrityFailure && reconciledPlan?.status === 'focus') setPlan(null);
-  }, [integrityFailure, reconciledPlan, setPlan]);
-  useEffect(() => {
     if (habitAwaiting && plan !== null) setPlan(null);
   }, [habitAwaiting, plan, setPlan]);
 
@@ -493,7 +506,8 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
     const reported = new Set(latest.progressReports.flatMap((report) => report.focusSessionIds));
     const settled = latest.focusHistory.filter((item) =>
       item.projectId === currentPlan.projectId && item.status === 'completed'
-        && item.marathon === true && !reported.has(item.id));
+        && item.marathon === true && !reported.has(item.id)
+        && item.settledAt === undefined && !marathonRoundSettled(latest, item.id));
     if (settled.length > 0) {
       setPlan({
         ...currentPlan,
@@ -679,9 +693,9 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
        {habitAwaiting ? <HabitBuildingSelection state={state} active={active} resourcePacks={resourcePacks} run={run} targetRounds={preferences.habitTargetRounds}/>
         : marathonReportPhase ? <MarathonProgressReport state={state} hostProjectId={reconciledPlan!.projectId} run={run} onSubmitted={() => { setPlan(null); fireConstructionFeedback(); }}/>
         : pending.length > 0 && !marathonPlan ? <ProgressReportV7 active={active} run={run} onSubmitted={afterReport}/> : <>
-         {session && <div className="focus-task-context"><span>{isHabit ? '本轮习惯' : marathonPlan ? '本场推进' : '本轮任务'}</span><strong>{isHabit ? active.project.title : marathonPlan ? `马拉松 第 ${(reconciledPlan?.completedRounds ?? 0) + 1} / ${reconciledPlan?.totalRounds ?? 1} 轮` : subtask!.title}</strong></div>}
+         {session && <div className="focus-task-context"><strong>{isHabit ? active.project.title : marathonPlan ? `马拉松 第 ${(reconciledPlan?.completedRounds ?? 0) + 1} / ${reconciledPlan?.totalRounds ?? 1} 轮` : subtask!.title}</strong></div>}
         {isBreak && <div className="rest-summary"><span>休息时间</span><strong>{marathonPlan ? `第 ${reconciledPlan?.completedRounds ?? 0} / ${reconciledPlan?.totalRounds ?? 1} 轮已结束` : (reconciledPlan?.endAfterBreak ? '小任务已完成' : '下一轮准备中')}</strong><small>{marathonPlan ? '休息结束后自动进入下一轮' : dailySummary}</small></div>}
-        {(isBreak || session || reconciledPlan?.status === 'ready') && <div className={isBreak ? 'session-kind rest' : 'session-kind'}>{isBreak ? '放松一下，结束后会回到下一步。' : session ? `第 ${(reconciledPlan?.completedRounds ?? 0) + 1} / ${reconciledPlan?.totalRounds ?? 1} 轮专注` : `准备第 ${reconciledPlan!.completedRounds + 1} / ${reconciledPlan!.totalRounds} 轮`}</div>}
+        {(isBreak || reconciledPlan?.status === 'ready') && <div className={isBreak ? 'session-kind rest' : 'session-kind'}>{isBreak ? '放松一下，结束后会回到下一步。' : `准备第 ${reconciledPlan!.completedRounds + 1} / ${reconciledPlan!.totalRounds} 轮`}</div>}
         {(session && state.focusIntegrityPolicy.enabled && (integrityFlash || integrityLeaving)) && <div className={`${session.integrity.effectiveExcursions > 0 ? 'focus-integrity-warning flash active' : 'focus-integrity-warning flash'}${integrityLeaving ? ' is-leaving' : ''}`} role="status"><AlertTriangle/>有效离开 {session.integrity.effectiveExcursions} / {state.focusIntegrityPolicy.maxEffectiveExcursions} 次</div>}
         {integrityFailure && !integrityEndedHidden && <div className={`focus-integrity-ended${integrityEndedLeaving ? ' is-leaving' : ''}`} role="alert"><AlertTriangle/>本轮专注因达到离开应用次数上限而结束。下次可以从这里继续。</div>}
          <FocusTimer mode={timerMode} endsAt={timerEndsAt} fallbackMs={timerFallbackMs} marathonRemainingMs={marathonRemainingTotalMs} onElapsed={session ? reconcile : finishBreak}/>
@@ -840,6 +854,19 @@ function ProgressReportV7({active,run,onSubmitted}:{active:NonNullable<ReturnTyp
 // projects at once. Habit buildings may take the first K rounds via steppers
 // (earliest rounds first); the remaining N-K rounds form one block shared by
 // every chosen subtask. One combined command applies everything atomically.
+/**
+ * A completed marathon round is settled once it has been consumed by a progress
+ * report, a habit building, or an explicit settlement — it must never be offered
+ * to a later settlement again. V23: this is what lets a "confirm then cancel"
+ * plan return straight to the classic lane even after earlier rounds were
+ * allocated to habits (the old code re-surfaced them as if unreported).
+ */
+function marathonRoundSettled(state: ReturnType<ApplicationService['snapshot']>, sessionId: string): boolean {
+  return state.progressReports.some((report) => report.focusSessionIds.includes(sessionId))
+    || state.habitBuildings.some((building) => building.focusSessionIds.includes(sessionId))
+    || state.projects.some((project) => project.kind === 'habit' && project.habit !== null && project.habit.completedFocusSessionIds.includes(sessionId));
+}
+
 function MarathonProgressReport({ state, hostProjectId, run, onSubmitted }: {
   state: ReturnType<ApplicationService['snapshot']>;
   hostProjectId: string;
@@ -848,7 +875,8 @@ function MarathonProgressReport({ state, hostProjectId, run, onSubmitted }: {
 }) {
   const reported = new Set(state.progressReports.flatMap((report) => report.focusSessionIds));
   const sessions = state.focusHistory.filter((item) =>
-    item.projectId === hostProjectId && item.status === 'completed' && item.marathon === true && !reported.has(item.id));
+    item.projectId === hostProjectId && item.status === 'completed' && item.marathon === true
+      && !reported.has(item.id) && item.settledAt === undefined && !marathonRoundSettled(state, item.id));
   const totalRounds = sessions.length;
   const projects = state.projects.filter((project) =>
     project.status !== 'deleted' && project.kind === 'finite' && project.subtasks.some((subtask) => subtask.progressBasisPoints < 10000));
@@ -919,14 +947,15 @@ function MarathonProgressReport({ state, hostProjectId, run, onSubmitted }: {
     }))
     .filter((entry) => entry.projectId !== '' && entry.progressBasisPoints > (subtaskCurrent.get(entry.subtaskId) ?? 0));
   const hasTargets = projects.length > 0 || habits.length > 0;
-  const canSubmit = !busy && (allocatedRounds === totalRounds ? entries.length === 0 : entries.length > 0);
+  // V23: submitting with nothing allocated is valid — the remaining rounds (or
+  // all rounds) are simply discarded instead of attributed to any task.
+  const canSubmit = !busy;
   const submit = async () => {
     if (busy) return;
     if (totalRounds === 0 || !hasTargets) {
       onSubmitted();
       return;
     }
-    if (!canSubmit) return;
     setBusy(true);
     try {
       const habitAllocations = Object.entries(habitRounds)
@@ -948,7 +977,7 @@ function MarathonProgressReport({ state, hostProjectId, run, onSubmitted }: {
     <Check/>
     <span className="eyebrow">{totalRounds} 轮专注已结束</span>
     <h2>把这次推进汇报给哪些任务？</h2>
-    <p>展开任务选择要推进的小任务；习惯任务可以计入部分轮次（从最早完成的一轮开始）。剩余轮次会同时计入所有勾选的小任务，最后统一提交。</p>
+    <p>展开任务选择要推进的小任务；习惯任务可以计入部分轮次（从最早完成的一轮开始）。剩余轮次会同时计入所有勾选的小任务；没有勾选的任务轮次将直接丢弃，最后统一提交。</p>
     {totalRounds === 0
       ? <p className="plan-sheet-note">这次没有需要汇报的轮次，直接结束计划即可。</p>
       : !hasTargets
@@ -995,7 +1024,7 @@ function MarathonProgressReport({ state, hostProjectId, run, onSubmitted }: {
             ))}
           </div>}
     {totalRounds > 0 && allocatedRounds === totalRounds && <p className="plan-sheet-note">全部轮次已计入习惯建筑，不能再勾选小任务。</p>}
-    {totalRounds > 0 && hasTargets && allocatedRounds < totalRounds && entries.length === 0 && <p className="plan-sheet-note">还有 {totalRounds - allocatedRounds} 轮未分配，请至少选择一个小任务。</p>}
+    {totalRounds > 0 && hasTargets && allocatedRounds < totalRounds && entries.length === 0 && <p className="plan-sheet-note">还有 {totalRounds - allocatedRounds} 轮未分配，可直接提交丢弃这些轮次，或展开任务选择小任务推进。</p>}
     <button type="button" className="primary marathon-report-submit" disabled={busy || (totalRounds > 0 && hasTargets && !canSubmit)} onClick={() => void submit()}>{totalRounds > 0 && hasTargets ? '提交本次推进' : '直接结束计划'}</button>
   </div>;
 }
@@ -1227,12 +1256,49 @@ function StatsScreen({state}:{state:ReturnType<ApplicationService['snapshot']>})
 }
 
 function FocusHeatmap({heatmap}:{heatmap:ReturnType<typeof focusHeatmapStats>}) {
-  return <section className="focus-heatmap-card" aria-labelledby="focus-heatmap-title">
-    <div className="stats-section-heading"><div><h2 id="focus-heatmap-title">近 26 周</h2><p>按有效专注时长着色</p></div><span>{formatFocusMinutes(heatmap.totalMinutes)}</span></div>
-    <div className="focus-heatmap-scroll"><div className="focus-heatmap" role="img" aria-label={`近 26 周有效专注热力图，共 ${heatmap.totalMinutes} 分钟，${heatmap.activeDays} 个活跃日`}>
+  const [tip,setTip]=useState<{date:string;x:number;y:number}|null>(null);
+  const cardRef=useRef<HTMLElement|null>(null);
+  const openTip=(date:string,future:boolean,cell:HTMLElement)=>{
+    if(future)return;
+    if(tip&&tip.date===date){setTip(null);return;}
+    const rect=cell.getBoundingClientRect();
+    setTip({date,x:Math.max(10,Math.min(rect.left+rect.width/2-88,window.innerWidth-198)),y:Math.max(10,rect.top+rect.height+6)});
+  };
+  useEffect(()=>{
+    if(!tip)return;
+    const onPointerDown=(event:PointerEvent)=>{
+      if(cardRef.current&&!cardRef.current.contains(event.target as Node))setTip(null);
+    };
+    const onKey=(event:KeyboardEvent)=>{if(event.key==='Escape')setTip(null);};
+    window.addEventListener('pointerdown',onPointerDown);
+    window.addEventListener('keydown',onKey);
+    return()=>{window.removeEventListener('pointerdown',onPointerDown);window.removeEventListener('keydown',onKey);};
+  },[tip]);
+  const days=heatmap.weeks.flatMap(week=>week.days);
+  const selectedDay=tip?days.find(day=>day.date===tip.date):null;
+  return <section className="focus-heatmap-card" ref={cardRef} aria-labelledby="focus-heatmap-title">
+    <div className="stats-section-heading"><div><h2 id="focus-heatmap-title">近 26 周</h2><p>按有效专注时长着色，点格子看当天详情</p></div><span>{formatFocusMinutes(heatmap.totalMinutes)}</span></div>
+    <div className="focus-heatmap-scroll"><div className="focus-heatmap">
       <div className="focus-heatmap-months" aria-hidden="true">{heatmap.months.map(month=><span key={month.column} style={{gridColumn:`${month.column} / span ${month.span}`}}>{month.label}</span>)}</div>
-      <div className="focus-heatmap-content"><div className="focus-heatmap-weekdays" aria-hidden="true"><span>一</span><span></span><span>三</span><span></span><span>五</span><span></span><span></span></div><div className="focus-heatmap-grid">{heatmap.weeks.flatMap(week=>week.days.map(day=><span key={day.date} className={`focus-heatmap-cell heat-level-${day.level}${day.future?' is-future':''}`} title={`${heatmapDateLabel(day.date)}：有效专注 ${day.minutes} 分钟`}/>))}</div></div>
+      <div className="focus-heatmap-content"><div className="focus-heatmap-weekdays" aria-hidden="true"><span>一</span><span></span><span>三</span><span></span><span>五</span><span></span><span></span></div><div className="focus-heatmap-grid">{days.map(day=>{
+        const label=`${heatmapDateLabel(day.date)}：有效专注 ${day.minutes} 分钟${day.sessions?`，${day.sessions} 次`:'，无专注记录'}`;
+        return <span key={day.date}
+          role={day.future?undefined:'button'}
+          tabIndex={day.future?-1:0}
+          aria-pressed={tip?.date===day.date||undefined}
+          aria-label={day.future?undefined:label}
+          className={`focus-heatmap-cell heat-level-${day.level}${day.future?' is-future':''}${tip?.date===day.date?' is-selected':''}`}
+          title={label}
+          onClick={day.future?undefined:(event)=>openTip(day.date,day.future,event.currentTarget)}
+          onKeyDown={day.future?undefined:(event)=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();openTip(day.date,day.future,event.currentTarget);}}}
+        />;
+      })}</div></div>
     </div></div>
+    {tip&&selectedDay&&<div className="focus-heatmap-tip" role="status" style={{left:tip.x,top:tip.y}}>
+      <div className="focus-heatmap-tip-head"><strong>{heatmapDateLabel(selectedDay.date)}</strong><button type="button" className="focus-heatmap-tip-close" aria-label="关闭" onClick={()=>setTip(null)}>×</button></div>
+      <div className="focus-heatmap-tip-row"><span>有效专注</span><strong>{formatFocusMinutes(selectedDay.minutes)}</strong></div>
+      {selectedDay.sessions>0?<div className="focus-heatmap-tip-row"><span>专注次数</span><strong>{selectedDay.sessions} 次</strong></div>:<div className="focus-heatmap-tip-row"><span>专注次数</span><strong>无记录</strong></div>}
+    </div>}
     <div className="focus-heatmap-legend" aria-label="色阶：0、少于 90、90、180、270、360 分钟以上">{([['0',0],['<90',1],['90',2],['180',3],['270',4],['360+',5]] as const).map(([label,level])=><span className="heatmap-legend-item" key={level}><i className={`heat-level-${level}`}/>{label}</span>)}</div>
   </section>;
 }
@@ -1267,6 +1333,13 @@ function SettingsScreen({service,resourcePacks,state,run,refresh,preferences,onP
     <section className="settings-group" aria-labelledby="settings-group-notice">
       <h2 id="settings-group-notice">提醒</h2>
       <NotificationHealthSetting service={service}/>
+    </section>
+    <section className="settings-group" aria-labelledby="settings-group-appearance">
+      <h2 id="settings-group-appearance">外观</h2>
+      <div className="setting-row toggle-row">
+        <div className="setting-name"><span>深色模式</span><small>跟随系统或手动指定</small></div>
+        <div className="text-toggle" role="group" aria-label="深色模式">{([['light','浅色'],['dark','深色'],['system','跟随系统']] as const).map(([value,label])=><button key={value} aria-pressed={preferences.themeMode===value} onClick={()=>onPreferencesChange({...preferences,themeMode:value})}>{label}</button>)}</div>
+      </div>
     </section>
     <section className="settings-group" aria-labelledby="settings-group-world">
       <h2 id="settings-group-world">世界</h2>
@@ -1378,10 +1451,11 @@ function focusHeatmapStats(state:ReturnType<ApplicationService['snapshot']>) {
   const weekday=(new Date(`${today}T12:00:00Z`).getUTCDay()+6)%7;
   const firstDate=addLocalDays(today,-weekday-25*7);
   const millisecondsByDate=effectiveFocusMillisecondsByDate(state.focusHistory);
+  const sessionsByDate=focusSessionCountByDate(state.focusHistory);
   const weeks=Array.from({length:26},(_,weekIndex)=>({days:Array.from({length:7},(_,dayIndex)=>{
     const date=addLocalDays(firstDate,weekIndex*7+dayIndex);
     const minutes=Math.round((millisecondsByDate.get(date)??0)/60000);
-    return {date,minutes,future:date>today,level:focusHeatmapLevel(minutes)};
+    return {date,minutes,future:date>today,level:focusHeatmapLevel(minutes),sessions:sessionsByDate.get(date)??0};
   })}));
   const monthMarkers=weeks.flatMap((week,index)=>{
     const first=index===0?week.days[0]:undefined;
@@ -1404,10 +1478,10 @@ function loadPreferences():FocusPreferences {
       const legacy=value.visualExperiment;
       const lightingQuality:VoxelLightingQuality=value.lightingQuality==='performance'||value.lightingQuality==='balanced'||value.lightingQuality==='cinematic'||value.lightingQuality==='auto'?value.lightingQuality:legacy==='water'||legacy==='mist-beam'?'cinematic':'auto';
       const constructionOutlineVisibility:ConstructionOutlineVisibility=value.constructionOutlineVisibility==='off'||value.constructionOutlineVisibility==='all'||value.constructionOutlineVisibility==='current'?value.constructionOutlineVisibility:'current';
-      return{focusMinutes:clamp(value.focusMinutes,1,180),habitFocusMinutes:clamp(value.habitFocusMinutes??value.focusMinutes,1,180),habitTargetRounds:clamp(value.habitTargetRounds??10,10,30),breakMinutes:clamp(value.breakMinutes,0,60),lightingQuality,constructionOutlineVisibility};
+      return{focusMinutes:clamp(value.focusMinutes,1,180),habitFocusMinutes:clamp(value.habitFocusMinutes??value.focusMinutes,1,180),habitTargetRounds:clamp(value.habitTargetRounds??10,10,30),breakMinutes:clamp(value.breakMinutes,0,60),lightingQuality,constructionOutlineVisibility,themeMode:value.themeMode==='light'||value.themeMode==='dark'?value.themeMode:'system'};
     }
   } catch {}
-  return{focusMinutes:45,habitFocusMinutes:45,habitTargetRounds:10,breakMinutes:5,lightingQuality:'auto',constructionOutlineVisibility:'current'};
+  return{focusMinutes:45,habitFocusMinutes:45,habitTargetRounds:10,breakMinutes:5,lightingQuality:'auto',constructionOutlineVisibility:'current',themeMode:'system'};
 }
 function loadRoundPlan(projectId:string):RoundPlan|null { try{return parseRoundPlan(JSON.parse(localStorage.getItem(ROUND_PLAN_KEY)??'null'),projectId);}catch{return null;} }
 function clamp(value:number,min:number,max:number){return Math.min(max,Math.max(min,Math.round(value)));}

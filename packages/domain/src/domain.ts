@@ -24,7 +24,7 @@ import type {
 export function createInitialState(timeZone = "UTC", restWeekdays: number[] = [0, 6]): DomainState {
   assertCalendar(timeZone, restWeekdays);
   return {
-    schemaVersion: 8,
+    schemaVersion: 9,
     projects: [],
     habitBuildings: [],
     activeProjectId: null,
@@ -508,7 +508,9 @@ function handle(state: DomainState, command: DomainCommand, clock: Clock): Comma
       const reportedSessions = new Set(state.progressReports.flatMap((report) => report.focusSessionIds));
       const consumedByHabit = (id: string) => state.habitBuildings.some((building) => building.focusSessionIds.includes(id))
         || state.projects.some((project) => project.kind === "habit" && project.habit !== null && project.habit.completedFocusSessionIds.includes(id));
-      if (sessionIds.some((id) => reportedSessions.has(id) || consumedByHabit(id))) {
+      // V23: a round settled by an earlier settlement report (habit / shared /
+      // discarded) can never support a second one.
+      if (sessionIds.some((id, index) => reportedSessions.has(id) || consumedByHabit(id) || sessions[index]!.settledAt !== undefined)) {
         return fail(state, "FOCUS_ALREADY_REPORTED", "A completed marathon session can support only one settlement report");
       }
       const allocations = Array.isArray(command.habitAllocations) ? command.habitAllocations : [];
@@ -540,9 +542,8 @@ function handle(state: DomainState, command: DomainCommand, clock: Clock): Comma
       if (habitRounds === totalRounds && entries.length > 0) {
         return fail(state, "MARATHON_SPLIT_INVALID", "All rounds were allocated to habits; no subtask entries are allowed");
       }
-      if (habitRounds < totalRounds && entries.length === 0) {
-        return fail(state, "MARATHON_SPLIT_INVALID", "Remaining rounds need at least one subtask entry");
-      }
+      // V23: an empty allocation is valid — the remaining rounds (or all rounds,
+      // when habits took none) are deliberately discarded instead of attributed.
       if (new Set(entries.map((entry) => entry.subtaskId)).size !== entries.length) {
         return fail(state, "DUPLICATE_ID", "Marathon report subtasks must be unique");
       }
@@ -599,6 +600,11 @@ function handle(state: DomainState, command: DomainCommand, clock: Clock): Comma
         project.status = "monument";
         if (state.activeProjectId === project.id) state.activeProjectId = null;
         events.push({ type: "ProjectSealedAsMonument", projectId: project.id });
+      }
+      // Every settled round — habit-allocated, shared by entries, or discarded —
+      // is marked so a later settlement never offers it again.
+      for (const session of sessions) {
+        if (session && session.settledAt === undefined) session.settledAt = now;
       }
       return ok(state, events);
     }

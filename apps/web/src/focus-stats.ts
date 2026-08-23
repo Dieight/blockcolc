@@ -22,6 +22,19 @@ export function effectiveFocusMillisecondsByDate(history: FocusHistory): Map<ISO
   return millisecondsByDate;
 }
 
+/** V23: number of focus sessions that contributed actual time, per local date.
+ * Only sessions with positive effective time count (a 0-minute interruption
+ * was not a focus session). */
+export function focusSessionCountByDate(history: FocusHistory): Map<ISODate, number> {
+  const countByDate = new Map<ISODate, number>();
+  for (const session of history) {
+    if (session.actualDurationMs <= 0) continue;
+    const date = focusSessionLocalDate(session);
+    countByDate.set(date, (countByDate.get(date) ?? 0) + 1);
+  }
+  return countByDate;
+}
+
 export function focusHeatmapLevel(minutes: number): 0 | 1 | 2 | 3 | 4 | 5 {
   if (minutes <= 0) return 0;
   if (minutes < 90) return 1;

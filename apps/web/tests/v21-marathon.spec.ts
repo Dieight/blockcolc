@@ -66,13 +66,13 @@ test("marathon mode schedules from an end time and reports once after every roun
   expect(summary).toContain("结束 16:05");
   expect(summary).toContain("剩余 ");
   await page.getByRole("button", { name: /^开始到/ }).click();
-  await expect(page.locator(".session-kind")).toContainText(`第 1 / ${total} 轮专注`);
+  await expect(page.locator(".focus-task-context strong")).toContainText(`马拉松 第 1 / ${total} 轮`);
 
   for (let round = 1; round < total; round += 1) {
     await page.clock.fastForward(61_000);
     await expect(page.getByRole("button", { name: "开始下一轮" })).toBeVisible();
     await page.getByRole("button", { name: "开始下一轮" }).click();
-    await expect(page.locator(".session-kind")).toContainText(`第 ${round + 1} / ${total} 轮专注`);
+    await expect(page.locator(".focus-task-context strong")).toContainText(`马拉松 第 ${round + 1} / ${total} 轮`);
   }
   await page.clock.fastForward(61_000);
   await expect(page.getByRole("heading", { name: "把这次推进汇报给哪些任务？" })).toBeVisible();

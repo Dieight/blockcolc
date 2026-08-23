@@ -260,6 +260,9 @@ interface V2TerrainSample {
   supportInfluence: number;
   moisture: number;
   waterKind: "none" | "river" | "lake";
+  /** V23: 0..1 broad mountain potential (ridge/chain/peak strength). Only the
+   * far LOD ring uses it to raise coherent big mountains; absent elsewhere. */
+  mountainSignal?: number;
 }
 
 function createNaturalTerrainDataV2(
@@ -336,20 +339,39 @@ function createNaturalTerrainDataV2(
     const key = `${x}:${z}:${size}`;
     const cached = cellSampleCache.get(key);
     if (cached) return cached;
-    const center = sampleAt(x, z);
-    if (center.waterKind === "none") {
-      cellSampleCache.set(key, center);
-      return center;
+    // V23 ①: far LOD cells (16 units) sample the broad terrain so mountains and
+    // water read as coherent big blocks instead of aliased pillars.
+    const broad0 = hydrologyV3
+      ? sampleNaturalTerrainV3(x, z, seedHash, support, hydrologyV3, true, true)
+      : sampleNaturalTerrainV2(x, z, seedHash, support, hydrologyV2!, true, true);
+    // The far ring is seen at a grazing angle, so the terrain's real relief
+    // reads as a thin flat sheet and the distant view looks empty. Raise the
+    // broad land by the terrain's own mountain potential (0..1) under a smooth
+    // outward envelope: big mountain masses grow at the horizon while plains
+    // and water keep their levels. The envelope starts at zero exactly at the
+    // middle ring, so no cliff appears at the ring boundary.
+    let broad = broad0;
+    if (broad.waterKind === "none" && (broad.mountainSignal ?? 0) > 0.02) {
+      const distance = Math.hypot(x, z);
+      const envelope = smoothstep(middleExtent, farExtent * 0.8, distance);
+      if (envelope > 0.001) {
+        const lift = envelope * smoothstep(0.05, 0.5, broad.mountainSignal ?? 0) * 22;
+        if (lift > 0.001) broad = { ...broad, height: Math.round(Math.min(48, broad.height + lift)) };
+      }
+    }
+    if (broad.waterKind === "none") {
+      cellSampleCache.set(key, broad);
+      return broad;
     }
     let matchingWaterSamples = 0;
     const offset = size * 0.3;
     for (const dx of [-offset, 0, offset]) {
       for (const dz of [-offset, 0, offset]) {
-        if (sampleAt(x + dx, z + dz).waterKind === center.waterKind) matchingWaterSamples += 1;
+        if (sampleAt(x + dx, z + dz).waterKind === broad.waterKind) matchingWaterSamples += 1;
       }
     }
-    const requiredCoverage = center.waterKind === "lake" ? 5 : 2;
-    const sample = matchingWaterSamples >= requiredCoverage ? center : sampleLandAt(x, z);
+    const requiredCoverage = broad.waterKind === "lake" ? 5 : 2;
+    const sample = matchingWaterSamples >= requiredCoverage ? broad : sampleLandAt(x, z);
     cellSampleCache.set(key, sample);
     return sample;
   };
@@ -626,8 +648,10 @@ function sampleNaturalTerrainV2(
   seedHash: number,
   support: V2SupportContext,
   hydrology: V2Hydrology,
+  includeWater = true,
+  coarse = false,
 ): V2TerrainSample {
-  const macro = sampleV2MacroTerrain(x, z, seedHash);
+  const macro = sampleV2MacroTerrain(x, z, seedHash, 2, coarse);
   const supported = sampleV2Support(x, z, support);
   const maximumSupportedHeight = supported.height + Math.pow(1 - supported.influence, 0.78) * 26;
   let height = supported.influence >= 0.995
@@ -643,7 +667,7 @@ function sampleNaturalTerrainV2(
       waterKind = water.kind;
     }
   }
-  return { height, material, supportInfluence: supported.influence, moisture: macro.moisture, waterKind };
+  return { height, material, supportInfluence: supported.influence, moisture: macro.moisture, waterKind, mountainSignal: macro.mountainSignal };
 }
 
 function sampleNaturalTerrainV3(
@@ -653,8 +677,9 @@ function sampleNaturalTerrainV3(
   support: V2SupportContext,
   hydrology: V3Hydrology,
   includeWater = true,
+  coarse = false,
 ): V2TerrainSample {
-  const macro = sampleV2MacroTerrain(x, z, seedHash, hydrology.generationVersion);
+  const macro = sampleV2MacroTerrain(x, z, seedHash, hydrology.generationVersion, coarse);
   const supported = sampleV2Support(x, z, support);
   const maximumSupportedHeight = supported.height + Math.pow(1 - supported.influence, 0.78)
     * (hydrology.generationVersion === 4 ? 48 : 26);
@@ -671,10 +696,16 @@ function sampleNaturalTerrainV3(
       waterKind = water.kind;
     }
   }
-  return { height, material, supportInfluence: supported.influence, moisture: macro.moisture, waterKind };
+  return { height, material, supportInfluence: supported.influence, moisture: macro.moisture, waterKind, mountainSignal: macro.mountainSignal };
 }
 
-function sampleV2MacroTerrain(x: number, z: number, seedHash: number, generationVersion: 2 | 3 | 4 = 3): { height: number; moisture: number; rocky: boolean } {
+function sampleV2MacroTerrain(
+  x: number,
+  z: number,
+  seedHash: number,
+  generationVersion: 2 | 3 | 4 = 3,
+  coarse = false,
+): { height: number; moisture: number; rocky: boolean; mountainSignal: number } {
   const warpX = fractalNoise(x * 0.0048, z * 0.0048, seedHash, 0x121) * 38;
   const warpZ = fractalNoise(x * 0.0048, z * 0.0048, seedHash, 0x131) * 38;
   const px = x + warpX;
@@ -683,8 +714,16 @@ function sampleV2MacroTerrain(x: number, z: number, seedHash: number, generation
   const erosion = fractalNoise(px * 0.0095, pz * 0.0095, seedHash, 0x151);
   const ridgeNoise = fractalNoise(px * 0.0085, pz * 0.0085, seedHash, 0x161);
   const ridge = Math.pow(1 - Math.abs(ridgeNoise), 2.15);
-  const hills = fractalNoise(px * 0.016, pz * 0.016, seedHash, 0x171);
-  const detail = fractalNoise(px * 0.044, pz * 0.044, seedHash, 0x181);
+  // V23: the far LOD ring samples 16-unit cells — far coarser than the detail
+  // field (wavelength 5.7-22.7) and the finest hill octave (15.6). Sampling
+  // them at full resolution aliases into chaotic adjacent-cell steps that read
+  // as scattered pillars, not coherent landmasses. The coarse pass keeps only
+  // the two smooth hill octaves and drops the detail field entirely, so the far
+  // ring traces broad mountain / valley / water masses of big blocks.
+  const hills = coarse
+    ? fractalNoise(px * 0.016, pz * 0.016, seedHash, 0x171) - valueNoise(px * 0.064, pz * 0.064, seedHash, 0x173) * 0.15
+    : fractalNoise(px * 0.016, pz * 0.016, seedHash, 0x171);
+  const detail = coarse ? 0 : fractalNoise(px * 0.044, pz * 0.044, seedHash, 0x181);
   const moisture = fractalNoise(px * 0.011, pz * 0.011, seedHash, 0x191);
   const base = splineRemap(continentalness, [
     [-1, 0], [-0.58, 0.5], [-0.18, 2.2], [0.24, 4.2], [0.58, 6.8], [1, 8.5],
@@ -710,7 +749,9 @@ function sampleV2MacroTerrain(x: number, z: number, seedHash: number, generation
   const maximumHeight = generationVersion === 4 ? 48 : 25;
   const height = Math.max(0, Math.min(maximumHeight, Math.round(shapedHeight)));
   const rockyHeight = generationVersion === 4 ? 22 : 17;
-  return { height, moisture, rocky: height >= rockyHeight && (ridge > 0.48 || chainRidge > 0.58 || moisture < -0.2) };
+  // V23: the broad 0..1 mountain potential drives the far ring's big blocks.
+  const mountainSignal = Math.min(1, Math.max(ridge * mountainMask, chainRidge * chainMask, peakSignal * 0.7));
+  return { height, moisture, rocky: height >= rockyHeight && (ridge > 0.48 || chainRidge > 0.58 || moisture < -0.2), mountainSignal };
 }
 
 function splineRemap(value: number, points: readonly (readonly [number, number])[]): number {

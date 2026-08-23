@@ -184,7 +184,21 @@ export function reconcileRoundPlan(
           ? session.projectId === plan.projectId
           : session.projectId === plan.projectId && session.subtaskId === plan.subtaskId);
   if (!latest) return null;
-  if (latest.status === 'interrupted') return null;
+  if (latest.status === 'interrupted') {
+    // V23: an interrupted marathon round keeps the end-time schedule at the same
+    // round so the next focus resumes here — an integrity-limit exit behaves
+    // exactly like a user interrupt. Classic per-round plans drop the schedule.
+    if (isMarathon) {
+      return {
+        ...plan,
+        status: 'ready',
+        breakEndsAt: undefined,
+        endAfterBreak: undefined,
+        currentSessionId: undefined,
+      };
+    }
+    return null;
+  }
   if (latest.status !== 'completed' && latest.status !== 'completed-early') return null;
   const alreadyRecorded = plan.reportedSessionIds.includes(latest.id);
   const nextCompletedRounds = alreadyRecorded

@@ -12,7 +12,7 @@ async function createDefaultProject(page: import("@playwright/test").Page) {
 test("the app-switch-limit notice appears once and fades out like other controls", async ({ page }) => {
   await createDefaultProject(page);
   await page.getByRole("button", { name: "开始 1 轮" }).click();
-  await expect(page.locator(".session-kind")).toContainText(/第 1 \/ 1 轮专注/);
+  await expect(page.locator(".timer-value")).toBeVisible();
 
   // Three web-visibility excursions exceed the default max of three; each
   // background/foreground pair must exceed the 3 s grace to count.

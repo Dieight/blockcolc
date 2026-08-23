@@ -912,15 +912,31 @@ describe("V22 marathon settlement report", () => {
       habitAllocations: [],
       focusSessionIds: ["s5", "s6"],
     })).toMatchObject({ ok: false, code: "PROGRESS_REQUIRES_COMPLETED_FOCUS" });
-    // With no habit allocation every round must reach a subtask entry.
+    // V23: an empty allocation discards every round instead of rejecting it,
+    // and a discarded round is permanently settled so a later settlement never
+    // re-offers it (this used to surface as "A completed ... report").
     f.completeMarathon("s7", "a");
     f.completeMarathon("s8", "a");
-    expect(f.run({
+    const discard = f.run({
       type: "ReportMarathonFocus",
       entries: [],
       habitAllocations: [],
       focusSessionIds: ["s7", "s8"],
-    })).toMatchObject({ ok: false, code: "MARATHON_SPLIT_INVALID" });
+    });
+    expect(discard).toMatchObject({ ok: true });
+    expect(f.state().focusHistory.filter((item) => item.id === "s7" || item.id === "s8"))
+      .toEqual([
+        expect.objectContaining({ id: "s7", status: "completed", settledAt: expect.any(String) }),
+        expect.objectContaining({ id: "s8", status: "completed", settledAt: expect.any(String) }),
+      ]);
+    // Discarded rounds can never support a later settlement.
+    f.completeMarathon("s9", "a");
+    expect(f.run({
+      type: "ReportMarathonFocus",
+      entries: [{ reportId: "m8", projectId: "p1", subtaskId: "a", progressBasisPoints: 1_000 }],
+      habitAllocations: [],
+      focusSessionIds: ["s7", "s9"],
+    })).toMatchObject({ ok: false, code: "FOCUS_ALREADY_REPORTED" });
   });
 
   it("seals every project whose subtasks the marathon completes", () => {
@@ -980,6 +996,34 @@ describe("V22 marathon settlement report", () => {
     expect(parseDomainState(f.state())).toEqual(f.state());
   });
 
+  it("never re-offers rounds that were already allocated to a habit building", () => {
+    const f = fixture();
+    f.create("p1", ["a", "b"]);
+    f.run({ type: "SwitchActiveProject", projectId: "p1" });
+    f.run({ type: "CreateHabitProject", projectId: "habit", title: "Read", blueprintId: "cottage", targetRounds: 10 });
+    f.completeMarathon("s1", "a", "p1");
+    f.completeMarathon("s2", "a", "p1");
+    expect(f.run({
+      type: "ReportMarathonFocus",
+      entries: [],
+      habitAllocations: [{ projectId: "habit", rounds: 2 }],
+      focusSessionIds: ["s1", "s2"],
+    })).toMatchObject({ ok: true });
+    const habit = f.state().projects.find((item) => item.id === "habit")!.habit!;
+    expect(habit.completedFocusSessionIds).toEqual(["s1", "s2"]);
+    // A later settlement must reject the habit-consumed rounds instead of
+    // silently re-using them (this used to surface as "A completed ... report"
+    // and let a confirm-then-cancel plan show stale rounds as a full report).
+    f.completeMarathon("s3", "a", "p1");
+    expect(f.run({
+      type: "ReportMarathonFocus",
+      entries: [{ reportId: "m1", projectId: "p1", subtaskId: "b", progressBasisPoints: 1_000 }],
+      habitAllocations: [],
+      focusSessionIds: ["s1", "s3"],
+    })).toMatchObject({ ok: false, code: "FOCUS_ALREADY_REPORTED" });
+    expect(parseDomainState(f.state())).toEqual(f.state());
+  });
+
   it("completes the habit building exactly when the allocation reaches the target", () => {
     const f = fixture();
     f.run({ type: "CreateHabitProject", projectId: "habit", title: "Read", blueprintId: "cottage", targetRounds: 10 });
@@ -1030,15 +1074,17 @@ describe("V22 marathon settlement report", () => {
       habitAllocations: [{ projectId: "habit", rounds: 2 }],
       focusSessionIds: ["s1", "s2"],
     })).toMatchObject({ ok: false, code: "MARATHON_SPLIT_INVALID" });
-    // Some rounds to habits but nothing left over for a subtask.
+    // V23: some rounds to habits with the rest discarded is now valid (no
+    // subtask entry is required), and the discarded round is settled.
     expect(f.run({
       type: "ReportMarathonFocus",
       entries: [],
       habitAllocations: [{ projectId: "habit", rounds: 1 }],
       focusSessionIds: ["s1", "s2"],
-    })).toMatchObject({ ok: false, code: "MARATHON_SPLIT_INVALID" });
+    })).toMatchObject({ ok: true });
+    expect(f.state().focusHistory.find((item) => item.id === "s2")).toMatchObject({ settledAt: expect.any(String) });
     // More rounds than the current building still needs.
-    for (let round = 1; round <= 9; round += 1) {
+    for (let round = 1; round <= 8; round += 1) {
       f.run({ type: "StartFocus", sessionId: `normal-${round}`, subtaskId: null, plannedDurationMs: 1 });
       f.clock.advance(1);
       f.run({ type: "CompleteFocus" });

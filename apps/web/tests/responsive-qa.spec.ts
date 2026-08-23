@@ -112,7 +112,7 @@ test('keeps setup and the focus world usable across the target viewport matrix',
   await expect(page.locator('.app-shell')).toHaveClass(/focus-immersive/);
   await expect(page.getByRole('navigation', { name: '主导航' })).toHaveCount(0);
   await expect(page.locator('.topbar')).toHaveCount(0);
-  await expect(page.getByText('本轮任务')).toBeVisible();
+  await expect(page.getByText('整理所有输入资料并逐项核对')).toBeVisible();
   await revealFocusControls(page);
 
   for (const viewport of VIEWPORTS) {

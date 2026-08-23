@@ -91,6 +91,13 @@ export interface FocusSessionBase {
    * active project mid-plan.
    */
   marathon?: boolean;
+  /**
+   * V23: set when a completed marathon round has been settled by one settlement
+   * report — attributed to a habit building, shared by subtask entries, or
+   * deliberately discarded (no allocation). A settled round is never offered to
+   * a later settlement again.
+   */
+  settledAt?: ISOInstant;
 }
 
 export type FocusBackgroundReason = "app-switch" | "screen-lock" | "system-exempt" | "web-visibility";
@@ -202,7 +209,7 @@ export interface WorldSettings {
 }
 
 export interface DomainState {
-  schemaVersion: 8;
+  schemaVersion: 9;
   projects: Project[];
   habitBuildings: HabitBuildingMonument[];
   activeProjectId: string | null;

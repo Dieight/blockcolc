@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createInitialState, type FocusSession } from '@tomato-clock/domain';
-import { effectiveFocusMillisecondsByDate, focusHeatmapLevel, focusHourDistribution, focusSessionEndedAt, focusSessionLocalDate, focusWindowSummary, projectFocusAllocation, settlementTotals } from './focus-stats';
+import { effectiveFocusMillisecondsByDate, focusHeatmapLevel, focusHourDistribution, focusSessionCountByDate, focusSessionEndedAt, focusSessionLocalDate, focusWindowSummary, projectFocusAllocation, settlementTotals } from './focus-stats';
 
 const base = {
   projectId: 'project',
@@ -27,6 +27,15 @@ describe('effective focus statistics', () => {
     expect([0, 1, 89, 90, 179, 180, 269, 270, 359, 360].map(focusHeatmapLevel)).toEqual([
       0, 1, 1, 2, 2, 3, 3, 4, 4, 5,
     ]);
+  });
+
+  it('counts focus sessions per local date, ignoring zero-time interruptions', () => {
+    const history: FocusSession[] = [
+      { ...base, id: 'completed', status: 'completed', completedAt: '2026-08-04T16:15:00.000Z', completedLocalDate: '2026-08-05', actualDurationMs: 20_000 },
+      { ...base, id: 'interrupted', status: 'interrupted', interruptedAt: '2026-08-04T16:20:00.000Z', interruptionReason: 'user-cancelled', interruptionCategory: 'fatigue', actualDurationMs: 40_000 },
+      { ...base, id: 'zero', status: 'interrupted', interruptedAt: '2026-08-04T16:21:00.000Z', interruptionReason: 'user-cancelled', interruptionCategory: 'fatigue', actualDurationMs: 0 },
+    ];
+    expect(focusSessionCountByDate(history).get('2026-08-05')).toBe(2);
   });
 
   it('explains recent rhythm and project allocation using actual time from every outcome', () => {

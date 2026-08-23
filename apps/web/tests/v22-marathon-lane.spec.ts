@@ -59,8 +59,7 @@ test("confirming locks the plan and moves the workbench into the end-time lane; 
   await expect(page.locator(".timer-label")).toHaveText("剩余总时长");
   await expect(page.locator(".timer-value")).toHaveText(`${String(total).padStart(2, '0')}:00`);
   await page.getByRole("button", { name: /^开始到/ }).click();
-  await expect(page.locator(".session-kind")).toContainText(/第 1 \/ \d+ 轮专注/);
-  await expect(page.locator(".focus-task-context")).toContainText("马拉松");
+  await expect(page.locator(".focus-task-context strong")).toContainText(/马拉松 第 1 \/ \d+ 轮/);
 
   // Reopening the sheet now shows the red cancel-plan button.
   await page.clock.fastForward(61_000);
@@ -190,5 +189,5 @@ test("switching the active project never drops or distracts a locked marathon pl
   expect(summary).toContain("结束 16:05");
   // Rounds still start on the marathon host (the first project).
   await page.getByRole("button", { name: /^开始到/ }).click();
-  await expect(page.locator(".session-kind")).toContainText(/第 1 \/ \d+ 轮专注/);
+  await expect(page.locator(".focus-task-context strong")).toContainText(/马拉松 第 1 \/ \d+ 轮/);
 });

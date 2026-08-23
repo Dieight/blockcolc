@@ -19,6 +19,21 @@ public class MainActivity extends BridgeActivity {
     private Insets latestSafeInsets = Insets.NONE;
     private boolean miniWindowActive = false;
     private final Runnable miniWindowCheck = this::checkMiniWindowFallback;
+    // V23: every channel that reports a focus leave/return (onPause/onStop,
+    // onWindowFocusChanged, onMultiWindowModeChanged, the area poll) funnels into
+    // one attention state machine. A single physical transition therefore emits
+    // exactly one background and one foreground signal — the notification shade
+    // used to report the same leave through several channels and the domain's
+    // single-pending dedup could not absorb a stale echo arriving after the
+    // return, which counted a second excursion. It also stops the resume-time
+    // duplicate foreground storm that stalled the JS main thread (IndexedDB
+    // reloads) and made world rotation stutter for seconds after coming back.
+    private boolean attentionActive = true;
+    private void setAttention(boolean attending) {
+        if (attending == attentionActive) return;
+        attentionActive = attending;
+        pushMiniWindowSignal(!attending);
+    }
     // V22 follow-up: OEM side-rail floating windows (ColorOS smart sidebar) hide
     // the host activity without a reliable onStop or multi-window callback, so
     // three compensating channels exist: onPause/onResume signals, a 1-second
@@ -103,11 +118,7 @@ public class MainActivity extends BridgeActivity {
         boolean mini = ((float) width * (float) height) / ((float) size.x * (float) size.y) < 0.55f;
         if (mini == miniWindowActive) return;
         miniWindowActive = mini;
-        FocusIntegrityPlugin.recordBackgroundContext(this);
-        getBridge().getWebView().post(() -> getBridge().getWebView().evaluateJavascript(
-            "window.dispatchEvent(new CustomEvent('blockcolc-multi-window',{detail:{active:" + mini + "}}));",
-            null
-        ));
+        setAttention(!mini);
     }
 
     private void publishSafeAreaInsets(Insets insets) {
@@ -146,6 +157,7 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onStop() {
         FocusIntegrityPlugin.recordBackgroundContext(this);
+        setAttention(false);
         super.onStop();
     }
 
@@ -154,21 +166,22 @@ public class MainActivity extends BridgeActivity {
         super.onPause();
         // A floating window typically pauses the host without stopping it;
         // report the pause as a potential leave (the 3 s grace absorbs quick
-        // system overlays) and let the domain layer deduplicate with onStop.
-        pushMiniWindowSignal(true);
+        // system overlays). Repeated leave channels are deduplicated by the
+        // attention state machine.
+        setAttention(false);
     }
 
     @Override
     public void onResume() {
         super.onResume();
-        pushMiniWindowSignal(false);
+        setAttention(true);
     }
 
     @Override
     @android.annotation.TargetApi(24)
     public void onMultiWindowModeChanged(boolean isInMultiWindowMode) {
         super.onMultiWindowModeChanged(isInMultiWindowMode);
-        pushMiniWindowSignal(isInMultiWindowMode);
+        setAttention(!isInMultiWindowMode);
     }
 
     @Override
@@ -178,7 +191,7 @@ public class MainActivity extends BridgeActivity {
         if (hasFocus) {
             // Returning focus settles a pending focus-leave; the domain grace
             // absorbs quick overlays (notification shade, edge panel).
-            pushMiniWindowSignal(false);
+            setAttention(true);
             getBridge().getWebView().postDelayed(() -> getBridge().getWebView().evaluateJavascript(
                 "window.dispatchEvent(new Event('blockcolc-window-focus'));", null
             ), 180);
@@ -187,7 +200,7 @@ public class MainActivity extends BridgeActivity {
             // another app, the notification shade, the recents overview) loses
             // focus without any lifecycle callback; treat it like a leave and
             // let the 3 s grace separate glances from actual slacking.
-            pushMiniWindowSignal(true);
+            setAttention(false);
         }
     }
 }
