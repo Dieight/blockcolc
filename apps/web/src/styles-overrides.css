@@ -379,7 +379,7 @@
 .focus-immersive .world-screen.is-focusing{display:block;position:relative;width:100%;height:100dvh}
 .focus-immersive .is-focusing .world{position:absolute;inset:0;width:100%;height:100dvh;min-height:0;max-height:none}
 .focus-immersive .is-focusing .world-hud{display:none}
-.focus-immersive .is-focusing .focus-panel{position:absolute;left:0;right:0;bottom:0;height:clamp(290px,46dvh,470px);border-top:1px solid rgba(203,210,205,.85);background:rgba(243,245,242,.66);backdrop-filter:blur(18px) saturate(1.2);-webkit-backdrop-filter:blur(18px) saturate(1.2);padding:max(16px,var(--safe-bottom)) max(20px,var(--safe-right)) max(16px,var(--safe-bottom)) max(20px,var(--safe-left));display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;max-width:none;margin:0}
+.focus-immersive .is-focusing .focus-panel{position:absolute;left:0;right:0;bottom:0;border-top:1px solid rgba(203,210,205,.85);background:rgba(243,245,242,.66);backdrop-filter:blur(18px) saturate(1.2);-webkit-backdrop-filter:blur(18px) saturate(1.2);padding:max(16px,var(--safe-bottom)) max(20px,var(--safe-right)) max(16px,var(--safe-bottom)) max(20px,var(--safe-left));display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;max-width:none;margin:0}
 .focus-immersive .is-focusing .focus-task-context{display:flex;align-items:center;justify-content:center;min-height:48px;max-width:100%;padding:0;gap:0}
 .focus-immersive .is-focusing .focus-task-context strong{max-width:100%;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere;font-size:16px;line-height:1.3;text-align:center}
 .focus-immersive .is-focusing .timer{margin:0;font-size:64px}
@@ -598,3 +598,61 @@ html[data-theme="dark"],html[data-theme="dark"] body,html[data-theme="dark"] #ro
 
 /* World HUD already dark; deepen slightly for consistency */
 [data-theme="dark"] .world-hud span,[data-theme="dark"] .world-hud button,[data-theme="dark"] .immersive-reset-view,[data-theme="dark"] .world-building-details,[data-theme="dark"] .world-pick-chip{background:rgba(11,17,14,.92)}
+
+/* Tasks screen boxes */
+[data-theme="dark"] .task-editor-row,[data-theme="dark"] .subtask-group-toggle,[data-theme="dark"] .project-portfolio-row>button{background:#17211c;border-color:var(--line);color:#e6efe9}
+[data-theme="dark"] .task-editor-row.task-current{background:#1a2920;border-color:#3a5545}
+[data-theme="dark"] .task-editor-row.task-complete{background:#141d19;border-color:#2c3a31}
+[data-theme="dark"] .task-order{background:#24312a;color:#7fd6a1}
+[data-theme="dark"] .task-editor-row.task-current .task-order{background:#276749;color:#0c1410}
+[data-theme="dark"] .task-editor-row.task-complete .task-order{background:#1f3329;color:#3f7d4e}
+[data-theme="dark"] .subtask-group-toggle{color:#e6efe9}
+[data-theme="dark"] .add-subtask button,[data-theme="dark"] .daily-goal button{background:#17211c;border-color:#3a5545;color:#7fd6a1}
+[data-theme="dark"] .daily-goal-controls>label:not(.switch-control){color:var(--muted)}
+[data-theme="dark"] .task-copy small,[data-theme="dark"] .subtask-group-toggle small,[data-theme="dark"] .subtask-group-toggle span{color:var(--muted)}
+[data-theme="dark"] .task-row-actions button{border-color:var(--line)}
+[data-theme="dark"] .task-section-heading,[data-theme="dark"] .task-section-actions .icon-action{color:var(--muted)}
+
+/* End-focus / interruption dialog */
+[data-theme="dark"] .end-focus-choices>button,[data-theme="dark"] .interruption-options button,[data-theme="dark"] .dialog-back{background:#17211c;border-color:var(--line);color:#e6efe9}
+[data-theme="dark"] .end-focus-choices>button strong,[data-theme="dark"] .end-focus-choices>button small,[data-theme="dark"] .interruption-options button{color:#e6efe9}
+[data-theme="dark"] .end-focus-choices>button small{color:var(--muted)}
+
+/* Stats: settlement totals + project allocation */
+[data-theme="dark"] .settlement-totals{background:#17211c;border-color:var(--line)}
+[data-theme="dark"] .project-allocation{background:#17211c;border-color:var(--line)}
+[data-theme="dark"] .settlement-totals strong,[data-theme="dark"] .settlement-totals .stats-grid>div{color:#e6efe9}
+[data-theme="dark"] .project-allocation strong{color:#e6efe9}
+[data-theme="dark"] .allocation-bar .allocation-other,[data-theme="dark"] .allocation-legend li>i.allocation-other{background:#33463c}
+
+/* World workbench + settlement overview */
+[data-theme="dark"] .workbench-context{background:#17211c;border-color:var(--line)}
+[data-theme="dark"] .current-work small,[data-theme="dark"] .workbench-context small{color:var(--muted)}
+[data-theme="dark"] .current-work{background:#17211c;border-color:var(--line)}
+
+/* Blueprint library */
+[data-theme="dark"] .building-blueprint-list li{background:#17211c;border-color:var(--line)}
+[data-theme="dark"] .building-blueprint-list strong,[data-theme="dark"] .building-blueprint-list small{color:#e6efe9}
+[data-theme="dark"] .building-blueprint-list small{color:var(--muted)}
+[data-theme="dark"] .building-blueprint-list .blueprint-library-actions button{border-color:var(--line)}
+
+/* Immersive focus board: frosted glass goes dark, timer text flips light */
+[data-theme="dark"] .focus-immersive .is-focusing .focus-panel{background:rgba(20,29,25,.72);border-color:#2c3a31}
+[data-theme="dark"] .focus-immersive .is-focusing .timer{color:#e6efe9}
+[data-theme="dark"] .focus-immersive .is-focusing .immersive-hint{color:var(--muted)}
+
+/* Remaining light controls: dropdowns, pickers, tabs, switchers, settlement, steppers */
+[data-theme="dark"] .choice-menu-trigger,[data-theme="dark"] .choice-menu-options button,[data-theme="dark"] .round-picker button,[data-theme="dark"] .period-tabs button,[data-theme="dark"] .project-switcher>button,[data-theme="dark"] .project-switcher-actions button,[data-theme="dark"] .resume-projects>button,[data-theme="dark"] .waiting-buildings button,[data-theme="dark"] .marathon-settlement-toggle,[data-theme="dark"] .marathon-report-options button,[data-theme="dark"] .time-stepper button,[data-theme="dark"] .check-update,[data-theme="dark"] .litematic-file,[data-theme="dark"] .setup-actions>button:not(.primary),[data-theme="dark"] .daily-goal-adjust,[data-theme="dark"] .daily-goal-reward-panel button,[data-theme="dark"] .notification-health>button,[data-theme="dark"] .import-role button{background:#17211c;border-color:#3a5545;color:#e6efe9}
+[data-theme="dark"] .choice-menu-options button[aria-selected="true"],[data-theme="dark"] .round-picker button.selected,[data-theme="dark"] .period-tabs .selected,[data-theme="dark"] .import-role button[aria-pressed="true"]{background:#1f3329;border-color:var(--focus);color:var(--focus)}
+[data-theme="dark"] .choice-menu-options button:hover{background:#1a241f}
+[data-theme="dark"] .time-stepper strong{background:#121a16;color:#e6efe9}
+[data-theme="dark"] .rest-summary{background:#17211c;border-color:var(--line)}
+[data-theme="dark"] .rest-summary small{color:var(--muted)}
+[data-theme="dark"] .setup-subtask-order{background:#24312a;color:#7fd6a1}
+[data-theme="dark"] .setup-subtask-row{background:#17211c;border-color:var(--line)}
+[data-theme="dark"] .marathon-settlement-toggle{color:#7fd6a1}
+[data-theme="dark"] .update-result{background:#16271c;color:#7fd6a1!important;border-color:#2d4a37}
+[data-theme="dark"] .focus-integrity-warning{background:#17211c;border-color:var(--line)}
+[data-theme="dark"] .focus-integrity-warning.active{background:#2a2013;border-color:#6b5220;color:#e8c88a}
+[data-theme="dark"] .today:active{background:#24312a;color:#e6efe9}
+[data-theme="dark"] .daily-goal-workbench .daily-goal-reward-panel{background:#1a2920}
