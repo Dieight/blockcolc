@@ -356,6 +356,22 @@ function handle(state: DomainState, command: DomainCommand, clock: Clock): Comma
         return ok(state, events);
       }
       if (state.progressReports.some((report) => report.id === command.reportId)) return fail(state, "DUPLICATE_ID", "Progress report ID already exists");
+      // Marathon rounds settle on the unified report page: an early-completed
+      // round behaves exactly like a normally completed one — record the
+      // round, never auto-advance any task. The plan sheet reports on its own.
+      if (active.marathon === true) {
+        const actualDurationMs = Math.max(0, Date.parse(now) - Date.parse(active.startedAt));
+        const session: FocusSession = {
+          ...focusSessionBase(active), status: "completed-early", completedAt: now,
+          completedLocalDate: localDateOf(now, active.timeZoneAtStart), actualDurationMs,
+        };
+        state.focusHistory.push(session);
+        state.activeFocusSession = null;
+        const events: DomainEvent[] = [{ type: "FocusCompletedEarly", sessionId: session.id, subtaskId: null, actualDurationMs }];
+        applyRepair(state, session.projectId, now, events);
+        reachGoalForDate(state, session.completedLocalDate, session.completedAt, events, session.projectId);
+        return ok(state, events);
+      }
       const subtask = project.subtasks.find((item) => item.id === active.subtaskId);
       if (!subtask) return fail(state, "SUBTASK_NOT_FOUND", "Subtask does not exist");
       const actualDurationMs = Math.max(0, Date.parse(now) - Date.parse(active.startedAt));
@@ -498,7 +514,7 @@ function handle(state: DomainState, command: DomainCommand, clock: Clock): Comma
         return fail(state, "PROGRESS_REQUIRES_COMPLETED_FOCUS", "A marathon report needs unique completed focus sessions");
       }
       const sessions = sessionIds.map((id) => state.focusHistory.find((candidate) => candidate.id === id));
-      if (sessions.some((session) => !session || session.status !== "completed" || session.marathon !== true)) {
+      if (sessions.some((session) => !session || (session.status !== "completed" && session.status !== "completed-early") || session.marathon !== true)) {
         return fail(state, "PROGRESS_REQUIRES_COMPLETED_FOCUS", "Every supporting session must be a completed marathon round");
       }
       const hostId = sessions[0]!.projectId;
