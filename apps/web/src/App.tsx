@@ -583,13 +583,13 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
     closeEnding();
     const sealed = result.events.some((event: { type: string }) => event.type === 'ProjectSealedAsMonument' || event.type === 'HabitBuildingCompleted');
     const currentPlan = reconciledPlan;
-    if (sealed || !currentPlan || currentPlan.totalRounds === 1) {
-      setPlan(null);
-      return;
-    }
     const completedSession = result.events.find((event: { type: string; sessionId?: string }) => event.type === 'FocusCompletedEarly');
     const sessionId = completedSession?.sessionId;
-    if (currentPlan.mode === 'marathon') {
+    // A marathon pushes all rounds into the cross-project settlement report,
+    // sealed building or not: the report filters already-settled rounds via
+    // marathonRoundSettled (the sealed round IS settled by its seal report),
+    // so the sealed round shows as completed there instead of bypassing it.
+    if (currentPlan?.mode === 'marathon') {
       const completed = currentPlan.completedRounds + 1;
       const reportedSessionIds = sessionId && !currentPlan.reportedSessionIds.includes(sessionId)
         ? [...currentPlan.reportedSessionIds, sessionId]
@@ -601,6 +601,10 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
       } else {
         setPlan({ ...currentPlan, completedRounds: completed, status: 'break', breakEndsAt: new Date(Date.now() + preferences.breakMinutes * 60000).toISOString(), currentSessionId: undefined, reportedSessionIds });
       }
+      return;
+    }
+    if (sealed || !currentPlan || currentPlan.totalRounds === 1) {
+      setPlan(null);
       return;
     }
     if (preferences.breakMinutes === 0) {

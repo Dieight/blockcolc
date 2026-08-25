@@ -608,6 +608,7 @@ html[data-theme="dark"],html[data-theme="dark"] body,html[data-theme="dark"] #ro
 [data-theme="dark"] .task-editor-row.task-complete .task-order{background:#1f3329;color:#3f7d4e}
 [data-theme="dark"] .subtask-group-toggle{color:#e6efe9}
 [data-theme="dark"] .add-subtask button,[data-theme="dark"] .daily-goal button{background:#17211c;border-color:#3a5545;color:#7fd6a1}
+[data-theme="dark"] .daily-goal-adjust{background:#17211c!important;border-color:#3a5545!important;color:#7fd6a1!important}
 [data-theme="dark"] .daily-goal-controls>label:not(.switch-control){color:var(--muted)}
 [data-theme="dark"] .task-copy small,[data-theme="dark"] .subtask-group-toggle small,[data-theme="dark"] .subtask-group-toggle span{color:var(--muted)}
 [data-theme="dark"] .task-row-actions button{border-color:var(--line)}
@@ -650,6 +651,14 @@ html[data-theme="dark"],html[data-theme="dark"] body,html[data-theme="dark"] #ro
 [data-theme="dark"] .rest-summary small{color:var(--muted)}
 [data-theme="dark"] .setup-subtask-order{background:#24312a;color:#7fd6a1}
 [data-theme="dark"] .setup-subtask-row{background:#17211c;border-color:var(--line)}
+[data-theme="dark"] .setup-subtask-row .native-ime-entry input,[data-theme="dark"] .setup-subtask-row .native-ime-entry textarea{background:#121a16;border-color:#38473d;color:#e6efe9}
+[data-theme="dark"] .setup-subtask-row .native-ime-entry input::placeholder{color:#6c8577}
+
+/* Selected/active states must stay visually distinct on dark backgrounds */
+[data-theme="dark"] .bottom-nav .nav-active{color:var(--focus)}
+[data-theme="dark"] .period-tabs .selected,[data-theme="dark"] .text-toggle button[aria-pressed="true"]{color:var(--focus)}
+[data-theme="dark"] .text-toggle button[aria-pressed="true"]{text-decoration-color:var(--focus)}
+[data-theme="dark"] .focus-heatmap-cell.is-selected{outline-color:#6fce96}
 [data-theme="dark"] .marathon-settlement-toggle{color:#7fd6a1}
 [data-theme="dark"] .update-result{background:#16271c;color:#7fd6a1!important;border-color:#2d4a37}
 [data-theme="dark"] .focus-integrity-warning{background:#17211c;border-color:var(--line)}
