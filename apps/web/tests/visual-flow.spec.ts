@@ -376,7 +376,7 @@ test('navigation remains usable without overlap', async ({ page }) => {
 });
 
 test('keeps the world renderer resident across tab switches', async ({ page }) => {
-  test.setTimeout(60_000); // Drag + tab round trip through the resident renderer exceeds the default budget on loaded shared GPUs.
+  test.setTimeout(150_000); // Drag + tab round trip through the resident renderer exceeds the default budget on loaded shared GPUs; the V23 refined far-fine terrain rebuilds heavier.
   await page.goto('/');
   await page.getByRole('button', { name: '开始建造' }).click();
   const canvas = page.getByLabel('项目建筑世界');

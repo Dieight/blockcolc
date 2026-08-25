@@ -288,19 +288,19 @@ function createNaturalTerrainDataV2(
   // boundary never becomes the visual horizon.
   const farExtent = alignTo(Math.max(720, middleExtent + 80, coreRadius * 4.5), 16);
   // V23 follow-up: the far ring's 16-unit cells still read as giant slabs on
-  // the visible horizon, so the band just past the middle ring refines to
-  // 2-unit cells (1/8 of 16). The fine band is 96 units wide — wide enough to
-  // make the visible mid-distance read as terrain instead of blocks. It is
-  // gated to mid-sized settlements (farExtent up to 1024): imported wide
-  // blueprints push the rings far out, where the far ring is barely visible
-  // anyway and refining it would multiply the mesh (and software-renderer
-  // test time) for no visible gain. Both boundaries land on the 16-unit
-  // lattice so the two far tiers share exact edges (2-unit cells sit on odd
-  // centers, edges on multiples of 2, which includes multiples of 16). The
-  // refinement is v4-only: legacy generators keep their single 16-unit far
-  // ring untouched.
+  // the visible horizon. The band just past the middle ring refines to 2-unit
+  // cells (1/8 of 16) and the distant skirt drops to 8-unit cells (1/2 of 16),
+  // so no tier projects as a coarse blockfield. The fine band is 64 units
+  // wide; the skirt's 8-unit projection at its distances is already sub-block.
+  // Both are gated to mid-sized settlements (farExtent up to 1024): imported
+  // wide blueprints push the rings far out, where the far ring is barely
+  // visible anyway and refining it would multiply the mesh for no visible
+  // gain. Boundaries land on the 16-unit lattice so the far tiers share exact
+  // edges (2-unit cells sit on odd centers, edges on multiples of 2; 8-unit
+  // cells at 4 mod 8, edges on multiples of 8/16). The refinement is v4-only:
+  // legacy generators keep their single 16-unit far ring untouched.
   const refinedFar = terrainGenerationVersion === 4 && farExtent <= 1024;
-  const farFineExtent = refinedFar ? alignTo(Math.max(middleExtent + 96, middleExtent * 1.3), 16) : middleExtent;
+  const farFineExtent = refinedFar ? alignTo(Math.max(middleExtent + 64, middleExtent * 1.25), 16) : middleExtent;
   const support = createV2SupportContext(placements, roads, additionalPads);
   const hydrologyExtent = Math.min(farExtent, 560);
   const hydrologyV2 = terrainGenerationVersion === 2 ? createV2Hydrology(hydrologyExtent, seedHash, support) : null;
@@ -432,7 +432,7 @@ function createNaturalTerrainDataV2(
   addV2LodSquare(nearExtent, 0, 2, (x, z) => addCell(x, z, 2, "near"));
   addV2LodSquare(middleExtent, nearExtent, 4, (x, z) => addCell(x, z, 4, "middle"));
   if (refinedFar) addV2LodSquare(farFineExtent, middleExtent, 2, (x, z) => addCell(x, z, 2, "far"));
-  addV2LodSquare(farExtent, refinedFar ? farFineExtent : middleExtent, 16, (x, z) => addCell(x, z, 16, "far"));
+  addV2LodSquare(farExtent, refinedFar ? farFineExtent : middleExtent, refinedFar ? 8 : 16, (x, z) => addCell(x, z, refinedFar ? 8 : 16, "far"));
 
   closeV2CornerSlits(positions, indicesByMaterial, sideIndices);
 
@@ -625,11 +625,11 @@ function addV2CellSide(
   const insideNear = Math.abs(acrossX) <= nearExtent && Math.abs(acrossZ) <= nearExtent;
   const insideMiddle = Math.abs(acrossX) <= middleExtent && Math.abs(acrossZ) <= middleExtent;
   const insideFine = refinedFar && Math.abs(acrossX) <= farFineExtent && Math.abs(acrossZ) <= farFineExtent;
-  const neighborSize = insideNear ? 2 : insideMiddle ? 4 : insideFine ? 2 : 16;
+  const neighborSize = insideNear ? 2 : insideMiddle ? 4 : insideFine ? 2 : refinedFar ? 8 : 16;
   // Ring lattices: near cells sit on odd coordinates, middle cells at 2 mod 4,
-  // the far fine tier also on odd coordinates (2 mod 2), far cells at 8 mod 16
-  // — the lattice offset is always half the neighbor size. Snap the neighbor
-  // sample to a real cell center of
+  // the far fine tier also on odd coordinates (2 mod 2), the far skirt at
+  // 4 mod 8, legacy far cells at 8 mod 16 — the lattice offset is always half
+  // the neighbor size. Snap the neighbor sample to a real cell center of
   // ITS ring instead of the off-lattice adjacent position, and split this
   // cell's edge at the neighbor lattice so every segment's bottom rests on
   // the actual neighbor top. This closes the boundary-line slits that used to

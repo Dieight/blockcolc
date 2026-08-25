@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 test("replaces the old visual experiments with persistent adaptive lighting presets", async ({ page }, testInfo) => {
-  test.setTimeout(60_000); // Five full software-WebGL renderer rebuilds (one per outline/quality change) exceed the default budget on shared GPUs.
+  test.setTimeout(120_000); // Five full software-WebGL renderer rebuilds (one per outline/quality change) exceed the default budget on shared GPUs; the V23 refined far-fine terrain added a second rebuild tier.
   const pageErrors: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
   page.on("console", (message) => {
