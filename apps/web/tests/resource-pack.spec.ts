@@ -87,7 +87,7 @@ test('applies an atlas to a real imported building and restores original renderi
   await expect.poll(async()=>Number(await canvas.getAttribute('data-geometry-signature-batch-count'))).toBeGreaterThan(0);
   expect(Number(await canvas.getAttribute('data-geometry-signature-batch-count'))).toBeLessThanOrEqual(64);
   expect(Number(await canvas.getAttribute('data-render-calls'))).toBeLessThanOrEqual(120);
-  expect(Number(await canvas.getAttribute('data-render-triangles'))).toBeLessThanOrEqual(220_000);
+  expect(Number(await canvas.getAttribute('data-render-triangles'))).toBeLessThanOrEqual(350_000); // V23 refined far-fine tier adds terrain triangles on purpose
   await expect(canvas).toHaveAttribute('data-continuous-rendering','false');
   await expect(canvas).toHaveAttribute('data-animation-scheduled','true');
   await expect.poll(async()=>Number(await canvas.getAttribute('data-animation-interpolated-texture-count'))).toBeGreaterThan(0);
@@ -180,7 +180,7 @@ test('renders translucent multipart panes and zero-thickness iron bars from a re
     const fullscreenPasses=Number(await canvas.getAttribute('data-fullscreen-pass-count'));
     return Number(await canvas.getAttribute('data-render-calls'))-fullscreenPasses*6;
   }).toBeLessThanOrEqual(120);
-  expect(Number(await canvas.getAttribute('data-render-triangles'))).toBeLessThanOrEqual(220_000);
+  expect(Number(await canvas.getAttribute('data-render-triangles'))).toBeLessThanOrEqual(350_000); // V23 refined far-fine tier adds terrain triangles on purpose
   await expect(canvas).toHaveAttribute('data-continuous-rendering','false');
   await canvas.screenshot({path:testInfo.outputPath('p2-multipart-pane-bars.png')});
 });

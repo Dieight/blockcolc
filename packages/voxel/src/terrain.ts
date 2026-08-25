@@ -283,23 +283,24 @@ function createNaturalTerrainDataV2(
   // cells are 8 mod 16 (edges on multiples of 16) — the middle extent must
   // therefore be a multiple of 16 and the near extent a multiple of 4/8.
   const middleExtent = alignTo(Math.max(160, nearExtent + 64), 16);
-  // V23 follow-up: the far ring's 16-unit cells still read as giant slabs on
-  // the visible horizon, so the band just past the middle ring refines to
-  // 2-unit cells (1/8 of 16). The fine band is 128 units wide — wide enough to
-  // cover the visible mid-distance (where 16-unit blocks were most obvious)
-  // while keeping the triangle budget near the pre-refinement level for large
-  // settlements; the distant skirt beyond it keeps 16-unit cells because there
-  // the projection is sub-pixel anyway. Both boundaries land on the 16-unit
-  // lattice so the two far tiers share exact edges (2-unit cells sit on odd
-  // centers, edges on multiples of 2, which includes multiples of 16). The
-  // refinement is v4-only: legacy generators keep their single 16-unit far
-  // ring untouched.
-  const refinedFar = terrainGenerationVersion === 4;
-  const farFineExtent = refinedFar ? alignTo(Math.max(middleExtent + 128, middleExtent * 1.4), 16) : middleExtent;
   // The camera can see well beyond the settlement framing box on tall mobile
   // viewports. Keep the far envelope outside that frustum so the square LOD
   // boundary never becomes the visual horizon.
   const farExtent = alignTo(Math.max(720, middleExtent + 80, coreRadius * 4.5), 16);
+  // V23 follow-up: the far ring's 16-unit cells still read as giant slabs on
+  // the visible horizon, so the band just past the middle ring refines to
+  // 2-unit cells (1/8 of 16). The fine band is 96 units wide — wide enough to
+  // make the visible mid-distance read as terrain instead of blocks. It is
+  // gated to mid-sized settlements (farExtent up to 1024): imported wide
+  // blueprints push the rings far out, where the far ring is barely visible
+  // anyway and refining it would multiply the mesh (and software-renderer
+  // test time) for no visible gain. Both boundaries land on the 16-unit
+  // lattice so the two far tiers share exact edges (2-unit cells sit on odd
+  // centers, edges on multiples of 2, which includes multiples of 16). The
+  // refinement is v4-only: legacy generators keep their single 16-unit far
+  // ring untouched.
+  const refinedFar = terrainGenerationVersion === 4 && farExtent <= 1024;
+  const farFineExtent = refinedFar ? alignTo(Math.max(middleExtent + 96, middleExtent * 1.3), 16) : middleExtent;
   const support = createV2SupportContext(placements, roads, additionalPads);
   const hydrologyExtent = Math.min(farExtent, 560);
   const hydrologyV2 = terrainGenerationVersion === 2 ? createV2Hydrology(hydrologyExtent, seedHash, support) : null;

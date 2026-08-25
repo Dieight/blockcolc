@@ -1,6 +1,10 @@
 import { expect, test } from '@playwright/test';
 
 test('captures cinematic low-sun views and scans for bloom-white faces', async ({ page }, testInfo) => {
+  // The bloom post-process plus the V23 refined far-fine terrain (~4x the old
+  // mesh) renders slow under the software WebGL of the gate machine; the real
+  // device GPU shows no such cost. Budget follows the heavy-render baseline.
+  test.setTimeout(90_000);
   await page.clock.install({ time: new Date('2026-07-26T06:30:00+08:00') });
   await page.goto('/');
   await page.getByRole('button', { name: '开始建造' }).click();
