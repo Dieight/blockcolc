@@ -656,3 +656,29 @@ html[data-theme="dark"],html[data-theme="dark"] body,html[data-theme="dark"] #ro
 [data-theme="dark"] .focus-integrity-warning.active{background:#2a2013;border-color:#6b5220;color:#e8c88a}
 [data-theme="dark"] .today:active{background:#24312a;color:#e6efe9}
 [data-theme="dark"] .daily-goal-workbench .daily-goal-reward-panel{background:#1a2920}
+
+/* Dropdown container (choice menus for subtask / queue lists) */
+[data-theme="dark"] .choice-menu-options{background:#17211c;border-color:var(--line)}
+
+/* Plan sheet mode tabs (fixed rounds / end-time) */
+[data-theme="dark"] .plan-mode button{color:var(--muted)}
+[data-theme="dark"] .plan-mode button[aria-pressed="true"]{color:#e6efe9;text-decoration-color:var(--focus)}
+
+/* Task row icon actions + drag handle */
+[data-theme="dark"] .icon-action,[data-theme="dark"] .task-row-actions button{background:#17211c;border-color:var(--line);color:#e6efe9}
+[data-theme="dark"] .icon-action.destructive-icon,[data-theme="dark"] .task-row-actions button.destructive-icon{color:#ff8a8a}
+[data-theme="dark"] .task-drag-handle{background:#24312a;color:#7fd6a1}
+
+/* Stats: interruption reason labels and bars */
+[data-theme="dark"] .interruption-list span,[data-theme="dark"] .interruption-list strong{color:#e6efe9}
+[data-theme="dark"] .interruption-bar{background:#3a3329}
+
+/* Immersive board: focused task name must read on the dark glass */
+[data-theme="dark"] .focus-immersive .is-focusing .focus-task-context strong{color:#e6efe9}
+
+/* Boot loading page */
+[data-theme="dark"] .boot-page{background:#0e1512}
+[data-theme="dark"] .boot-page-mark{color:#e6efe9}
+[data-theme="dark"] .boot-page-status{color:#93b0a0}
+[data-theme="dark"] .boot-page-hint{color:#6c8577}
+[data-theme="dark"] .boot-page-blocks i{background:#4f8f63}

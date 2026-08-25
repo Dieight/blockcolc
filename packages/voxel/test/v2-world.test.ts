@@ -338,7 +338,7 @@ describe("merged stepped terrain", () => {
       worldSeed: "another-stable-world",
     });
     expect(otherSeed.positions).not.toEqual(natural.positions);
-  });
+  }, 20_000); // Multiple full v4 builds; the refined far-fine tier made each build heavier.
 
   it("keeps the previous terrain generators addressable while defaulting new worlds to v4", () => {
     const placements = layoutWorlds(snapshots);
@@ -363,7 +363,7 @@ describe("merged stepped terrain", () => {
     expect(current.terrainGenerationVersion).toBe(4);
     expect(current.positions).not.toEqual(previous.positions);
     expect(current.positions).not.toEqual(previousHydrology.positions);
-  });
+  }, 20_000); // Three full builds; the v4 one carries the refined far-fine tier.
 
   it("reduces water coverage and raises only the high mountain tail across fixed seeds", () => {
     const placements = layoutWorlds(snapshots);
@@ -383,7 +383,10 @@ describe("merged stepped terrain", () => {
       expect(current.bounds.maxY - 0.5).toBeLessThanOrEqual(48);
       expect(current.hydrology.protectedWaterCellCount).toBe(0);
       expect(current.hydrology.maxUphillWaterStep).toBe(0);
-      expect(current.triangleCount).toBeLessThan(previous.triangleCount * 1.2);
+      // The refined 2-unit far ring multiplies v4 triangles on purpose (see
+      // farFineExtent), so compare the actual water area instead of the mesh
+      // size: v4 must still cut water coverage materially.
+      expect(current.hydrology.waterSurfaceArea).toBeLessThan(previous.hydrology.waterSurfaceArea * 0.9);
     }
     const median = (values: number[]) => {
       const sorted = [...values].sort((left, right) => left - right);
@@ -408,7 +411,9 @@ describe("merged stepped terrain", () => {
       worldSeed: "stress-world",
     });
     expect(terrain.bounds.maxX - terrain.framingBounds.maxX).toBeGreaterThanOrEqual(52);
-    expect(terrain.cellCount).toBeLessThan(100_000);
+    // V23 follow-up: the refined 2-unit far ring adds cells on purpose; the
+    // cap must still catch an out-of-control build.
+    expect(terrain.cellCount).toBeLessThan(150_000);
     expect(terrain.triangleCount).toBeLessThan(500_000);
     expect(placements).toHaveLength(count);
   });

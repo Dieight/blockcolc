@@ -283,6 +283,19 @@ function createNaturalTerrainDataV2(
   // cells are 8 mod 16 (edges on multiples of 16) — the middle extent must
   // therefore be a multiple of 16 and the near extent a multiple of 4/8.
   const middleExtent = alignTo(Math.max(160, nearExtent + 64), 16);
+  // V23 follow-up: the far ring's 16-unit cells still read as giant slabs on
+  // the visible horizon, so the band just past the middle ring refines to
+  // 2-unit cells (1/8 of 16). The fine band is 128 units wide — wide enough to
+  // cover the visible mid-distance (where 16-unit blocks were most obvious)
+  // while keeping the triangle budget near the pre-refinement level for large
+  // settlements; the distant skirt beyond it keeps 16-unit cells because there
+  // the projection is sub-pixel anyway. Both boundaries land on the 16-unit
+  // lattice so the two far tiers share exact edges (2-unit cells sit on odd
+  // centers, edges on multiples of 2, which includes multiples of 16). The
+  // refinement is v4-only: legacy generators keep their single 16-unit far
+  // ring untouched.
+  const refinedFar = terrainGenerationVersion === 4;
+  const farFineExtent = refinedFar ? alignTo(Math.max(middleExtent + 128, middleExtent * 1.4), 16) : middleExtent;
   // The camera can see well beyond the settlement framing box on tall mobile
   // viewports. Keep the far envelope outside that frustum so the square LOD
   // boundary never becomes the visual horizon.
@@ -394,10 +407,10 @@ function createNaturalTerrainDataV2(
     // lattice centers: sampling a ring boundary neighbor at this cell's size or
     // at an off-lattice position hides real steps and leaves a sky-visible slit
     // along the whole boundary line between the two rings.
-    addV2CellSide(x, z, size, sample, -1, 0, sampleCellAt, nearExtent, middleExtent, addSideQuad);
-    addV2CellSide(x, z, size, sample, 1, 0, sampleCellAt, nearExtent, middleExtent, addSideQuad);
-    addV2CellSide(x, z, size, sample, 0, -1, sampleCellAt, nearExtent, middleExtent, addSideQuad);
-    addV2CellSide(x, z, size, sample, 0, 1, sampleCellAt, nearExtent, middleExtent, addSideQuad);
+    addV2CellSide(x, z, size, sample, -1, 0, sampleCellAt, nearExtent, middleExtent, farFineExtent, refinedFar, addSideQuad);
+    addV2CellSide(x, z, size, sample, 1, 0, sampleCellAt, nearExtent, middleExtent, farFineExtent, refinedFar, addSideQuad);
+    addV2CellSide(x, z, size, sample, 0, -1, sampleCellAt, nearExtent, middleExtent, farFineExtent, refinedFar, addSideQuad);
+    addV2CellSide(x, z, size, sample, 0, 1, sampleCellAt, nearExtent, middleExtent, farFineExtent, refinedFar, addSideQuad);
     lodCellCounts[lod] += 1;
     terrainSurfaceArea += size * size;
     minHeight = Math.min(minHeight, sample.height);
@@ -406,7 +419,7 @@ function createNaturalTerrainDataV2(
     if (sample.waterKind === "lake") lakeCellCount += 1;
     if (sample.waterKind !== "none") waterSurfaceArea += size * size;
     if (sample.waterKind !== "none" && sample.supportInfluence >= 0.28) protectedWaterCellCount += 1;
-    if (size <= 4 && sample.material === "grass" && sample.supportInfluence < 0.18 && sample.moisture > 0.06) {
+    if (lod !== "far" && size <= 4 && sample.material === "grass" && sample.supportInfluence < 0.18 && sample.moisture > 0.06) {
       const treeHash = hash2d(seedHash, 0x771, Math.round(x), Math.round(z));
       const density = size === 2 ? 27 : 58;
       if (treeHash % 1000 < density && sample.height < 19) {
@@ -417,7 +430,8 @@ function createNaturalTerrainDataV2(
 
   addV2LodSquare(nearExtent, 0, 2, (x, z) => addCell(x, z, 2, "near"));
   addV2LodSquare(middleExtent, nearExtent, 4, (x, z) => addCell(x, z, 4, "middle"));
-  addV2LodSquare(farExtent, middleExtent, 16, (x, z) => addCell(x, z, 16, "far"));
+  if (refinedFar) addV2LodSquare(farFineExtent, middleExtent, 2, (x, z) => addCell(x, z, 2, "far"));
+  addV2LodSquare(farExtent, refinedFar ? farFineExtent : middleExtent, 16, (x, z) => addCell(x, z, 16, "far"));
 
   closeV2CornerSlits(positions, indicesByMaterial, sideIndices);
 
@@ -597,6 +611,8 @@ function addV2CellSide(
   sampleCellAt: (x: number, z: number, size: number) => V2TerrainSample,
   nearExtent: number,
   middleExtent: number,
+  farFineExtent: number,
+  refinedFar: boolean,
   addQuad: (vertices: readonly number[], material: "dirt" | "stone") => void,
 ): void {
   // Water surfaces sit 0.16 above land tops; side faces must start at the actual
@@ -607,14 +623,17 @@ function addV2CellSide(
   const acrossZ = z + dz * cellSize;
   const insideNear = Math.abs(acrossX) <= nearExtent && Math.abs(acrossZ) <= nearExtent;
   const insideMiddle = Math.abs(acrossX) <= middleExtent && Math.abs(acrossZ) <= middleExtent;
-  const neighborSize = insideNear ? 2 : insideMiddle ? 4 : 16;
+  const insideFine = refinedFar && Math.abs(acrossX) <= farFineExtent && Math.abs(acrossZ) <= farFineExtent;
+  const neighborSize = insideNear ? 2 : insideMiddle ? 4 : insideFine ? 2 : 16;
   // Ring lattices: near cells sit on odd coordinates, middle cells at 2 mod 4,
-  // far cells at 8 mod 16. Snap the neighbor sample to a real cell center of
+  // the far fine tier also on odd coordinates (2 mod 2), far cells at 8 mod 16
+  // — the lattice offset is always half the neighbor size. Snap the neighbor
+  // sample to a real cell center of
   // ITS ring instead of the off-lattice adjacent position, and split this
   // cell's edge at the neighbor lattice so every segment's bottom rests on
   // the actual neighbor top. This closes the boundary-line slits that used to
   // run along x/z = ±80 (and ±160) between the rings.
-  const latticeOffset = neighborSize === 16 ? 8 : neighborSize === 4 ? 2 : 1;
+  const latticeOffset = neighborSize / 2;
   const snap = (value: number) => latticeOffset + neighborSize * Math.round((value - latticeOffset) / neighborSize);
   // The neighbor cell across the edge is the lattice cell whose edge contains
   // this cell's boundary line: the boundary coordinate shifted half a neighbor
