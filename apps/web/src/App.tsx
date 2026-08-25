@@ -505,7 +505,7 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
     const latest = service.snapshot();
     const reported = new Set(latest.progressReports.flatMap((report) => report.focusSessionIds));
     const settled = latest.focusHistory.filter((item) =>
-      item.projectId === currentPlan.projectId && item.status === 'completed'
+      item.projectId === currentPlan.projectId && (item.status === 'completed' || item.status === 'completed-early')
         && item.marathon === true && !reported.has(item.id)
         && item.settledAt === undefined && !marathonRoundSettled(latest, item.id));
     if (settled.length > 0) {
@@ -879,9 +879,15 @@ function MarathonProgressReport({ state, hostProjectId, run, onSubmitted }: {
 }) {
   const reported = new Set(state.progressReports.flatMap((report) => report.focusSessionIds));
   const sessions = state.focusHistory.filter((item) =>
-    item.projectId === hostProjectId && item.status === 'completed' && item.marathon === true
+    item.projectId === hostProjectId && (item.status === 'completed' || item.status === 'completed-early') && item.marathon === true
       && !reported.has(item.id) && item.settledAt === undefined && !marathonRoundSettled(state, item.id));
-  const totalRounds = sessions.length;
+  // Rounds that already carry an automatic progress report (an early-completed
+  // round advances its subtask on completion) are not distributable again, but
+  // they still count toward the plan total shown to the user.
+  const totalRounds = state.focusHistory.filter((item) =>
+    item.projectId === hostProjectId && (item.status === 'completed' || item.status === 'completed-early') && item.marathon === true
+      && item.settledAt === undefined).length;
+  const distributableRounds = sessions.length;
   const projects = state.projects.filter((project) =>
     project.status !== 'deleted' && project.kind === 'finite' && project.subtasks.some((subtask) => subtask.progressBasisPoints < 10000));
   const habits = state.projects.filter((project) =>
@@ -906,7 +912,7 @@ function MarathonProgressReport({ state, hostProjectId, run, onSubmitted }: {
   }
   const ownHabitMax = (project: typeof habits[number]): number => {
     const habit = project.habit!;
-    return Math.max(0, Math.min(totalRounds, habit.targetRounds - habit.completedFocusSessionIds.length));
+    return Math.max(0, Math.min(distributableRounds, habit.targetRounds - habit.completedFocusSessionIds.length));
   };
   const allocatedRounds = Object.values(habitRounds).reduce((sum, value) => sum + value, 0);
   const expandHabit = (projectId: string) => {
@@ -917,7 +923,7 @@ function MarathonProgressReport({ state, hostProjectId, run, onSubmitted }: {
       if (!(projectId in habitRounds)) {
         const project = habits.find((item) => item.id === projectId);
         if (!project) return;
-        const max = Math.max(1, Math.min(ownHabitMax(project), totalRounds - allocatedRounds));
+        const max = Math.max(1, Math.min(ownHabitMax(project), distributableRounds - allocatedRounds));
         setHabitRounds((previous) => ({ ...previous, [projectId]: max }));
       }
     } else {
@@ -931,7 +937,7 @@ function MarathonProgressReport({ state, hostProjectId, run, onSubmitted }: {
     if (!project) return;
     const current = habitRounds[projectId] ?? 0;
     const others = allocatedRounds - current;
-    const max = Math.max(0, Math.min(ownHabitMax(project), totalRounds - others));
+    const max = Math.max(0, Math.min(ownHabitMax(project), distributableRounds - others));
     const nextValue = Math.max(0, Math.min(max, current + delta));
     setHabitRounds((previous) => {
       const next = { ...previous };
@@ -942,7 +948,7 @@ function MarathonProgressReport({ state, hostProjectId, run, onSubmitted }: {
   };
   const optionsFor = (current: number) =>
     [current, 2500, 5000, 7500, 10000].filter((value, index, all) => value >= current && all.indexOf(value) === index);
-  const canPickSubtasks = allocatedRounds < totalRounds;
+  const canPickSubtasks = allocatedRounds < distributableRounds;
   const entries = Object.entries(choices)
     .map(([subtaskId, progressBasisPoints]) => ({
       projectId: subtaskProject.get(subtaskId) ?? '',
@@ -956,7 +962,7 @@ function MarathonProgressReport({ state, hostProjectId, run, onSubmitted }: {
   const canSubmit = !busy;
   const submit = async () => {
     if (busy) return;
-    if (totalRounds === 0 || !hasTargets) {
+    if (distributableRounds === 0 || !hasTargets) {
       onSubmitted();
       return;
     }
@@ -979,11 +985,11 @@ function MarathonProgressReport({ state, hostProjectId, run, onSubmitted }: {
   };
   return <div className="report v7-progress-report marathon-progress-report">
     <Check/>
-    <span className="eyebrow">{totalRounds} 轮专注已结束</span>
+    <span className="eyebrow">{totalRounds} 轮专注已结束{distributableRounds < totalRounds ? `，其中 ${totalRounds - distributableRounds} 轮已提前完成并自动推进` : ''}</span>
     <h2>把这次推进汇报给哪些任务？</h2>
     <p>展开任务选择要推进的小任务；习惯任务可以计入部分轮次（从最早完成的一轮开始）。剩余轮次会同时计入所有勾选的小任务；没有勾选的任务轮次将直接丢弃，最后统一提交。</p>
-    {totalRounds === 0
-      ? <p className="plan-sheet-note">这次没有需要汇报的轮次，直接结束计划即可。</p>
+    {distributableRounds === 0
+      ? <p className="plan-sheet-note">{totalRounds > 0 ? '所有轮次都已提前完成并自动推进，直接结束计划即可。' : '这次没有需要汇报的轮次，直接结束计划即可。'}</p>
       : !hasTargets
         ? <p className="plan-sheet-note">没有可推进的任务：所有小任务都已完成，习惯建筑也都在等待选择下一座。直接结束计划即可。</p>
         : <div className="marathon-settlement-list">
@@ -996,8 +1002,8 @@ function MarathonProgressReport({ state, hostProjectId, run, onSubmitted }: {
                   <span className="marathon-settlement-toggle">{expanded.has(project.id) ? '收起' : '计入轮数'}</span>
                 </button>
                 {expanded.has(project.id) && <div className="marathon-settlement-body">
-                  <div className="time-stepper habit-round-stepper"><span>计入</span><button type="button" aria-label="减少计入轮数" disabled={busy || rounds === 0} onClick={() => stepHabit(project.id, -1)}>−</button><strong aria-label="计入轮数">{rounds}</strong><button type="button" aria-label="增加计入轮数" disabled={busy || rounds >= Math.min(ownHabitMax(project), totalRounds - (allocatedRounds - rounds))} onClick={() => stepHabit(project.id, 1)}>+</button><span>轮</span></div>
-                  <small>{allocatedRounds >= totalRounds ? '全部轮次已计入习惯建筑' : `计入后剩余 ${totalRounds - allocatedRounds} 轮可分配给小任务`}</small>
+                  <div className="time-stepper habit-round-stepper"><span>计入</span><button type="button" aria-label="减少计入轮数" disabled={busy || rounds === 0} onClick={() => stepHabit(project.id, -1)}>−</button><strong aria-label="计入轮数">{rounds}</strong><button type="button" aria-label="增加计入轮数" disabled={busy || rounds >= Math.min(ownHabitMax(project), distributableRounds - (allocatedRounds - rounds))} onClick={() => stepHabit(project.id, 1)}>+</button><span>轮</span></div>
+                  <small>{allocatedRounds >= distributableRounds ? '全部轮次已计入习惯建筑' : `计入后剩余 ${distributableRounds - allocatedRounds} 轮可分配给小任务`}</small>
                 </div>}
               </section>;
             })}
@@ -1027,9 +1033,9 @@ function MarathonProgressReport({ state, hostProjectId, run, onSubmitted }: {
               </section>
             ))}
           </div>}
-    {totalRounds > 0 && allocatedRounds === totalRounds && <p className="plan-sheet-note">全部轮次已计入习惯建筑，不能再勾选小任务。</p>}
-    {totalRounds > 0 && hasTargets && allocatedRounds < totalRounds && entries.length === 0 && <p className="plan-sheet-note">还有 {totalRounds - allocatedRounds} 轮未分配，可直接提交丢弃这些轮次，或展开任务选择小任务推进。</p>}
-    <button type="button" className="primary marathon-report-submit" disabled={busy || (totalRounds > 0 && hasTargets && !canSubmit)} onClick={() => void submit()}>{totalRounds > 0 && hasTargets ? '提交本次推进' : '直接结束计划'}</button>
+    {distributableRounds > 0 && allocatedRounds === distributableRounds && <p className="plan-sheet-note">全部轮次已计入习惯建筑，不能再勾选小任务。</p>}
+    {distributableRounds > 0 && hasTargets && allocatedRounds < distributableRounds && entries.length === 0 && <p className="plan-sheet-note">还有 {distributableRounds - allocatedRounds} 轮未分配，可直接提交丢弃这些轮次，或展开任务选择小任务推进。</p>}
+    <button type="button" className="primary marathon-report-submit" disabled={busy || (distributableRounds > 0 && hasTargets && !canSubmit)} onClick={() => void submit()}>{distributableRounds > 0 && hasTargets ? '提交本次推进' : '直接结束计划'}</button>
   </div>;
 }
 
