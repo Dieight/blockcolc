@@ -370,6 +370,22 @@ export function createVoxelRenderer(
   });
   renderer.info.autoReset = false;
   const webGlContext = renderer.getContext();
+  // Software rasterizers (SwiftShader/llvmpipe — headless gate machines, low-end
+  // VMs) render the refined far-fine terrain mesh far slower than any real GPU.
+  // Detect them once and let the terrain generator fall back to the classic
+  // coarse far ring there, so expensive off-screen/gate environments stay
+  // fluid while real devices keep the refined ring.
+  const softwareRendererName = (() => {
+    try {
+      const debugInfo = webGlContext.getExtension("WEBGL_debug_renderer_info");
+      const raw = String(debugInfo
+        ? webGlContext.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL)
+        : webGlContext.getParameter(webGlContext.RENDERER));
+      return /swiftshader|llvmpipe|software|mesa offscreen/i.test(raw);
+    } catch {
+      return false;
+    }
+  })();
   const webGl2Context = typeof WebGL2RenderingContext !== "undefined" && webGlContext instanceof WebGL2RenderingContext
     ? webGlContext
     : null;
@@ -935,6 +951,7 @@ export function createVoxelRenderer(
         environmentStyle: previewMode ? "classic-island" : options.environmentStyle ?? "classic-island",
         worldSeed: options.worldSeed,
         terrainGenerationVersion: options.terrainGenerationVersion,
+        refinedFar: !softwareRendererName,
       },
     );
     canvas.dataset.environmentStyle = previewMode ? "classic-island" : options.environmentStyle ?? "classic-island";
