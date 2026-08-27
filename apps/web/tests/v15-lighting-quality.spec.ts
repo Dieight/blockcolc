@@ -61,6 +61,11 @@ test("replaces the old visual experiments with persistent adaptive lighting pres
     await expect(canvas).toHaveAttribute("data-fullscreen-pass-count", "4");
     await expect(canvas).toHaveAttribute("data-post-process-sample-count", "2");
     await expect.poll(async () => Number(await canvas.getAttribute("data-post-process-render-count"))).toBeGreaterThan(0);
+    // Software-WebGL gates render slowly under sustained full-suite load; wait
+    // for a fresh frame before screenshotting so the comparison is two real
+    // frames instead of the same stale one.
+    const framesSeen = Number(await canvas.getAttribute("data-post-process-render-count"));
+    await expect.poll(async () => Number(await canvas.getAttribute("data-post-process-render-count"))).toBeGreaterThan(framesSeen);
   } else {
     await expect(canvas).toHaveAttribute("data-bloom-enabled", "false");
     await expect(canvas).toHaveAttribute("data-fullscreen-pass-count", "0");
