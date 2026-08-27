@@ -200,7 +200,7 @@ export interface FocusIntegrityPolicy {
   maxEffectiveExcursions: number;
 }
 
-export type WorldEnvironmentStyle = "natural-valley" | "classic-island";
+export type WorldEnvironmentStyle = "natural-valley" | "classic-island" | "ocean-island";
 
 export interface WorldSettings {
   worldSeed: string;

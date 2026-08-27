@@ -652,7 +652,7 @@ function handle(state: DomainState, command: DomainCommand, clock: Clock): Comma
       return ok(state, [{ type: "CalendarConfigured" }]);
     }
     case "ConfigureWorldEnvironment": {
-      if (command.environmentStyle !== "natural-valley" && command.environmentStyle !== "classic-island") {
+      if (command.environmentStyle !== "natural-valley" && command.environmentStyle !== "classic-island" && command.environmentStyle !== "ocean-island") {
         throw new Error("Invalid world environment style");
       }
       if (state.worldSettings.environmentStyle === command.environmentStyle) return ok(state, []);

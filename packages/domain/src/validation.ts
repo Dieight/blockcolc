@@ -412,7 +412,7 @@ function parseWorldSettings(raw: unknown, path: string): DomainState["worldSetti
   return {
     worldSeed: nonBlankString(x.worldSeed, path + ".worldSeed"),
     terrainGenerationVersion: 4,
-    environmentStyle: enumeration(x.environmentStyle, path + ".environmentStyle", ["natural-valley", "classic-island"] as const),
+    environmentStyle: enumeration(x.environmentStyle, path + ".environmentStyle", ["natural-valley", "classic-island", "ocean-island"] as const),
   };
 }
 

@@ -962,6 +962,10 @@ export function createVoxelRenderer(
     canvas.dataset.terrainNearCellCount = String(terrainData.lodCellCounts.near);
     canvas.dataset.terrainMiddleCellCount = String(terrainData.lodCellCounts.middle);
     canvas.dataset.terrainFarCellCount = String(terrainData.lodCellCounts.far);
+    canvas.dataset.oceanIsletCount = String(terrainData.oceanIslets?.length ?? 0);
+    canvas.dataset.oceanIsletPositions = (terrainData.oceanIslets ?? []).map((islet) => `${Math.round(islet.x)}:${Math.round(islet.z)}:${Math.round(islet.radius)}`).join(",");
+    canvas.dataset.oceanMainRadius = String(terrainData.oceanMain?.radius ?? "");
+    canvas.dataset.oceanMainBeach = String(terrainData.oceanMain?.beach ?? "");
     canvas.dataset.terrainHydrologyNetworkCount = String(terrainData.hydrology.networkCount);
     canvas.dataset.terrainHydrologyBasinCount = String(terrainData.hydrology.basinCount);
     canvas.dataset.terrainHydrologySegmentCount = String(terrainData.hydrology.riverSegmentCount);
@@ -1727,10 +1731,32 @@ export function createVoxelRenderer(
     }
   }
 
+  // V24: real-world sea tones — turquoise shallow tropics, deep blue open
+  // ocean, emerald phytoplankton-rich water, slate grey temperate seas.
+  // The world seed picks one so a world keeps its sea identity forever.
+  const OCEAN_SEA_TONES = {
+    azure: 0x2ea3ad,
+    deep: 0x1d62a8,
+    emerald: 0x20998a,
+    slate: 0x5b7b99,
+  } as const;
+  function oceanSeaTone(worldSeed: string): keyof typeof OCEAN_SEA_TONES {
+    let hash = 0x811c9dc5;
+    for (let index = 0; index < worldSeed.length; index += 1) {
+      hash = Math.imul(hash ^ worldSeed.charCodeAt(index), 0x01000193) >>> 0;
+    }
+    return (["azure", "deep", "emerald", "slate"] as const)[hash % 4]!;
+  }
+
   function updateReflectiveMaterials(state: SunState): void {
     const water = materials.get("terrainWater");
     if (water) {
-      water.color.setHex(0x3e7380).lerp(new THREE.Color(state.skyHorizonColor), qualityTier === "high" ? 0.2 : 0.1);
+      // V24: ocean environments pick one of four real-world sea tones,
+      // determined by the world seed so every world keeps its identity.
+      const base = options.environmentStyle === "ocean-island"
+        ? OCEAN_SEA_TONES[oceanSeaTone(options.worldSeed ?? "world-default")]
+        : 0x3e7380;
+      water.color.setHex(base).lerp(new THREE.Color(state.skyHorizonColor), qualityTier === "high" ? 0.2 : 0.1);
       water.roughness = qualityTier === "high" ? 0.22 : qualityTier === "balanced" ? 0.3 : 0.48;
       water.metalness = qualityTier === "high" ? 0.1 : 0.04;
       water.emissive.setHex(state.nightFactor > 0.55 ? 0x102c36 : 0x071c22);
@@ -1805,7 +1831,7 @@ export function createVoxelRenderer(
     // the whole visible world), not only when the date rolls over.
     if (!force && currentWeather.localDate === localDate
       && cloudsBuiltSpanX === spanX && cloudsBuiltSpanZ === spanZ && cloudsBuiltBaseY === cloudBase) return;
-    currentWeather = weatherForLocalDate(localDate);
+    currentWeather = weatherForLocalDate(localDate, options.environmentStyle === "ocean-island");
     clearGroup(atmosphereGroup, true);
     cloudMaterial = null;
     rainAnimation = null;
@@ -2078,6 +2104,18 @@ export function createVoxelRenderer(
 
   function updateAmbientMotion(nowMs: number): void {
     if (disposed) return;
+    if (interacting && interactionStaleAtMs !== null && nowMs > interactionStaleAtMs) {
+      // A pointer that produced no movement for the stale window was left
+      // behind by a system gesture; release it so the ambient drift resumes.
+      pointerStarts.clear();
+      pointers.clear();
+      previousPinchDistance = null;
+      previousPinchCenterY = null;
+      interacting = false;
+      interactionStaleAtMs = null;
+      updateDiagnosticsDataset();
+      requestRender();
+    }
     updateRainAnimation(nowMs);
     updateCloudDrift(nowMs);
     updateTreeSway(nowMs);
@@ -2121,13 +2159,15 @@ export function createVoxelRenderer(
       Math.abs(terrainBoundsBox.min.z), Math.abs(terrainBoundsBox.max.z),
     );
     const radius = Math.max(coreRadius, terrainHalfExtent / 6);
-    const range = fogRangeForView(currentWeather.kind, cameraDistance, radius);
+    const range = fogRangeForView(currentWeather.kind, cameraDistance, radius, options.environmentStyle === "ocean-island");
     scene.fog.near = range.near;
     scene.fog.far = range.far;
   }
 
   function updateSkyVisuals(state: SunState): void {
-    const weatherTint = currentWeather.kind === "clear" ? null : currentWeather.kind === "mist" ? 0xaeb8b1 : 0x9eada8;
+    const weatherTint = currentWeather.kind === "clear" ? null
+      : currentWeather.kind === "mist" ? (options.environmentStyle === "ocean-island" ? 0xc9d4dc : 0xaeb8b1)
+        : 0x9eada8;
     updateSkyDomeColors(skyGeometry, state, weatherTint);
     const celestialRadius = SKY_RADIUS * CELESTIAL_RADIUS_RATIO;
     setCelestialPosition(sunSprite, state.sunPosition, celestialRadius);
@@ -2361,14 +2401,17 @@ export function createVoxelRenderer(
       lastInteractionAnimationFrameMs = null;
     }
     interacting = true;
+    interactionStaleAtMs = performance.now() + 2_500;
     pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
     pointerStarts.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    updateDiagnosticsDataset();
     try { canvas.setPointerCapture(event.pointerId); } catch { /* Synthetic QA events do not own native capture. */ }
     if (pointers.size === 2) updatePinchReference();
     requestRender();
   };
   const pointerMove = (event: PointerEvent): void => {
     pointerMoveCount += 1;
+    if (interacting) interactionStaleAtMs = performance.now() + 2_500;
     const previous = pointers.get(event.pointerId);
     if (!previous) return;
     const next = { x: event.clientX, y: event.clientY };
@@ -2396,19 +2439,42 @@ export function createVoxelRenderer(
   const pointerUp = (event: PointerEvent): void => {
     const start = pointerStarts.get(event.pointerId);
     const wasSinglePointer = pointers.size === 1;
-    pointerStarts.delete(event.pointerId);
-    pointers.delete(event.pointerId);
-    if (pointers.size < 2) { previousPinchDistance = null; previousPinchCenterY = null; }
-    if (pointers.size === 0) {
-      interacting = false;
-      updateDiagnosticsDataset();
-      logInteractionDiagnostics();
-      requestRender();
-    }
+    releasePointer(event.pointerId);
     if (wasSinglePointer && start && Math.hypot(event.clientX - start.x, event.clientY - start.y) <= 8) {
       pickTerrainAt(event.clientX, event.clientY);
       selectProjectAt(event.clientX, event.clientY);
     }
+  };
+  // V24 CT-01: system gestures (notification shade, edge back, incoming calls)
+  // fire pointercancel / steal pointer capture instead of pointerup. Without a
+  // cleanup the tracked pointer and the interacting flag stayed stuck, which
+  // froze the ambient cloud drift / tree sway and interaction frames until the
+  // next touch. A stale-interaction guard releases any pointer that produced
+  // no movement for 2.5 s as a final safety net.
+  let interactionStaleAtMs: number | null = null;
+  const pointerCancel = (event: PointerEvent): void => {
+    releasePointer(event.pointerId);
+  };
+  const releasePointer = (pointerId: number): void => {
+    pointerStarts.delete(pointerId);
+    pointers.delete(pointerId);
+    if (pointers.size < 2) { previousPinchDistance = null; previousPinchCenterY = null; }
+    if (pointers.size === 0) {
+      interacting = false;
+      interactionStaleAtMs = null;
+      updateDiagnosticsDataset();
+      requestRender();
+    }
+  };
+  const windowBlur = (): void => {
+    pointerStarts.clear();
+    pointers.clear();
+    previousPinchDistance = null;
+    previousPinchCenterY = null;
+    interacting = false;
+    interactionStaleAtMs = null;
+    updateDiagnosticsDataset();
+    requestRender();
   };
   const wheel = (event: WheelEvent): void => {
     event.preventDefault();
@@ -2641,6 +2707,8 @@ export function createVoxelRenderer(
 
   function updateDiagnosticsDataset(): void {
     const diagnostics = getDiagnostics();
+    canvas.dataset.interacting = String(interacting);
+    canvas.dataset.pointerCount = String(pointers.size);
     canvas.dataset.renderCalls = String(diagnostics.render.calls);
     canvas.dataset.renderTriangles = String(diagnostics.render.triangles);
     canvas.dataset.pixelRatio = diagnostics.pixelRatio.toFixed(2);
@@ -2849,8 +2917,10 @@ export function createVoxelRenderer(
   canvas.addEventListener("pointerdown", pointerDown);
   canvas.addEventListener("pointermove", pointerMove);
   canvas.addEventListener("pointerup", pointerUp);
-  canvas.addEventListener("pointercancel", pointerUp);
+  canvas.addEventListener("pointercancel", pointerCancel);
+  canvas.addEventListener("lostpointercapture", pointerCancel);
   canvas.addEventListener("wheel", wheel, { passive: false });
+  window.addEventListener("blur", windowBlur);
   if (options.subscribeNativeInput) {
     void options.subscribeNativeInput((sample) => {
       consumeNativeInput(sample);
@@ -2977,8 +3047,10 @@ export function createVoxelRenderer(
       canvas.removeEventListener("pointerdown", pointerDown);
       canvas.removeEventListener("pointermove", pointerMove);
       canvas.removeEventListener("pointerup", pointerUp);
-      canvas.removeEventListener("pointercancel", pointerUp);
+      canvas.removeEventListener("pointercancel", pointerCancel);
+      canvas.removeEventListener("lostpointercapture", pointerCancel);
       canvas.removeEventListener("wheel", wheel);
+      window.removeEventListener("blur", windowBlur);
       clearGroup(buildingGroup);
       clearGroup(terrainGroup);
       for (const texture of terrainPackTextures) texture.dispose();

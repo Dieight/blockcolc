@@ -2,7 +2,7 @@ import type { VillagePlacement, RoadCell } from "./village";
 import { terrainHeightAt } from "./village";
 
 export type TerrainMaterial = "grass" | "dirt" | "stone" | "water";
-export type TerrainEnvironmentStyle = "natural-valley" | "classic-island";
+export type TerrainEnvironmentStyle = "natural-valley" | "classic-island" | "ocean-island";
 export type TerrainGenerationVersion = 1 | 2 | 3 | 4;
 
 export interface NaturalTreePlacement {
@@ -24,6 +24,12 @@ export interface MergedGeometryData {
   naturalTrees: readonly NaturalTreePlacement[];
   terrainGenerationVersion: TerrainGenerationVersion;
   lodCellCounts: { near: number; middle: number; far: number };
+  /** V24 ocean-island: satellite islet discs (center + shore radius), exposed
+   * for diagnostics and tests; absent for other environments. */
+  oceanIslets?: ReadonlyArray<{ x: number; z: number; radius: number }>;
+  /** V24 ocean-island: main island body radius and beach band width, so tests
+   * can verify the open-water strait precisely. */
+  oceanMain?: { radius: number; beach: number };
   hydrology: {
     networkCount: number;
     basinCount: number;
@@ -69,6 +75,9 @@ export function createSteppedTerrainData(
   const worldSeed = options.worldSeed ?? "world-default";
   const seedHash = stableHash(worldSeed);
   const terrainGenerationVersion = options.terrainGenerationVersion ?? 4;
+  if (options.environmentStyle === "ocean-island") {
+    return createOceanIslandTerrainDataV1(placements, roads, additionalPads, radius, seedHash);
+  }
   if (natural && (terrainGenerationVersion === 2 || terrainGenerationVersion === 3 || terrainGenerationVersion === 4)) {
     return createNaturalTerrainDataV2(placements, roads, additionalPads, radius, seedHash, terrainGenerationVersion, options.refinedFar);
   }
@@ -466,12 +475,216 @@ function createNaturalTerrainDataV2(
   };
 }
 
-function addV2LodSquare(extent: number, innerExtent: number, cellSize: number, add: (x: number, z: number) => void): void {
+/**
+ * V24 ocean-island environment: one main island (flat building platform, a
+ * ring of beach and one small hill), a set of satellite islets with a
+ * guaranteed open-water strait, and open ocean everywhere else. The island
+ * bodies sample a dedicated height field; the ocean is a flat water surface
+ * at height 0 (the same water rendering as lakes). Satellite islets get their
+ * own fine 2-unit lattice so they read as real islands instead of coarse far
+ * cells, while the background rings skip their discs.
+ */
+interface OceanIslet {
+  x: number;
+  z: number;
+  radius: number;
+  peakHeight: number;
+}
+
+function createOceanIslandTerrainDataV1(
+  placements: readonly VillagePlacement[],
+  roads: readonly RoadCell[],
+  additionalPads: readonly TerrainPad[],
+  coreRadius: number,
+  seedHash: number,
+): MergedGeometryData {
+  const nearExtent = alignTo(Math.max(80, coreRadius + 28), 8);
+  const middleExtent = alignTo(Math.max(160, nearExtent + 64), 16);
+  const farExtent = alignTo(Math.max(720, middleExtent + 80, coreRadius * 4.5), 16);
+  // Main island: building platform + shoulder + beach band + one hill.
+  const mainRadius = coreRadius + 26;
+  const beach = Math.max(12, Math.round(mainRadius * 0.24));
+  const hillAzimuth = (hash2d(seedHash, 0x911, 0, 0) / 0xffffffff) * Math.PI * 2;
+  const hillDistance = mainRadius * (0.3 + (hash2d(seedHash, 0x912, 0, 0) % 31) / 100);
+  const hillHeight = 22 + (hash2d(seedHash, 0x913, 0, 0) % 13);
+  const hillRadius = 16 + (hash2d(seedHash, 0x914, 0, 0) % 10);
+  const hill = { x: Math.cos(hillAzimuth) * hillDistance, z: Math.sin(hillAzimuth) * hillDistance };
+  // Satellite islets: 4..7 around the main island, at least `strait` units of
+  // open water between the main beach and any islet shore (user requirement).
+  const isletCount = 4 + (hash2d(seedHash, 0x921, 0, 0) % 4);
+  const islets: OceanIslet[] = [];
+  const strait = 60;
+  for (let index = 0; index < isletCount; index += 1) {
+    const angle = (index / isletCount) * Math.PI * 2 + (((hash2d(seedHash, 0x930 + index, 0, 0) % 628) / 100) - 3.1) * 0.12;
+    const radius = 13 + (hash2d(seedHash, 0x932 + index, 0, 0) % 15);
+    // The mandated open-water strait is measured from shoreline to shoreline:
+    // the islet center sits at least strait + its own radius past the beach.
+    const distance = mainRadius + beach + strait + radius + (hash2d(seedHash, 0x931 + index, 0, 0) % 85);
+    const peakHeight = 5 + (hash2d(seedHash, 0x933 + index, 0, 0) % 7);
+    islets.push({ x: Math.cos(angle) * distance, z: Math.sin(angle) * distance, radius, peakHeight });
+  }
+  const ocean = (): V2TerrainSample => ({ height: 0, material: "water", supportInfluence: 0, moisture: 1, waterKind: "lake" });
+  const inIsletDisc = (x: number, z: number): boolean =>
+    islets.some((islet) => Math.hypot(x - islet.x, z - islet.z) <= islet.radius + 3);
+  const sampleOceanAt = (x: number, z: number): V2TerrainSample => {
+    // Satellite islets.
+    for (const islet of islets) {
+      const d = Math.hypot(x - islet.x, z - islet.z);
+      const shore = islet.radius + 1.5;
+      if (d <= shore) {
+        const slope = Math.max(0, 1 - d / shore);
+        const ridge = 0.5 + 0.5 * Math.sin(fractalNoise(x * 0.07, z * 0.07, seedHash, 0x941) * Math.PI);
+        const height = Math.max(1, Math.round(slope * slope * (islet.peakHeight * (0.6 + ridge * 0.9))));
+        const sandy = d > islet.radius - 2;
+        return {
+          height,
+          material: height > 6 ? "stone" : sandy ? "dirt" : "grass",
+          supportInfluence: 0,
+          moisture: 0.14,
+          waterKind: "none",
+        };
+      }
+    }
+    // Main island.
+    const d = Math.hypot(x, z);
+    if (d <= mainRadius + beach) {
+      const platform = coreRadius * 0.92;
+      const gentle = valueNoise(x * 0.055, z * 0.055, seedHash, 0x951) * 0.5;
+      let height: number;
+      if (d <= platform) {
+        height = Math.max(1, Math.round(2.5 + gentle * 2));
+      } else if (d <= mainRadius) {
+        const t = 1 - (d - platform) / (mainRadius - platform);
+        height = Math.max(1, Math.round(1.5 + t * 3 + gentle * 2));
+      } else {
+        const t = 1 - (d - mainRadius) / beach;
+        height = Math.max(0, Math.round(t * 1.6));
+      }
+      // The hill rises inside the island body.
+      const hillDistanceTo = Math.hypot(x - hill.x, z - hill.z);
+      if (hillDistanceTo < hillRadius) {
+        const lift = Math.pow(1 - hillDistanceTo / hillRadius, 1.35) * (hillHeight + fractalNoise(x * 0.045, z * 0.045, seedHash, 0x952) * 7);
+        height += Math.round(lift);
+      }
+      const sandy = d > mainRadius - 5;
+      const rocky = height >= 16;
+      return {
+        height,
+        material: rocky ? "stone" : sandy ? "dirt" : "grass",
+        supportInfluence: 0,
+        moisture: 0.12,
+        waterKind: "none",
+      };
+    }
+    return ocean();
+  };
+
+  const positions: number[] = [];
+  const indicesByMaterial: Record<TerrainMaterial, number[]> = { grass: [], dirt: [], stone: [], water: [] };
+  const sideIndices: { dirt: number[]; stone: number[] } = { dirt: [], stone: [] };
+  const addSideQuad = (vertices: readonly number[], material: "dirt" | "stone"): void => {
+    const start = positions.length / 3;
+    positions.push(...vertices);
+    sideIndices[material].push(start, start + 1, start + 2, start, start + 2, start + 3);
+  };
+  const naturalTrees: NaturalTreePlacement[] = [];
+  const lodCellCounts = { near: 0, middle: 0, far: 0 };
+  let minHeight = Number.POSITIVE_INFINITY;
+  let maxHeight = Number.NEGATIVE_INFINITY;
+  let riverCellCount = 0;
+  let lakeCellCount = 0;
+  let protectedWaterCellCount = 0;
+  let waterSurfaceArea = 0;
+  let terrainSurfaceArea = 0;
+  const sampleCache = new Map<string, V2TerrainSample>();
+  const sampleCellAt = (x: number, z: number, _size: number): V2TerrainSample => {
+    const key = `${x}:${z}`;
+    const cached = sampleCache.get(key);
+    if (cached) return cached;
+    const sample = sampleOceanAt(x, z);
+    sampleCache.set(key, sample);
+    return sample;
+  };
+  const addQuad = (vertices: readonly number[], material: TerrainMaterial): void => {
+    const start = positions.length / 3;
+    positions.push(...vertices);
+    indicesByMaterial[material].push(start, start + 1, start + 2, start, start + 2, start + 3);
+  };
+  const addCell = (x: number, z: number, size: number, lod: keyof typeof lodCellCounts): void => {
+    const sample = sampleCellAt(x, z, size);
+    const half = size / 2;
+    const top = sample.height - (sample.material === "water" ? 0.34 : 0.5);
+    addQuad([
+      x - half, top, z - half, x - half, top, z + half,
+      x + half, top, z + half, x + half, top, z - half,
+    ], sample.material);
+    addV2CellSide(x, z, size, sample, -1, 0, sampleCellAt, nearExtent, middleExtent, middleExtent, false, addSideQuad);
+    addV2CellSide(x, z, size, sample, 1, 0, sampleCellAt, nearExtent, middleExtent, middleExtent, false, addSideQuad);
+    addV2CellSide(x, z, size, sample, 0, -1, sampleCellAt, nearExtent, middleExtent, middleExtent, false, addSideQuad);
+    addV2CellSide(x, z, size, sample, 0, 1, sampleCellAt, nearExtent, middleExtent, middleExtent, false, addSideQuad);
+    lodCellCounts[lod] += 1;
+    terrainSurfaceArea += size * size;
+    minHeight = Math.min(minHeight, sample.height);
+    maxHeight = Math.max(maxHeight, sample.height);
+    if (sample.waterKind === "river") riverCellCount += 1;
+    if (sample.waterKind === "lake") lakeCellCount += 1;
+    if (sample.waterKind !== "none") waterSurfaceArea += size * size;
+    if (sample.waterKind !== "none" && sample.supportInfluence >= 0.28) protectedWaterCellCount += 1;
+    if (lod !== "far" && size <= 4 && sample.material === "grass" && sample.supportInfluence < 0.18 && sample.moisture > 0.06) {
+      const treeHash = hash2d(seedHash, 0x771, Math.round(x), Math.round(z));
+      const density = size === 2 ? 27 : 58;
+      if (treeHash % 1000 < density && sample.height < 19) {
+        naturalTrees.push({ x, y: sample.height - 0.45, z, scale: 0.82 + (treeHash % 41) / 100 });
+      }
+    }
+  };
+
+  // Background rings skip the islet discs; the islets get fine 2-unit lattices.
+  addV2LodSquare(nearExtent, 0, 2, (x, z) => { if (!inIsletDisc(x, z)) addCell(x, z, 2, "near"); });
+  addV2LodSquare(middleExtent, nearExtent, 4, (x, z) => { if (!inIsletDisc(x, z)) addCell(x, z, 4, "middle"); });
+  addV2LodSquare(farExtent, middleExtent, 16, (x, z) => { if (!inIsletDisc(x, z)) addCell(x, z, 16, "far"); });
+  for (const islet of islets) {
+    addV2LodSquare(islet.radius + 5, 0, 2, (x, z) => addCell(x, z, 2, "middle"), islet.x, islet.z);
+  }
+
+  closeV2CornerSlits(positions, indicesByMaterial, sideIndices);
+
+  const indexCount = Object.values(indicesByMaterial).reduce((sum, indices) => sum + indices.length, 0)
+    + sideIndices.dirt.length + sideIndices.stone.length;
+  return {
+    positions,
+    indicesByMaterial,
+    sideIndices,
+    cellCount: lodCellCounts.near + lodCellCounts.middle + lodCellCounts.far,
+    triangleCount: indexCount / 3,
+    bounds: { minX: -farExtent, maxX: farExtent, minY: minHeight - 0.5, maxY: maxHeight + 0.5, minZ: -farExtent, maxZ: farExtent },
+    framingBounds: { minX: -coreRadius, maxX: coreRadius, minZ: -coreRadius, maxZ: coreRadius },
+    naturalTrees,
+    terrainGenerationVersion: 4,
+    lodCellCounts,
+    oceanIslets: islets,
+    oceanMain: { radius: mainRadius, beach },
+    hydrology: {
+      networkCount: 0,
+      basinCount: 0,
+      riverCellCount,
+      lakeCellCount,
+      riverSegmentCount: 0,
+      outletCount: 0,
+      maxUphillWaterStep: 0,
+      protectedWaterCellCount,
+      waterSurfaceArea,
+      terrainSurfaceArea,
+    },
+  };
+}
+
+function addV2LodSquare(extent: number, innerExtent: number, cellSize: number, add: (x: number, z: number) => void, centerX = 0, centerZ = 0): void {
   const start = -extent + cellSize / 2;
   for (let x = start; x < extent; x += cellSize) {
     for (let z = start; z < extent; z += cellSize) {
       if (innerExtent > 0 && Math.abs(x) < innerExtent && Math.abs(z) < innerExtent) continue;
-      add(x, z);
+      add(x + centerX, z + centerZ);
     }
   }
 }
