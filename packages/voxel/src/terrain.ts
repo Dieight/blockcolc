@@ -501,7 +501,8 @@ function createOceanIslandTerrainDataV1(
   const nearExtent = alignTo(Math.max(80, coreRadius + 28), 8);
   const middleExtent = alignTo(Math.max(160, nearExtent + 64), 16);
   const farExtent = alignTo(Math.max(720, middleExtent + 80, coreRadius * 4.5), 16);
-  // Main island: building platform + shoulder + beach band + one hill.
+  // Main island: building platform + shoulder + beach bays / rocky headlands +
+  // a hill chain, plus an inner lagoon and offshore reefs for visual richness.
   const mainRadius = coreRadius + 26;
   const beach = Math.max(12, Math.round(mainRadius * 0.24));
   const hillAzimuth = (hash2d(seedHash, 0x911, 0, 0) / 0xffffffff) * Math.PI * 2;
@@ -509,6 +510,60 @@ function createOceanIslandTerrainDataV1(
   const hillHeight = 22 + (hash2d(seedHash, 0x913, 0, 0) % 13);
   const hillRadius = 16 + (hash2d(seedHash, 0x914, 0, 0) % 10);
   const hill = { x: Math.cos(hillAzimuth) * hillDistance, z: Math.sin(hillAzimuth) * hillDistance };
+  // Secondary peaks along the hill chain give the island a ridged silhouette.
+  const secondaryPeaks = [0.42, 0.96, 1.5].map((offset) => ({
+    x: hill.x * Math.cos(offset) - hill.z * Math.sin(offset),
+    z: hill.x * Math.sin(offset) + hill.z * Math.cos(offset),
+    height: 8 + (hash2d(seedHash, 0x915, Math.round(offset * 10), 0) % 7),
+    radius: 9 + (hash2d(seedHash, 0x916, Math.round(offset * 10), 0) % 6),
+  }));
+  // The shoreline is warped per angle: several cosine harmonics plus one
+  // seeded fractal make bays and headlands instead of a perfect circle.
+  const shorePhaseA = (hash2d(seedHash, 0x941, 0, 0) / 0xffffffff) * Math.PI * 2;
+  const shorePhaseB = (hash2d(seedHash, 0x942, 0, 0) / 0xffffffff) * Math.PI * 2;
+  const shorePhaseC = (hash2d(seedHash, 0x943, 0, 0) / 0xffffffff) * Math.PI * 2;
+  const shoreWarp = (angle: number): number => {
+    const waves = Math.sin(angle * 2 + shorePhaseA) * 0.5
+      + Math.sin(angle * 3 + shorePhaseB) * 0.32
+      + Math.sin(angle * 5 + shorePhaseC) * 0.18;
+    const fractal = valueNoise(Math.cos(angle) * 1.7, Math.sin(angle) * 1.7, seedHash, 0x944) * 0.24;
+    return Math.max(0.62, 1 + waves * 0.24 + fractal * 0.18);
+  };
+  // Two or three rocky headland arcs; the rest of the shore is sandy bays.
+  const headlandCount = 2 + (hash2d(seedHash, 0x945, 0, 0) % 2);
+  const headlands: Array<{ center: number; width: number }> = [];
+  for (let index = 0; index < headlandCount; index += 1) {
+    headlands.push({
+      center: (hash2d(seedHash, 0x946 + index, 0, 0) / 0xffffffff) * Math.PI * 2,
+      width: 0.55 + (hash2d(seedHash, 0x947 + index, 0, 0) % 40) / 100,
+    });
+  }
+  const rockyShore = (angle: number): boolean =>
+    headlands.some((head) => {
+      let delta = Math.abs(angle - head.center);
+      if (delta > Math.PI) delta = Math.PI * 2 - delta;
+      return delta < head.width;
+    });
+  // An inner lagoon: a small pond halfway to the shore, ringed by the shoulders.
+  const lagoonAzimuth = hillAzimuth + Math.PI + (((hash2d(seedHash, 0x917, 0, 0) % 628) / 100) - 3.1) * 0.8;
+  const lagoonDistance = mainRadius * (0.5 + (hash2d(seedHash, 0x918, 0, 0) % 15) / 100);
+  const lagoon = {
+    x: Math.cos(lagoonAzimuth) * lagoonDistance,
+    z: Math.sin(lagoonAzimuth) * lagoonDistance,
+    radius: 4 + (hash2d(seedHash, 0x919, 0, 0) % 4),
+  };
+  // Offshore reefs: a few rock knobs poking out of the shallow water.
+  const reefCount = 6 + (hash2d(seedHash, 0x95a, 0, 0) % 5);
+  const reefs: Array<{ x: number; z: number; radius: number }> = [];
+  for (let index = 0; index < reefCount; index += 1) {
+    const ring = mainRadius + beach + 10 + (hash2d(seedHash, 0x95b + index, 0, 0) % 26);
+    const angle = (hash2d(seedHash, 0x95c + index, 0, 0) / 0xffffffff) * Math.PI * 2;
+    reefs.push({
+      x: Math.cos(angle) * ring,
+      z: Math.sin(angle) * ring,
+      radius: 1.5 + (hash2d(seedHash, 0x95d + index, 0, 0) % 20) / 10,
+    });
+  }
   // Satellite islets: 4..7 around the main island, at least `strait` units of
   // open water between the main beach and any islet shore (user requirement).
   const isletCount = 4 + (hash2d(seedHash, 0x921, 0, 0) % 4);
@@ -524,13 +579,17 @@ function createOceanIslandTerrainDataV1(
     islets.push({ x: Math.cos(angle) * distance, z: Math.sin(angle) * distance, radius, peakHeight });
   }
   const ocean = (): V2TerrainSample => ({ height: 0, material: "water", supportInfluence: 0, moisture: 1, waterKind: "lake" });
+  // The fine islet lattice covers a slightly larger disc than the background
+  // rings skip, so no ring of missing cells surrounds an islet.
   const inIsletDisc = (x: number, z: number): boolean =>
-    islets.some((islet) => Math.hypot(x - islet.x, z - islet.z) <= islet.radius + 3);
+    islets.some((islet) => Math.hypot(x - islet.x, z - islet.z) <= islet.radius + 6);
   const sampleOceanAt = (x: number, z: number): V2TerrainSample => {
-    // Satellite islets.
+    // Satellite islets (warped shores like the main island).
     for (const islet of islets) {
-      const d = Math.hypot(x - islet.x, z - islet.z);
-      const shore = islet.radius + 1.5;
+      const dx = x - islet.x;
+      const dz = z - islet.z;
+      const d = Math.hypot(dx, dz);
+      const shore = islet.radius * shoreWarp(Math.atan2(dz, dx)) + 1.5;
       if (d <= shore) {
         const slope = Math.max(0, 1 - d / shore);
         const ridge = 0.5 + 0.5 * Math.sin(fractalNoise(x * 0.07, z * 0.07, seedHash, 0x941) * Math.PI);
@@ -545,29 +604,44 @@ function createOceanIslandTerrainDataV1(
         };
       }
     }
-    // Main island.
+    // Reefs poke out of the open water.
+    for (const reef of reefs) {
+      if (Math.hypot(x - reef.x, z - reef.z) <= reef.radius) {
+        return { height: 1, material: "stone", supportInfluence: 0, moisture: 0, waterKind: "none" };
+      }
+    }
+    // Inner lagoon pond on the main island (checked before the island body so
+    // the pond does not get swallowed by the land sample).
+    if (Math.hypot(x - lagoon.x, z - lagoon.z) <= lagoon.radius) {
+      return ocean();
+    }
+    // Main island, shoreline warped into bays and headlands.
+    const angle = Math.atan2(z, x);
+    const shoreK = shoreWarp(angle);
     const d = Math.hypot(x, z);
-    if (d <= mainRadius + beach) {
+    if (d <= (mainRadius + beach) * shoreK) {
       const platform = coreRadius * 0.92;
       const gentle = valueNoise(x * 0.055, z * 0.055, seedHash, 0x951) * 0.5;
       let height: number;
       if (d <= platform) {
         height = Math.max(1, Math.round(2.5 + gentle * 2));
-      } else if (d <= mainRadius) {
-        const t = 1 - (d - platform) / (mainRadius - platform);
+      } else if (d <= mainRadius * shoreK) {
+        const t = 1 - (d - platform) / Math.max(1, mainRadius * shoreK - platform);
         height = Math.max(1, Math.round(1.5 + t * 3 + gentle * 2));
       } else {
-        const t = 1 - (d - mainRadius) / beach;
+        const t = 1 - (d - mainRadius * shoreK) / Math.max(1, (mainRadius + beach) * shoreK - mainRadius * shoreK);
         height = Math.max(0, Math.round(t * 1.6));
       }
-      // The hill rises inside the island body.
-      const hillDistanceTo = Math.hypot(x - hill.x, z - hill.z);
-      if (hillDistanceTo < hillRadius) {
-        const lift = Math.pow(1 - hillDistanceTo / hillRadius, 1.35) * (hillHeight + fractalNoise(x * 0.045, z * 0.045, seedHash, 0x952) * 7);
-        height += Math.round(lift);
-      }
-      const sandy = d > mainRadius - 5;
-      const rocky = height >= 16;
+      // Hill chain: the main peak plus the secondary peaks along the ridge.
+      const peakContrib = (peak: { x: number; z: number; height: number; radius: number }): number => {
+        const peakDistanceTo = Math.hypot(x - peak.x, z - peak.z);
+        if (peakDistanceTo >= peak.radius) return 0;
+        return Math.pow(1 - peakDistanceTo / peak.radius, 1.35) * (peak.height + fractalNoise(x * 0.045, z * 0.045, seedHash, 0x952) * 6);
+      };
+      height += Math.round(peakContrib({ ...hill, height: hillHeight, radius: hillRadius }));
+      for (const secondary of secondaryPeaks) height += Math.round(peakContrib(secondary));
+      const rocky = height >= 16 || (rockyShore(angle) && d > mainRadius * shoreK - 4);
+      const sandy = !rocky && d > mainRadius * shoreK - 5;
       return {
         height,
         material: rocky ? "stone" : sandy ? "dirt" : "grass",
@@ -644,7 +718,9 @@ function createOceanIslandTerrainDataV1(
   addV2LodSquare(middleExtent, nearExtent, 4, (x, z) => { if (!inIsletDisc(x, z)) addCell(x, z, 4, "middle"); });
   addV2LodSquare(farExtent, middleExtent, 16, (x, z) => { if (!inIsletDisc(x, z)) addCell(x, z, 16, "far"); });
   for (const islet of islets) {
-    addV2LodSquare(islet.radius + 5, 0, 2, (x, z) => addCell(x, z, 2, "middle"), islet.x, islet.z);
+    // The fine lattice extends past the skipped background disc (islet.radius + 6)
+    // so no ring of missing cells can surround an islet.
+    addV2LodSquare(islet.radius + 7, 0, 2, (x, z) => addCell(x, z, 2, "middle"), islet.x, islet.z);
   }
 
   closeV2CornerSlits(positions, indicesByMaterial, sideIndices);

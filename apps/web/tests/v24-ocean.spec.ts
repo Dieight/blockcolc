@@ -73,3 +73,17 @@ function analyzePixels(buffer: Buffer): { waterShare: number; landShare: number 
   const total = water + land || 1;
   return { waterShare: water / total, landShare: land / total };
 }
+
+test("ocean island at night scatters the moon streak instead of a mirror band", async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.clock.install({ time: new Date("2026-08-26T14:20:00Z") });
+  await page.goto("/");
+  await page.getByRole("button", { name: "开始建造" }).click();
+  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await page.getByRole("group", { name: "聚落环境" }).getByRole("button", { name: "海洋小岛" }).click();
+  await page.getByRole("button", { name: "计时", exact: true }).click();
+  const canvas = page.getByLabel("项目建筑世界");
+  await expect(canvas).toHaveAttribute("data-environment-style", "ocean-island");
+  await page.waitForTimeout(1_500);
+  await page.screenshot({ path: "test-results/v24-ocean-night.png", fullPage: true });
+});
