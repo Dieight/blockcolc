@@ -419,10 +419,10 @@ function createNaturalTerrainDataV2(
     // lattice centers: sampling a ring boundary neighbor at this cell's size or
     // at an off-lattice position hides real steps and leaves a sky-visible slit
     // along the whole boundary line between the two rings.
-    addV2CellSide(x, z, size, sample, -1, 0, sampleCellAt, nearExtent, middleExtent, farFineExtent, refinedFar, addSideQuad);
-    addV2CellSide(x, z, size, sample, 1, 0, sampleCellAt, nearExtent, middleExtent, farFineExtent, refinedFar, addSideQuad);
-    addV2CellSide(x, z, size, sample, 0, -1, sampleCellAt, nearExtent, middleExtent, farFineExtent, refinedFar, addSideQuad);
-    addV2CellSide(x, z, size, sample, 0, 1, sampleCellAt, nearExtent, middleExtent, farFineExtent, refinedFar, addSideQuad);
+    addV2CellSide(x, z, size, sample, -1, 0, sampleCellAt, nearExtent, middleExtent, farFineExtent, refinedFar, 16, addSideQuad);
+    addV2CellSide(x, z, size, sample, 1, 0, sampleCellAt, nearExtent, middleExtent, farFineExtent, refinedFar, 16, addSideQuad);
+    addV2CellSide(x, z, size, sample, 0, -1, sampleCellAt, nearExtent, middleExtent, farFineExtent, refinedFar, 16, addSideQuad);
+    addV2CellSide(x, z, size, sample, 0, 1, sampleCellAt, nearExtent, middleExtent, farFineExtent, refinedFar, 16, addSideQuad);
     lodCellCounts[lod] += 1;
     terrainSurfaceArea += size * size;
     minHeight = Math.min(minHeight, sample.height);
@@ -500,7 +500,12 @@ function createOceanIslandTerrainDataV1(
 ): MergedGeometryData {
   const nearExtent = alignTo(Math.max(80, coreRadius + 28), 8);
   const middleExtent = alignTo(Math.max(160, nearExtent + 64), 16);
-  const farExtent = alignTo(Math.max(720, middleExtent + 80, coreRadius * 4.5), 16);
+  // The ocean needs a much larger envelope than the valleys: the flat sea
+  // makes the terrain edge visible as a hard line when the camera zooms out,
+  // so the boundary sits far past any reachable view. The far ring uses
+  // 32-unit cells there (flat water, sub-pixel at that distance) so the cost
+  // stays tiny.
+  const farExtent = alignTo(Math.max(1200, middleExtent + 80, coreRadius * 5), 16);
   // Main island: building platform + shoulder + beach bays / rocky headlands +
   // a hill chain, plus an inner lagoon and offshore reefs for visual richness.
   // The island body is sized well past the building platform so beaches, hills
@@ -533,13 +538,16 @@ function createOceanIslandTerrainDataV1(
     const fractal = valueNoise(Math.cos(angle) * 1.9, Math.sin(angle) * 1.9, seedHash, 0x944) * 0.3;
     return Math.max(0.58, 1 + waves * 0.3 + fractal * 0.22);
   };
-  // Two or three rocky headland arcs; the rest of the shore is sandy bays.
-  const headlandCount = 2 + (hash2d(seedHash, 0x945, 0, 0) % 2);
+  // Several rocky headland arcs in scattered, asymmetric angles; the rest of
+  // the shore is sandy only where the coast recedes (bays) — protruding
+  // stretches stay rocky, so the rim never reads as a half-sand half-stone
+  // ring.
+  const headlandCount = 2 + (hash2d(seedHash, 0x945, 0, 0) % 3);
   const headlands: Array<{ center: number; width: number }> = [];
   for (let index = 0; index < headlandCount; index += 1) {
     headlands.push({
       center: (hash2d(seedHash, 0x946 + index, 0, 0) / 0xffffffff) * Math.PI * 2,
-      width: 0.55 + (hash2d(seedHash, 0x947 + index, 0, 0) % 40) / 100,
+      width: 0.5 + (hash2d(seedHash, 0x947 + index, 0, 0) % 62) / 100,
     });
   }
   const rockyShore = (angle: number): boolean =>
@@ -598,10 +606,11 @@ function createOceanIslandTerrainDataV1(
     islets.push({ x: Math.cos(angle) * distance, z: Math.sin(angle) * distance, radius, peakHeight });
   }
   const ocean = (): V2TerrainSample => ({ height: 0, material: "water", supportInfluence: 0, moisture: 1, waterKind: "lake" });
-  // The fine islet lattice covers a slightly larger disc than the background
-  // rings skip, so no ring of missing cells surrounds an islet.
+  // The fine islet lattice covers a 16-multiple disc aligned with the
+  // background 16-unit cells, so no ring of missing cells surrounds an islet.
+  const isletReach = (islet: OceanIslet): number => Math.ceil((islet.radius + 9) / 16) * 16;
   const inIsletDisc = (x: number, z: number): boolean =>
-    islets.some((islet) => Math.hypot(x - islet.x, z - islet.z) <= islet.radius + 6);
+    islets.some((islet) => Math.hypot(x - islet.x, z - islet.z) <= isletReach(islet));
   // The building platform is a SQUARE framing box; circular features (hill
   // discs, lagoon, sandy arcs) must never touch it, so every decorative
   // feature is gated on this square halo.
@@ -619,7 +628,10 @@ function createOceanIslandTerrainDataV1(
         const slope = Math.max(0, 1 - d / shore);
         const ridge = 0.5 + 0.5 * Math.sin(fractalNoise(x * 0.07, z * 0.07, seedHash, 0x941) * Math.PI);
         const height = Math.max(1, Math.round(slope * slope * (islet.peakHeight * (0.6 + ridge * 0.9))));
-        const sandy = d > islet.radius - 2;
+        // Same bay/headland rule as the main island: beaches only in receding
+        // bays, protruding stretches stay rocky.
+        const isletShoreK = shoreWarp(Math.atan2(dz, dx));
+        const sandy = isletShoreK < 1.06 && d > islet.radius - 2;
         return {
           height,
           material: height > 6 ? "stone" : sandy ? "dirt" : "grass",
@@ -649,10 +661,14 @@ function createOceanIslandTerrainDataV1(
       const gentle = valueNoise(x * 0.055, z * 0.055, seedHash, 0x951) * 0.5;
       let height: number;
       if (d <= platform) {
-        height = Math.max(1, Math.round(2.5 + gentle * 2));
+        // Building platform: gently rolling grass that matches the shoulder
+        // height so it reads as part of the island, not a sunken flat disc.
+        height = Math.max(2, Math.round(3 + gentle * 1.6));
       } else if (d <= mainRadius * shoreK) {
+        // Shoulder climbs smoothly from the platform toward the hill chain,
+        // then the island slopes down toward the rim.
         const t = 1 - (d - platform) / Math.max(1, mainRadius * shoreK - platform);
-        height = Math.max(1, Math.round(1.5 + t * 3 + gentle * 2));
+        height = Math.max(2, Math.round(3 + gentle * 1.6 + t * 2.6));
       } else {
         const t = 1 - (d - mainRadius * shoreK) / Math.max(1, (mainRadius + beach) * shoreK - mainRadius * shoreK);
         height = Math.max(0, Math.round(t * 1.6));
@@ -667,11 +683,12 @@ function createOceanIslandTerrainDataV1(
       };
       height += Math.round(peakContrib({ ...hill, height: hillHeight, radius: hillRadius }));
       for (const secondary of secondaryPeaks) height += Math.round(peakContrib(secondary));
-      // Beaches and rocky headlands belong to the island rim, never onto the
-      // square building halo — the platform stays uniform green like every
-      // other environment.
+      // Beaches belong to receding bays only; headlands and protruding stretches
+      // stay rocky — never onto the square building halo.
       const rim = Math.max(mainRadius * shoreK, platform);
-      const rocky = height >= 16 || (rockyShore(angle) && !squareIn(x, z) && d > rim - 4);
+      const protruding = shoreK >= 1.06;
+      const rocky = height >= 16 || (protruding && !squareIn(x, z) && d > rim - 5)
+        || (rockyShore(angle) && !squareIn(x, z) && d > rim - 4);
       const sandy = !rocky && !squareIn(x, z) && d > rim - 5;
       return {
         height,
@@ -723,10 +740,10 @@ function createOceanIslandTerrainDataV1(
       x - half, top, z - half, x - half, top, z + half,
       x + half, top, z + half, x + half, top, z - half,
     ], sample.material);
-    addV2CellSide(x, z, size, sample, -1, 0, sampleCellAt, nearExtent, middleExtent, middleExtent, false, addSideQuad);
-    addV2CellSide(x, z, size, sample, 1, 0, sampleCellAt, nearExtent, middleExtent, middleExtent, false, addSideQuad);
-    addV2CellSide(x, z, size, sample, 0, -1, sampleCellAt, nearExtent, middleExtent, middleExtent, false, addSideQuad);
-    addV2CellSide(x, z, size, sample, 0, 1, sampleCellAt, nearExtent, middleExtent, middleExtent, false, addSideQuad);
+    addV2CellSide(x, z, size, sample, -1, 0, sampleCellAt, nearExtent, middleExtent, middleExtent, false, 32, addSideQuad);
+    addV2CellSide(x, z, size, sample, 1, 0, sampleCellAt, nearExtent, middleExtent, middleExtent, false, 32, addSideQuad);
+    addV2CellSide(x, z, size, sample, 0, -1, sampleCellAt, nearExtent, middleExtent, middleExtent, false, 32, addSideQuad);
+    addV2CellSide(x, z, size, sample, 0, 1, sampleCellAt, nearExtent, middleExtent, middleExtent, false, 32, addSideQuad);
     lodCellCounts[lod] += 1;
     terrainSurfaceArea += size * size;
     minHeight = Math.min(minHeight, sample.height);
@@ -745,13 +762,17 @@ function createOceanIslandTerrainDataV1(
   };
 
   // Background rings skip the islet discs; the islets get fine 2-unit lattices.
+  // Every ring boundary must sit on the coarser lattice's edge so the two
+  // grids interlock without overlaps or gaps at the seam.
   addV2LodSquare(nearExtent, 0, 2, (x, z) => { if (!inIsletDisc(x, z)) addCell(x, z, 2, "near"); });
   addV2LodSquare(middleExtent, nearExtent, 4, (x, z) => { if (!inIsletDisc(x, z)) addCell(x, z, 4, "middle"); });
-  addV2LodSquare(farExtent, middleExtent, 16, (x, z) => { if (!inIsletDisc(x, z)) addCell(x, z, 16, "far"); });
+  addV2LodSquare(farExtent, middleExtent, 32, (x, z) => { if (!inIsletDisc(x, z)) addCell(x, z, 32, "far"); });
   for (const islet of islets) {
-    // The fine lattice extends past the skipped background disc (islet.radius + 6)
-    // so no ring of missing cells can surround an islet.
-    addV2LodSquare(islet.radius + 7, 0, 2, (x, z) => addCell(x, z, 2, "middle"), islet.x, islet.z);
+    // The fine lattice extends to a 16-multiple boundary (aligned with the
+    // 16-unit background cells) past the skipped disc, so the 2-unit and
+    // 16-unit grids share exact edges around every islet — no stray seams.
+    const reach = Math.ceil((islet.radius + 9) / 16) * 16;
+    addV2LodSquare(reach, 0, 2, (x, z) => addCell(x, z, 2, "middle"), islet.x, islet.z);
   }
 
   closeV2CornerSlits(positions, indicesByMaterial, sideIndices);
@@ -936,6 +957,7 @@ function addV2CellSide(
   middleExtent: number,
   farFineExtent: number,
   refinedFar: boolean,
+  farCellSize = 16,
   addQuad: (vertices: readonly number[], material: "dirt" | "stone") => void,
 ): void {
   // Water surfaces sit 0.16 above land tops; side faces must start at the actual
@@ -947,7 +969,7 @@ function addV2CellSide(
   const insideNear = Math.abs(acrossX) <= nearExtent && Math.abs(acrossZ) <= nearExtent;
   const insideMiddle = Math.abs(acrossX) <= middleExtent && Math.abs(acrossZ) <= middleExtent;
   const insideFine = refinedFar && Math.abs(acrossX) <= farFineExtent && Math.abs(acrossZ) <= farFineExtent;
-  const neighborSize = insideNear ? 2 : insideMiddle ? 4 : insideFine ? 2 : 16;
+  const neighborSize = insideNear ? 2 : insideMiddle ? 4 : insideFine ? 2 : farCellSize;
   // Ring lattices: near cells sit on odd coordinates, middle cells at 2 mod 4,
   // the far fine tier also on odd coordinates (2 mod 2), far cells at 8 mod 16
   // — the lattice offset is always half the neighbor size. Snap the neighbor

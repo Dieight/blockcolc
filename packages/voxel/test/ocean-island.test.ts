@@ -74,6 +74,9 @@ test("ocean island: framing stays dry, ocean dominates, islets exist", () => {
     expect(platformDirt).toBe(0);
     expect(platformStone).toBe(0);
     expect(platformWater).toBe(0);
+    // The ocean envelope sits far past any reachable view so the zoomed-out
+    // rotation never shows a hard terrain edge.
+    expect(terrain.bounds.maxX).toBeGreaterThanOrEqual(1100);
     // Straits: no land bridge between islands — every land quad at distance d
     // from origin has open water between mainRadius and d (checked visually via
     // the land-only ring counts above); at minimum land exists at 2+ distances.

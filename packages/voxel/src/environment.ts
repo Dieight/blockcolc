@@ -78,9 +78,16 @@ export function fogRangeForView(kind: WeatherKind, cameraDistance: number, conte
       : { near: Math.max(18, distance - radius * 0.15), far: distance + radius * 3.2 };
   }
   if (kind === "rain") {
-    return { near: Math.max(22, distance + radius * 0.05), far: distance + radius * 4.1 };
+    // V24 ocean: the sea edge sits at farExtent 1200; full fog lands well
+    // before it so the zoomed-out rotation never reveals a hard terrain edge
+    // (the valleys keep the classic six-radius range).
+    return ocean
+      ? { near: Math.max(22, distance + radius * 0.05), far: distance + radius * 4.1 }
+      : { near: Math.max(22, distance + radius * 0.05), far: distance + radius * 4.1 };
   }
-  return { near: Math.max(32, distance + radius * 0.45), far: distance + radius * 6 };
+  return ocean
+    ? { near: Math.max(32, distance + radius * 0.45), far: distance + radius * 4.4 }
+    : { near: Math.max(32, distance + radius * 0.45), far: distance + radius * 6 };
 }
 
 export function decorationsForProject(

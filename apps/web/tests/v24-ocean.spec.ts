@@ -25,6 +25,7 @@ test("ocean island world renders main island, islets and open sea", async ({ pag
       isletPositions: c?.dataset.oceanIsletPositions ?? "",
       mainRadius: Number(c?.dataset.oceanMainRadius ?? 0),
       mainBeach: Number(c?.dataset.oceanMainBeach ?? 0),
+      farExtent: Number(c?.dataset.terrainFarExtent ?? 0),
     };
   });
   console.log("OCEAN_DIAG " + JSON.stringify(diag));
@@ -33,6 +34,8 @@ test("ocean island world renders main island, islets and open sea", async ({ pag
   expect(diag.islets).toBeGreaterThanOrEqual(4);
   expect(diag.islets).toBeLessThanOrEqual(7);
   expect(diag.mainRadius).toBeGreaterThan(0);
+  const farExtent = Number(diag.farExtent ?? 0);
+  expect(farExtent).toBeGreaterThanOrEqual(1100);
   const shoreline = diag.mainRadius + diag.mainBeach;
   const seats = diag.isletPositions.split(",").filter(Boolean).map((entry) => entry.split(":").map(Number));
   for (const [ix, iz, radius] of seats) {
