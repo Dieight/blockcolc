@@ -72,7 +72,13 @@ test("replaces the old visual experiments with persistent adaptive lighting pres
     await expect(canvas).toHaveAttribute("data-post-process-sample-count", "0");
   }
   const cinematic = await canvas.screenshot({ path: testInfo.outputPath("lighting-cinematic.png") });
-  expect(Buffer.compare(performance, cinematic)).not.toBe(0);
+  // Software-WebGL gates (and any device the adaptive tier downgrades)
+  // legitimately fall back from cinematic to performance: then the two
+  // screenshots are the same render path and the comparison would be a
+  // false negative. Only assert the visual change when cinematic is active.
+  if (active === "cinematic") {
+    expect(Buffer.compare(performance, cinematic)).not.toBe(0);
+  }
 
   const box = await canvas.boundingBox();
   if (!box) throw new Error("World canvas has no layout box");
