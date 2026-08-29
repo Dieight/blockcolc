@@ -49,6 +49,31 @@ test("ocean island: framing stays dry, ocean dominates, islets exist", () => {
       }
     }
     expect(isletLand).toBeGreaterThan(100);
+    // The building platform must stay uniform green — no beach, rock or water
+    // quad center may sit inside the construction area (framing box).
+    let platformDirt = 0;
+    let platformStone = 0;
+    let platformWater = 0;
+    {
+      const positions = terrain.positions;
+      for (const material of ["dirt", "stone", "water"] as const) {
+        const indices = terrain.indicesByMaterial[material];
+        for (let base = 0; base + 2 < indices.length; base += 6) {
+          const p0 = indices[base]! * 3;
+          const p2 = indices[base + 2]! * 3;
+          const cx = (positions[p0]! + positions[p2]!) / 2;
+          const cz = (positions[p0 + 2]! + positions[p2 + 2]!) / 2;
+          if (Math.max(Math.abs(cx), Math.abs(cz)) <= framing.maxX - 1) {
+            if (material === "dirt") platformDirt += 1;
+            if (material === "stone") platformStone += 1;
+            if (material === "water") platformWater += 1;
+          }
+        }
+      }
+    }
+    expect(platformDirt).toBe(0);
+    expect(platformStone).toBe(0);
+    expect(platformWater).toBe(0);
     // Straits: no land bridge between islands — every land quad at distance d
     // from origin has open water between mainRadius and d (checked visually via
     // the land-only ring counts above); at minimum land exists at 2+ distances.

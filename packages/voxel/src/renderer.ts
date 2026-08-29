@@ -1048,37 +1048,9 @@ export function createVoxelRenderer(
     });
     geometry.setIndex(combined);
     geometry.computeVertexNormals();
-    // V24: large ocean surfaces reflect like a mirror when every water vertex
-    // points straight up — moonlight draws one long stripe and the horizon
-    // splits into grey-in-front/blue-behind bands. Tilt the water normals with
-    // seeded per-vertex noise so speculars scatter into soft patches instead.
-    const waterNormals = geometry.getAttribute("normal") as THREE.BufferAttribute;
-    if (waterNormals) {
-      const normalArray = waterNormals.array as Float32Array;
-      const waterIndices = data.indicesByMaterial.water;
-      for (let offset = 0; offset < waterIndices.length; offset += 1) {
-        const vertexIndex = waterIndices[offset]!;
-        const wx = data.positions[vertexIndex * 3]!;
-        const wz = data.positions[vertexIndex * 3 + 2]!;
-        // Per-vertex pseudo-random phase: adjacent vertices differ wildly, so
-        // moonlight speculars scatter as patches instead of one striped band.
-        const mixed = Math.sin(wx * 12.9898 + wz * 78.233) * 43758.5453;
-        const phase = mixed - Math.floor(mixed);
-        // Far water is seen at grazing angles where a small normal tilt makes
-        // a huge reflection shift, so scatter grows with distance from the
-        // settlement core — the horizon reads as textured sea, not a mirror.
-        const distanceFactor = Math.min(1, Math.hypot(wx, wz) / 520);
-        const tilt = 0.12 + phase * (0.26 + distanceFactor * 0.42);
-        const spin = phase * Math.PI * 2 * 3;
-        const nx = Math.sin(spin) * tilt;
-        const nz = Math.cos(spin) * tilt;
-        const ny = Math.sqrt(Math.max(0, 1 - tilt * tilt));
-        normalArray[vertexIndex * 3] = nx;
-        normalArray[vertexIndex * 3 + 1] = ny;
-        normalArray[vertexIndex * 3 + 2] = nz;
-      }
-      waterNormals.needsUpdate = true;
-    }
+    // V24: water keeps its flat surface normals — the vertex-tilt experiment
+    // made the day-lit open sea read as noisy mush over the far LOD cells and
+    // was rolled back (user-accepted mirror gloss stays for now).
     // Terrain surfaces retexture through pack tiles when the pack provides them;
     // water keeps the opaque procedural contract.
     const grassPack = packTileMaterial("minecraft:grass_block", "up");
@@ -1788,14 +1760,10 @@ export function createVoxelRenderer(
         ? OCEAN_SEA_TONES[oceanSeaTone(options.worldSeed ?? "world-default")]
         : 0x3e7380;
       water.color.setHex(base).lerp(new THREE.Color(state.skyHorizonColor), qualityTier === "high" ? 0.2 : 0.1);
-      // V24: rough the surface up so the open sea reads as water, not polished
-      // glass — combined with the tilted water normals this breaks the long
-      // mirror streaks (moonlight) and the front-grey/back-blue horizon split.
-      water.roughness = qualityTier === "high" ? 0.6 : qualityTier === "balanced" ? 0.68 : 0.78;
-      water.metalness = qualityTier === "high" ? 0.02 : 0.01;
-      if ("specularIntensity" in water) (water as THREE.MeshStandardMaterial & { specularIntensity: number }).specularIntensity = 0.3;
+      water.roughness = qualityTier === "high" ? 0.22 : qualityTier === "balanced" ? 0.3 : 0.48;
+      water.metalness = qualityTier === "high" ? 0.1 : 0.04;
       water.emissive.setHex(state.nightFactor > 0.55 ? 0x102c36 : 0x071c22);
-      water.emissiveIntensity = qualityTier === "high" ? 0.14 : 0.06;
+      water.emissiveIntensity = qualityTier === "high" ? 0.2 : 0.08;
     }
     const glass = materials.get("glass");
     if (glass) {

@@ -503,10 +503,14 @@ function createOceanIslandTerrainDataV1(
   const farExtent = alignTo(Math.max(720, middleExtent + 80, coreRadius * 4.5), 16);
   // Main island: building platform + shoulder + beach bays / rocky headlands +
   // a hill chain, plus an inner lagoon and offshore reefs for visual richness.
-  const mainRadius = coreRadius + 26;
-  const beach = Math.max(12, Math.round(mainRadius * 0.24));
+  // The island body is sized well past the building platform so beaches, hills
+  // and the lagoon live OUTSIDE the construction area (the platform terrain
+  // must behave exactly like every other environment).
+  const platform = coreRadius * 0.92;
+  const mainRadius = coreRadius * 1.55 + 20;
+  const beach = Math.max(12, Math.round(mainRadius * 0.22));
   const hillAzimuth = (hash2d(seedHash, 0x911, 0, 0) / 0xffffffff) * Math.PI * 2;
-  const hillDistance = mainRadius * (0.3 + (hash2d(seedHash, 0x912, 0, 0) % 31) / 100);
+  const hillDistance = Math.max(platform * 1.4, mainRadius * 0.42 + (hash2d(seedHash, 0x912, 0, 0) % 21));
   const hillHeight = 22 + (hash2d(seedHash, 0x913, 0, 0) % 13);
   const hillRadius = 16 + (hash2d(seedHash, 0x914, 0, 0) % 10);
   const hill = { x: Math.cos(hillAzimuth) * hillDistance, z: Math.sin(hillAzimuth) * hillDistance };
@@ -525,9 +529,9 @@ function createOceanIslandTerrainDataV1(
   const shoreWarp = (angle: number): number => {
     const waves = Math.sin(angle * 2 + shorePhaseA) * 0.5
       + Math.sin(angle * 3 + shorePhaseB) * 0.32
-      + Math.sin(angle * 5 + shorePhaseC) * 0.18;
-    const fractal = valueNoise(Math.cos(angle) * 1.7, Math.sin(angle) * 1.7, seedHash, 0x944) * 0.24;
-    return Math.max(0.62, 1 + waves * 0.24 + fractal * 0.18);
+      + Math.sin(angle * 5 + shorePhaseC) * 0.2;
+    const fractal = valueNoise(Math.cos(angle) * 1.9, Math.sin(angle) * 1.9, seedHash, 0x944) * 0.3;
+    return Math.max(0.58, 1 + waves * 0.3 + fractal * 0.22);
   };
   // Two or three rocky headland arcs; the rest of the shore is sandy bays.
   const headlandCount = 2 + (hash2d(seedHash, 0x945, 0, 0) % 2);
@@ -544,9 +548,10 @@ function createOceanIslandTerrainDataV1(
       if (delta > Math.PI) delta = Math.PI * 2 - delta;
       return delta < head.width;
     });
-  // An inner lagoon: a small pond halfway to the shore, ringed by the shoulders.
+  // An inner lagoon: a small pond outside the building platform, ringed by the
+  // shoulders.
   const lagoonAzimuth = hillAzimuth + Math.PI + (((hash2d(seedHash, 0x917, 0, 0) % 628) / 100) - 3.1) * 0.8;
-  const lagoonDistance = mainRadius * (0.5 + (hash2d(seedHash, 0x918, 0, 0) % 15) / 100);
+  const lagoonDistance = Math.max(platform * 1.35, mainRadius * 0.52 + (hash2d(seedHash, 0x918, 0, 0) % 14));
   const lagoon = {
     x: Math.cos(lagoonAzimuth) * lagoonDistance,
     z: Math.sin(lagoonAzimuth) * lagoonDistance,
@@ -564,13 +569,27 @@ function createOceanIslandTerrainDataV1(
       radius: 1.5 + (hash2d(seedHash, 0x95d + index, 0, 0) % 20) / 10,
     });
   }
-  // Satellite islets: 4..7 around the main island, at least `strait` units of
-  // open water between the main beach and any islet shore (user requirement).
+  // Satellite islets: 4..7 with scattered angles (no uniform ring — Minecraft-
+// style organic placement), at least `strait` units of open water between the
+// main beach and any islet shore (user requirement).
   const isletCount = 4 + (hash2d(seedHash, 0x921, 0, 0) % 4);
+  const isletAngles: number[] = [];
+  for (let index = 0; index < isletCount; index += 1) {
+    isletAngles.push((hash2d(seedHash, 0x960 + index, 0, 0) / 0xffffffff) * Math.PI * 2);
+  }
+  isletAngles.sort((a, b) => a - b);
+  for (let index = 0; index < isletAngles.length; index += 1) {
+    const next = (index + 1) % isletAngles.length;
+    let gap = (isletAngles[next]! - isletAngles[index]! + Math.PI * 2) % (Math.PI * 2);
+    if (gap < 0.45) {
+      isletAngles[next] = (isletAngles[index]! + 0.45) % (Math.PI * 2);
+      if (next === 0) isletAngles[0]! += Math.PI * 2;
+    }
+  }
   const islets: OceanIslet[] = [];
   const strait = 60;
   for (let index = 0; index < isletCount; index += 1) {
-    const angle = (index / isletCount) * Math.PI * 2 + (((hash2d(seedHash, 0x930 + index, 0, 0) % 628) / 100) - 3.1) * 0.12;
+    const angle = isletAngles[index]!;
     const radius = 13 + (hash2d(seedHash, 0x932 + index, 0, 0) % 15);
     // The mandated open-water strait is measured from shoreline to shoreline:
     // the islet center sits at least strait + its own radius past the beach.
@@ -583,6 +602,12 @@ function createOceanIslandTerrainDataV1(
   // rings skip, so no ring of missing cells surrounds an islet.
   const inIsletDisc = (x: number, z: number): boolean =>
     islets.some((islet) => Math.hypot(x - islet.x, z - islet.z) <= islet.radius + 6);
+  // The building platform is a SQUARE framing box; circular features (hill
+  // discs, lagoon, sandy arcs) must never touch it, so every decorative
+  // feature is gated on this square halo.
+  const platformHalo = coreRadius * 1.34;
+  const squareIn = (x: number, z: number): boolean =>
+    Math.max(Math.abs(x), Math.abs(z)) <= platformHalo;
   const sampleOceanAt = (x: number, z: number): V2TerrainSample => {
     // Satellite islets (warped shores like the main island).
     for (const islet of islets) {
@@ -611,8 +636,9 @@ function createOceanIslandTerrainDataV1(
       }
     }
     // Inner lagoon pond on the main island (checked before the island body so
-    // the pond does not get swallowed by the land sample).
-    if (Math.hypot(x - lagoon.x, z - lagoon.z) <= lagoon.radius) {
+    // the pond does not get swallowed by the land sample; never inside the
+    // square building halo).
+    if (!squareIn(x, z) && Math.hypot(x - lagoon.x, z - lagoon.z) <= lagoon.radius) {
       return ocean();
     }
     // Main island, shoreline warped into bays and headlands.
@@ -620,7 +646,6 @@ function createOceanIslandTerrainDataV1(
     const shoreK = shoreWarp(angle);
     const d = Math.hypot(x, z);
     if (d <= (mainRadius + beach) * shoreK) {
-      const platform = coreRadius * 0.92;
       const gentle = valueNoise(x * 0.055, z * 0.055, seedHash, 0x951) * 0.5;
       let height: number;
       if (d <= platform) {
@@ -632,16 +657,22 @@ function createOceanIslandTerrainDataV1(
         const t = 1 - (d - mainRadius * shoreK) / Math.max(1, (mainRadius + beach) * shoreK - mainRadius * shoreK);
         height = Math.max(0, Math.round(t * 1.6));
       }
-      // Hill chain: the main peak plus the secondary peaks along the ridge.
+      // Hill chain: the main peak plus the secondary peaks along the ridge. The
+      // peaks never lift the square building halo.
       const peakContrib = (peak: { x: number; z: number; height: number; radius: number }): number => {
+        if (squareIn(x, z)) return 0;
         const peakDistanceTo = Math.hypot(x - peak.x, z - peak.z);
         if (peakDistanceTo >= peak.radius) return 0;
         return Math.pow(1 - peakDistanceTo / peak.radius, 1.35) * (peak.height + fractalNoise(x * 0.045, z * 0.045, seedHash, 0x952) * 6);
       };
       height += Math.round(peakContrib({ ...hill, height: hillHeight, radius: hillRadius }));
       for (const secondary of secondaryPeaks) height += Math.round(peakContrib(secondary));
-      const rocky = height >= 16 || (rockyShore(angle) && d > mainRadius * shoreK - 4);
-      const sandy = !rocky && d > mainRadius * shoreK - 5;
+      // Beaches and rocky headlands belong to the island rim, never onto the
+      // square building halo — the platform stays uniform green like every
+      // other environment.
+      const rim = Math.max(mainRadius * shoreK, platform);
+      const rocky = height >= 16 || (rockyShore(angle) && !squareIn(x, z) && d > rim - 4);
+      const sandy = !rocky && !squareIn(x, z) && d > rim - 5;
       return {
         height,
         material: rocky ? "stone" : sandy ? "dirt" : "grass",
