@@ -606,9 +606,13 @@ function createOceanIslandTerrainDataV1(
     islets.push({ x: Math.cos(angle) * distance, z: Math.sin(angle) * distance, radius, peakHeight });
   }
   const ocean = (): V2TerrainSample => ({ height: 0, material: "water", supportInfluence: 0, moisture: 1, waterKind: "lake" });
-  // The fine islet lattice covers a 16-multiple disc aligned with the
-  // background 16-unit cells, so no ring of missing cells surrounds an islet.
-  const isletReach = (islet: OceanIslet): number => Math.ceil((islet.radius + 9) / 16) * 16;
+  // The fine islet lattice grows until its SQUARE inscribed circle covers the
+// island shore, then rounds up to the background ring's cell size (32 units
+// in the ocean): the 2-unit square and the 32-unit background then share
+// exact edges around every islet, and no ring of missing cells can survive
+// between the square corners and the skipped disc.
+  const isletReach = (islet: OceanIslet): number =>
+    Math.ceil(((islet.radius + 5) * 1.45) / 32) * 32;
   const inIsletDisc = (x: number, z: number): boolean =>
     islets.some((islet) => Math.hypot(x - islet.x, z - islet.z) <= isletReach(islet));
   // The building platform is a SQUARE framing box; circular features (hill

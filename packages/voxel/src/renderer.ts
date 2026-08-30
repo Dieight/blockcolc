@@ -1760,7 +1760,7 @@ export function createVoxelRenderer(
         ? OCEAN_SEA_TONES[oceanSeaTone(options.worldSeed ?? "world-default")]
         : 0x3e7380;
       water.color.setHex(base).lerp(new THREE.Color(state.skyHorizonColor), qualityTier === "high" ? 0.2 : 0.1);
-      water.roughness = qualityTier === "high" ? 0.22 : qualityTier === "balanced" ? 0.3 : 0.48;
+      water.roughness = options.debugVoidScan ? 1 : (qualityTier === "high" ? 0.22 : qualityTier === "balanced" ? 0.3 : 0.48);
       water.metalness = qualityTier === "high" ? 0.1 : 0.04;
       water.emissive.setHex(state.nightFactor > 0.55 ? 0x102c36 : 0x071c22);
       water.emissiveIntensity = qualityTier === "high" ? 0.2 : 0.08;
@@ -2135,6 +2135,8 @@ export function createVoxelRenderer(
       scene.fog = null;
       skyGroup.visible = false;
       atmosphereGroup.visible = false;
+      sunSprite.visible = false;
+      moonSprite.visible = false;
       return;
     }
     const weatherTint = currentWeather.kind === "clear" ? null : currentWeather.kind === "mist" ? 0xaeb8b1 : 0x9eada8;
