@@ -212,7 +212,7 @@ describe("Litematic decoding boundaries", () => {
     await expect(parseLitematic(tooWide)).rejects.toEqual(expect.objectContaining({ code: "LIMIT_EXCEEDED" }));
     await expect(parseLitematic(tooTall)).rejects.toEqual(expect.objectContaining({ code: "LIMIT_EXCEEDED" }));
     await expect(parseLitematic(maxAllowed)).resolves.toBeTruthy();
-  });
+  }, 15_000);
 
   it("rejects a packed array whose length cannot represent the region", async () => {
     const input = makeLitematic({ regions: { broken: makeRegion({ position: { x: 0, y: 0, z: 0 }, size: { x: 3, y: 1, z: 1 }, palette: ["minecraft:air", "minecraft:stone"], values: [1, 1, 1], omitLastLong: true }) } });

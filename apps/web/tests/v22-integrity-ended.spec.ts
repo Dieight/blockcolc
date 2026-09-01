@@ -10,6 +10,9 @@ async function createDefaultProject(page: import("@playwright/test").Page) {
 }
 
 test("the app-switch-limit notice appears once and fades out like other controls", async ({ page }) => {
+  // This scenario intentionally spends 16.4 s in real lifecycle/fade timers;
+  // leave enough headroom for software-WebGL startup on a busy release runner.
+  test.setTimeout(45_000);
   await createDefaultProject(page);
   await page.getByRole("button", { name: "开始 1 轮" }).click();
   await expect(page.locator(".timer-value")).toBeVisible();
@@ -30,7 +33,13 @@ test("the app-switch-limit notice appears once and fades out like other controls
   }
 
   await expect(page.locator(".focus-integrity-ended")).toBeVisible();
+  await expect(page.locator(".toast")).toHaveCount(0);
   await expect(page.locator(".session-kind")).toHaveCount(0);
+  const notice = await page.locator(".focus-integrity-ended").boundingBox();
+  const start = await page.getByRole("button", { name: /^开始 \d+ 轮$/ }).boundingBox();
+  expect(notice).not.toBeNull();
+  expect(start).not.toBeNull();
+  expect(notice!.y + notice!.height).toBeLessThanOrEqual(start!.y + 0.5);
 
   // The notice auto-dismisses after the shared 5 s dwell plus its fade-out.
   await page.waitForTimeout(5_600);

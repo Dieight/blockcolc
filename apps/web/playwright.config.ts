@@ -1,7 +1,5 @@
 import { defineConfig, devices } from '@playwright/test';
-
-const desktopOnlySpecs = /(?:responsive-qa|v2-world-interaction|v11-world-environment)\.spec\.ts/;
-const crossViewportRendererSpecs = /(?:v3-lightweight-shading|v15-lighting-quality|settings-layout)\.spec\.ts/;
+import { crossViewportRendererSpecs, desktopOnlySpecs, diagnosticSpecs } from './playwright.suites';
 
 export default defineConfig({
   testDir: './tests', timeout: 30_000, fullyParallel: true,
@@ -9,12 +7,13 @@ export default defineConfig({
   projects: [
     {
       name: 'mobile-chromium',
-      testIgnore: desktopOnlySpecs,
+      testIgnore: [desktopOnlySpecs, diagnosticSpecs],
       use: { ...devices['Pixel 7'], timezoneId: 'Asia/Shanghai' },
     },
     {
       name: 'desktop-chromium',
       testMatch: [desktopOnlySpecs, crossViewportRendererSpecs],
+      testIgnore: diagnosticSpecs,
       use: { ...devices['Desktop Chrome'], viewport: { width: 1440, height: 900 }, timezoneId: 'Asia/Shanghai' },
     },
   ],

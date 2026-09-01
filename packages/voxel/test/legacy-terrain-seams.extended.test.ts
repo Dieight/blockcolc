@@ -1,3 +1,4 @@
+// Extended release regression: scans complete legacy terrain meshes.
 import { expect, it } from "vitest";
 import { SMALL_WORKSHOP_BLUEPRINT, TIMBER_HOUSE_BLUEPRINT, VILLAGE_CHAPEL_BLUEPRINT } from "../src/blueprint";
 import { layoutWorlds, type WorldSnapshot } from "../src/renderer";

@@ -3,6 +3,7 @@ import type { ApplicationCommand, ApplicationResult, ApplicationService } from '
 import { completedPomodorosOn, dailyGoalForDate, localDateOf, projectProgressBasisPoints } from '@tomato-clock/domain';
 import { Check, ChevronDown, GripVertical, LockKeyhole, MapPinned, Minus, Pencil, Plus, Repeat2, Trash2, X } from 'lucide-react';
 import { ChoiceMenu } from './ChoiceMenu';
+import { NativeImeTextEntry, isImeCommitKey } from './NativeImeTextEntry';
 
 type ActiveProject = NonNullable<ReturnType<ApplicationService['activeProjectProjection']>>;
 type AppState = ReturnType<ApplicationService['snapshot']>;
@@ -12,8 +13,10 @@ type DropTarget = { id: string; position: 'before' | 'after' };
 export function TasksScreen({ active, state, run, onCreateProject, onViewProject }: { active: ActiveProject; state: AppState; run: RunCommand; onCreateProject: () => void; onViewProject: (projectId: string) => void }) {
   const [pending, setPending] = useState(false);
   const [projectTitle, setProjectTitle] = useState(active.project.title);
+  const projectTitleRef = useRef<HTMLInputElement>(null);
   const [editingProject, setEditingProject] = useState(false);
   const [newSubtask, setNewSubtask] = useState('');
+  const newSubtaskRef = useRef<HTMLInputElement>(null);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
   const [deleteProjectOpen, setDeleteProjectOpen] = useState(false);
   const [managingTasks, setManagingTasks] = useState(false);
@@ -54,7 +57,7 @@ export function TasksScreen({ active, state, run, onCreateProject, onViewProject
   };
 
   const renameProject = async () => {
-    const title = projectTitle.trim();
+    const title = (projectTitleRef.current?.value ?? projectTitle).trim();
     if (!title || title === active.project.title) {
       setProjectTitle(active.project.title);
       setEditingProject(false);
@@ -64,9 +67,12 @@ export function TasksScreen({ active, state, run, onCreateProject, onViewProject
   };
 
   const addSubtask = async () => {
-    const title = newSubtask.trim();
+    const title = (newSubtaskRef.current?.value ?? newSubtask).trim();
     if (!title || locked) return;
-    if (await perform({ type: 'AddSubtask', title })) setNewSubtask('');
+    if (await perform({ type: 'AddSubtask', title })) {
+      if (newSubtaskRef.current) newSubtaskRef.current.value = '';
+      setNewSubtask('');
+    }
   };
 
   const reorderById = async (movingId: string, targetId: string, position: 'before' | 'after') => {
@@ -203,8 +209,8 @@ export function TasksScreen({ active, state, run, onCreateProject, onViewProject
     <div className="task-project-title">
       {editingProject ? <>
         <label className="sr-only" htmlFor="project-title">任务名称</label>
-        <input id="project-title" autoFocus value={projectTitle} disabled={pending} onChange={event => setProjectTitle(event.target.value)} onKeyDown={event => {
-          if (event.key === 'Enter') void renameProject();
+        <NativeImeTextEntry targetRef={projectTitleRef} id="project-title" name="project-title" defaultValue={active.project.title} autoFocus disabled={pending} onValueChange={setProjectTitle} onNativeKeyDown={event => {
+          if (isImeCommitKey(event)) void renameProject();
           if (event.key === 'Escape') { setProjectTitle(active.project.title); setEditingProject(false); }
         }}/>
         <IconButton label="保存任务名称" disabled={pending || !projectTitle.trim()} onClick={() => void renameProject()}><Check/></IconButton>
@@ -235,7 +241,7 @@ export function TasksScreen({ active, state, run, onCreateProject, onViewProject
 
       {!locked && managingTasks && <div className="add-subtask">
         <label htmlFor="new-subtask">新增小任务</label>
-        <div><input id="new-subtask" value={newSubtask} disabled={pending} placeholder="例如：整理验证结果" onChange={event => setNewSubtask(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') void addSubtask(); }}/><button type="button" disabled={pending || !newSubtask.trim()} onClick={() => void addSubtask()}><Plus/>添加</button></div>
+        <div><NativeImeTextEntry targetRef={newSubtaskRef} id="new-subtask" name="new-subtask" defaultValue="" disabled={pending} placeholder="例如：整理验证结果" onValueChange={setNewSubtask} onNativeKeyDown={event => { if (isImeCommitKey(event)) void addSubtask(); }}/><button type="button" disabled={pending || !newSubtask.trim()} onClick={() => void addSubtask()}><Plus/>添加</button></div>
       </div>}
     </>}
 
@@ -302,9 +308,10 @@ function SubtaskRow({ id, title, progressBasisPoints, phase, index, pending, man
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(title);
+  const draftRef = useRef<HTMLInputElement>(null);
   useEffect(() => { setDraft(title); setEditing(false); }, [id, title]);
   const save = async () => {
-    const value = draft.trim();
+    const value = (draftRef.current?.value ?? draft).trim();
     if (!value || value === title) { setDraft(title); setEditing(false); return; }
     if (await onRename(value)) setEditing(false);
   };
@@ -318,8 +325,8 @@ function SubtaskRow({ id, title, progressBasisPoints, phase, index, pending, man
       if (event.key === 'ArrowDown') { event.preventDefault(); void onMove(1); }
     }}><GripVertical/></button> : <div className="task-order">{index + 1}</div>}
     <div className="task-copy">
-      {editing ? <label><span className="sr-only">小任务名称</span><input autoFocus value={draft} disabled={pending} onChange={event => setDraft(event.target.value)} onKeyDown={event => {
-        if (event.key === 'Enter') void save();
+      {editing ? <label><span className="sr-only" id={`subtask-title-${id}`}>小任务名称</span><NativeImeTextEntry targetRef={draftRef} name={`subtask-title-${id}`} defaultValue={title} ariaLabel="小任务名称" autoFocus disabled={pending} onValueChange={setDraft} onNativeKeyDown={event => {
+        if (isImeCommitKey(event)) void save();
         if (event.key === 'Escape') { setDraft(title); setEditing(false); }
       }}/></label> : <strong>{title}</strong>}
       <div><progress max={10000} value={progressBasisPoints}/><span>{Math.round(progressBasisPoints / 100)}%</span></div>

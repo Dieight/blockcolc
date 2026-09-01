@@ -2,8 +2,11 @@ import { expect, test } from "@playwright/test";
 
 // beach, hill, satellite islets and the open sea (remove before release).
 
-test("ocean island world renders main island, islets and open sea", async ({ page }) => {
+test("@smoke ocean island world renders main island, islets and open sea", async ({ page }) => {
   test.setTimeout(120_000);
+  // Keep shoreline and terrain screenshots in daylight regardless of when the
+  // release gate runs; the separate test below owns night-water coverage.
+  await page.clock.install({ time: new Date("2026-08-31T04:00:00Z") });
   await page.goto("/");
   await page.getByRole("button", { name: "开始建造" }).click();
   await page.getByRole("button", { name: "设置", exact: true }).click();

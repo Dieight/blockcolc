@@ -34,6 +34,9 @@ async function revealFocusControls(page: import('@playwright/test').Page) {
   throw new Error('Focus controls did not reveal after repeated double-taps');
 }
 test('one-round early completion records the task and ends the plan without a break', async ({ page }, testInfo) => {
+  // Full-page WebGL screenshots can push this flow past Playwright's default
+  // timeout under the single-worker release gate.
+  test.setTimeout(60_000);
   await createDefaultProject(page);
   await page.getByRole('button', { name: '开始 1 轮' }).click();
   await revealFocusControls(page);
@@ -138,7 +141,7 @@ test('opens the active task in a restrained world focus and returns to the settl
   await expect(world).toHaveAttribute('data-camera-distance-ratio', /^(0\.[89]|1\.)/);
   await expect(world).toHaveAttribute('data-sky-camera-world-offset', '0.0000');
   await page.screenshot({ path: testInfo.outputPath('v7-focused-world.png'), fullPage: true });
-  await page.getByRole('button', { name: '返回完整聚落' }).click();
+  await page.getByRole('button', { name: '关闭建筑记忆' }).click();
   await expect(page.getByText('林边聚落 · 1 栋')).toBeVisible();
   await expect(world).toHaveAttribute('data-sky-camera-world-offset', '0.0000');
 });
@@ -274,6 +277,9 @@ test('keeps routine task lists compact and exposes editing only on demand', asyn
 });
 
 test('categorized interruption appears in local statistics', async ({ page }) => {
+  // This scenario intentionally waits for the five-second toast lifecycle;
+  // leave headroom for a warm software-WebGL renderer in the release suite.
+  test.setTimeout(60_000);
   await createDefaultProject(page);
   await page.getByRole('button', { name: '开始 1 轮' }).click();
   await revealFocusControls(page);

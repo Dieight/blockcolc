@@ -182,6 +182,26 @@ describe("imported daily reward decorations", () => {
 });
 
 describe("habit task building cycles", () => {
+  it("advances habit buildings directly for normal and early end-time rounds", () => {
+    const f = fixture();
+    f.run({ type: "CreateHabitProject", projectId: "habit", title: "Read", blueprintId: "cottage", targetRounds: 10 });
+    expect(f.run({ type: "StartFocus", sessionId: "h1", subtaskId: null, plannedDurationMs: 1, projectId: "habit", marathon: true }))
+      .toMatchObject({ ok: true });
+    f.clock.advance(1);
+    expect(f.run({ type: "CompleteFocus" })).toMatchObject({ ok: true, events: expect.arrayContaining([
+      { type: "HabitBuildingProgressed", projectId: "habit", completedRounds: 1, targetRounds: 10 },
+    ]) });
+    expect(f.run({ type: "StartFocus", sessionId: "h2", subtaskId: null, plannedDurationMs: 10, projectId: "habit", marathon: true }))
+      .toMatchObject({ ok: true });
+    f.clock.advance(2);
+    expect(f.run({ type: "CompleteFocusEarly", reportId: "unused-for-habit" })).toMatchObject({ ok: true, events: expect.arrayContaining([
+      { type: "HabitBuildingProgressed", projectId: "habit", completedRounds: 2, targetRounds: 10 },
+    ]) });
+    expect(activeProject(f.state()).habit?.completedFocusSessionIds).toEqual(["h1", "h2"]);
+    expect(f.state().focusHistory.every((session) => session.marathon === true)).toBe(true);
+    expect(parseDomainState(f.state())).toEqual(f.state());
+  });
+
   it("advances on normal and early completion, locks the current blueprint, and snapshots the next target", () => {
     const f = fixture();
     expect(f.run({

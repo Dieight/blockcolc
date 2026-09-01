@@ -1,0 +1,46 @@
+/* Fixed, high-readability glass for transient functional layers above the world or page.
+   The immersive focus board keeps its own user-adjustable material tokens. */
+.world-hud span,
+.world-hud button,
+.toast,
+.construction-feedback {
+  border-color: var(--world-glass-border);
+  background: var(--world-glass-background);
+  box-shadow: var(--world-glass-shadow);
+  backdrop-filter: var(--world-glass-filter);
+  -webkit-backdrop-filter: var(--world-glass-filter);
+}
+
+.world-hud span,
+.world-hud button,
+.toast,
+.construction-feedback {
+  border-style: solid;
+  border-width: 1px;
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .world-hud span,
+  .world-hud button,
+  .toast,
+  .construction-feedback,
+  .world-pick-chip,
+  .immersive-reset-view,
+  .focus-integrity-warning.flash,
+  .world-building-index:focus-within,
+  .building-memory-panel {
+    background: var(--world-overlay);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+
+  .focus-immersive .is-focusing .focus-integrity-warning.flash.active {
+    background: rgba(117, 79, 24, 0.96);
+  }
+
+  .building-memory-layer {
+    background: rgba(8, 14, 11, 0.42);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+}

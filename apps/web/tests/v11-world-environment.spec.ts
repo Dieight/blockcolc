@@ -38,16 +38,22 @@ test('selects a building with a light tap', async ({ page }, testInfo) => {
 
   const box = await canvas.boundingBox();
   if (!box) throw new Error('World canvas has no layout box');
+  let pointerId = 10;
   for (const y of [0.36, 0.48, 0.6, 0.72]) {
     for (const x of [0.25, 0.38, 0.5, 0.62, 0.75]) {
-      await canvas.click({ position: { x: box.width * x, y: box.height * y } });
-      if (await page.locator('.world-building-details').count()) break;
+      const clientX = box.x + box.width * x;
+      const clientY = box.y + box.height * y;
+      pointerId += 1;
+      await canvas.dispatchEvent('pointerdown', { pointerId, pointerType: 'touch', isPrimary: true, clientX, clientY, buttons: 1 });
+      await canvas.dispatchEvent('pointerup', { pointerId, pointerType: 'touch', isPrimary: true, clientX, clientY, buttons: 0 });
+      if (await page.locator('.building-memory-panel').count()) break;
     }
-    if (await page.locator('.world-building-details').count()) break;
+    if (await page.locator('.building-memory-panel').count()) break;
   }
 
-  await expect(page.locator('.world-building-details')).toContainText('我的第一座工坊');
-  await expect(page.locator('.world-building-details')).toContainText('0%');
+  await expect(page.getByRole('dialog', { name: '我的第一座工坊' })).toContainText('建筑记忆');
+  await expect(page.getByRole('dialog', { name: '我的第一座工坊' })).toContainText('0%');
+  await expect(page.getByRole('button', { name: '继续专注' })).toBeVisible();
   await expect(page.getByRole('button', { name: '返回完整聚落' })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('v11-building-selected.png'), fullPage: true });
 });
@@ -73,6 +79,11 @@ test('retains drag gestures in the selected-building view', async ({ page }) => 
   await page.goto('/');
   await page.getByRole('button', { name: '开始建造' }).click();
   const canvas = page.getByLabel('项目建筑世界');
+  await expect.poll(async () => Number(await canvas.getAttribute('data-render-triangles'))).toBeGreaterThan(1_000);
+  const buildingEntry = page.getByRole('button', { name: '查看建筑记忆：我的第一座工坊' });
+  await buildingEntry.focus();
+  await buildingEntry.press('Enter');
+  await expect(page.getByRole('dialog', { name: '我的第一座工坊' })).toBeVisible();
   const box = await canvas.boundingBox();
   if (!box) throw new Error('World canvas has no layout box');
   const before = Number(await canvas.getAttribute('data-camera-azimuth'));
@@ -87,9 +98,10 @@ test('retains drag gestures in the selected-building view', async ({ page }) => 
     new MutationObserver(() => probe()).observe(document.body, { childList: true, subtree: true });
     probe();
   });
-  await canvas.dispatchEvent('pointerdown', { pointerId: 1, pointerType: 'touch', isPrimary: true, clientX: box.x + box.width * 0.35, clientY: box.y + box.height * 0.5, buttons: 1 });
-  await canvas.dispatchEvent('pointermove', { pointerId: 1, pointerType: 'touch', isPrimary: true, clientX: box.x + box.width * 0.65, clientY: box.y + box.height * 0.5, buttons: 1 });
-  await canvas.dispatchEvent('pointerup', { pointerId: 1, pointerType: 'touch', isPrimary: true, clientX: box.x + box.width * 0.65, clientY: box.y + box.height * 0.5, buttons: 0 });
+  await page.mouse.move(box.x + box.width * 0.72, box.y + box.height * 0.5);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * 0.9, box.y + box.height * 0.5, { steps: 3 });
+  await page.mouse.up();
   await expect.poll(async () => Number(await canvas.getAttribute('data-camera-azimuth'))).not.toBe(before);
   // Read the attach log only after the gesture settles: while the drag drives
   // continuous software-WebGL frames, an in-flight page.evaluate can starve

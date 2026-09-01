@@ -1,6 +1,6 @@
 {
   "name": "tomato-clock",
-  "version": "1.9.0",
+  "version": "1.10.0",
   "private": true,
   "workspaces": [
     "packages/*",
@@ -13,6 +13,10 @@
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
     "test:fast": "npm run version:check && npm run typecheck && npm test",
+    "test:extended": "npm run test:extended -w @tomato-clock/voxel",
+    "test:unit:full": "npm run test:fast && npm run test:extended",
+    "test:web:smoke": "npm run test:e2e:smoke -w @tomato-clock/web",
+    "test:web:diagnostics": "npm run test:e2e:diagnostics -w @tomato-clock/web",
     "test:web:release": "npm run test:e2e -w @tomato-clock/web -- --workers=1",
     "test:e2e": "npm run test:e2e --workspaces --if-present"
   }

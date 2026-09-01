@@ -79,7 +79,10 @@ test('explains interrupted time in recent rhythm, project allocation, building m
 
   await page.getByRole('button', { name: '任务', exact: true }).click();
   await page.getByRole('button', { name: '查看建筑' }).click();
-  await expect(page.locator('.world-building-details')).toContainText('累计 75 分钟');
+  const buildingMemory = page.locator('.building-memory-panel');
+  await expect(buildingMemory).toContainText('累计有效专注');
+  await expect(buildingMemory).toContainText('75 分钟');
+  await buildingMemory.getByRole('button', { name: '关闭建筑记忆' }).click();
   await page.getByRole('button', { name: '设置' }).click();
   await expect(page.locator('.notification-health')).toContainText(/提醒|通知/);
 });

@@ -8,7 +8,10 @@ const repositoryRoot = path.dirname(toolsDirectory);
 const webRoot = path.join(repositoryRoot, 'apps', 'web');
 const viteEntry = path.join(repositoryRoot, 'node_modules', 'vite', 'bin', 'vite.js');
 const playwrightEntry = path.join(repositoryRoot, 'node_modules', '@playwright', 'test', 'cli.js');
-const playwrightConfig = path.join(webRoot, 'playwright.config.ts');
+const commandArguments = process.argv.slice(2);
+const diagnosticMode = commandArguments.includes('--diagnostics');
+const playwrightArguments = commandArguments.filter((argument) => argument !== '--diagnostics');
+const playwrightConfig = path.join(webRoot, diagnosticMode ? 'playwright.diagnostics.config.ts' : 'playwright.config.ts');
 const serverUrl = 'http://127.0.0.1:41988';
 const lastRunPath = path.join(webRoot, 'test-results', '.last-run.json');
 
@@ -86,7 +89,7 @@ try {
     'test',
     '--config',
     playwrightConfig,
-    ...process.argv.slice(2),
+    ...playwrightArguments,
   ], {
     cwd: webRoot,
     stdio: 'inherit',

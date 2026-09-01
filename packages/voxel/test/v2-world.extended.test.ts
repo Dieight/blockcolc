@@ -1,3 +1,4 @@
+// Extended release regression: includes full terrain mesh and settlement budgets.
 import { describe, expect, it } from "vitest";
 import {
   SMALL_WORKSHOP_BLUEPRINT,

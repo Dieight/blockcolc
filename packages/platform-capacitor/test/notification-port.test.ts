@@ -1,9 +1,35 @@
 import { describe, expect, it } from 'vitest';
-import { FOCUS_NOTIFICATION_ID, mapPermission } from '../src/index';
+import { BREAK_COMPLETION_NOTIFICATION_ID, BREAK_NOTIFICATION_ID, FOCUS_NOTIFICATION_ID, breakLiveUpdateOptions, breakNotificationKey, getBreakLiveUpdateCapability, mapPermission, openBreakLiveUpdateSettings } from '../src/index';
 
 describe('Capacitor notification contract', () => {
   it('uses one stable Android notification identifier', () => { expect(FOCUS_NOTIFICATION_ID).toBe(42001); });
+  it('separates the visible break live update from the at-time completion alarm', () => {
+    expect(BREAK_NOTIFICATION_ID).toBe(42002);
+    expect(BREAK_COMPLETION_NOTIFICATION_ID).toBe(42003);
+  });
+  it('uses a stable key to suppress lifecycle-driven reposts of the same break', () => {
+    const first = { endsAt: '2026-08-31T12:34:56.000Z', completedRounds: 2, totalRounds: 4, nextTaskTitle: '整理笔记' };
+    expect(breakNotificationKey(first)).toBe(breakNotificationKey({ ...first }));
+    expect(breakNotificationKey(first)).not.toBe(breakNotificationKey({ ...first, completedRounds: 3 }));
+  });
+  it('converts absolute break context for the native system chronometer', () => {
+    expect(breakLiveUpdateOptions({
+      endsAt: '2026-08-31T12:34:56.000Z',
+      completedRounds: 2,
+      totalRounds: 4,
+      nextTaskTitle: '整理笔记',
+    })).toEqual({
+      endsAtEpochMs: Date.parse('2026-08-31T12:34:56.000Z'),
+      completedRounds: 2,
+      totalRounds: 4,
+      nextTaskTitle: '整理笔记',
+    });
+  });
   it.each([
     ['granted', 'granted'], ['denied', 'denied'], ['prompt', 'prompt'], ['prompt-with-rationale', 'prompt'],
   ] as const)('maps %s permission to %s', (native, application) => { expect(mapPermission(native)).toBe(application); });
+  it('reports promoted notifications as unavailable outside native Android', async () => {
+    await expect(getBreakLiveUpdateCapability()).resolves.toEqual({ supported: false, allowed: false, settingsAvailable: false });
+    await expect(openBreakLiveUpdateSettings()).resolves.toBe(false);
+  });
 });

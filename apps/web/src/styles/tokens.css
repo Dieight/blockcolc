@@ -1,0 +1,44 @@
+:root {
+  --app-bg: #f3f5f2;
+  --surface: #ffffff;
+  --surface-subtle: #f7f9f7;
+  --surface-active: #dfece3;
+  --ink: #17211c;
+  --muted: #58635d;
+  --line: #d7ddd8;
+  --control-border: #aeb8b1;
+  --focus: #276749;
+  --focus-strong: #3f7d4e;
+  --danger: #b4232c;
+  --world-overlay: rgba(20, 29, 25, 0.94);
+  --world-overlay-muted: #c5d1c9;
+  --focus-glass-light-alpha: 0.56;
+  --focus-glass-dark-alpha: 0.6;
+  --focus-glass-blur: 20px;
+  --focus-glass-saturation: 1.32;
+  --focus-glass-brightness: 1.03;
+  --focus-glass-highlight-alpha: 0.115;
+  --focus-glass-accent-alpha: 0.04;
+  --focus-glass-shadow-alpha: 0.27;
+  --world-glass-background: linear-gradient(145deg, rgba(255, 255, 255, 0.13), rgba(255, 255, 255, 0.025) 42%, rgba(111, 206, 150, 0.055)), rgba(20, 29, 25, 0.8);
+  --world-glass-border: rgba(255, 255, 255, 0.22);
+  --world-glass-filter: blur(14px) saturate(1.24) contrast(1.04);
+  --world-glass-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16), 0 8px 24px rgba(8, 14, 11, 0.28);
+}
+
+:root[data-theme="dark"] {
+  --app-bg: #0e1512;
+  --surface: #17211c;
+  --surface-subtle: #131c17;
+  --surface-active: #1f3329;
+  --ink: #e6efe9;
+  --muted: #93b0a0;
+  --line: #2c3a31;
+  --control-border: #38473d;
+  --focus: #6fce96;
+  --focus-strong: #7fd6a1;
+  --danger: #ff8a8a;
+  --world-overlay: rgba(11, 17, 14, 0.95);
+  --world-overlay-muted: #aebcb4;
+  --world-glass-background: linear-gradient(145deg, rgba(255, 255, 255, 0.11), rgba(255, 255, 255, 0.018) 42%, rgba(111, 206, 150, 0.05)), rgba(11, 17, 14, 0.84);
+}

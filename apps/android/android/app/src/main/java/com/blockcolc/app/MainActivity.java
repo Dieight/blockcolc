@@ -4,6 +4,7 @@ import android.os.Bundle;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
+import android.content.Intent;
 import android.webkit.WebView;
 import android.view.View;
 import android.view.WindowManager;
@@ -16,6 +17,8 @@ import com.getcapacitor.WebViewListener;
 import java.util.Locale;
 
 public class MainActivity extends BridgeActivity {
+    static final String ACTION_SKIP_BREAK = "com.blockcolc.app.action.SKIP_BREAK";
+    private boolean pendingSkipBreak = false;
     private Insets latestSafeInsets = Insets.NONE;
     private boolean miniWindowActive = false;
     private final Runnable miniWindowCheck = this::checkMiniWindowFallback;
@@ -51,6 +54,7 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+        captureBreakAction(getIntent());
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             WindowManager.LayoutParams attributes = getWindow().getAttributes();
             attributes.layoutInDisplayCutoutMode =
@@ -61,10 +65,12 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(LitematicFilePickerPlugin.class);
         registerPlugin(NativeInputPlugin.class);
         registerPlugin(SettingsPlugin.class);
+        registerPlugin(BreakLiveUpdatePlugin.class);
         bridgeBuilder.addWebViewListener(new WebViewListener() {
             @Override
             public void onPageLoaded(WebView webView) {
                 publishSafeAreaInsets(latestSafeInsets);
+                dispatchPendingBreakAction();
             }
         });
         WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
@@ -94,6 +100,31 @@ public class MainActivity extends BridgeActivity {
             view.postDelayed(miniWindowCheck, 700);
         });
         mainHandler.postDelayed(miniWindowPoll, 500);
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        captureBreakAction(intent);
+        dispatchPendingBreakAction();
+    }
+
+    private void captureBreakAction(Intent intent) {
+        if (intent == null || !ACTION_SKIP_BREAK.equals(intent.getAction())) return;
+        pendingSkipBreak = true;
+        BreakLiveUpdatePlugin.cancelNotification(this);
+        intent.setAction(null);
+    }
+
+    private void dispatchPendingBreakAction() {
+        if (!pendingSkipBreak || getBridge() == null || getBridge().getWebView() == null) return;
+        pendingSkipBreak = false;
+        getBridge().getWebView().post(() -> getBridge().getWebView().evaluateJavascript(
+            "localStorage.setItem('blockcolc-skip-break-request-v1','1');" +
+                "window.dispatchEvent(new Event('blockcolc-skip-break'));",
+            null
+        ));
     }
 
     private void pushMiniWindowSignal(boolean active) {

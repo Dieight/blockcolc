@@ -174,6 +174,19 @@ describe('round-plan recovery', () => {
     expect(reconcileRoundPlan(afterRound, state({ focusHistory }), projectId, Date.parse('2026-08-05T12:00:00.000Z'), 0, 300_000)).toBe(afterRound);
   });
 
+  it('settles the final habit end-time round without opening a finite-task report', () => {
+    const marathon: RoundPlan = { ...basePlan, subtaskId: null, mode: 'marathon', totalRounds: 1, currentSessionId: 'session-1' };
+    const focusHistory = [{
+      ...completedSession('session-1', null, '2026-08-05T08:45:00.000Z'),
+      subtaskId: null,
+    }] as DomainState['focusHistory'];
+    const habitProject = {
+      id: projectId, kind: 'habit', habit: { cycleNumber: 1, targetRounds: 10, completedFocusSessionIds: ['session-1'], awaitingNextBuilding: false },
+    } as DomainState['projects'][number];
+    expect(reconcileRoundPlan(marathon, state({ projects: [habitProject], focusHistory }), projectId, Date.parse('2026-08-05T08:46:00.000Z'), 0, 300_000)).toBeNull();
+    expect(reconcileRoundPlan({ ...marathon, status: 'report', completedRounds: 1 }, state({ projects: [habitProject], focusHistory }), projectId)).toBeNull();
+  });
+
   it('never advances an interrupted marathon round', () => {
     const marathon: RoundPlan = { ...basePlan, mode: 'marathon', totalRounds: 3, currentSessionId: 'session-1' };
     const focusHistory = [{

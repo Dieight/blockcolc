@@ -138,9 +138,11 @@ export function reconcileRoundPlan(
     } : null;
   }
   if (plan.projectId !== activeProjectId && plan.mode !== 'marathon') return null;
+  const project = state.projects.find((candidate) => candidate.id === plan.projectId);
   // The final marathon report is a durable UI phase: once every round is done,
   // keep the plan alive until the user submits the combined progress report.
-  if (plan.status === 'report') return plan;
+  // Habit rounds are already settled one by one and never enter that report.
+  if (plan.status === 'report') return project?.kind === 'habit' ? null : plan;
   if (plan.completedRounds >= plan.totalRounds) return null;
 
   const isMarathon = plan.mode === 'marathon';
@@ -154,7 +156,6 @@ export function reconcileRoundPlan(
     return plan;
   }
 
-  const project = state.projects.find((candidate) => candidate.id === plan.projectId);
   if (project?.kind === 'habit' && project.habit?.awaitingNextBuilding) return null;
   const reported = new Set(state.progressReports.flatMap((report) => report.focusSessionIds));
   const pending = project?.kind !== 'habit' && state.focusHistory.some((session) =>
@@ -207,6 +208,7 @@ export function reconcileRoundPlan(
   const reportedSessionIds = alreadyRecorded ? plan.reportedSessionIds : [...plan.reportedSessionIds, latest.id];
   if (isMarathon) {
     if (nextCompletedRounds >= plan.totalRounds) {
+      if (project?.kind === 'habit') return null;
       return {
         ...plan,
         completedRounds: nextCompletedRounds,

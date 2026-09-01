@@ -28,6 +28,9 @@ try {
     Invoke-TimedReleaseStep -Name 'unit' -Durations $gateDurations -Action {
         Invoke-External -FilePath 'npm' -Arguments @('test')
     }
+    Invoke-TimedReleaseStep -Name 'extendedUnit' -Durations $gateDurations -Action {
+        Invoke-External -FilePath 'npm' -Arguments @('run', 'test:extended')
+    }
     Invoke-TimedReleaseStep -Name 'storageE2e' -Durations $gateDurations -Action {
         Invoke-External -FilePath 'npm' -Arguments @('run', 'test:e2e', '-w', '@tomato-clock/storage-indexeddb', '--', '--workers=1')
     }
@@ -35,7 +38,19 @@ try {
         Invoke-External -FilePath 'npm' -Arguments @('run', 'test:e2e', '-w', '@tomato-clock/core-loop-browser', '--', '--workers=1')
     }
     Invoke-TimedReleaseStep -Name 'webE2e' -Durations $gateDurations -Action {
-        Invoke-External -FilePath 'npm' -Arguments @('run', 'test:web:release')
+        $previousDeadline = [Environment]::GetEnvironmentVariable('E2E_COMPLETION_DEADLINE_MS', 'Process')
+        try {
+            # A single-worker release run currently takes about 25 minutes on
+            # the local software-WebGL gate. The explicit release deadline also
+            # activates the documented physical-device ownership of the one
+            # synchronous 3D drag probe.
+            $env:E2E_COMPLETION_DEADLINE_MS = '2400000'
+            Invoke-External -FilePath 'npm' -Arguments @('run', 'test:web:release')
+        }
+        finally {
+            if ($null -eq $previousDeadline) { Remove-Item Env:E2E_COMPLETION_DEADLINE_MS -ErrorAction SilentlyContinue }
+            else { $env:E2E_COMPLETION_DEADLINE_MS = $previousDeadline }
+        }
     }
     Invoke-TimedReleaseStep -Name 'androidBuild' -Durations $gateDurations -Action {
         & (Join-Path $PSScriptRoot 'Build-AndroidRelease.ps1') -QualityGateAlreadyPassed

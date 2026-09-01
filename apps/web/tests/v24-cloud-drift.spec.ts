@@ -1,6 +1,7 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Locator } from "@playwright/test";
 
-// by the stale-pointer guard (remove before release).
+// V24 contract: pointer cancellation releases interaction immediately, while a
+// missing terminal event is recovered by the renderer's stale-pointer guard.
 
 test("interacting clears on pointercancel and stale pointers", async ({ page }) => {
   test.setTimeout(90_000);
@@ -8,6 +9,7 @@ test("interacting clears on pointercancel and stale pointers", async ({ page }) 
   await page.getByRole("button", { name: "开始建造" }).click();
   const canvas = page.getByLabel("项目建筑世界");
   await expect(canvas).toHaveAttribute("data-environment-style", "natural-valley");
+  await expect.poll(async () => Number(await canvas.getAttribute("data-render-triangles"))).toBeGreaterThan(1_000);
   const box = await canvas.boundingBox();
   if (!box) throw new Error("no box");
   const cy = box.y + box.height * 0.5;
@@ -18,17 +20,40 @@ test("interacting clears on pointercancel and stale pointers", async ({ page }) 
   await expect.poll(interacting, { timeout: 2_000 }).toBe(false);
 
   // Press without releasing: interacting locks.
-  await page.mouse.move(box.x + box.width * 0.4, cy);
-  await page.mouse.down();
-  await expect.poll(interacting, { timeout: 4_000 }).toBe(true);
+  const firstPointer = { pointerId: 71, pointerType: "touch", isPrimary: true, clientX: box.x + box.width * 0.4, clientY: cy };
+  // Read the synchronous handler result in the same browser task. On a loaded
+  // software-WebGL worker, a later Playwright poll can resume only after the
+  // 2.5-second stale guard has already (correctly) released the pointer.
+  expect(await dispatchPointerAndReadInteracting(canvas, "pointerdown", { ...firstPointer, buttons: 1 })).toBe("true");
 
   // System gesture steals the pointer via pointercancel: released instantly.
-  await canvas.dispatchEvent("pointercancel", { pointerId: 1, pointerType: "mouse", clientX: 0, clientY: 0 });
-  await expect.poll(interacting, { timeout: 4_000 }).toBe(false);
+  expect(await dispatchPointerAndReadInteracting(canvas, "pointercancel", { ...firstPointer, buttons: 0 })).toBe("false");
 
   // Press again and never release: the stale guard releases the interaction.
-  await page.mouse.down();
-  await expect.poll(interacting, { timeout: 4_000 }).toBe(true);
+  expect(await dispatchPointerAndReadInteracting(canvas, "pointerdown", { ...firstPointer, pointerId: 72, buttons: 1 })).toBe("true");
   await expect.poll(interacting, { timeout: 8_000 }).toBe(false);
-  await page.mouse.up();
 });
+
+interface PointerProbeInit {
+  pointerId: number;
+  pointerType: string;
+  isPrimary: boolean;
+  clientX: number;
+  clientY: number;
+  buttons: number;
+}
+
+async function dispatchPointerAndReadInteracting(
+  canvas: Locator,
+  type: "pointerdown" | "pointercancel",
+  init: PointerProbeInit,
+): Promise<string | null> {
+  return canvas.evaluate((node, event) => {
+    node.dispatchEvent(new PointerEvent(event.type, {
+      bubbles: true,
+      cancelable: true,
+      ...event.init,
+    }));
+    return (node as HTMLCanvasElement).dataset.interacting ?? null;
+  }, { type, init });
+}

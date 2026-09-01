@@ -23,6 +23,18 @@ async function configureOneMinuteRounds(page: import("@playwright/test").Page) {
   await page.getByRole("button", { name: "计时" }).click();
 }
 
+async function revealFocusControls(page: import("@playwright/test").Page) {
+  const endButton = page.getByRole("button", { name: "结束本次专注" });
+  if (await endButton.isVisible().catch(() => false)) return;
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    await page.dispatchEvent(".focus-panel", "pointerup", { pointerId: 7, clientX: 20, clientY: 20, pointerType: "touch", isPrimary: true });
+    await page.dispatchEvent(".focus-panel", "pointerup", { pointerId: 7, clientX: 20, clientY: 20, pointerType: "touch", isPrimary: true });
+    await page.waitForTimeout(300);
+    if (await endButton.isVisible().catch(() => false)) return;
+  }
+  throw new Error("Focus controls did not reveal after repeated double-taps");
+}
+
 // Installed at 16:00 Shanghai; the custom stepper starts at 18:00, so step it to
 // 16:05 for a short (1-minute) marathon.
 async function pickEndTime1605(page: import("@playwright/test").Page) {
@@ -84,6 +96,33 @@ test("confirming locks the plan and moves the workbench into the end-time lane; 
   await expect(page.getByRole("heading", { name: "我的第一座工坊" })).toBeVisible();
   await expect(page.locator(".workbench-context")).toContainText("确定目标");
   await expect(page.locator(".workbench-context")).toContainText("25%");
+});
+
+test("every end-time round can finish early without advancing a leftover subtask", async ({ page }) => {
+  await page.clock.install({ time: new Date("2026-08-03T08:00:00Z") });
+  await createDefaultProject(page);
+  await configureOneMinuteRounds(page);
+  await page.getByRole("button", { name: "调整本次计划" }).click();
+  const sheet = await pickEndTime1605(page);
+  await sheet.getByRole("button", { name: "确认计划" }).click();
+  const summary = (await page.locator(".plan-summary span").first().textContent()) ?? "";
+  const total = Number(summary.match(/约 (\d+) 轮/)?.[1]);
+  expect(total).toBeGreaterThan(1);
+
+  await page.getByRole("button", { name: /^开始到/ }).click();
+  await revealFocusControls(page);
+  const dialog = page.getByRole("dialog", { name: "如何结束这次专注？" });
+  if (!(await dialog.isVisible().catch(() => false))) {
+    await page.getByRole("button", { name: "结束本次专注" }).click();
+  }
+  await expect(dialog).toContainText(`马拉松 第 1 / ${total} 轮`);
+  await expect(dialog.getByRole("button", { name: /提前完成本轮/ })).toContainText("记录本轮，并继续本场计划");
+  await dialog.getByRole("button", { name: /提前完成本轮/ }).click();
+
+  await expect(page.getByRole("button", { name: "开始下一轮" })).toBeVisible();
+  await expect(page.getByText("本轮已提前完成，实际专注时间已记录。", { exact: true })).toBeVisible();
+  await expect(page.getByText("小任务已提前完成，实际专注时间已记录。", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "把这次推进汇报给哪些任务？" })).toHaveCount(0);
 });
 
 test("cancelling an unstarted locked plan returns straight to the classic lane", async ({ page }) => {

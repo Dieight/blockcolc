@@ -55,3 +55,13 @@ npm run android:assemble -w @tomato-clock/android
 方块钟不会上传用户任务、统计、蓝图或资源包。导入内容在浏览器或 Android WebView 内解析；不支持的方块会使用安全的替代外观，实体、方块实体和计划刻不会被重建。
 
 Minecraft 是 Mojang Studios 的商标。本项目与 Mojang Studios 或 Microsoft 没有关联，也不附带 Minecraft 原版纹理或其他受版权保护的游戏资源。
+
+## 项目文档与测试
+
+- 当前产品事实：[`Tomato Clock.md`](./Tomato%20Clock.md)
+- 工程边界：[`ARCHITECTURE.md`](./ARCHITECTURE.md)
+- 设计规则：[`DESIGN.md`](./DESIGN.md)
+- 测试分层：[`docs/TESTING.md`](./docs/TESTING.md)
+- 版本工作包：[`docs/versions`](./docs/versions)
+
+日常改动先运行 `npm run test:fast`，再按影响范围选择指定 E2E 或 `npm run test:web:smoke`。完整单 worker Web 回归只用于发布或高风险跨层改动。

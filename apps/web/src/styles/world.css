@@ -1,0 +1,190 @@
+/* World, focus workbench, motion and marathon presentation. */
+.world-pane.is-hidden{display:none}
+
+/* V19 SW-01: the idle-workbench scroll lock uses :has(.world-screen...), which the now-resident hidden world pane also satisfies and would lock every tab. Restore free scrolling whenever the world pane is hidden. */
+@media(max-width:699px){html:has(.world-pane.is-hidden .world-screen),body:has(.world-pane.is-hidden .world-screen),#root:has(.world-pane.is-hidden .world-screen){height:auto!important;overflow:auto!important}}
+@media(min-width:700px) and (max-height:620px){html:has(.world-pane.is-hidden .world-screen),body:has(.world-pane.is-hidden .world-screen),#root:has(.world-pane.is-hidden .world-screen){height:auto!important;overflow:auto!important}}
+
+/* V19 IF-02: immersive focus UI in the V18 language — quiet text hierarchy, hairline separators, no boxed pills. */
+.focus-task-context span{text-transform:none;font-weight:600;font-size:12px;letter-spacing:0}
+.rest-summary{display:grid;gap:3px;padding:6px 0 6px 10px;border:0;border-left:3px solid #276749;border-radius:0;background:none;text-align:left}
+.rest-summary span,.rest-summary small{color:#58635d;font-size:12px}
+.focus-immersive .is-focusing .focus-integrity-warning{border:0;border-radius:0;background:none;padding:4px 0;color:#58635d;font-weight:600}
+.focus-immersive .is-focusing .focus-integrity-warning.active{background:none;color:#8a5a14}
+.focus-immersive .is-focusing .focus-integrity-ended{border:0;background:none;padding:4px 0}
+
+/* V19 fix: the import-role confirm row inherits the page-level .primary sizing (width 100% + auto margins), which squeezes the cancel button and clips the long confirm label. Restore a V18-quiet action row. */
+.imported-blueprint-role .dialog-actions{display:flex;align-items:center;justify-content:flex-end;gap:10px;margin-top:10px}
+.imported-blueprint-role .dialog-actions button{min-height:44px;padding:0 8px;border:0;background:none;color:#58635d;font-size:13px;font-weight:600}
+.imported-blueprint-role .primary{width:auto;margin:0;min-height:44px;padding:0 18px;border-radius:6px;background:var(--focus);color:#fff;font-weight:700;font-size:14px}
+
+/* V19 immersive design B (frosted): the world owns the whole screen; a frosted-glass
+   band is attached to the bottom edge so the world blurs through it. The end control is hidden
+   until a double-tap on the band, and sits in a fixed-height slot so the reveal never
+   moves the panel. */
+/* V23 ②: the immersive focus info board now carries only the task name above the
+   time and the double-tap end control below it; the time sits exactly on the board's
+   vertical+horizontal center. The transient chips (本轮习惯 / 第x/x轮专注 / 本轮剩余)
+   are gone, the task-name slot and the control slot share one height so the time stays
+   dead center, and a long task name clamps to two lines instead of growing the board
+   (V23 BUG 1) or colliding with anything else. */
+.focus-immersive .world-screen.is-focusing{display:block;position:relative;width:100%;height:100dvh}
+.focus-immersive .is-focusing .world{position:absolute;inset:0;width:100%;height:100dvh;min-height:0;max-height:none}
+.focus-immersive .is-focusing .world-hud{display:none}
+.focus-immersive .is-focusing .focus-panel{position:absolute;left:0;right:0;bottom:0;border:0;border-radius:0;background:linear-gradient(145deg,rgb(255 255 255 / var(--focus-glass-highlight-alpha)),transparent 42%,rgb(39 103 73 / var(--focus-glass-accent-alpha))),rgb(243 245 242 / var(--focus-glass-light-alpha));box-shadow:0 -18px 42px rgb(10 20 15 / var(--focus-glass-shadow-alpha));backdrop-filter:blur(var(--focus-glass-blur)) saturate(var(--focus-glass-saturation)) brightness(var(--focus-glass-brightness)) contrast(1.04);-webkit-backdrop-filter:blur(var(--focus-glass-blur)) saturate(var(--focus-glass-saturation)) brightness(var(--focus-glass-brightness)) contrast(1.04);padding:max(16px,var(--safe-bottom)) max(20px,var(--safe-right)) max(16px,var(--safe-bottom)) max(20px,var(--safe-left));display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;max-width:none;margin:0;overflow:hidden}
+.focus-immersive .is-focusing .focus-task-context{display:flex;align-items:center;justify-content:center;min-height:48px;max-width:100%;padding:0;gap:0}
+.focus-immersive .is-focusing .focus-task-context strong{max-width:100%;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere;font-size:16px;line-height:1.3;text-align:center}
+.focus-immersive .is-focusing .timer{margin:0;font-size:64px}
+.focus-immersive .is-focusing .timer-label{display:none}
+.immersive-controls{width:100%;min-height:48px;display:grid;place-items:center}
+.immersive-controls .primary.destructive{width:min(100%,340px)}
+.immersive-hint{margin:0;font-size:11px;color:#58635d;opacity:1;transition:opacity 1.2s ease}
+.immersive-hint.is-faded{opacity:0}
+.focus-immersive .is-focusing .primary.destructive{min-height:48px}
+/* manipulation disables the browser's double-tap-zoom on the band; with zoom enabled the
+   second tap of a double-tap arrives as pointercancel and the reveal never fires on-device. */
+.focus-immersive .is-focusing .focus-panel{touch-action:manipulation}
+/* The integrity count is a transient chip above the band: it pops up when the session
+   starts and when an excursion is consumed, then fades out without moving the layout. */
+.focus-immersive .is-focusing .focus-integrity-warning.flash{position:absolute;top:-56px;left:50%;transform:translateX(-50%);width:max-content;max-width:calc(100% - 40px);margin:0;padding:9px 14px;border:1px solid var(--world-glass-border);border-radius:8px;background:var(--world-glass-background);color:#fff;display:flex;align-items:center;justify-content:center;gap:6px;font-size:12px;line-height:1.4;box-shadow:var(--world-glass-shadow);backdrop-filter:var(--world-glass-filter);-webkit-backdrop-filter:var(--world-glass-filter);animation:integrity-flash-in .22s ease}
+.focus-immersive .is-focusing .focus-integrity-warning.flash.active{background:linear-gradient(145deg,rgba(255,255,255,.12),rgba(255,255,255,.02)),rgba(117,79,24,.84)}
+@keyframes integrity-flash-in{from{opacity:0;transform:translate(-50%,6px)}to{opacity:1;transform:translate(-50%,0)}}
+@media(min-width:700px){.focus-immersive .world-screen.is-focusing{display:block;position:relative}
+.focus-immersive .is-focusing .world{position:absolute;inset:0;width:100%;height:100dvh;min-height:0;max-height:none}
+.focus-immersive .is-focusing .focus-panel{position:absolute;left:auto;right:0;top:0;bottom:0;height:100dvh;width:clamp(288px,34vw,330px);border:0;border-radius:0;background:linear-gradient(145deg,rgb(255 255 255 / var(--focus-glass-highlight-alpha)),transparent 42%,rgb(39 103 73 / var(--focus-glass-accent-alpha))),rgb(243 245 242 / var(--focus-glass-light-alpha));box-shadow:-18px 0 42px rgb(10 20 15 / var(--focus-glass-shadow-alpha));backdrop-filter:blur(var(--focus-glass-blur)) saturate(var(--focus-glass-saturation)) brightness(var(--focus-glass-brightness)) contrast(1.04);-webkit-backdrop-filter:blur(var(--focus-glass-blur)) saturate(var(--focus-glass-saturation)) brightness(var(--focus-glass-brightness)) contrast(1.04);padding:max(16px,var(--safe-top)) max(18px,var(--safe-right)) max(16px,var(--safe-bottom)) 18px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px}
+.focus-immersive .is-focusing .focus-integrity-warning.flash{top:auto;bottom:max(16px,var(--safe-bottom));left:50%}}
+
+@media(prefers-reduced-transparency:reduce){.focus-immersive .is-focusing .focus-panel{background:rgba(243,245,242,.9);backdrop-filter:blur(12px) saturate(1.05);-webkit-backdrop-filter:blur(12px) saturate(1.05)}}
+
+/* V19 diagnosis: a light tap on the world reports the terrain cell coordinates in a
+   quiet mono chip under the HUD, so defects can be pinned to exact blocks. */
+.world-pick-chip{position:absolute;left:12px;top:76px;z-index:3;margin:0;padding:6px 10px;border:1px solid var(--world-glass-border);border-radius:8px;background:var(--world-glass-background);color:#d8e4da;font:12px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace;box-shadow:var(--world-glass-shadow);backdrop-filter:var(--world-glass-filter);-webkit-backdrop-filter:var(--world-glass-filter);pointer-events:none}
+.world-pick-chip::before{content:"▦ ";color:#8fb89b}
+
+/* V20 FX-01 (owner feedback, dropped in V21): the per-digit rise animation was
+   removed — the timer now renders as one static string and ticks quietly. */
+.timer-value{font-variant-numeric:tabular-nums}
+
+/* V20 FX-02: press rebound. Buttons dip under the finger and spring back instead
+   of snapping; the overshoot bezier lives on the release so the bounce reads as
+   one continuous gesture. Gated on no-preference so reduced motion keeps plain
+   presses. */
+@media(prefers-reduced-motion:no-preference){
+.primary,.destructive,.secondary-action,.task-switch-action,.plan-summary,.round-picker button,.choice-menu button,.report-options button,.duration button,.dialog-close,.dialog-back,.check-update,.habit-building-confirm,.task-section-actions .icon-action,.subtask-group-toggle,.project-portfolio-row>button{transition:transform .16s cubic-bezier(.34,1.56,.64,1),background-color .16s ease,border-color .16s ease,color .16s ease,opacity .16s ease}
+.primary:active,.destructive:active,.secondary-action:active,.task-switch-action:active,.plan-summary:active,.round-picker button:active,.choice-menu button:active,.report-options button:active,.duration button:active,.dialog-close:active,.dialog-back:active,.check-update:active,.habit-building-confirm:active,.task-section-actions .icon-action:active,.subtask-group-toggle:active,.project-portfolio-row>button:active{transform:scale(.955)}
+}
+
+/* V20 FX-03 (owner feedback, dropped): the round/break ceremony overlay was
+   removed — the existing construction-feedback beat already marks a completed
+   round, and the extra floating text was unwanted. */
+
+/* V20 FX-04: conditional controls enter with the same quiet fade-up the
+   immersive end control already uses for its hint, so every pop-in panel and
+   button reads as one visual language. Mount-triggered, 160-200 ms, gated on
+   no-preference. */
+@media(prefers-reduced-motion:no-preference){
+.immersive-controls .primary.destructive,
+.focus-task-context,
+.rest-summary,
+.focus-integrity-ended,
+.focus-integrity-warning:not(.flash),
+.report,
+.confirm-dialog,
+.focus-plan-sheet,
+.habit-building-selection,
+.progress-report-panel{animation:ui-fade-in .18s cubic-bezier(.22,.9,.36,1) both}
+.dialog-backdrop{animation:ui-fade-in .14s ease-out both}
+/* FX-04 exit: closing controls mirror the entrance with a fade-down so
+   pop-in and pop-out read as one symmetric move. The immersive integrity chip
+   centers itself with translateX(-50%), so its exit keeps that offset instead
+   of jumping right before fading. */
+.dialog-leave .confirm-dialog,
+.dialog-leave .focus-plan-sheet,
+.dialog-leave .habit-building-selection,
+.immersive-controls.is-leaving .primary.destructive,
+.focus-integrity-warning.is-leaving{animation:ui-fade-out .16s ease-in both}
+.focus-integrity-ended.is-leaving{animation:ui-fade-out .16s ease-in both}
+.focus-immersive .is-focusing .focus-integrity-warning.is-leaving{animation:ui-fade-out-centered .16s ease-in both}
+.dialog-leave .dialog-backdrop{animation:ui-fade-out .14s ease-in both}
+}
+@keyframes ui-fade-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+@keyframes ui-fade-out{from{opacity:1;transform:translateY(0)}to{opacity:0;transform:translateY(8px)}}
+@keyframes ui-fade-out-centered{from{opacity:1;transform:translate(-50%,0)}to{opacity:0;transform:translate(-50%,8px)}}
+
+/* V20 FX-05: the active bottom-nav icon pops into place when a tab activates,
+   the only other owner-approved micro-motion beyond the press rebound. */
+@media(prefers-reduced-motion:no-preference){
+.bottom-nav .nav-active svg{animation:nav-icon-pop .2s cubic-bezier(.34,1.56,.64,1)}
+}
+@keyframes nav-icon-pop{from{transform:scale(.82)}to{transform:scale(1)}}
+
+/* V21 marathon scheduling: an end-time plan mode with the same quiet sheet
+   language as the round picker, plus the per-subtask final report rows. */
+.plan-mode{display:flex;gap:2px;margin-bottom:16px}
+.plan-mode button{min-height:44px;padding:9px 14px;border:0;background:transparent;border-radius:6px;color:#58635d;font-weight:500;font-size:14px}
+.plan-mode button[aria-pressed="true"]{color:#17211c;font-weight:750;text-decoration:underline;text-decoration-thickness:2px;text-decoration-color:#276749;text-underline-offset:7px}
+.plan-mode button:disabled{opacity:.5}
+/* V21 custom end-time picker: app-styled hour/minute steppers replace the native
+   time input so the sheet never opens the system picker on Android. */
+.marathon-end-picker{display:flex;align-items:flex-end;justify-content:center;gap:12px;margin-top:2px}
+.time-stepper{display:grid;justify-items:center;gap:5px}
+.time-stepper>span{color:#58635d;font-size:12px}
+.time-stepper strong{min-width:64px;padding:12px 6px;border:1px solid #aeb8b1;border-radius:6px;background:#fff;color:#17211c;text-align:center;font-size:22px;font-weight:750;font-variant-numeric:tabular-nums}
+.time-stepper button{width:52px;min-height:44px;padding:0;border:1px solid #aeb8b1;border-radius:6px;background:#fff;color:#276749;font-size:20px;font-weight:700}
+.time-stepper button:disabled{opacity:.5}
+.time-colon{align-self:center;font-size:22px;font-weight:750;color:#58635d;margin-bottom:34px}
+.plan-sheet-error{margin:16px 0;color:#8b1e26;font-size:13px;line-height:1.55}
+.marathon-progress-report .report-options{grid-template-columns:repeat(2,minmax(0,1fr))}
+.marathon-report-rows{display:grid;gap:10px;margin:16px 0}
+.marathon-report-row{padding:11px 0;border-top:1px solid #d7ddd8;display:grid;gap:9px;text-align:left}
+.marathon-report-copy{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
+.marathon-report-copy strong{min-width:0;overflow-wrap:anywhere;font-size:15px}
+.marathon-report-copy small{flex:0 0 auto;color:#58635d;font-size:12px}
+.marathon-report-options{display:flex;flex-wrap:wrap;gap:6px}
+.marathon-report-options button{min-height:40px;padding:0 11px;border:1px solid #aeb8b1;border-radius:5px;background:#fff;color:#27342e;font-size:13px}
+.marathon-report-options button[aria-pressed="true"]{border-color:#276749;background:#e2efe5;color:#276749;font-weight:700}
+.marathon-report-options button:last-child{border-color:#276749}
+.marathon-report-submit{width:min(100%,340px);min-height:48px;margin:4px auto 0}
+@media(max-width:480px){.marathon-report-options button{flex:1 1 40%}.marathon-progress-report .report-options{grid-template-columns:1fr}}
+/* V22 marathon settlement: project cards sit side by side, tapping one expands
+   its subtask list (or the habit round stepper); choices accumulate and the
+   whole settlement submits once. */
+.marathon-settlement-list{display:grid;gap:10px;margin:16px 0;text-align:left}
+.marathon-settlement-card{border:1px solid #d7ddd8;border-radius:10px;background:#fbfcfb;overflow:hidden}
+.marathon-settlement-head{width:100%;min-height:52px;padding:10px 14px;display:flex;align-items:center;justify-content:space-between;gap:10px;background:none;border:0;text-align:left}
+.marathon-settlement-copy{display:grid;gap:3px;min-width:0}
+.marathon-settlement-copy strong{font-size:15px;overflow-wrap:anywhere}
+.marathon-settlement-copy small{color:#58635d;font-size:12px}
+.marathon-settlement-toggle{flex:0 0 auto;padding:6px 12px;border:1px solid #aeb8b1;border-radius:5px;background:#fff;color:#276749;font-size:13px}
+.marathon-settlement-body{padding:12px 14px;border-top:1px solid #d7ddd8;display:grid;gap:10px}
+.marathon-settlement-body>small{color:#58635d;font-size:12px}
+.habit-round-stepper{grid-auto-flow:column;align-items:center;justify-content:start;gap:10px}
+.habit-round-stepper strong{min-width:44px}
+
+/* V21 top-right HUD reveal: one tap zone governs both the immersive view
+   controls and the ordinary world HUD. They fade in/out like the other
+   conditional controls with a 5-second dwell, and the immersive column sits at
+   the world's own top-right (left of the frosted side panel on landscape). */
+.world-hud-tapzone{position:absolute;top:0;right:0;width:112px;height:88px;z-index:5;touch-action:manipulation}
+.world-hud{z-index:7}
+.immersive-view-controls{position:absolute;top:max(12px,var(--safe-top));right:max(12px,var(--safe-right));z-index:7;display:flex;gap:8px}
+.immersive-reset-view{width:44px;height:44px;padding:0;border:1px solid var(--world-glass-border);border-radius:8px;background:var(--world-glass-background);color:#fff;display:grid;place-items:center;box-shadow:var(--world-glass-shadow);backdrop-filter:var(--world-glass-filter);-webkit-backdrop-filter:var(--world-glass-filter)}
+.immersive-reset-view svg{width:20px;height:20px}
+.world-hud.is-leaving{animation:ui-fade-out .16s ease-in both}
+@media(prefers-reduced-motion:no-preference){
+.immersive-view-controls .immersive-reset-view{animation:ui-fade-in .18s cubic-bezier(.22,.9,.36,1) both}
+.immersive-view-controls.is-leaving .immersive-reset-view{animation:ui-fade-out .16s ease-in both}
+.world-hud{animation:ui-fade-in .18s cubic-bezier(.22,.9,.36,1) both}
+}
+@media(prefers-reduced-motion:reduce){.immersive-reset-view{transition:none}}
+/* On landscape the frosted panel is a right-hand column; the world's top-right
+   corner sits at that column's left edge, so offset the controls and tap zone
+   by the panel width instead of hugging the screen edge. */
+@media(min-width:700px) and (orientation:landscape){
+.immersive-view-controls{right:calc(clamp(288px,34vw,330px) + max(12px,var(--safe-right)))}
+.world-hud-tapzone{right:clamp(288px,34vw,330px)}
+}
+
+/* V21: a started plan's sheet confirm turns into a red "cancel plan" action,
+   matching the immersive end-focus button's destructive colour. */
+.primary.destructive{background:#712a30;border-color:#a84b51;color:#fff}

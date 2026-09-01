@@ -115,7 +115,7 @@ async function revealFocusControls(page: import('@playwright/test').Page) {
   }
   throw new Error('Focus controls did not reveal after repeated double-taps');
 }
-test('creates a project, renders the world and persists focus state', async ({ page }, testInfo) => {
+test('@smoke creates a project, renders the world and persists focus state', async ({ page }, testInfo) => {
   // The hint-fade assertion adds a five-second rhythm check on top of the
   // world render and the reveal/hide cycle; the local gate machine measures
   // this between 24 and 34 seconds depending on thermal state.
@@ -144,7 +144,7 @@ test('creates a project, renders the world and persists focus state', async ({ p
   await revealFocusControls(page);
   await interruptFocus(page);
   await expect(page.getByRole('button', { name: '开始 1 轮' })).toBeVisible();
-  const clearOfNavigation = await page.evaluate(() => document.querySelector('.primary')!.getBoundingClientRect().bottom <= document.querySelector('nav')!.getBoundingClientRect().top);
+  const clearOfNavigation = await page.evaluate(() => document.querySelector('.primary')!.getBoundingClientRect().bottom <= document.querySelector('.bottom-nav')!.getBoundingClientRect().top);
   if ((await page.viewportSize())!.width < 700) expect(clearOfNavigation).toBe(true);
   await page.screenshot({ path: testInfo.outputPath('world-screen.png'), fullPage: true });
 });
@@ -209,6 +209,11 @@ test('imports a local litematic, previews it and persists its normalized bluepri
 });
 
 test('renders a monument with the active building and restores both after deletion', async ({ page }) => {
+  // This flow creates two complete 3D settlements, deletes the active project,
+  // then rebuilds both from an IndexedDB safety backup. Software WebGL reaches
+  // the final correct state in roughly 32 seconds during the release suite, so
+  // keep the extra budget scoped to this one integration path.
+  test.setTimeout(60_000);
   await page.clock.install({ time: new Date('2026-07-24T08:00:00Z') });
   await page.goto('/');
   await page.getByLabel('大型任务').fill('完成第一栋建筑');
@@ -247,6 +252,11 @@ test('renders a monument with the active building and restores both after deleti
 });
 
 test('adds and switches unfinished large projects without moving their buildings', async ({ page }) => {
+  // This path builds two full 3D settlements, switches their ownership, then
+  // enters and interrupts an immersive focus. Software WebGL consistently
+  // needs about 32 seconds, so keep a scoped budget instead of weakening the
+  // suite-wide timeout.
+  test.setTimeout(45_000);
   await createDefaultProject(page);
   await openTasks(page);
   await page.getByRole('button', { name: '新增任务' }).click();
@@ -361,7 +371,7 @@ test('creates a project when Android IME has not emitted a React change before b
   await expect(page.locator('#world-summary')).toContainText('中文长期任务');
 });
 
-test('navigation remains usable without overlap', async ({ page }) => {
+test('@smoke navigation remains usable without overlap', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: '开始建造' }).click();
   await page.getByRole('button', { name: '任务', exact: true }).click();
@@ -371,7 +381,7 @@ test('navigation remains usable without overlap', async ({ page }) => {
   await page.getByRole('button', { name: '设置' }).click();
   await expect(page.getByRole('heading', { name: '设置' })).toBeVisible();
   await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
-  const unobstructed = await page.evaluate(() => { const last = (document.querySelector('.backup-panel') ?? document.querySelector('.setting:last-child'))!.getBoundingClientRect(); const nav = document.querySelector('nav')!.getBoundingClientRect(); return innerWidth >= 700 ? last.left >= nav.right : last.bottom <= nav.top; });
+  const unobstructed = await page.evaluate(() => { const last = (document.querySelector('.backup-panel') ?? document.querySelector('.setting:last-child'))!.getBoundingClientRect(); const nav = document.querySelector('.bottom-nav')!.getBoundingClientRect(); return innerWidth >= 700 ? last.left >= nav.right : last.bottom <= nav.top; });
   expect(unobstructed).toBe(true);
 });
 
@@ -401,7 +411,7 @@ test('keeps the world renderer resident across tab switches', async ({ page }) =
   await expect(canvas).toHaveAttribute('data-environment-style', 'natural-valley');
 });
 
-test('expired focus resumes into progress reporting and grows the building', async ({ page }, testInfo) => {
+test('@smoke expired focus resumes into progress reporting and grows the building', async ({ page }, testInfo) => {
   await page.clock.install({ time: new Date('2026-07-23T08:00:00Z') });
   await page.goto('/');
   await page.getByRole('button', { name: '开始建造' }).click();
@@ -512,7 +522,7 @@ test('edits project and subtasks before progress and persists their order', asyn
   await addControl.scrollIntoViewIfNeeded();
   const clearOfNavigation = await page.evaluate(() => {
     const control = document.querySelector('#new-subtask')!.getBoundingClientRect();
-    const nav = document.querySelector('nav')!.getBoundingClientRect();
+    const nav = document.querySelector('.bottom-nav')!.getBoundingClientRect();
     return innerWidth >= 700 ? control.left >= nav.right : control.bottom <= nav.top;
   });
   expect(clearOfNavigation).toBe(true);
@@ -628,6 +638,7 @@ test('persists daily goal target changes and disabled state', async ({ page }, t
 });
 
 test('renames an imported building blueprint without changing its stored snapshot', async ({ page }, testInfo) => {
+  test.setTimeout(90_000);
   const sample = resolve(process.cwd(), '../../litematic/bd29cade-7000-42b7-adc1-0631ce512c30.litematic');
   test.skip(!existsSync(sample), 'The real Litematic compatibility fixture stays local.');
   await createDefaultProject(page);
@@ -667,7 +678,7 @@ test('renames an imported building blueprint without changing its stored snapsho
   await page.getByRole('button', { name: '开始建造' }).click();
   await page.getByRole('button', { name: '任务', exact: true }).click();
   await page.getByRole('button', { name: '查看建筑' }).first().click();
-  await expect(page.locator('.world-building-details')).toContainText('V13 阅读大厅');
+  await expect(page.locator('.building-memory-panel')).toContainText('V13 阅读大厅');
   await page.screenshot({ path: testInfo.outputPath('v19-blueprint-label-world.png'), fullPage: true });
 });
 

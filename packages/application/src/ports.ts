@@ -74,6 +74,10 @@ export interface FocusCompletionNotification {
 
 export interface BreakCompletionNotification {
   endsAt: ISOInstant;
+  /** Presentation-only context for Android's ongoing break countdown. */
+  completedRounds?: number;
+  totalRounds?: number;
+  nextTaskTitle?: string;
 }
 
 export interface NotificationPort {

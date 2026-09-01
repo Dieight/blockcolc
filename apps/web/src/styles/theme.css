@@ -1,0 +1,160 @@
+/* Theme-specific compatibility rules. New components should consume semantic tokens. */
+:root[data-theme="dark"]{color-scheme:dark;color:var(--ink);background:var(--app-bg)}
+html[data-theme="dark"],html[data-theme="dark"] body,html[data-theme="dark"] #root{background:#0e1512;color:#e6efe9}
+
+/* Chrome */
+[data-theme="dark"] .topbar{background:rgba(14,21,18,.96);border-color:var(--line)}
+[data-theme="dark"] .bottom-nav{background:#131c17;border-color:var(--line)}
+[data-theme="dark"] .bottom-nav button{color:#8aa295}
+[data-theme="dark"] .world,[data-theme="dark"] .setup-world{background:#0d1712}
+
+/* Inputs & generic buttons */
+[data-theme="dark"] select,[data-theme="dark"] input,[data-theme="dark"] textarea{background:#121a16;color:#e6efe9;border-color:#38473d}
+[data-theme="dark"] input::placeholder,[data-theme="dark"] textarea::placeholder{color:#6c8577}
+[data-theme="dark"] .duration button,[data-theme="dark"] .report-options button,[data-theme="dark"] .setting button,[data-theme="dark"] .dialog-actions button,[data-theme="dark"] .resource-pack-original button,[data-theme="dark"] .resource-pack-list li button,[data-theme="dark"] .resource-pack-import,[data-theme="dark"] .backup-actions button,[data-theme="dark"] .file-button,[data-theme="dark"] .rollback-heading button,[data-theme="dark"] .rollback-list li button,[data-theme="dark"] .setup-kind button,[data-theme="dark"] .blueprint-option,[data-theme="dark"] .danger-outline,[data-theme="dark"] .planned-days button{background:#131c17;color:#e6efe9;border-color:#38473d}
+[data-theme="dark"] .duration .selected,[data-theme="dark"] .blueprint-option.selected{background:#1f3329;border-color:var(--focus);color:var(--focus)}
+[data-theme="dark"] .setup-kind button{color:var(--muted)}
+[data-theme="dark"] .setup-kind button[aria-pressed="true"]{color:#e6efe9}
+[data-theme="dark"] .planned-days button[aria-pressed="true"]{background:#1f3329;color:var(--focus)}
+[data-theme="dark"] .planned-days button:disabled{color:#4a5b52}
+[data-theme="dark"] .primary{color:#0c1410}
+[data-theme="dark"] .switch-control,[data-theme="dark"] .integrity-controls .switch-control{color:#e6efe9}
+[data-theme="dark"] input[type="checkbox"]{accent-color:var(--focus)}
+[data-theme="dark"] .segmented-control{background:#1a241f}
+[data-theme="dark"] .segmented-control button[aria-pressed="true"]{background:#17211c;color:var(--focus)}
+
+/* Cards, dialogs and sheets */
+[data-theme="dark"] .task-list>div,[data-theme="dark"] .blueprint-choice,[data-theme="dark"] .report,[data-theme="dark"] .focus-hour-card,[data-theme="dark"] .focus-heatmap-card,[data-theme="dark"] .rhythm-grid>div,[data-theme="dark"] .stats-grid>div,[data-theme="dark"] .import-preview,[data-theme="dark"] .resource-pack-original,[data-theme="dark"] .resource-pack-list li,[data-theme="dark"] .marathon-settlement-card,[data-theme="dark"] .confirm-dialog,[data-theme="dark"] .focus-plan-sheet,[data-theme="dark"] .daily-goal-sheet,[data-theme="dark"] .daily-goal,[data-theme="dark"] .end-focus-dialog,[data-theme="dark"] .about-dialog,[data-theme="dark"] .current-work{background:#17211c;border-color:var(--line)}
+[data-theme="dark"] .resource-pack-original.active,[data-theme="dark"] .resource-pack-list li.active,[data-theme="dark"] .daily-goal-workbench{background:#1a2920;border-color:#3a5545}
+
+/* Text */
+[data-theme="dark"] .settings-group>h2,[data-theme="dark"] .setting-value,[data-theme="dark"] .workbench-context strong,[data-theme="dark"] .plan-summary,[data-theme="dark"] .number-field input,[data-theme="dark"] .setup-subtasks-head,[data-theme="dark"] .marathon-report-copy{color:#e6efe9}
+[data-theme="dark"] .settings-head p,[data-theme="dark"] .setting-name small,[data-theme="dark"] .task-queue-label,[data-theme="dark"] .stats-intro,[data-theme="dark"] .project-allocation span,[data-theme="dark"] .allocation-legend span,[data-theme="dark"] .focus-hour-axis,[data-theme="dark"] .focus-hour-legend,[data-theme="dark"] .workbench-context span,[data-theme="dark"] .workbench-context small,[data-theme="dark"] .habit-selection-heading p,[data-theme="dark"] .marathon-report-row span,[data-theme="dark"] .interruption-summary p,[data-theme="dark"] .stats-note,[data-theme="dark"] .backup-panel>div>p,[data-theme="dark"] .resource-pack-panel header p,[data-theme="dark"] .number-field,[data-theme="dark"] .text-toggle button{color:var(--muted)}
+
+/* Settings hairline separators */
+[data-theme="dark"] .settings-group,[data-theme="dark"] .building-blueprint-panel,[data-theme="dark"] .resource-pack-panel,[data-theme="dark"] .backup-panel{border-top-color:#24312a}
+[data-theme="dark"] .settings-group>.setting-row{border-bottom-color:#24312a}
+
+/* Accents */
+[data-theme="dark"] .report>svg,[data-theme="dark"] .about-icon,[data-theme="dark"] .task-list b,[data-theme="dark"] .rhythm-grid strong,[data-theme="dark"] .build-percent,[data-theme="dark"] .stats-section-heading>span,[data-theme="dark"] .plan-summary span:last-child,[data-theme="dark"] .task-switch-action,[data-theme="dark"] .project-view-action,[data-theme="dark"] .settings-text-action,[data-theme="dark"] .resource-pack-original button,[data-theme="dark"] .resource-pack-list li button:not(.resource-pack-delete),[data-theme="dark"] .backup-actions button,[data-theme="dark"] .file-button,[data-theme="dark"] .rollback-heading button,[data-theme="dark"] .rollback-list li button{color:var(--focus)}
+[data-theme="dark"] .meter{background:#24312a}
+[data-theme="dark"] .allocation-bar,[data-theme="dark"] .project-allocation i{background:#24312a}
+[data-theme="dark"] .allocation-bar .allocation-other,[data-theme="dark"] .allocation-legend li>i.allocation-other{background:#33463c}
+[data-theme="dark"] .project-allocation i b{background:#4f8f63}
+[data-theme="dark"] .text-toggle button:hover{background:#1a241f}
+[data-theme="dark"] .number-field input:focus-visible{background:#121a16}
+[data-theme="dark"] .glass-transparency-control{color:#e6efe9}
+[data-theme="dark"] .glass-transparency-control input[type="range"]{--range-track:#3a4941;background:transparent;border-color:transparent}
+
+/* Danger */
+[data-theme="dark"] .danger-outline,[data-theme="dark"] .primary.destructive,[data-theme="dark"] .dialog-actions .danger-action{border-color:#e26060}
+[data-theme="dark"] .danger-outline,[data-theme="dark"] .blueprint-delete,[data-theme="dark"] .resource-pack-delete,[data-theme="dark"] .project-delete-zone h2,[data-theme="dark"] .plan-sheet-error{color:#ff8a8a}
+[data-theme="dark"] .backup-error{color:#ff9a9a;background:#2c1a1c;border-color:#5c2a2e}
+[data-theme="dark"] .backup-notice{color:#7fd6a1;background:#16271c;border-color:#2d4a37}
+
+/* Heatmap */
+[data-theme="dark"] .focus-heatmap-cell{background:#26312b}
+[data-theme="dark"] .heat-level-1{background:#2e4a37}
+[data-theme="dark"] .heat-level-2{background:#3f6b4c}
+[data-theme="dark"] .heat-level-3{background:#55905f}
+[data-theme="dark"] .heat-level-4{background:#74b37e}
+[data-theme="dark"] .focus-heatmap-cell.is-future{background:#1a221d;border-color:#26312b}
+[data-theme="dark"] .focus-heatmap-legend .heat-level-0{background:#26312b}
+
+/* World HUD already dark; deepen slightly for consistency */
+[data-theme="dark"] .world-hud span,[data-theme="dark"] .world-hud button,[data-theme="dark"] .immersive-reset-view,[data-theme="dark"] .world-pick-chip{background:var(--world-glass-background)}
+
+/* Tasks screen boxes */
+[data-theme="dark"] .task-editor-row,[data-theme="dark"] .subtask-group-toggle,[data-theme="dark"] .project-portfolio-row>button{background:#17211c;border-color:var(--line);color:#e6efe9}
+[data-theme="dark"] .task-editor-row.task-current{background:#1a2920;border-color:#3a5545}
+[data-theme="dark"] .task-editor-row.task-complete{background:#141d19;border-color:#2c3a31}
+[data-theme="dark"] .task-order{background:#24312a;color:#7fd6a1}
+[data-theme="dark"] .task-editor-row.task-current .task-order{background:#276749;color:#0c1410}
+[data-theme="dark"] .task-editor-row.task-complete .task-order{background:#1f3329;color:#3f7d4e}
+[data-theme="dark"] .subtask-group-toggle{color:#e6efe9}
+[data-theme="dark"] .add-subtask button,[data-theme="dark"] .daily-goal button{background:#17211c;border-color:#3a5545;color:#7fd6a1}
+[data-theme="dark"] .daily-goal-adjust{background:#17211c!important;border-color:#3a5545!important;color:#7fd6a1!important}
+[data-theme="dark"] .daily-goal-controls>label:not(.switch-control){color:var(--muted)}
+[data-theme="dark"] .task-copy small,[data-theme="dark"] .subtask-group-toggle small,[data-theme="dark"] .subtask-group-toggle span{color:var(--muted)}
+[data-theme="dark"] .task-row-actions button{border-color:var(--line)}
+[data-theme="dark"] .task-section-heading,[data-theme="dark"] .task-section-actions .icon-action{color:var(--muted)}
+
+/* End-focus / interruption dialog */
+[data-theme="dark"] .end-focus-choices>button,[data-theme="dark"] .interruption-options button,[data-theme="dark"] .dialog-back{background:#17211c;border-color:var(--line);color:#e6efe9}
+[data-theme="dark"] .end-focus-choices>button strong,[data-theme="dark"] .end-focus-choices>button small,[data-theme="dark"] .interruption-options button{color:#e6efe9}
+[data-theme="dark"] .end-focus-choices>button small{color:var(--muted)}
+
+/* Stats: settlement totals + project allocation */
+[data-theme="dark"] .settlement-totals{background:#17211c;border-color:var(--line)}
+[data-theme="dark"] .project-allocation{background:#17211c;border-color:var(--line)}
+[data-theme="dark"] .settlement-totals strong,[data-theme="dark"] .settlement-totals .stats-grid>div{color:#e6efe9}
+[data-theme="dark"] .project-allocation strong{color:#e6efe9}
+[data-theme="dark"] .allocation-bar .allocation-other,[data-theme="dark"] .allocation-legend li>i.allocation-other{background:#33463c}
+
+/* World workbench + settlement overview */
+[data-theme="dark"] .workbench-context{background:#17211c;border-color:var(--line);border-left-color:#276749}
+[data-theme="dark"] .current-work small,[data-theme="dark"] .workbench-context small{color:var(--muted)}
+[data-theme="dark"] .current-work{background:#17211c;border-color:var(--line)}
+
+/* Blueprint library */
+[data-theme="dark"] .building-blueprint-list li{background:#17211c;border-color:var(--line)}
+[data-theme="dark"] .building-blueprint-list strong,[data-theme="dark"] .building-blueprint-list small{color:#e6efe9}
+[data-theme="dark"] .building-blueprint-list small{color:var(--muted)}
+[data-theme="dark"] .building-blueprint-list .blueprint-library-actions button{border-color:var(--line)}
+
+/* Immersive focus board: the dark tint changes with clarity while the edge stays a soft cast shadow. */
+[data-theme="dark"] .focus-immersive .is-focusing .focus-panel{background:linear-gradient(145deg,rgb(255 255 255 / var(--focus-glass-highlight-alpha)),transparent 42%,rgb(111 206 150 / var(--focus-glass-accent-alpha))),rgb(20 29 25 / var(--focus-glass-dark-alpha));box-shadow:0 -18px 42px rgb(0 0 0 / var(--focus-glass-shadow-alpha))}
+@media(min-width:700px){[data-theme="dark"] .focus-immersive .is-focusing .focus-panel{box-shadow:-18px 0 42px rgb(0 0 0 / var(--focus-glass-shadow-alpha))}}
+[data-theme="dark"] .focus-immersive .is-focusing .timer{color:#e6efe9}
+[data-theme="dark"] .focus-immersive .is-focusing .immersive-hint{color:var(--muted)}
+@media(prefers-reduced-transparency:reduce){[data-theme="dark"] .focus-immersive .is-focusing .focus-panel{background:rgba(20,29,25,.92)}}
+
+/* Remaining light controls: dropdowns, pickers, tabs, switchers, settlement, steppers */
+[data-theme="dark"] .choice-menu-trigger,[data-theme="dark"] .choice-menu-options button,[data-theme="dark"] .round-picker button,[data-theme="dark"] .period-tabs button,[data-theme="dark"] .project-switcher>button,[data-theme="dark"] .project-switcher-actions button,[data-theme="dark"] .resume-projects>button,[data-theme="dark"] .waiting-buildings button,[data-theme="dark"] .marathon-settlement-toggle,[data-theme="dark"] .marathon-report-options button,[data-theme="dark"] .time-stepper button,[data-theme="dark"] .check-update,[data-theme="dark"] .litematic-file,[data-theme="dark"] .setup-actions>button:not(.primary),[data-theme="dark"] .daily-goal-adjust,[data-theme="dark"] .daily-goal-reward-panel button,[data-theme="dark"] .notification-health>button,[data-theme="dark"] .import-role button{background:#17211c;border-color:#3a5545;color:#e6efe9}
+[data-theme="dark"] .choice-menu-options button[aria-selected="true"],[data-theme="dark"] .round-picker button.selected,[data-theme="dark"] .period-tabs .selected,[data-theme="dark"] .import-role button[aria-pressed="true"]{background:#1f3329;border-color:var(--focus);color:var(--focus)}
+[data-theme="dark"] .choice-menu-options button:hover{background:#1a241f}
+[data-theme="dark"] .time-stepper strong{background:#121a16;color:#e6efe9}
+[data-theme="dark"] .rest-summary{background:#17211c;border-color:var(--line)}
+[data-theme="dark"] .rest-summary small{color:var(--muted)}
+[data-theme="dark"] .setup-subtask-order{background:#24312a;color:#7fd6a1}
+[data-theme="dark"] .setup-subtask-row{background:#17211c;border-color:var(--line)}
+[data-theme="dark"] .setup-subtask-row .native-ime-entry input,[data-theme="dark"] .setup-subtask-row .native-ime-entry textarea{background:#121a16;border-color:#38473d;color:#e6efe9}
+[data-theme="dark"] .setup-subtask-row .native-ime-entry input::placeholder{color:#6c8577}
+
+/* Selected/active states must stay visually distinct on dark backgrounds */
+[data-theme="dark"] .bottom-nav .nav-active{color:var(--focus)}
+[data-theme="dark"] .period-tabs .selected,[data-theme="dark"] .text-toggle button[aria-pressed="true"]{color:var(--focus)}
+[data-theme="dark"] .text-toggle button[aria-pressed="true"]{text-decoration-color:var(--focus)}
+[data-theme="dark"] .focus-heatmap-cell.is-selected{outline-color:#6fce96}
+[data-theme="dark"] .marathon-settlement-toggle{color:#7fd6a1}
+[data-theme="dark"] .update-result{background:#16271c;color:#7fd6a1!important;border-color:#2d4a37}
+[data-theme="dark"] .focus-integrity-warning{background:#17211c;border-color:var(--line)}
+[data-theme="dark"] .focus-integrity-warning.active{background:#2a2013;border-color:#6b5220;color:#e8c88a}
+[data-theme="dark"] .today:active{background:#24312a;color:#e6efe9}
+[data-theme="dark"] .daily-goal-workbench .daily-goal-reward-panel{background:#1a2920}
+
+/* Dropdown container (choice menus for subtask / queue lists) */
+[data-theme="dark"] .choice-menu-options{background:#17211c;border-color:var(--line)}
+
+/* Plan sheet mode tabs (fixed rounds / end-time) */
+[data-theme="dark"] .plan-mode button{color:var(--muted)}
+[data-theme="dark"] .plan-mode button[aria-pressed="true"]{color:#e6efe9;text-decoration-color:var(--focus)}
+
+/* Task row icon actions + drag handle */
+[data-theme="dark"] .icon-action,[data-theme="dark"] .task-row-actions button{background:#17211c;border-color:var(--line);color:#e6efe9}
+[data-theme="dark"] .icon-action.destructive-icon,[data-theme="dark"] .task-row-actions button.destructive-icon{color:#ff8a8a}
+[data-theme="dark"] .task-drag-handle{background:#24312a;color:#7fd6a1}
+
+/* Stats: interruption reason labels and bars */
+[data-theme="dark"] .interruption-list span,[data-theme="dark"] .interruption-list strong{color:#e6efe9}
+[data-theme="dark"] .interruption-bar{background:#3a3329}
+
+/* Immersive board: focused task name must read on the dark glass */
+[data-theme="dark"] .focus-immersive .is-focusing .focus-task-context strong{color:#e6efe9}
+
+/* Boot loading page */
+[data-theme="dark"] .boot-page{background:#0e1512}
+[data-theme="dark"] .boot-page-mark{color:#e6efe9}
+[data-theme="dark"] .boot-page-status{color:#93b0a0}
+[data-theme="dark"] .boot-page-hint{color:#6c8577}
+[data-theme="dark"] .boot-page-blocks i{background:#4f8f63}

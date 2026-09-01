@@ -300,9 +300,6 @@ function handle(state: DomainState, command: DomainCommand, clock: Clock): Comma
       if (state.activeFocusSession) return fail(state, "FOCUS_ALREADY_ACTIVE", "A focus session is already active");
       requireNonBlank(command.sessionId, "sessionId");
       if (state.focusHistory.some((item) => item.id === command.sessionId)) return fail(state, "DUPLICATE_ID", "Session ID already exists");
-      if (command.marathon === true && project.kind === "habit") {
-        return fail(state, "SUBTASK_NOT_FOUND", "Marathon sessions need a finite host project");
-      }
       if (project.kind === "habit") {
         if (command.subtaskId !== null) return fail(state, "SUBTASK_NOT_FOUND", "Habit focus cannot target a subtask");
         if (requireHabit(project).awaitingNextBuilding) return fail(state, "HABIT_BUILDING_SELECTION_REQUIRED", "Select the next habit building before focusing");
@@ -340,7 +337,8 @@ function handle(state: DomainState, command: DomainCommand, clock: Clock): Comma
       if (!active) return fail(state, "FOCUS_NOT_ACTIVE", "No focus session is active");
       if (Date.parse(now) >= Date.parse(active.endsAt)) return fail(state, "FOCUS_ALREADY_ELAPSED", "Elapsed focus must be completed normally");
       requireNonBlank(command.reportId, "reportId");
-      const project = activeProject(state);
+      const project = state.projects.find((candidate) => candidate.id === active.projectId);
+      if (!project) return fail(state, "PROJECT_NOT_FOUND", "Focus session project does not exist");
       if (project.kind === "habit") {
         const actualDurationMs = Math.max(0, Date.parse(now) - Date.parse(active.startedAt));
         const session: FocusSession = {

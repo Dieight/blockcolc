@@ -197,7 +197,9 @@ test('bleeds the focus world under a landscape cutout while keeping controls saf
   // missing box counts as the hidden HUD.
   expect(layout.hud?.width ?? 0).toBe(0);
   expect(layout.panel?.width).toBeLessThanOrEqual(330);
-  expect(layout.panel?.right).toBeLessThanOrEqual(layout.width);
+  expect(layout.panel?.top).toBe(0);
+  expect(layout.panel?.right).toBe(layout.width);
+  expect(layout.panel?.bottom).toBe(layout.height);
   expect(layout.action?.right).toBeLessThanOrEqual(layout.width - 8 + 1);
   expect(layout.action?.bottom).toBeLessThanOrEqual(layout.height - 6 + 1);
   const canvas = await page.getByLabel('项目建筑世界').screenshot({ path: testInfo.outputPath('focus-landscape-cutout-canvas.png') });

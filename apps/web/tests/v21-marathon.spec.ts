@@ -10,6 +10,18 @@ async function createDefaultProject(page: import("@playwright/test").Page) {
   await expect(page.locator(".world-screen")).toBeVisible();
 }
 
+async function revealFocusControls(page: import("@playwright/test").Page) {
+  const endButton = page.getByRole("button", { name: "结束本次专注" });
+  if (await endButton.isVisible().catch(() => false)) return;
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    await page.dispatchEvent(".focus-panel", "pointerup", { pointerId: 7, clientX: 20, clientY: 20, pointerType: "touch", isPrimary: true });
+    await page.dispatchEvent(".focus-panel", "pointerup", { pointerId: 7, clientX: 20, clientY: 20, pointerType: "touch", isPrimary: true });
+    await page.waitForTimeout(300);
+    if (await endButton.isVisible().catch(() => false)) return;
+  }
+  throw new Error("Focus controls did not reveal after repeated double-taps");
+}
+
 test("opening and closing the plan sheet never moves the panel below the adjust row", async ({ page }) => {
   await createDefaultProject(page);
   const measure = () => page.evaluate(() => {
@@ -19,7 +31,7 @@ test("opening and closing the plan sheet never moves the panel below the adjust 
       const box = element.getBoundingClientRect();
       return Math.round(box.top * 10) / 10;
     };
-    return { timer: rect(".timer"), primary: rect(".v7-focus-panel .primary"), panel: rect(".v7-focus-panel"), world: rect(".world") };
+    return { timer: rect(".timer"), primary: rect(".focus-workbench-panel .primary"), panel: rect(".focus-workbench-panel"), world: rect(".world") };
   });
   const before = await measure();
   await page.getByRole("button", { name: "调整本次计划" }).click();
@@ -90,6 +102,135 @@ test("marathon mode schedules from an end time and reports once after every roun
   await expect(page.locator(".workbench-context")).toContainText("25%");
   await page.getByRole("button", { name: "任务", exact: true }).click();
   await expect(page.getByText("25%", { exact: false }).first()).toBeVisible();
+});
+
+test("habit plans support an isolated end-time schedule without the finite-task report", async ({ page }) => {
+  await page.clock.install({ time: new Date("2026-08-03T08:00:00Z") });
+  await createDefaultProject(page);
+  await page.getByRole("button", { name: "设置" }).click();
+  const habitMinutes = page.getByLabel("习惯任务专注分钟");
+  await habitMinutes.fill("2");
+  await habitMinutes.press("Enter");
+  const breakMinutes = page.getByLabel("每轮休息分钟");
+  await breakMinutes.fill("0");
+  await breakMinutes.press("Enter");
+
+  await page.getByRole("button", { name: "任务", exact: true }).click();
+  await page.getByRole("button", { name: "新增任务" }).click();
+  await page.getByRole("button", { name: "习惯任务" }).click();
+  await page.getByLabel("习惯名称").fill("习惯排程隔离验证");
+  await page.getByRole("button", { name: "开始建造" }).click();
+
+  await page.getByRole("button", { name: "调整本次计划" }).click();
+  const sheet = page.getByRole("dialog", { name: "安排习惯专注" });
+  await expect(sheet.getByRole("button", { name: "固定轮次" })).toBeVisible();
+  await sheet.getByRole("button", { name: "按结束时间" }).click();
+  await expect(sheet.locator(".choice-menu")).toHaveCount(0);
+  await page.getByLabel("减少结束小时").click();
+  await page.getByLabel("减少结束小时").click();
+  await page.getByLabel("增加结束分钟").click();
+  await expect(sheet).toContainText("安排 2 轮习惯专注");
+  await expect(sheet).toContainText("结束后不进入普通任务的统一汇报");
+  await sheet.getByRole("button", { name: "确认计划" }).click();
+
+  const context = page.locator(".workbench-context");
+  await expect(context).toContainText("按结束时间排程");
+  await expect(context).toContainText("习惯轮次直接推进建筑");
+
+  await page.getByRole("button", { name: /^开始到/ }).click();
+  await expect(page.locator(".focus-task-context")).toContainText("马拉松 第 1 / 2 轮");
+  await revealFocusControls(page);
+  const endDialog = page.getByRole("dialog", { name: "如何结束这次专注？" });
+  if (!(await endDialog.isVisible().catch(() => false))) {
+    await page.getByRole("button", { name: "结束本次专注" }).click();
+  }
+  await expect(endDialog.getByRole("button", { name: /提前完成本轮/ })).toContainText("推进当前习惯建筑，并继续本场计划");
+  await endDialog.getByRole("button", { name: /提前完成本轮/ }).click();
+  await expect(page.getByRole("button", { name: "开始下一轮" })).toBeVisible();
+  await expect(context).toContainText("已完成 1 / 2 轮");
+  await page.getByRole("button", { name: "开始下一轮" }).click();
+  await page.clock.fastForward(121_000);
+  await expect(page.getByRole("heading", { name: "把这次推进汇报给哪些任务？" })).toHaveCount(0);
+  await expect(page.locator(".workbench-context")).toContainText("本周期 2 / 10 轮");
+
+  await page.getByRole("button", { name: "调整本次计划" }).click();
+  await sheet.getByRole("button", { name: "固定轮次" }).click();
+  await expect(sheet.getByLabel("习惯专注轮数")).toBeVisible();
+});
+
+test("a locked habit end-time lane keeps its host after another project becomes current", async ({ page }) => {
+  await page.clock.install({ time: new Date("2026-08-03T08:00:00Z") });
+  await createDefaultProject(page);
+  await page.getByRole("button", { name: "设置" }).click();
+  await page.getByLabel("习惯任务专注分钟").fill("1");
+  await page.getByLabel("习惯任务专注分钟").press("Enter");
+  await page.getByLabel("每轮休息分钟").fill("0");
+  await page.getByLabel("每轮休息分钟").press("Enter");
+  await page.getByRole("button", { name: "任务", exact: true }).click();
+  await page.getByRole("button", { name: "新增任务" }).click();
+  await page.getByRole("button", { name: "习惯任务" }).click();
+  await page.getByLabel("习惯名称").fill("宿主习惯");
+  await page.getByRole("button", { name: "开始建造" }).click();
+
+  await page.getByRole("button", { name: "调整本次计划" }).click();
+  const habitSheet = page.getByRole("dialog", { name: "安排习惯专注" });
+  await habitSheet.getByRole("button", { name: "按结束时间" }).click();
+  await page.getByLabel("减少结束小时").click();
+  await page.getByLabel("减少结束小时").click();
+  await page.getByLabel("增加结束分钟").click();
+  await habitSheet.getByRole("button", { name: "确认计划" }).click();
+
+  await page.getByRole("button", { name: "任务", exact: true }).click();
+  await page.getByRole("button", { name: "新增任务" }).click();
+  await page.getByLabel("大型任务").fill("后来成为当前的普通任务");
+  await page.getByRole("button", { name: "开始建造" }).click();
+
+  await expect(page.getByRole("heading", { name: "按结束时间排程" })).toBeVisible();
+  await expect(page.locator(".workbench-context")).toContainText("习惯轮次直接推进建筑");
+  await expect(page.getByText("后来成为当前的普通任务", { exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "调整本次计划" }).click();
+  await expect(page.getByRole("dialog", { name: "安排习惯专注" })).toContainText("结束后不进入普通任务的统一汇报");
+  await page.getByRole("button", { name: "关闭本次计划" }).click();
+
+  await page.getByRole("button", { name: /^开始到/ }).click();
+  await expect(page.locator(".focus-task-context")).toContainText(/马拉松 第 1 \/ \d+ 轮/);
+  await revealFocusControls(page);
+  await page.getByRole("button", { name: "结束本次专注" }).click();
+  await page.getByRole("dialog", { name: "如何结束这次专注？" }).getByRole("button", { name: /提前完成本轮/ }).click();
+  await expect(page.getByRole("button", { name: "开始下一轮" })).toBeVisible();
+});
+
+test("the native live-update action skips an active habit break", async ({ page }) => {
+  await page.clock.install({ time: new Date("2026-08-03T08:00:00Z") });
+  await createDefaultProject(page);
+  await page.getByRole("button", { name: "设置" }).click();
+  const habitMinutes = page.getByLabel("习惯任务专注分钟");
+  await habitMinutes.fill("1");
+  await habitMinutes.press("Enter");
+  const breakMinutes = page.getByLabel("每轮休息分钟");
+  await breakMinutes.fill("1");
+  await breakMinutes.press("Enter");
+
+  await page.getByRole("button", { name: "任务", exact: true }).click();
+  await page.getByRole("button", { name: "新增任务" }).click();
+  await page.getByRole("button", { name: "习惯任务" }).click();
+  await page.getByLabel("习惯名称").fill("流体云休息操作验证");
+  await page.getByRole("button", { name: "开始建造" }).click();
+
+  await page.getByRole("button", { name: "调整本次计划" }).click();
+  const sheet = page.getByRole("dialog", { name: "安排习惯专注" });
+  await sheet.getByLabel("习惯专注轮数").getByRole("button", { name: "2 轮" }).click();
+  await sheet.getByRole("button", { name: "确认计划" }).click();
+  await page.getByRole("button", { name: "开始 2 轮" }).click();
+  await page.clock.fastForward(61_000);
+  await expect(page.getByRole("button", { name: "跳过休息" })).toBeVisible();
+
+  await page.evaluate(() => {
+    localStorage.setItem("blockcolc-skip-break-request-v1", "1");
+    window.dispatchEvent(new Event("blockcolc-skip-break"));
+  });
+  await expect(page.getByRole("button", { name: "开始下一轮" })).toBeVisible();
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("blockcolc-skip-break-request-v1"))).toBeNull();
 });
 
 test("marathon rounds unlock the wider round count in the plan summary", async ({ page }) => {

@@ -313,13 +313,25 @@ export function layoutWorlds(
   return resolved.map((world, index) => ({ ...world, ...placements[index]! }));
 }
 
-function stableProjectHash(value: string): number {
-  let hash = 0x811c9dc5;
-  for (let index = 0; index < value.length; index += 1) {
-    hash ^= value.charCodeAt(index);
-    hash = Math.imul(hash, 0x01000193);
-  }
-  return hash >>> 0;
+export function alignWorldsToEnvironment(
+  worlds: readonly PositionedWorldSnapshot[],
+  environmentStyle: TerrainEnvironmentStyle,
+): PositionedWorldSnapshot[] {
+  if (environmentStyle !== "ocean-island") return [...worlds];
+  return worlds.map((world) => world.worldPosition.y >= 4
+    ? world
+    : { ...world, worldPosition: { ...world.worldPosition, y: 4 } });
+}
+
+function sameSpatialWorldLayout(left: readonly WorldSnapshot[], right: readonly WorldSnapshot[]): boolean {
+  if (left.length !== right.length) return false;
+  const byProject = new Map(left.map((world) => [world.projectId, world]));
+  return right.every((world) => {
+    const previous = byProject.get(world.projectId);
+    return previous !== undefined
+      && previous.blueprintId === world.blueprintId
+      && previous.settlementIndex === world.settlementIndex;
+  });
 }
 
 export function createVoxelRenderer(
@@ -573,6 +585,7 @@ export function createVoxelRenderer(
   const pointerStarts = new Map<number, { x: number; y: number }>();
   let previousPinchDistance: number | null = null;
   let previousPinchCenterY: number | null = null;
+  let interactionStaleAtMs: number | null = null;
   let cachedShadowTransformSyncs = 0;
   let lastWorlds: readonly WorldSnapshot[] = [];
   let resourcePackGeneration = 0;
@@ -825,7 +838,13 @@ export function createVoxelRenderer(
     if (disposed || frame !== 0 || !paneVisible) return;
     frame = requestAnimationFrame(() => {
       frame = 0;
-      const cameraStillMoving = renderFrame(performance.now());
+      const frameStartedAtMs = performance.now();
+      releaseStaleInteraction(frameStartedAtMs);
+      const cameraStillMoving = renderFrame(frameStartedAtMs);
+      // Software WebGL can spend longer than the entire stale window inside a
+      // single frame. Recheck after rendering so a stolen pointer cannot keep
+      // scheduling expensive interaction frames while interval tasks starve.
+      releaseStaleInteraction(performance.now());
       if (interacting || nativeInputActive || cameraStillMoving || performance.now() < constructionPulseUntilMs) requestRender();
     });
   }
@@ -866,6 +885,7 @@ export function createVoxelRenderer(
   }
 
   function rebuild(worlds: readonly WorldSnapshot[], previousWorlds: readonly WorldSnapshot[] = lastWorlds): void {
+    const preserveCameraView = positionedWorlds.length > 0 && sameSpatialWorldLayout(previousWorlds, worlds);
     sceneRevision += 1;
     clearGroup(buildingGroup);
     clearGroup(terrainGroup);
@@ -894,13 +914,20 @@ export function createVoxelRenderer(
     plannedOutlineVoxelCount = 0;
     referencedAnimatedTextureIndices.clear();
     const initialPositioned = layoutWorlds(worlds, resolveBlueprint);
+    const alignedPositioned = alignWorldsToEnvironment(
+      initialPositioned,
+      options.environmentStyle ?? "classic-island",
+    );
     const buildingPads: TerrainPad[] = [];
-    const positioned = initialPositioned.map((world) => {
-      const lift = stableProjectHash(world.projectId) % 100 < 35 ? 1 + stableProjectHash(`lift:${world.projectId}`) % 3 : 0;
-      if (lift === 0) return world;
-      const raised = { ...world, worldPosition: { ...world.worldPosition, y: world.worldPosition.y + lift } };
-      buildingPads.push({ x: raised.worldPosition.x, z: raised.worldPosition.z, width: raised.footprint.width, depth: raised.footprint.depth, groundLevel: raised.worldPosition.y });
-      return raised;
+    const positioned = alignedPositioned.map((world, index) => {
+      // The ocean settlement sits on a seeded inhabited terrace whose natural
+      // surface is about level 4. Classic layout heights (0..3) previously made
+      // large foundations carve several layers down into that terrace. Lift the
+      // building datum to the terrace instead; the support blend then meets the
+      // foundation bottom exactly without forming a crater.
+      if (world.worldPosition.y === initialPositioned[index]!.worldPosition.y) return world;
+      buildingPads.push({ x: world.worldPosition.x, z: world.worldPosition.z, width: world.footprint.width, depth: world.footprint.depth, groundLevel: world.worldPosition.y });
+      return world;
     });
     positionedWorlds = positioned;
     const voxelCount = positioned.reduce((sum, world) => sum + world.blueprint.voxels.length, 0);
@@ -987,7 +1014,7 @@ export function createVoxelRenderer(
     updateSceneBounds(positioned, importedDecorations, terrainData, previewMode);
     updateWeather(localDateForDate(new Date()), true);
     updateLighting(new Date(), true);
-    frameScene(true);
+    frameScene(!preserveCameraView, preserveCameraView);
     cacheStaticWorldTransforms();
     updateDiagnosticsDataset();
     requestRender();
@@ -2105,8 +2132,7 @@ export function createVoxelRenderer(
     else requestRender();
   }
 
-  function updateAmbientMotion(nowMs: number): void {
-    if (disposed) return;
+  function releaseStaleInteraction(nowMs: number): void {
     if (interacting && interactionStaleAtMs !== null && nowMs > interactionStaleAtMs) {
       // A pointer that produced no movement for the stale window was left
       // behind by a system gesture; release it so the ambient drift resumes.
@@ -2119,6 +2145,11 @@ export function createVoxelRenderer(
       updateDiagnosticsDataset();
       requestRender();
     }
+  }
+
+  function updateAmbientMotion(nowMs: number): void {
+    if (disposed) return;
+    releaseStaleInteraction(nowMs);
     updateRainAnimation(nowMs);
     updateCloudDrift(nowMs);
     updateTreeSway(nowMs);
@@ -2255,7 +2286,9 @@ export function createVoxelRenderer(
     );
   }
 
-  function frameScene(resetDistance: boolean): void {
+  function frameScene(resetDistance: boolean, preserveView = false): void {
+    const previousTarget = preserveView ? cameraTarget.clone() : null;
+    const previousDistance = cameraDistance;
     const focused = focusedProjectId === null ? undefined : positionedWorlds.find((world) => world.projectId === focusedProjectId);
     if (!focused) focusedProjectId = null;
     const bounds = focused ? focusBoundsFor(focused) : contentBounds;
@@ -2271,7 +2304,14 @@ export function createVoxelRenderer(
     // the natural terrain ring into the sky.
     minimumCameraDistance = fittedDistance * (focused ? 0.9 : previewMode ? 0.65 : 0.5);
     maximumCameraDistance = fittedDistance * (focused || previewMode ? 1.35 : 1.14);
-    if (resetDistance) cameraDistance = fittedDistance;
+    if (preserveView && previousTarget) {
+      cameraTarget.copy(previousTarget);
+      // A close/switch transition must remain visually still even when the old
+      // focused distance falls outside the settlement's normal zoom limits.
+      minimumCameraDistance = Math.min(minimumCameraDistance, previousDistance);
+      maximumCameraDistance = Math.max(maximumCameraDistance, previousDistance);
+      cameraDistance = previousDistance;
+    } else if (resetDistance) cameraDistance = fittedDistance;
     cameraDistance = THREE.MathUtils.clamp(cameraDistance, minimumCameraDistance, maximumCameraDistance);
     updateCamera();
   }
@@ -2349,6 +2389,10 @@ export function createVoxelRenderer(
     canvas.dataset.cameraAzimuth = cameraAzimuth.toFixed(4);
     canvas.dataset.cameraPitchDegrees = THREE.MathUtils.radToDeg(cameraPitch).toFixed(2);
     canvas.dataset.cameraDistanceRatio = (cameraDistance / fittedDistance).toFixed(4);
+    canvas.dataset.cameraTargetX = cameraTarget.x.toFixed(3);
+    canvas.dataset.cameraTargetY = cameraTarget.y.toFixed(3);
+    canvas.dataset.cameraTargetZ = cameraTarget.z.toFixed(3);
+    canvas.dataset.cameraDistance = cameraDistance.toFixed(3);
     canvas.dataset.cameraMinimumDistanceRatio = (minimumCameraDistance / fittedDistance).toFixed(4);
     canvas.dataset.cameraMaximumDistanceRatio = (maximumCameraDistance / fittedDistance).toFixed(4);
     canvas.dataset.cameraNear = camera.near.toFixed(3);
@@ -2416,9 +2460,13 @@ export function createVoxelRenderer(
   };
   const pointerMove = (event: PointerEvent): void => {
     pointerMoveCount += 1;
-    if (interacting) interactionStaleAtMs = performance.now() + 2_500;
     const previous = pointers.get(event.pointerId);
     if (!previous) return;
+    // Only movement from a pointer owned by this canvas can keep an
+    // interaction alive. Hover mice, styluses and synthetic QA events may
+    // continue moving after Android has stolen a touch pointer; allowing those
+    // unrelated IDs to extend the deadline leaves ambient motion stuck.
+    if (interacting) interactionStaleAtMs = performance.now() + 2_500;
     const next = { x: event.clientX, y: event.clientY };
     pointers.set(event.pointerId, next);
     if ((options.readNativeInput || options.subscribeNativeInput) && pointers.size === 1) { requestRender(); return; }
@@ -2456,7 +2504,6 @@ export function createVoxelRenderer(
   // froze the ambient cloud drift / tree sway and interaction frames until the
   // next touch. A stale-interaction guard releases any pointer that produced
   // no movement for 2.5 s as a final safety net.
-  let interactionStaleAtMs: number | null = null;
   const pointerCancel = (event: PointerEvent): void => {
     releasePointer(event.pointerId);
   };
@@ -2721,6 +2768,10 @@ export function createVoxelRenderer(
     canvas.dataset.cameraAzimuth = cameraAzimuth.toFixed(4);
     canvas.dataset.cameraDistanceRatio = (cameraDistance / fittedDistance).toFixed(4);
     canvas.dataset.cameraPitchDegrees = THREE.MathUtils.radToDeg(cameraPitch).toFixed(2);
+    canvas.dataset.cameraTargetX = cameraTarget.x.toFixed(3);
+    canvas.dataset.cameraTargetY = cameraTarget.y.toFixed(3);
+    canvas.dataset.cameraTargetZ = cameraTarget.z.toFixed(3);
+    canvas.dataset.cameraDistance = cameraDistance.toFixed(3);
     canvas.dataset.skyCameraWorldOffset = new THREE.Vector3().setFromMatrixPosition(skyGroup.matrixWorld).distanceTo(camera.position).toFixed(4);
     canvas.dataset.worldRootMembers = rotatableWorldRoot.children.map((child) => child.name).join(",");
     canvas.dataset.shadowAutoUpdate = String(renderer.shadowMap.autoUpdate);
@@ -2960,8 +3011,10 @@ export function createVoxelRenderer(
       rebuild(lastWorlds, previous);
     },
     focusProject(projectId) {
+      if (projectId === focusedProjectId) return;
+      const preserveView = projectId === null;
       focusedProjectId = projectId;
-      frameScene(true);
+      frameScene(!preserveView, preserveView);
       requestRender();
     },
     async setResourcePack(pack) {

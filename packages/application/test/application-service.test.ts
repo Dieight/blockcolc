@@ -304,10 +304,11 @@ describe("initialization and command persistence", () => {
     const f = await fixture();
     f.log.length = 0;
     const endsAt = "2026-07-20T09:05:00.000Z";
-    await expect(f.service.scheduleBreakCompletion({ endsAt })).resolves.toEqual([]);
+    const notification = { endsAt, completedRounds: 2, totalRounds: 4, nextTaskTitle: "整理笔记" };
+    await expect(f.service.scheduleBreakCompletion(notification)).resolves.toEqual([]);
     expect(f.log).toEqual(["refresh", "schedule-break"]);
     expect(f.notifications.requestCount).toBe(0);
-    expect(f.notifications.scheduledBreak).toEqual({ endsAt });
+    expect(f.notifications.scheduledBreak).toEqual(notification);
 
     f.log.length = 0;
     await expect(f.service.cancelBreakCompletion()).resolves.toEqual([]);

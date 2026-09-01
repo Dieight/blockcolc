@@ -1,4 +1,4 @@
-import { expect, test, type Locator } from "@playwright/test";
+import { expect, test, type CDPSession } from "@playwright/test";
 
 test("renders the current compact world and supports bounded rotate and pinch gestures", async ({ page }, testInfo) => {
   await page.clock.install({ time: new Date("2026-07-26T12:00:00+08:00") });
@@ -28,9 +28,10 @@ test("renders the current compact world and supports bounded rotate and pinch ge
 
   const box = await canvas.boundingBox();
   if (!box) throw new Error("World canvas has no layout box");
-  await pointer(canvas, "pointerdown", 1, box.x + box.width * 0.38, box.y + box.height * 0.55);
-  await pointer(canvas, "pointermove", 1, box.x + box.width * 0.68, box.y + box.height * 0.44);
-  await pointer(canvas, "pointerup", 1, box.x + box.width * 0.68, box.y + box.height * 0.44);
+  const cdp = await page.context().newCDPSession(page);
+  await touch(cdp, "touchStart", [{ id: 1, x: box.x + box.width * 0.38, y: box.y + box.height * 0.55 }]);
+  await touch(cdp, "touchMove", [{ id: 1, x: box.x + box.width * 0.68, y: box.y + box.height * 0.44 }]);
+  await touch(cdp, "touchEnd", []);
   await expect.poll(async () => Number(await canvas.getAttribute("data-camera-azimuth"))).not.toBe(initialCameraAzimuth);
   await expect(canvas).toHaveAttribute("data-world-rotation", "0.0000");
   expect(Number(await canvas.getAttribute("data-cached-shadow-transform-syncs"))).toBe(0);
@@ -46,12 +47,15 @@ test("renders the current compact world and supports bounded rotate and pinch ge
   const beforePinch = Number(await canvas.getAttribute("data-camera-distance-ratio"));
   const centerX = box.x + box.width / 2;
   const centerY = box.y + box.height / 2;
-  await pointer(canvas, "pointerdown", 11, centerX - 25, centerY);
-  await pointer(canvas, "pointerdown", 12, centerX + 25, centerY);
-  await pointer(canvas, "pointermove", 11, centerX - 75, centerY);
-  await pointer(canvas, "pointermove", 12, centerX + 75, centerY);
-  await pointer(canvas, "pointerup", 11, centerX - 75, centerY);
-  await pointer(canvas, "pointerup", 12, centerX + 75, centerY);
+  await touch(cdp, "touchStart", [
+    { id: 11, x: centerX - 25, y: centerY },
+    { id: 12, x: centerX + 25, y: centerY },
+  ]);
+  await touch(cdp, "touchMove", [
+    { id: 11, x: centerX - 75, y: centerY },
+    { id: 12, x: centerX + 75, y: centerY },
+  ]);
+  await touch(cdp, "touchEnd", []);
   await expect.poll(async () => Number(await canvas.getAttribute("data-camera-distance-ratio"))).toBeLessThan(beforePinch);
   const zoomRatio = Number(await canvas.getAttribute("data-camera-distance-ratio"));
   expect(zoomRatio).toBeGreaterThanOrEqual(0.5);
@@ -61,12 +65,15 @@ test("renders the current compact world and supports bounded rotate and pinch ge
 
   await page.getByRole("button", { name: "重置视角" }).click();
   const beforeZoomOut = Number(await canvas.getAttribute("data-camera-distance-ratio"));
-  await pointer(canvas, "pointerdown", 21, centerX - 75, centerY);
-  await pointer(canvas, "pointerdown", 22, centerX + 75, centerY);
-  await pointer(canvas, "pointermove", 21, centerX - 8, centerY);
-  await pointer(canvas, "pointermove", 22, centerX + 8, centerY);
-  await pointer(canvas, "pointerup", 21, centerX - 8, centerY);
-  await pointer(canvas, "pointerup", 22, centerX + 8, centerY);
+  await touch(cdp, "touchStart", [
+    { id: 21, x: centerX - 75, y: centerY },
+    { id: 22, x: centerX + 75, y: centerY },
+  ]);
+  await touch(cdp, "touchMove", [
+    { id: 21, x: centerX - 8, y: centerY },
+    { id: 22, x: centerX + 8, y: centerY },
+  ]);
+  await touch(cdp, "touchEnd", []);
   await expect.poll(async () => Number(await canvas.getAttribute("data-camera-distance-ratio"))).toBeGreaterThan(beforeZoomOut);
   const zoomedOutRatio = Number(await canvas.getAttribute("data-camera-distance-ratio"));
   expect(zoomedOutRatio).toBeLessThanOrEqual(1.14);
@@ -86,13 +93,10 @@ test("renders the current compact world and supports bounded rotate and pinch ge
   expect(Number(await canvas.getAttribute("data-pixel-ratio"))).toBeLessThanOrEqual(1.75);
 });
 
-async function pointer(locator: Locator, type: string, pointerId: number, clientX: number, clientY: number): Promise<void> {
-  await locator.dispatchEvent(type, {
-    pointerId,
-    pointerType: "touch",
-    isPrimary: pointerId % 10 === 1,
-    clientX,
-    clientY,
-    buttons: type === "pointerup" ? 0 : 1,
-  });
+async function touch(
+  session: CDPSession,
+  type: "touchStart" | "touchMove" | "touchEnd",
+  touchPoints: Array<{ id: number; x: number; y: number }>,
+): Promise<void> {
+  await session.send("Input.dispatchTouchEvent", { type, touchPoints });
 }

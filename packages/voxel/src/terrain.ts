@@ -476,19 +476,26 @@ function createNaturalTerrainDataV2(
 }
 
 /**
- * V24 ocean-island environment: one main island (flat building platform, a
- * ring of beach and one small hill), a set of satellite islets with a
- * guaranteed open-water strait, and open ocean everywhere else. The island
- * bodies sample a dedicated height field; the ocean is a flat water surface
- * at height 0 (the same water rendering as lakes). Satellite islets get their
- * own fine 2-unit lattice so they read as real islands instead of coarse far
- * cells, while the background rings skip their discs.
+ * V24 ocean-island environment: one seeded main island with an inhabited
+ * terrace, offset ridge, bays, rocky headlands and pocket beaches; a set of
+ * satellite islets with a guaranteed open-water strait; and open ocean
+ * everywhere else. Buildings and roads reuse the shared support blending
+ * kernel locally, but the visible landform remains island-specific. Satellite
+ * islets get fine 2-unit patches snapped to the background lattice, and all
+ * side faces are derived from the cells actually emitted across mixed LODs.
  */
 interface OceanIslet {
   x: number;
   z: number;
   radius: number;
   peakHeight: number;
+}
+
+interface OceanRenderCell {
+  x: number;
+  z: number;
+  size: number;
+  top: number;
 }
 
 function createOceanIslandTerrainDataV1(
@@ -498,27 +505,40 @@ function createOceanIslandTerrainDataV1(
   coreRadius: number,
   seedHash: number,
 ): MergedGeometryData {
+  const support = createV2SupportContext(placements, roads, additionalPads);
+  const constructionReach = coreRadius * 0.92;
+  const mainRadius = coreRadius * 1.55 + 20;
+  const beach = Math.max(12, Math.round(mainRadius * 0.22));
   const nearExtent = alignTo(Math.max(80, coreRadius + 28), 8);
-  const middleExtent = alignTo(Math.max(160, nearExtent + 64), 16);
+  // Keep the whole possible main shoreline out of the 32-unit far-water LOD.
+  // A coarse shore cell reads as a square/rectangle attached to the island;
+  // 4-unit coast cells retain the intended block character without exposing
+  // the background lattice as a geometric feature.
+  const maximumMainCoastReach = mainRadius * 1.2 + beach * 1.18 + 16;
+  const middleExtent = alignTo(Math.max(160, nearExtent + 64, maximumMainCoastReach), 16);
   // The ocean needs a much larger envelope than the valleys: the flat sea
   // makes the terrain edge visible as a hard line when the camera zooms out,
   // so the boundary sits far past any reachable view. The far ring uses
   // 32-unit cells there (flat water, sub-pixel at that distance) so the cost
   // stays tiny.
   const farExtent = alignTo(Math.max(1200, middleExtent + 80, coreRadius * 5), 16);
-  // Main island: building platform + shoulder + beach bays / rocky headlands +
-  // a hill chain, plus an inner lagoon and offshore reefs for visual richness.
-  // The island body is sized well past the building platform so beaches, hills
-  // and the lagoon live OUTSIDE the construction area (the platform terrain
-  // must behave exactly like every other environment).
-  const platform = coreRadius * 0.92;
-  const mainRadius = coreRadius * 1.55 + 20;
-  const beach = Math.max(12, Math.round(mainRadius * 0.22));
+  // Main island: an inhabited terrace plus beach bays, rocky headlands, an
+  // offset hill chain, an inner lagoon and offshore reefs. The body extends
+  // well past every building while actual footprints/roads alone own support
+  // blending; there is no global circular or square construction platform.
   const hillAzimuth = (hash2d(seedHash, 0x911, 0, 0) / 0xffffffff) * Math.PI * 2;
-  const hillDistance = Math.max(platform * 1.4, mainRadius * 0.42 + (hash2d(seedHash, 0x912, 0, 0) % 21));
+  const hillDistance = Math.max(constructionReach * 1.4, mainRadius * 0.42 + (hash2d(seedHash, 0x912, 0, 0) % 21));
   const hillHeight = 22 + (hash2d(seedHash, 0x913, 0, 0) % 13);
   const hillRadius = 16 + (hash2d(seedHash, 0x914, 0, 0) % 10);
   const hill = { x: Math.cos(hillAzimuth) * hillDistance, z: Math.sin(hillAzimuth) * hillDistance };
+  // The inhabited interior is an island terrace, not a copy of the natural
+  // valley biome. Its low ridge is offset from the settlement and rotates with
+  // the seed, so different worlds read as weathered coastal uplands while the
+  // construction area remains a usable bench rather than a crater.
+  const interiorAxis = hillAzimuth + 0.28 + (hash2d(seedHash, 0x91a, 0, 0) % 48) / 100;
+  const interiorRidgeOffset = mainRadius * (0.27 + (hash2d(seedHash, 0x91b, 0, 0) % 12) / 100);
+  const interiorRidgeWidth = mainRadius * (0.13 + (hash2d(seedHash, 0x91c, 0, 0) % 8) / 100);
+  const interiorRidgeStrength = 0.8 + (hash2d(seedHash, 0x91d, 0, 0) % 75) / 100;
   // Secondary peaks along the hill chain give the island a ridged silhouette.
   const secondaryPeaks = [0.42, 0.96, 1.5].map((offset) => ({
     x: hill.x * Math.cos(offset) - hill.z * Math.sin(offset),
@@ -526,8 +546,9 @@ function createOceanIslandTerrainDataV1(
     height: 8 + (hash2d(seedHash, 0x915, Math.round(offset * 10), 0) % 7),
     radius: 9 + (hash2d(seedHash, 0x916, Math.round(offset * 10), 0) % 6),
   }));
-  // The shoreline is warped per angle: several cosine harmonics plus one
-  // seeded fractal make bays and headlands instead of a perfect circle.
+  // The shoreline combines broad angular headlands with low-amplitude spatial
+  // noise. Keeping each band bounded prevents a single harmonic from growing
+  // into a giant rectangular-looking shelf on the block grid.
   const shorePhaseA = (hash2d(seedHash, 0x941, 0, 0) / 0xffffffff) * Math.PI * 2;
   const shorePhaseB = (hash2d(seedHash, 0x942, 0, 0) / 0xffffffff) * Math.PI * 2;
   const shorePhaseC = (hash2d(seedHash, 0x943, 0, 0) / 0xffffffff) * Math.PI * 2;
@@ -536,7 +557,15 @@ function createOceanIslandTerrainDataV1(
       + Math.sin(angle * 3 + shorePhaseB) * 0.32
       + Math.sin(angle * 5 + shorePhaseC) * 0.2;
     const fractal = valueNoise(Math.cos(angle) * 1.9, Math.sin(angle) * 1.9, seedHash, 0x944) * 0.3;
-    return Math.max(0.58, 1 + waves * 0.3 + fractal * 0.22);
+    return Math.max(0.78, Math.min(1.22, 1 + waves * 0.16 + fractal * 0.12));
+  };
+  const mainShoreWarp = (angle: number, x: number, z: number): number => {
+    const angular = Math.sin(angle * 2 + shorePhaseA) * 0.5
+      + Math.sin(angle * 3 + shorePhaseB) * 0.3
+      + Math.sin(angle * 5 + shorePhaseC) * 0.15;
+    const broad = fractalNoise(x * 0.011, z * 0.011, seedHash, 0x948);
+    const detail = valueNoise(x * 0.032, z * 0.032, seedHash, 0x949);
+    return Math.max(0.8, Math.min(1.2, 1 + angular * 0.13 + broad * 0.07 + detail * 0.035));
   };
   // Several rocky headland arcs in scattered, asymmetric angles; the rest of
   // the shore is sandy only where the coast recedes (bays) — protruding
@@ -550,16 +579,16 @@ function createOceanIslandTerrainDataV1(
       width: 0.5 + (hash2d(seedHash, 0x947 + index, 0, 0) % 62) / 100,
     });
   }
-  const rockyShore = (angle: number): boolean =>
-    headlands.some((head) => {
+  const rockyShoreStrength = (angle: number): number =>
+    headlands.reduce((strength, head) => {
       let delta = Math.abs(angle - head.center);
       if (delta > Math.PI) delta = Math.PI * 2 - delta;
-      return delta < head.width;
-    });
-  // An inner lagoon: a small pond outside the building platform, ringed by the
-  // shoulders.
+      return Math.max(strength, 1 - smoothstep(head.width * 0.55, head.width, delta));
+    }, 0);
+  // An inner lagoon: a small pond beyond the settlement framing range, ringed
+  // by the island terrace.
   const lagoonAzimuth = hillAzimuth + Math.PI + (((hash2d(seedHash, 0x917, 0, 0) % 628) / 100) - 3.1) * 0.8;
-  const lagoonDistance = Math.max(platform * 1.35, mainRadius * 0.52 + (hash2d(seedHash, 0x918, 0, 0) % 14));
+  const lagoonDistance = Math.max(coreRadius + 20, constructionReach * 1.35, mainRadius * 0.52 + (hash2d(seedHash, 0x918, 0, 0) % 14));
   const lagoon = {
     x: Math.cos(lagoonAzimuth) * lagoonDistance,
     z: Math.sin(lagoonAzimuth) * lagoonDistance,
@@ -606,22 +635,25 @@ function createOceanIslandTerrainDataV1(
     islets.push({ x: Math.cos(angle) * distance, z: Math.sin(angle) * distance, radius, peakHeight });
   }
   const ocean = (): V2TerrainSample => ({ height: 0, material: "water", supportInfluence: 0, moisture: 1, waterKind: "lake" });
-  // The fine islet lattice grows until its SQUARE inscribed circle covers the
-// island shore, then rounds up to the background ring's cell size (32 units
-// in the ocean): the 2-unit square and the 32-unit background then share
-// exact edges around every islet, and no ring of missing cells can survive
-// between the square corners and the skipped disc.
-  const isletReach = (islet: OceanIslet): number =>
-    Math.ceil(((islet.radius + 5) * 1.45) / 32) * 32;
-  const inIsletDisc = (x: number, z: number): boolean =>
-    islets.some((islet) => Math.hypot(x - islet.x, z - islet.z) <= isletReach(islet));
-  // The building platform is a SQUARE framing box; circular features (hill
-  // discs, lagoon, sandy arcs) must never touch it, so every decorative
-  // feature is gated on this square halo.
-  const platformHalo = coreRadius * 1.34;
-  const squareIn = (x: number, z: number): boolean =>
-    Math.max(Math.abs(x), Math.abs(z)) <= platformHalo;
+  // Each islet owns an axis-aligned fine patch whose EDGES, rather than its
+  // fractional centre, are snapped to the 32-unit background lattice. The old
+  // circular centre test skipped whole background cells while the replacement
+  // 2-unit square started at the unsnapped islet centre. Those two coordinate
+  // systems left positive-width uncovered bands (and larger holes whenever
+  // the circular skip radius exceeded the fine-square reach).
+  const isletPatches = islets.map(islet => {
+    const requiredReach = islet.radius + 12;
+    return {
+      minX: Math.floor((islet.x - requiredReach) / 32) * 32,
+      maxX: Math.ceil((islet.x + requiredReach) / 32) * 32,
+      minZ: Math.floor((islet.z - requiredReach) / 32) * 32,
+      maxZ: Math.ceil((islet.z + requiredReach) / 32) * 32,
+    };
+  });
+  const inIsletPatch = (x: number, z: number): boolean =>
+    isletPatches.some(patch => x > patch.minX && x < patch.maxX && z > patch.minZ && z < patch.maxZ);
   const sampleOceanAt = (x: number, z: number): V2TerrainSample => {
+    const supported = sampleV2Support(x, z, support);
     // Satellite islets (warped shores like the main island).
     for (const islet of islets) {
       const dx = x - islet.x;
@@ -652,52 +684,65 @@ function createOceanIslandTerrainDataV1(
       }
     }
     // Inner lagoon pond on the main island (checked before the island body so
-    // the pond does not get swallowed by the land sample; never inside the
-    // square building halo).
-    if (!squareIn(x, z) && Math.hypot(x - lagoon.x, z - lagoon.z) <= lagoon.radius) {
+    // the pond does not get swallowed by the land sample; actual support areas
+    // always win).
+    if (supported.influence < 0.08 && Math.hypot(x - lagoon.x, z - lagoon.z) <= lagoon.radius) {
       return ocean();
     }
     // Main island, shoreline warped into bays and headlands.
     const angle = Math.atan2(z, x);
-    const shoreK = shoreWarp(angle);
+    const shoreK = mainShoreWarp(angle, x, z);
     const d = Math.hypot(x, z);
-    if (d <= (mainRadius + beach) * shoreK) {
-      const gentle = valueNoise(x * 0.055, z * 0.055, seedHash, 0x951) * 0.5;
-      let height: number;
-      if (d <= platform) {
-        // Building platform: gently rolling grass that matches the shoulder
-        // height so it reads as part of the island, not a sunken flat disc.
-        height = Math.max(2, Math.round(3 + gentle * 1.6));
-      } else if (d <= mainRadius * shoreK) {
-        // Shoulder climbs smoothly from the platform toward the hill chain,
-        // then the island slopes down toward the rim.
-        const t = 1 - (d - platform) / Math.max(1, mainRadius * shoreK - platform);
-        height = Math.max(2, Math.round(3 + gentle * 1.6 + t * 2.6));
-      } else {
-        const t = 1 - (d - mainRadius * shoreK) / Math.max(1, (mainRadius + beach) * shoreK - mainRadius * shoreK);
-        height = Math.max(0, Math.round(t * 1.6));
-      }
+    const landRadius = mainRadius * shoreK;
+    const coastWidth = beach * Math.max(0.72, Math.min(1.18, 1.02 + (1 - shoreK) * 0.6));
+    const outerRadius = landRadius + coastWidth;
+    if (d <= outerRadius) {
+      const alongInterior = x * Math.cos(interiorAxis) + z * Math.sin(interiorAxis);
+      const acrossInterior = -x * Math.sin(interiorAxis) + z * Math.cos(interiorAxis);
+      const offsetRidge = Math.exp(-Math.pow((acrossInterior - interiorRidgeOffset) / interiorRidgeWidth, 2))
+        * interiorRidgeStrength;
+      const coastalTilt = (alongInterior / Math.max(1, mainRadius)) * 0.55;
+      const weatheredTerrace = valueNoise(x * 0.038, z * 0.038, seedHash, 0x950) * 0.55;
+      const interiorRise = smoothstep(0, Math.max(12, beach * 0.9), landRadius - d);
+      const beachRise = smoothstep(0, coastWidth, outerRadius - d);
+      let height = d <= landRadius
+        ? Math.max(1, Math.round(1.25 + interiorRise * 2.65 + (offsetRidge + coastalTilt + weatheredTerrace) * interiorRise))
+        : Math.max(0, Math.round(beachRise * 1.6));
       // Hill chain: the main peak plus the secondary peaks along the ridge. The
-      // peaks never lift the square building halo.
+      // support field locally fades them away around real buildings and roads,
+      // rather than carving one circular construction depression.
       const peakContrib = (peak: { x: number; z: number; height: number; radius: number }): number => {
-        if (squareIn(x, z)) return 0;
+        if (supported.influence > 0.04) return 0;
         const peakDistanceTo = Math.hypot(x - peak.x, z - peak.z);
         if (peakDistanceTo >= peak.radius) return 0;
         return Math.pow(1 - peakDistanceTo / peak.radius, 1.35) * (peak.height + fractalNoise(x * 0.045, z * 0.045, seedHash, 0x952) * 6);
       };
       height += Math.round(peakContrib({ ...hill, height: hillHeight, radius: hillRadius }));
       for (const secondary of secondaryPeaks) height += Math.round(peakContrib(secondary));
+      // Reuse the natural-valley support *mechanism*, not its visual terrain:
+      // only actual placements and roads receive a short, smooth height match.
+      // The surrounding seeded island terrace remains intact.
+      if (supported.influence > 0.001) {
+        const blend = smoothstep(0.72, 0.995, supported.influence);
+        height = Math.round(height + (supported.height - height) * blend);
+      }
       // Beaches belong to receding bays only; headlands and protruding stretches
-      // stay rocky — never onto the square building halo.
-      const rim = Math.max(mainRadius * shoreK, platform);
-      const protruding = shoreK >= 1.06;
-      const rocky = height >= 16 || (protruding && !squareIn(x, z) && d > rim - 5)
-        || (rockyShore(angle) && !squareIn(x, z) && d > rim - 4);
-      const sandy = !rocky && !squareIn(x, z) && d > rim - 5;
+      // stay rocky — never inside a protected building or road transition.
+      const rim = landRadius;
+      const protectedGround = supported.influence >= 0.08;
+      const headlandExposure = Math.max(
+        smoothstep(1.025, 1.11, shoreK),
+        rockyShoreStrength(angle),
+      );
+      const shoreTexture = valueNoise(x * 0.075, z * 0.075, seedHash, 0x94e) * 0.22;
+      const rocky = !protectedGround && (height >= 16
+        || (d > rim - (2.5 + headlandExposure * 4.5)
+          && headlandExposure + shoreTexture > 0.48));
+      const sandy = !protectedGround && !rocky && d > rim - 5;
       return {
         height,
         material: rocky ? "stone" : sandy ? "dirt" : "grass",
-        supportInfluence: 0,
+        supportInfluence: supported.influence,
         moisture: 0.12,
         waterKind: "none",
       };
@@ -714,6 +759,7 @@ function createOceanIslandTerrainDataV1(
     sideIndices[material].push(start, start + 1, start + 2, start, start + 2, start + 3);
   };
   const naturalTrees: NaturalTreePlacement[] = [];
+  const renderCells: OceanRenderCell[] = [];
   const lodCellCounts = { near: 0, middle: 0, far: 0 };
   let minHeight = Number.POSITIVE_INFINITY;
   let maxHeight = Number.NEGATIVE_INFINITY;
@@ -744,10 +790,7 @@ function createOceanIslandTerrainDataV1(
       x - half, top, z - half, x - half, top, z + half,
       x + half, top, z + half, x + half, top, z - half,
     ], sample.material);
-    addV2CellSide(x, z, size, sample, -1, 0, sampleCellAt, nearExtent, middleExtent, middleExtent, false, 32, addSideQuad);
-    addV2CellSide(x, z, size, sample, 1, 0, sampleCellAt, nearExtent, middleExtent, middleExtent, false, 32, addSideQuad);
-    addV2CellSide(x, z, size, sample, 0, -1, sampleCellAt, nearExtent, middleExtent, middleExtent, false, 32, addSideQuad);
-    addV2CellSide(x, z, size, sample, 0, 1, sampleCellAt, nearExtent, middleExtent, middleExtent, false, 32, addSideQuad);
+    renderCells.push({ x, z, size, top });
     lodCellCounts[lod] += 1;
     terrainSurfaceArea += size * size;
     minHeight = Math.min(minHeight, sample.height);
@@ -765,19 +808,29 @@ function createOceanIslandTerrainDataV1(
     }
   };
 
-  // Background rings skip the islet discs; the islets get fine 2-unit lattices.
-  // Every ring boundary must sit on the coarser lattice's edge so the two
-  // grids interlock without overlaps or gaps at the seam.
-  addV2LodSquare(nearExtent, 0, 2, (x, z) => { if (!inIsletDisc(x, z)) addCell(x, z, 2, "near"); });
-  addV2LodSquare(middleExtent, nearExtent, 4, (x, z) => { if (!inIsletDisc(x, z)) addCell(x, z, 4, "middle"); });
-  addV2LodSquare(farExtent, middleExtent, 32, (x, z) => { if (!inIsletDisc(x, z)) addCell(x, z, 32, "far"); });
-  for (const islet of islets) {
-    // The fine lattice extends to a 16-multiple boundary (aligned with the
-    // 16-unit background cells) past the skipped disc, so the 2-unit and
-    // 16-unit grids share exact edges around every islet — no stray seams.
-    const reach = Math.ceil((islet.radius + 9) / 16) * 16;
-    addV2LodSquare(reach, 0, 2, (x, z) => addCell(x, z, 2, "middle"), islet.x, islet.z);
+  // Background rings skip exact rectangular patches. All patch boundaries
+  // are shared multiples of 32, so the 2-, 4- and 32-unit grids meet on the
+  // same edges. Overlapping islet patches emit each fine cell only once.
+  addV2LodSquare(nearExtent, 0, 2, (x, z) => { if (!inIsletPatch(x, z)) addCell(x, z, 2, "near"); });
+  addV2LodSquare(middleExtent, nearExtent, 4, (x, z) => { if (!inIsletPatch(x, z)) addCell(x, z, 4, "middle"); });
+  addV2LodSquare(farExtent, middleExtent, 32, (x, z) => { if (!inIsletPatch(x, z)) addCell(x, z, 32, "far"); });
+  const emittedFineCells = new Set<string>();
+  for (const patch of isletPatches) {
+    for (let x = patch.minX + 1; x < patch.maxX; x += 2) {
+      for (let z = patch.minZ + 1; z < patch.maxZ; z += 2) {
+        const key = `${x}:${z}`;
+        if (emittedFineCells.has(key)) continue;
+        emittedFineCells.add(key);
+        addCell(x, z, 2, "middle");
+      }
+    }
   }
+
+  // Islet patches deliberately replace 4/32-unit ocean cells with 2-unit
+  // cells. Side faces must therefore follow the cells that were actually
+  // emitted; inferring a neighbour size from distance produces the long,
+  // straight x/z-aligned holes seen at patch and LOD boundaries.
+  addOceanCellSides(renderCells, addSideQuad);
 
   closeV2CornerSlits(positions, indicesByMaterial, sideIndices);
 
@@ -809,6 +862,78 @@ function createOceanIslandTerrainDataV1(
       terrainSurfaceArea,
     },
   };
+}
+
+function addOceanCellSides(
+  cells: readonly OceanRenderCell[],
+  addQuad: (vertices: readonly number[], material: "dirt" | "stone") => void,
+): void {
+  interface Edge {
+    start: number;
+    end: number;
+    top: number;
+  }
+  const leftByX = new Map<number, Edge[]>();
+  const rightByX = new Map<number, Edge[]>();
+  const nearByZ = new Map<number, Edge[]>();
+  const farByZ = new Map<number, Edge[]>();
+  const register = (map: Map<number, Edge[]>, line: number, edge: Edge): void => {
+    const edges = map.get(line) ?? [];
+    edges.push(edge);
+    map.set(line, edges);
+  };
+
+  for (const cell of cells) {
+    const half = cell.size / 2;
+    register(leftByX, cell.x - half, { start: cell.z - half, end: cell.z + half, top: cell.top });
+    register(rightByX, cell.x + half, { start: cell.z - half, end: cell.z + half, top: cell.top });
+    register(nearByZ, cell.z - half, { start: cell.x - half, end: cell.x + half, top: cell.top });
+    register(farByZ, cell.z + half, { start: cell.x - half, end: cell.x + half, top: cell.top });
+  }
+
+  const emit = (
+    cell: OceanRenderCell,
+    axis: "x" | "z",
+    direction: -1 | 1,
+    neighbors: readonly Edge[] | undefined,
+  ): void => {
+    if (!neighbors) return;
+    const half = cell.size / 2;
+    const edgeStart = axis === "x" ? cell.z - half : cell.x - half;
+    const edgeEnd = axis === "x" ? cell.z + half : cell.x + half;
+    const line = axis === "x" ? cell.x + direction * half : cell.z + direction * half;
+    const material: "dirt" | "stone" = cell.top > 12 ? "stone" : "dirt";
+    for (const neighbor of neighbors) {
+      const segmentStart = Math.max(edgeStart, neighbor.start);
+      const segmentEnd = Math.min(edgeEnd, neighbor.end);
+      if (segmentEnd - segmentStart < 0.001 || neighbor.top >= cell.top - 0.01) continue;
+      const bottom = neighbor.top;
+      if (axis === "x" && direction < 0) addQuad([
+        line, bottom, segmentEnd, line, cell.top, segmentEnd,
+        line, cell.top, segmentStart, line, bottom, segmentStart,
+      ], material);
+      else if (axis === "x") addQuad([
+        line, bottom, segmentStart, line, cell.top, segmentStart,
+        line, cell.top, segmentEnd, line, bottom, segmentEnd,
+      ], material);
+      else if (direction < 0) addQuad([
+        segmentStart, bottom, line, segmentStart, cell.top, line,
+        segmentEnd, cell.top, line, segmentEnd, bottom, line,
+      ], material);
+      else addQuad([
+        segmentEnd, bottom, line, segmentEnd, cell.top, line,
+        segmentStart, cell.top, line, segmentStart, bottom, line,
+      ], material);
+    }
+  };
+
+  for (const cell of cells) {
+    const half = cell.size / 2;
+    emit(cell, "x", -1, rightByX.get(cell.x - half));
+    emit(cell, "x", 1, leftByX.get(cell.x + half));
+    emit(cell, "z", -1, farByZ.get(cell.z - half));
+    emit(cell, "z", 1, nearByZ.get(cell.z + half));
+  }
 }
 
 function addV2LodSquare(extent: number, innerExtent: number, cellSize: number, add: (x: number, z: number) => void, centerX = 0, centerZ = 0): void {

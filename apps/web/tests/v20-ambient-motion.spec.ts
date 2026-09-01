@@ -98,11 +98,13 @@ test("moves clouds and trees across idle frames when the ambient gate is open", 
 });
 
 test("leaves the reveal quiet on the initial world load", async ({ page }) => {
+  test.setTimeout(60_000);
   await createDefaultProject(page);
   const canvas = page.getByLabel("项目建筑世界");
-  await expect
-    .poll(async () => Number(await canvas.getAttribute("data-construction-reveal-count") ?? "0"), { timeout: 3_000 })
-    .toBe(0);
+  // Wait for the renderer diagnostic to exist instead of coercing a missing
+  // attribute to zero. Software WebGL can attach the canvas slowly after a
+  // long single-worker release run, but the first real value must still be 0.
+  await expect(canvas).toHaveAttribute("data-construction-reveal-count", "0", { timeout: 15_000 });
   // And the tab itself keeps the no-continuous-loop guarantee.
   await expect(canvas).toHaveAttribute("data-continuous-rendering", "false");
   // V21 dropped the per-digit rise animation, so the timer is one static string.

@@ -1,4 +1,4 @@
-import { expect, it } from "vitest";
+// Shared scanner for the extended large-settlement release regressions.
 import { SMALL_WORKSHOP_BLUEPRINT, TIMBER_HOUSE_BLUEPRINT, VILLAGE_CHAPEL_BLUEPRINT } from "../src/blueprint";
 import { layoutWorlds, type WorldSnapshot } from "../src/renderer";
 import { createSteppedTerrainData } from "../src/terrain";
@@ -6,7 +6,7 @@ import { roadCellsForVillage } from "../src/village";
 
 const blueprints = [SMALL_WORKSHOP_BLUEPRINT, TIMBER_HOUSE_BLUEPRINT, VILLAGE_CHAPEL_BLUEPRINT];
 
-function bigSettlement(count: number): WorldSnapshot[] {
+export function bigSettlement(count: number): WorldSnapshot[] {
   return Array.from({ length: count }, (_, settlementIndex) => ({
     projectId: `project-${settlementIndex}`,
     blueprintId: blueprints[settlementIndex % blueprints.length]!.id,
@@ -17,7 +17,7 @@ function bigSettlement(count: number): WorldSnapshot[] {
   }));
 }
 
-function scanSlits(snapshots: WorldSnapshot[], seed: string, version: 1 | 4): string[] {
+export function scanSlits(snapshots: WorldSnapshot[], seed: string, version: 1 | 4): string[] {
   const placements = layoutWorlds(snapshots);
   const roads = roadCellsForVillage(placements);
   const terrain = createSteppedTerrainData(placements, roads, [], undefined, {
@@ -138,16 +138,3 @@ function scanSlits(snapshots: WorldSnapshot[], seed: string, version: 1 | 4): st
   }
   return slits;
 }
-
-it("leaves no sky-visible slit at ring boundaries of an expanded settlement", () => {
-  for (const count of [30, 60, 100, 150]) {
-    const snapshots = bigSettlement(count);
-    for (const seed of ["world-default", "probe-seed-16"]) {
-      const slits = scanSlits(snapshots, seed, 4);
-      const on200 = slits.filter((slit) => /(?:-200|200)\|/u.test(slit) || /\|(?:-200|200) /u.test(slit)).length;
-      console.log(`${count} buildings ${seed}: ${slits.length} open slits (on ±200: ${on200})`);
-      for (const slit of slits.slice(0, 6)) console.log("  SLIT", slit);
-      expect(slits.length).toBe(0);
-    }
-  }
-}, 180_000);
