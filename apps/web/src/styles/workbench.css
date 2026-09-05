@@ -10,4 +10,11 @@
 .plan-summary{min-height:44px;width:100%;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:0;border:0;background:none;color:#17211c;text-align:left;font-size:13px}
 .plan-summary span:first-child{color:#58635d}
 .plan-summary span:last-child{color:#276749;font-weight:700}
+/* V27 immersive focus: the building behind the band carries the progress
+ * semantics; this quiet caption links the timer to that construction stage.
+ * It is pinned to the band's lower padding zone so the timer keeps its
+ * centered placement (V16 invariant, asserted by focus-regressions). */
+.is-focusing .focus-panel{position:relative}
+.focus-building-progress{position:absolute;left:20px;right:20px;bottom:3px;display:flex;align-items:baseline;justify-content:center;gap:10px;color:#58635d;font-size:12px;line-height:1.4;pointer-events:none}
+.focus-building-progress strong{color:#17211c;font-weight:700;font-variant-numeric:tabular-nums}
 @media(max-height:620px) and (orientation:landscape){.workbench-context{gap:3px}.workbench-context strong{font-size:17px}.workbench-heading h1{font-size:19px}}

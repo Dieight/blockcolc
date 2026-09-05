@@ -24,6 +24,15 @@
   --world-glass-border: rgba(255, 255, 255, 0.22);
   --world-glass-filter: blur(14px) saturate(1.24) contrast(1.04);
   --world-glass-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16), 0 8px 24px rgba(8, 14, 11, 0.28);
+  /* V27 settings liquid glass: a page-level translucent card material. Type,
+   * color and size tokens above stay authoritative; these only add the material. */
+  --settings-glass-background: linear-gradient(180deg, rgba(255, 255, 255, 0.78), rgba(255, 255, 255, 0.6)), rgba(255, 255, 255, 0.6);
+  --settings-glass-border: rgba(23, 33, 28, 0.1);
+  --settings-glass-filter: blur(18px) saturate(1.4);
+  --settings-glass-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6), 0 10px 30px rgba(23, 33, 28, 0.09);
+  --settings-separator: rgba(23, 33, 28, 0.12);
+  --settings-field: rgba(23, 33, 28, 0.06);
+  --settings-track: rgba(23, 33, 28, 0.16);
 }
 
 :root[data-theme="dark"] {
@@ -41,4 +50,10 @@
   --world-overlay: rgba(11, 17, 14, 0.95);
   --world-overlay-muted: #aebcb4;
   --world-glass-background: linear-gradient(145deg, rgba(255, 255, 255, 0.11), rgba(255, 255, 255, 0.018) 42%, rgba(111, 206, 150, 0.05)), rgba(11, 17, 14, 0.84);
+  --settings-glass-background: linear-gradient(180deg, rgba(31, 51, 41, 0.6), rgba(19, 28, 23, 0.48)), rgba(19, 28, 23, 0.48);
+  --settings-glass-border: rgba(230, 239, 233, 0.12);
+  --settings-glass-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 10px 30px rgba(4, 8, 6, 0.4);
+  --settings-separator: rgba(230, 239, 233, 0.14);
+  --settings-field: rgba(230, 239, 233, 0.08);
+  --settings-track: rgba(230, 239, 233, 0.26);
 }

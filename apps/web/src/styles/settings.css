@@ -1,11 +1,23 @@
-/* Settings presentation. */
+/* Settings presentation: Apple-style grouped lists on a page-level liquid
+   glass material (V27). Font sizes, semantic colors and the 44px touch
+   contract are unchanged; this file owns the material, grouping and control
+   skins. Material tokens live in tokens.css. */
 .settings-page{max-width:780px}
 .settings-head h1{margin:5px 0 8px}
 .settings-head p{margin:0 0 4px;color:#58635d;font-size:13px}
-.settings-group{padding:36px 0 4px;border-top:1px solid #dde4df}
-.settings-group>h2{margin:0 0 4px;font-size:18px;font-weight:700;color:#27342e}
-.settings-group>.setting-row{padding:8px 0;border-bottom:1px solid #e9eeea}
-.settings-group>.setting-row:last-child{border-bottom:0}
+
+/* Group headers stay outside the card; the card below carries the material. */
+.settings-group{padding:30px 0 2px}
+.settings-group>h2{margin:0 0 10px;padding:0 4px;font-size:18px;font-weight:700;color:#27342e}
+
+/* Liquid glass grouped list. */
+.settings-list{border:1px solid var(--settings-glass-border);border-radius:18px;background:var(--settings-glass-background);box-shadow:var(--settings-glass-shadow);backdrop-filter:var(--settings-glass-filter);-webkit-backdrop-filter:var(--settings-glass-filter)}
+.settings-list>.setting-row{padding:8px 16px;border-bottom:0}
+.settings-list>.setting-row+.setting-row{border-top:1px solid var(--settings-separator)}
+@media(prefers-reduced-transparency:reduce){
+  .settings-list,.building-blueprint-panel,.resource-pack-panel,.backup-panel{background:var(--surface);backdrop-filter:none;-webkit-backdrop-filter:none}
+}
+
 .setting-row{min-height:56px;display:flex;align-items:center;justify-content:space-between;gap:14px}
 .setting-name{min-width:0;display:grid;gap:3px}
 .setting-name>span{font-size:16px;font-weight:650;line-height:1.3;overflow-wrap:anywhere}
@@ -13,7 +25,7 @@
 .setting-row-end{flex:0 0 auto;display:flex;align-items:center;gap:12px}
 .setting-value{color:#17211c;font-size:16px;font-weight:750;font-variant-numeric:tabular-nums}
 .number-field{flex:0 0 auto;display:flex;align-items:center;gap:5px;min-height:44px;margin:-6px 0;color:#58635d;font-size:13px}
-.number-field input{width:48px;height:32px;padding:8px 6px;border:0;border-radius:4px;background:transparent;color:#17211c;text-align:right;font-size:15px;font-weight:400;font-variant-numeric:tabular-nums}
+.number-field input{width:52px;height:36px;padding:8px 8px;border:0;border-radius:8px;background:var(--settings-field);color:#17211c;text-align:right;font-size:15px;font-weight:400;font-variant-numeric:tabular-nums}
 .number-field input:focus-visible{background:#fff;outline:3px solid #c25844;outline-offset:2px}
 .number-field input:disabled{opacity:.5}
 .settings-text-action{min-height:44px;padding:8px 2px;border:0;background:none;color:#276749;font-weight:700;display:inline-flex;align-items:center;gap:6px}
@@ -22,10 +34,23 @@
 .notification-health>.settings-text-action{width:44px;height:44px;display:grid;place-items:center;padding:0;border-radius:6px}
 .notification-actions{display:flex;align-items:center;gap:2px}
 .notification-actions>.settings-text-action{width:auto;height:44px;display:inline-flex;align-items:center;padding:0 8px}
-.text-toggle{flex:0 0 auto;display:flex;gap:2px}
-.text-toggle button{min-height:44px;padding:9px 12px;border:0;background:transparent;border-radius:6px;color:#58635d;font-weight:500}
-.text-toggle button:hover{background:#eef2ee}
-.text-toggle button[aria-pressed="true"]{color:#17211c;font-weight:750;text-decoration:underline;text-decoration-thickness:2px;text-decoration-color:#276749;text-underline-offset:7px}
+
+/* iOS-style segmented control replaces the underlined text toggle. */
+.text-toggle{flex:0 0 auto;display:flex;gap:2px;padding:2px;border-radius:10px;background:var(--settings-field)}
+.text-toggle button{min-height:44px;padding:8px 14px;border:0;background:transparent;border-radius:8px;color:#58635d;font-weight:500}
+.text-toggle button:hover{background:rgba(23,33,28,.05)}
+.text-toggle button[aria-pressed="true"]{background:var(--surface);color:#17211c;font-weight:750;box-shadow:0 1px 3px rgba(23,33,28,.18)}
+
+/* iOS-style pill switch. The label keeps the 44px touch target; the control is
+ * the visual switch. */
+.ios-switch{min-height:44px;display:flex;align-items:center}
+.ios-switch input{appearance:none;-webkit-appearance:none;position:relative;flex:0 0 auto;width:51px;height:31px;margin:0;border-radius:999px;background:var(--settings-track);box-shadow:inset 0 1px 2px rgba(23,33,28,.14);cursor:pointer;transition:background-color .18s ease}
+.ios-switch input::after{content:"";position:absolute;top:2px;left:2px;width:27px;height:27px;border-radius:50%;background:#fff;box-shadow:0 2px 4px rgba(23,33,28,.3);transition:transform .18s ease}
+.ios-switch input:checked{background:var(--focus)}
+.ios-switch input:checked::after{transform:translateX(20px)}
+.ios-switch input:focus-visible{outline:3px solid #c25844;outline-offset:2px}
+@media(prefers-reduced-motion:reduce){.ios-switch input,.ios-switch input::after{transition:none}}
+
 .glass-transparency-control{flex:0 0 min(300px,46vw);min-height:44px;display:grid;grid-template-columns:minmax(150px,1fr) 42px;align-items:center;gap:10px;color:#17211c;font-size:13px;font-weight:700;font-variant-numeric:tabular-nums}
 .glass-transparency-control input[type="range"]{--range-track:#cbd5cd;--range-progress:50%;width:100%;height:44px;margin:0;padding:0;border:0;border-radius:0;background:transparent;color:var(--focus);cursor:pointer;-webkit-appearance:none;appearance:none;outline:none;box-shadow:none;-webkit-tap-highlight-color:transparent;-webkit-user-select:none;user-select:none;touch-action:pan-y}
 .glass-transparency-control input[type="range"]::-webkit-slider-runnable-track{height:4px;border:0;border-radius:999px;background:linear-gradient(to right,var(--focus) 0 var(--range-progress),var(--range-track) var(--range-progress) 100%);box-shadow:none}
@@ -38,15 +63,23 @@
 .glass-transparency-control input[type="range"]:focus-visible::-moz-range-thumb{box-shadow:0 0 0 3px rgba(194,88,68,.36),0 1px 4px rgba(23,33,28,.28)}
 .glass-transparency-control span{text-align:right}
 .planned-days{flex:0 0 auto;display:flex;gap:3px}
-.planned-days button{width:44px;height:44px;padding:0;border:0;border-radius:50%;background:transparent;color:#58635d;font-weight:600}
+.planned-days button{flex:0 0 auto;width:44px;height:44px;padding:0;border:0;border-radius:50%;background:transparent;color:#58635d;font-weight:600}
 .planned-days button[aria-pressed="true"]{background:#e2efe5;color:#276749;font-weight:800}
 .planned-days button:disabled{color:#bcc5bf}
-@media(max-width:359px){.planned-days{width:100%;gap:2px}.planned-days button{width:40px;height:40px}}
+/* Narrow rows cannot fit seven 44px circles, so the pills become uniform
+ * capsules across the full row width; the 44px touch height is kept. The
+ * default Pixel 7 viewport (412px) still fits the circles. */
+@media(max-width:400px){
+  .planned-days{width:100%;gap:2px}
+  .planned-days button{width:auto;flex:1 1 0;min-width:0;border-radius:999px}
+}
 .integrity-setting{gap:18px;align-items:flex-start}
 .integrity-controls{display:flex!important;align-items:center;gap:14px!important}
 @media(max-width:480px){.integrity-setting{align-items:flex-start}.integrity-controls{flex-direction:row;align-items:center!important}}
+
+/* The three data panels join the same liquid glass material. */
+.building-blueprint-panel,.resource-pack-panel,.backup-panel{margin-top:30px;padding:16px 16px 18px;border:1px solid var(--settings-glass-border);border-radius:18px;background:var(--settings-glass-background);box-shadow:var(--settings-glass-shadow);backdrop-filter:var(--settings-glass-filter);-webkit-backdrop-filter:var(--settings-glass-filter)}
 .building-blueprint-panel header p,.resource-pack-panel header p,.backup-panel>div>p{margin:4px 0 10px;color:#58635d;font-size:12.5px;line-height:1.5}
-.building-blueprint-panel,.resource-pack-panel,.backup-panel{margin-top:0;padding-top:36px;border-top:1px solid #dde4df}
 .building-blueprint-panel h2,.resource-pack-panel h2,.backup-panel h2{margin:0 0 4px}
 .building-blueprint-list .blueprint-library-actions button{width:44px;min-width:44px;min-height:44px;border:0;background:transparent;color:#58635d}
 .building-blueprint-list .blueprint-library-actions .blueprint-delete{color:#b4232c}

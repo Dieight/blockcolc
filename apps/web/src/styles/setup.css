@@ -40,11 +40,14 @@
 .boot-page-mark{font-weight:800;font-size:20px;color:#17211c}
 .boot-page-mark small{display:block;font-size:11px;font-weight:400;color:#8a938d;letter-spacing:.14em;text-transform:uppercase;margin-top:2px}
 .boot-page-status{margin:0;font-size:14px;color:#58635d}
-.boot-page-blocks{display:flex;gap:6px;align-items:flex-end;height:10px}
-.boot-page-blocks i{width:10px;height:10px;background:#276749;animation:world-boot-block .9s ease-in-out infinite}
-.boot-page-blocks i:nth-child(2){animation-delay:.12s;background:#3e7d5c}
-.boot-page-blocks i:nth-child(3){animation-delay:.24s;background:#5b9275}
+.boot-page-blocks{display:flex;gap:5px;align-items:flex-end;height:12px;padding-bottom:1px}
+/* V27: blocks rise from below and settle in sequence — a small crew laying the
+ * first bricks of the settlement while the world restores. */
+.boot-page-blocks i{width:10px;height:10px;background:#276749;animation:world-boot-block 1.2s ease-in-out infinite}
+.boot-page-blocks i:nth-child(2){animation-delay:.16s;background:#3e7d5c}
+.boot-page-blocks i:nth-child(3){animation-delay:.32s;background:#5b9275}
 .boot-page-hint{margin:0;font-size:12px;color:#8a938d}
+@media(prefers-reduced-motion:reduce){.boot-page-blocks i{animation:none;opacity:1;transform:none}}
 @keyframes world-boot-in{from{opacity:0}to{opacity:1}}
-@keyframes world-boot-block{0%,100%{transform:translateY(0);opacity:.55}35%{transform:translateY(-7px);opacity:1}70%{transform:translateY(0);opacity:.75}}
+@keyframes world-boot-block{0%{transform:translateY(11px);opacity:0}25%{opacity:1}48%{transform:translateY(0)}60%{transform:translateY(-3px)}72%,92%{transform:translateY(0);opacity:1}100%{transform:translateY(0);opacity:.45}}
 .daily-goal-workbench{margin-bottom:26px}

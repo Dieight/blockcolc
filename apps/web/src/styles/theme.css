@@ -31,9 +31,8 @@ html[data-theme="dark"],html[data-theme="dark"] body,html[data-theme="dark"] #ro
 [data-theme="dark"] .settings-group>h2,[data-theme="dark"] .setting-value,[data-theme="dark"] .workbench-context strong,[data-theme="dark"] .plan-summary,[data-theme="dark"] .number-field input,[data-theme="dark"] .setup-subtasks-head,[data-theme="dark"] .marathon-report-copy{color:#e6efe9}
 [data-theme="dark"] .settings-head p,[data-theme="dark"] .setting-name small,[data-theme="dark"] .task-queue-label,[data-theme="dark"] .stats-intro,[data-theme="dark"] .project-allocation span,[data-theme="dark"] .allocation-legend span,[data-theme="dark"] .focus-hour-axis,[data-theme="dark"] .focus-hour-legend,[data-theme="dark"] .workbench-context span,[data-theme="dark"] .workbench-context small,[data-theme="dark"] .habit-selection-heading p,[data-theme="dark"] .marathon-report-row span,[data-theme="dark"] .interruption-summary p,[data-theme="dark"] .stats-note,[data-theme="dark"] .backup-panel>div>p,[data-theme="dark"] .resource-pack-panel header p,[data-theme="dark"] .number-field,[data-theme="dark"] .text-toggle button{color:var(--muted)}
 
-/* Settings hairline separators */
-[data-theme="dark"] .settings-group,[data-theme="dark"] .building-blueprint-panel,[data-theme="dark"] .resource-pack-panel,[data-theme="dark"] .backup-panel{border-top-color:#24312a}
-[data-theme="dark"] .settings-group>.setting-row{border-bottom-color:#24312a}
+/* V27: settings separators, group borders and glass card materials are owned
+ * by settings.css through tokens; the old hairline overrides are retired. */
 
 /* Accents */
 [data-theme="dark"] .report>svg,[data-theme="dark"] .about-icon,[data-theme="dark"] .task-list b,[data-theme="dark"] .rhythm-grid strong,[data-theme="dark"] .build-percent,[data-theme="dark"] .stats-section-heading>span,[data-theme="dark"] .plan-summary span:last-child,[data-theme="dark"] .task-switch-action,[data-theme="dark"] .project-view-action,[data-theme="dark"] .settings-text-action,[data-theme="dark"] .resource-pack-original button,[data-theme="dark"] .resource-pack-list li button:not(.resource-pack-delete),[data-theme="dark"] .backup-actions button,[data-theme="dark"] .file-button,[data-theme="dark"] .rollback-heading button,[data-theme="dark"] .rollback-list li button{color:var(--focus)}
@@ -41,7 +40,7 @@ html[data-theme="dark"],html[data-theme="dark"] body,html[data-theme="dark"] #ro
 [data-theme="dark"] .allocation-bar,[data-theme="dark"] .project-allocation i{background:#24312a}
 [data-theme="dark"] .allocation-bar .allocation-other,[data-theme="dark"] .allocation-legend li>i.allocation-other{background:#33463c}
 [data-theme="dark"] .project-allocation i b{background:#4f8f63}
-[data-theme="dark"] .text-toggle button:hover{background:#1a241f}
+[data-theme="dark"] .text-toggle button:hover{background:rgba(230,239,233,.08)}
 [data-theme="dark"] .number-field input:focus-visible{background:#121a16}
 [data-theme="dark"] .glass-transparency-control{color:#e6efe9}
 [data-theme="dark"] .glass-transparency-control input[type="range"]{--range-track:#3a4941;background:transparent;border-color:transparent}
@@ -123,8 +122,8 @@ html[data-theme="dark"],html[data-theme="dark"] body,html[data-theme="dark"] #ro
 
 /* Selected/active states must stay visually distinct on dark backgrounds */
 [data-theme="dark"] .bottom-nav .nav-active{color:var(--focus)}
-[data-theme="dark"] .period-tabs .selected,[data-theme="dark"] .text-toggle button[aria-pressed="true"]{color:var(--focus)}
-[data-theme="dark"] .text-toggle button[aria-pressed="true"]{text-decoration-color:var(--focus)}
+[data-theme="dark"] .period-tabs .selected{color:var(--focus)}
+[data-theme="dark"] .text-toggle button[aria-pressed="true"]{color:#e6efe9}
 [data-theme="dark"] .focus-heatmap-cell.is-selected{outline-color:#6fce96}
 [data-theme="dark"] .marathon-settlement-toggle{color:#7fd6a1}
 [data-theme="dark"] .update-result{background:#16271c;color:#7fd6a1!important;border-color:#2d4a37}

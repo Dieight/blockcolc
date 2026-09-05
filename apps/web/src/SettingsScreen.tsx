@@ -21,68 +21,83 @@ export function SettingsScreen({service,resourcePacks,state,run,refresh,preferen
     <header className="settings-head"><h1>设置</h1><p>专注节奏、聚落外观与本地数据。</p></header>
     <section className="settings-group" aria-labelledby="settings-group-timing">
       <h2 id="settings-group-timing">计时</h2>
-      <div className="setting-row">
-        <div className="setting-name"><span>普通任务专注</span></div>
-        <label className="number-field"><DeferredNumberInput ariaLabel="普通任务专注分钟" min={1} max={180} value={preferences.focusMinutes} onCommit={value=>update('focusMinutes',value)}/><span>分钟</span></label>
-      </div>
-      <div className="setting-row">
-        <div className="setting-name"><span>习惯任务专注</span></div>
-        <label className="number-field"><DeferredNumberInput ariaLabel="习惯任务专注分钟" min={1} max={180} value={preferences.habitFocusMinutes} onCommit={value=>update('habitFocusMinutes',value)}/><span>分钟</span></label>
-      </div>
-      <div className="setting-row">
-        <div className="setting-name"><span>每座习惯建筑</span></div>
-        <label className="number-field"><DeferredNumberInput ariaLabel="每座习惯建筑轮数" min={10} max={30} value={preferences.habitTargetRounds} onCommit={value=>update('habitTargetRounds',value)}/><span>轮</span></label>
-      </div>
-      <div className="setting-row">
-        <div className="setting-name"><span>每轮休息</span><small>0 表示不休息</small></div>
-        <label className="number-field"><DeferredNumberInput ariaLabel="每轮休息分钟" min={0} max={60} value={preferences.breakMinutes} onCommit={value=>update('breakMinutes',value)}/><span>分钟</span></label>
+      <div className="settings-list">
+        <div className="setting-row">
+          <div className="setting-name"><span>普通任务专注</span></div>
+          <label className="number-field"><DeferredNumberInput ariaLabel="普通任务专注分钟" min={1} max={180} value={preferences.focusMinutes} onCommit={value=>update('focusMinutes',value)}/><span>分钟</span></label>
+        </div>
+        <div className="setting-row">
+          <div className="setting-name"><span>习惯任务专注</span></div>
+          <label className="number-field"><DeferredNumberInput ariaLabel="习惯任务专注分钟" min={1} max={180} value={preferences.habitFocusMinutes} onCommit={value=>update('habitFocusMinutes',value)}/><span>分钟</span></label>
+        </div>
+        <div className="setting-row">
+          <div className="setting-name"><span>每座习惯建筑</span></div>
+          <label className="number-field"><DeferredNumberInput ariaLabel="每座习惯建筑轮数" min={10} max={30} value={preferences.habitTargetRounds} onCommit={value=>update('habitTargetRounds',value)}/><span>轮</span></label>
+        </div>
+        <div className="setting-row">
+          <div className="setting-name"><span>每轮休息</span><small>0 表示不休息</small></div>
+          <label className="number-field"><DeferredNumberInput ariaLabel="每轮休息分钟" min={0} max={60} value={preferences.breakMinutes} onCommit={value=>update('breakMinutes',value)}/><span>分钟</span></label>
+        </div>
       </div>
     </section>
     <section className="settings-group" aria-labelledby="settings-group-protection">
       <h2 id="settings-group-protection">专注保护</h2>
-      <FocusIntegritySetting policy={state.focusIntegrityPolicy} run={run}/>
-      <PlannedFocusDaysSetting state={state} run={run}/>
+      <div className="settings-list">
+        <FocusIntegritySetting policy={state.focusIntegrityPolicy} run={run}/>
+        <PlannedFocusDaysSetting state={state} run={run}/>
+      </div>
     </section>
     <section className="settings-group" aria-labelledby="settings-group-notice">
       <h2 id="settings-group-notice">提醒</h2>
-      <NotificationHealthSetting service={service}/>
-      <BreakLiveUpdateSetting/>
+      <div className="settings-list">
+        <NotificationHealthSetting service={service}/>
+        <BreakLiveUpdateSetting/>
+      </div>
     </section>
     <section className="settings-group" aria-labelledby="settings-group-appearance">
       <h2 id="settings-group-appearance">外观</h2>
-      <div className="setting-row toggle-row">
-        <div className="setting-name"><span>深色模式</span><small>跟随系统或手动指定</small></div>
-        <div className="text-toggle" role="group" aria-label="深色模式">{([['light','浅色'],['dark','深色'],['system','跟随系统']] as const).map(([value,label])=><button key={value} aria-pressed={preferences.themeMode===value} onClick={()=>onPreferencesChange({...preferences,themeMode:value})}>{label}</button>)}</div>
-      </div>
-      <div className="setting-row glass-transparency-row">
-        <div className="setting-name"><span>沉浸计时毛玻璃</span><small>调节背景透过程度；文字对比与模糊会自动补偿</small></div>
-        <label className="glass-transparency-control">
-          <input aria-label="沉浸计时毛玻璃通透程度" type="range" min="0" max="100" step="5" value={preferences.focusGlassTransparency} style={{'--range-progress':`${preferences.focusGlassTransparency}%`} as CSSProperties} onChange={event=>onPreferencesChange({...preferences,focusGlassTransparency:Number(event.target.value)})}/>
-          <span>{preferences.focusGlassTransparency}%</span>
-        </label>
+      <div className="settings-list">
+        <div className="setting-row toggle-row">
+          <div className="setting-name"><span>深色模式</span><small>跟随系统或手动指定</small></div>
+          <div className="text-toggle" role="group" aria-label="深色模式">{([['light','浅色'],['dark','深色'],['system','跟随系统']] as const).map(([value,label])=><button key={value} aria-pressed={preferences.themeMode===value} onClick={()=>onPreferencesChange({...preferences,themeMode:value})}>{label}</button>)}</div>
+        </div>
+        <div className="setting-row glass-transparency-row">
+          <div className="setting-name"><span>沉浸计时毛玻璃</span><small>调节背景透过程度；文字对比与模糊会自动补偿</small></div>
+          <label className="glass-transparency-control">
+            <input aria-label="沉浸计时毛玻璃通透程度" type="range" min="0" max="100" step="5" value={preferences.focusGlassTransparency} style={{'--range-progress':`${preferences.focusGlassTransparency}%`} as CSSProperties} onChange={event=>onPreferencesChange({...preferences,focusGlassTransparency:Number(event.target.value)})}/>
+            <span>{preferences.focusGlassTransparency}%</span>
+          </label>
+        </div>
       </div>
     </section>
     <section className="settings-group" aria-labelledby="settings-group-world">
       <h2 id="settings-group-world">世界</h2>
-      <div className="setting-row toggle-row">
-        <div className="setting-name"><span>聚落环境</span><small>只改变外围地形</small></div>
-        <div className="text-toggle" role="group" aria-label="聚落环境">{([['natural-valley','自然山谷'],['classic-island','经典空岛'],['ocean-island','海洋小岛']] as const).map(([value,label])=><button key={value} aria-pressed={state.worldSettings.environmentStyle===value} onClick={()=>void run({type:'ConfigureWorldEnvironment',environmentStyle:value})}>{label}</button>)}</div>
+      <div className="settings-list">
+        <div className="setting-row toggle-row">
+          <div className="setting-name"><span>聚落环境</span><small>只改变外围地形</small></div>
+          <div className="text-toggle" role="group" aria-label="聚落环境">{([['natural-valley','自然山谷'],['classic-island','经典空岛'],['ocean-island','海洋小岛']] as const).map(([value,label])=><button key={value} aria-pressed={state.worldSettings.environmentStyle===value} onClick={()=>void run({type:'ConfigureWorldEnvironment',environmentStyle:value})}>{label}</button>)}</div>
+        </div>
+        <div className="setting-row toggle-row">
+          <div className="setting-name"><span>光影质量</span><small>更高档位增加耗电</small></div>
+          <div className="text-toggle" role="group" aria-label="光影质量">{([['auto','自动'],['performance','流畅'],['balanced','均衡'],['cinematic','精致']] as const).map(([value,label])=><button key={value} aria-pressed={preferences.lightingQuality===value} onClick={()=>onPreferencesChange({...preferences,lightingQuality:value})}>{label}</button>)}</div>
+        </div>
+        <div className="setting-row toggle-row">
+          <div className="setting-name"><span>施工轮廓</span><small>未建部分的显示范围</small></div>
+          <div className="text-toggle" role="group" aria-label="施工轮廓">{([['off','关闭'],['current','当前'],['all','全部']] as const).map(([value,label])=><button key={value} aria-pressed={preferences.constructionOutlineVisibility===value} onClick={()=>onPreferencesChange({...preferences,constructionOutlineVisibility:value})}>{label}</button>)}</div>
+        </div>
+        <div className="setting-row">
+          <div className="setting-name"><span>建筑腐败</span><small>错过的计划日会风化建筑，专注可修复</small></div>
+          <label className="switch-control ios-switch"><input aria-label="开启建筑腐败" type="checkbox" checked={state.decayPolicy.enabled} onChange={event=>void run(event.target.checked?{type:'EnableDecay',damagePerMissedPlannedDayBasisPoints:500,gracePlannedDays:3}:{type:'DisableDecay'})}/></label>
+        </div>
       </div>
-      <div className="setting-row toggle-row">
-        <div className="setting-name"><span>光影质量</span><small>更高档位增加耗电</small></div>
-        <div className="text-toggle" role="group" aria-label="光影质量">{([['auto','自动'],['performance','流畅'],['balanced','均衡'],['cinematic','精致']] as const).map(([value,label])=><button key={value} aria-pressed={preferences.lightingQuality===value} onClick={()=>onPreferencesChange({...preferences,lightingQuality:value})}>{label}</button>)}</div>
-      </div>
-      <div className="setting-row toggle-row">
-        <div className="setting-name"><span>施工轮廓</span><small>未建部分的显示范围</small></div>
-        <div className="text-toggle" role="group" aria-label="施工轮廓">{([['off','关闭'],['current','当前'],['all','全部']] as const).map(([value,label])=><button key={value} aria-pressed={preferences.constructionOutlineVisibility===value} onClick={()=>onPreferencesChange({...preferences,constructionOutlineVisibility:value})}>{label}</button>)}</div>
-      </div>
-      <div className="setting-row">
-        <div className="setting-name"><span>显示世界坐标</span><small>点按地形时显示 x、z 与高度，便于定位世界问题</small></div>
-        <label className="switch-control"><input aria-label="显示世界坐标" type="checkbox" checked={preferences.showWorldCoordinates} onChange={event=>onPreferencesChange({...preferences,showWorldCoordinates:event.target.checked})}/></label>
-      </div>
-      <div className="setting-row">
-        <div className="setting-name"><span>建筑腐败</span><small>错过的计划日会风化建筑，专注可修复</small></div>
-        <label className="switch-control"><input aria-label="开启建筑腐败" type="checkbox" checked={state.decayPolicy.enabled} onChange={event=>void run(event.target.checked?{type:'EnableDecay',damagePerMissedPlannedDayBasisPoints:500,gracePlannedDays:3}:{type:'DisableDecay'})}/></label>
+    </section>
+    <section className="settings-group" aria-labelledby="settings-group-advanced">
+      <h2 id="settings-group-advanced">高级</h2>
+      <div className="settings-list">
+        <div className="setting-row">
+          <div className="setting-name"><span>显示世界坐标</span><small>点按地形时显示 x、z 与高度，便于定位世界问题</small></div>
+          <label className="switch-control ios-switch"><input aria-label="显示世界坐标" type="checkbox" checked={preferences.showWorldCoordinates} onChange={event=>onPreferencesChange({...preferences,showWorldCoordinates:event.target.checked})}/></label>
+        </div>
       </div>
     </section>
     <BuildingBlueprintPanel resources={state.buildingBlueprintResources} run={run}/>
@@ -133,7 +148,7 @@ function FocusIntegritySetting({policy,run}:{policy:ReturnType<ApplicationServic
   const [draft,setDraft]=useState(policy); const [pending,setPending]=useState(false); const draftRef=useRef(policy); const queue=useRef<Promise<void>>(Promise.resolve()); const pendingCount=useRef(0);
   useEffect(()=>{if(pendingCount.current===0){draftRef.current=policy;setDraft(policy);}},[policy.enabled,policy.maxEffectiveExcursions]);
   const configure=(next:typeof policy)=>{draftRef.current=next;setDraft(next);pendingCount.current+=1;setPending(true);queue.current=queue.current.then(async()=>{await run({type:'ConfigureFocusIntegrity',...next});}).catch(()=>{draftRef.current=policy;setDraft(policy);}).finally(()=>{pendingCount.current-=1;if(pendingCount.current===0)setPending(false);});};
-  return <div className="setting-row integrity-setting" aria-busy={pending}><div className="setting-name"><span>专注完整性</span><small>离开超过 3 秒计入；达到上限本轮失败</small></div><div className="integrity-controls"><label className="switch-control"><input aria-label="开启专注完整性" type="checkbox" checked={draft.enabled} onChange={e=>configure({...draftRef.current,enabled:e.target.checked})}/></label><label className="number-field"><DeferredNumberInput ariaLabel="允许有效离开次数" min={1} max={5} value={draft.maxEffectiveExcursions} disabled={!draft.enabled} onCommit={value=>configure({...draftRef.current,maxEffectiveExcursions:value})}/><span>次</span></label></div></div>;
+  return <div className="setting-row integrity-setting" aria-busy={pending}><div className="setting-name"><span>专注完整性</span><small>离开超过 3 秒计入；达到上限本轮失败</small></div><div className="integrity-controls"><label className="switch-control ios-switch"><input aria-label="开启专注完整性" type="checkbox" checked={draft.enabled} onChange={e=>configure({...draftRef.current,enabled:e.target.checked})}/></label><label className="number-field"><DeferredNumberInput ariaLabel="允许有效离开次数" min={1} max={5} value={draft.maxEffectiveExcursions} disabled={!draft.enabled} onCommit={value=>configure({...draftRef.current,maxEffectiveExcursions:value})}/><span>次</span></label></div></div>;
 }
 
 function DeferredNumberInput({ariaLabel,min,max,value,disabled=false,onCommit}:{ariaLabel:string;min:number;max:number;value:number;disabled?:boolean;onCommit:(value:number)=>void}) {

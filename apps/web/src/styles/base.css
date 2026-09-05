@@ -6,3 +6,14 @@
 /* Reset, application shell and cross-feature foundations. */
 html,body,#root{min-height:100%;background:var(--app-bg)}
 .route-pane{min-width:0;min-height:100%}
+/* Actionable toast: re-enable pointer events only when a decision is needed;
+ * plain acknowledgement toasts stay pass-through. */
+.toast.has-action{pointer-events:auto;display:flex;align-items:center;gap:10px}
+.toast-action{flex:0 0 auto;min-height:44px;padding:10px 12px;border:0;background:rgba(255,255,255,.14);border-radius:6px;color:#fff;font-weight:700;font-size:13px}
+.toast-action:active{background:rgba(255,255,255,.24)}
+@media(prefers-reduced-motion:no-preference){
+  .toast{animation:toast-in .18s ease-out}
+  /* Theme flips fade the shell colors instead of snapping. */
+  html,body,.topbar,.bottom-nav{transition:background-color .24s ease,color .24s ease,border-color .24s ease}
+}
+@keyframes toast-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}

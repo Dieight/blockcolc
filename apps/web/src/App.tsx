@@ -10,9 +10,9 @@ import type { ResourcePackRepository } from '@tomato-clock/resource-pack-indexed
 import { LoadingPage } from './LoadingPage';
 import { ChoiceMenu } from './ChoiceMenu';
 import { BuildingMemoryPanel, createBuildingMemory, conditionLabel, constructionStage } from './BuildingMemoryPanel';
+import { handleBack, useBackLayer } from './back-layer';
 import { NativeImeTextEntry, isImeCommitKey, type NativeImeInputRef } from './NativeImeTextEntry';
 import type { FocusPreferences } from './app-types';
-import { backLayerCount, handleBack, useBackLayer } from './back-layer';
 import { focusGlassMaterialFor } from './focus-glass';
 import { LITEMATIC_MAX_COMPRESSED_BYTES, readBrowserFileBytes } from './browser-adapters';
 import { APPLICATION_STATE_CHANGED_EVENT, type ApplicationStateChangedDetail } from './bootstrap';
@@ -55,7 +55,11 @@ function blueprintName(catalog:readonly BlueprintCatalogEntry[],id: string) {
 function complexityLabel(value:BlueprintCatalogEntry['complexity']) { return value==='simple'?'紧凑':value==='moderate'?'适中':'丰富'; }
 
 export function App({ service, resourcePacks }: { service: ApplicationService; resourcePacks: ResourcePackRepository }) {
-  const [tab, setTab] = useState<Tab>('world'); const [version, setVersion] = useState(0); const [message, setMessage] = useState('');
+  const [tab, setTab] = useState<Tab>('world'); const [version, setVersion] = useState(0);
+  // Transient status toasts may carry one navigable action (e.g. open settings)
+  // when the message needs a user decision, not just an acknowledgement. The
+  // excursion warning stays on the world page's own chip and never routes here.
+  const [message, setMessage] = useState<{ text: string; action?: { label: string; target: Tab } } | null>(null);
   const [creatingProject, setCreatingProject] = useState(false);
   const [projectDraft, setProjectDraft] = useState<ProjectSetupDraft | null>(null);
   const [worldFocusProjectId,setWorldFocusProjectId]=useState<string|null>(null);
@@ -68,6 +72,10 @@ export function App({ service, resourcePacks }: { service: ApplicationService; r
   const navigateTo = useCallback((next: Tab) => {
     setTab(next);
   }, []);
+  const showMessage = useCallback((text: string, action?: { label: string; target: Tab }) => {
+    setMessage(action ? { text, action } : { text });
+  }, []);
+  const clearMessage = useCallback(() => setMessage(null), []);
   useEffect(() => {
     const media = window.matchMedia('(prefers-color-scheme: dark)');
     const apply = () => {
@@ -100,23 +108,23 @@ export function App({ service, resourcePacks }: { service: ApplicationService; r
     try {
       const result = await service.dispatch(command);
       if (!result.ok) {
-        setMessage(result.message);
+        showMessage(result.message);
       } else {
         const earlyEvent = result.events.find(event => event.type === 'FocusCompletedEarly');
         const earlySession = earlyEvent
           ? result.state.focusHistory.find(session => session.id === earlyEvent.sessionId)
           : undefined;
-        if (result.events.some(event => event.type === 'FocusInterrupted' && event.reason === 'app-switch-limit')) setMessage('');
-        else if (result.events.some(event => event.type === 'FocusInterrupted')) setMessage('本轮已记录，有效专注时间已计入统计。');
-        else if (result.events.some(event => event.type === 'HabitBuildingCompleted')) setMessage('这座习惯建筑已完成，请选择下一座建筑。');
+        if (result.events.some(event => event.type === 'FocusInterrupted' && event.reason === 'app-switch-limit')) clearMessage();
+        else if (result.events.some(event => event.type === 'FocusInterrupted')) showMessage('本轮已记录，有效专注时间已计入统计。');
+        else if (result.events.some(event => event.type === 'HabitBuildingCompleted')) showMessage('这座习惯建筑已完成，请选择下一座建筑。');
         else if (earlyEvent) {
-          if (result.events.some(event => event.type === 'HabitBuildingProgressed')) setMessage('习惯专注已推进一轮，实际专注时间已记录。');
-          else if (earlySession?.marathon === true) setMessage('本轮已提前完成，实际专注时间已记录。');
-          else setMessage('小任务已提前完成，实际专注时间已记录。');
-        } else if (result.warnings.some(warning => warning.code === 'NOTIFICATION_INEXACT')) setMessage('系统提醒已开启，但未获精准闹钟权限，锁屏时可能略有延迟。');
-        else if (result.warnings.length) setMessage('计时已开始；系统通知当前不可用，回到应用时仍会正确恢复。');
-        else if (result.events.some(event => event.type === 'ProjectDeleted')) setMessage('任务已删除，已完成的习惯建筑仍保留在聚落中。');
-        else setMessage('');
+          if (result.events.some(event => event.type === 'HabitBuildingProgressed')) showMessage('习惯专注已推进一轮，实际专注时间已记录。');
+          else if (earlySession?.marathon === true) showMessage('本轮已提前完成，实际专注时间已记录。');
+          else showMessage('小任务已提前完成，实际专注时间已记录。');
+        } else if (result.warnings.some(warning => warning.code === 'NOTIFICATION_INEXACT')) showMessage('系统提醒已开启，但未获精准闹钟权限，锁屏时可能略有延迟。', { label: '去设置', target: 'settings' });
+        else if (result.warnings.length) showMessage('计时已开始；系统通知当前不可用，回到应用时仍会正确恢复。', { label: '去设置', target: 'settings' });
+        else if (result.events.some(event => event.type === 'ProjectDeleted')) showMessage('任务已删除，已完成的习惯建筑仍保留在聚落中。');
+        else clearMessage();
         const sealed = result.events.find(event => event.type === 'ProjectSealedAsMonument');
         if (sealed) {
           const project = result.state.projects.find(item => item.id === sealed.projectId);
@@ -126,10 +134,10 @@ export function App({ service, resourcePacks }: { service: ApplicationService; r
       refresh();
       return result;
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '操作失败，请重试。');
+      showMessage(error instanceof Error ? error.message : '操作失败，请重试。');
       throw error;
     }
-  }, [service, refresh]);
+  }, [service, refresh, showMessage, clearMessage]);
   useEffect(() => { const resumeFromPageCache = (event:PageTransitionEvent) => { if(event.persisted)void service.resume().then(refresh); }; window.addEventListener('pageshow',resumeFromPageCache);return()=>window.removeEventListener('pageshow',resumeFromPageCache);},[service,refresh]);
   useEffect(() => {
     const refreshAfterLifecycle = (event: Event) => {
@@ -148,7 +156,7 @@ export function App({ service, resourcePacks }: { service: ApplicationService; r
     return () => window.removeEventListener(APPLICATION_STATE_CHANGED_EVENT, refreshAfterLifecycle);
   }, [refresh]);
   useEffect(()=>{let observed=localDateOf(new Date(),service.snapshot().calendar.timeZone);const timer=window.setInterval(()=>{const next=localDateOf(new Date(),service.snapshot().calendar.timeZone);if(next!==observed){observed=next;refresh();}},60_000);return()=>window.clearInterval(timer);},[service,refresh]);
-  useEffect(()=>{if(!message)return;const timeout=window.setTimeout(()=>setMessage(''),5000);return()=>window.clearTimeout(timeout);},[message]);
+  useEffect(()=>{if(!message)return;const timeout=window.setTimeout(()=>setMessage(null),5000);return()=>window.clearTimeout(timeout);},[message]);
   useLayoutEffect(() => { window.scrollTo(0, 0); }, [tab, creatingProject]);
   const state = useMemo(() => service.snapshot(), [service, version]); const active = useMemo(() => service.activeProjectProjection(), [service, version]);
   useEffect(() => {
@@ -183,6 +191,30 @@ export function App({ service, resourcePacks }: { service: ApplicationService; r
   const clearWorldFocus=useCallback(()=>{setWorldFocusProjectId(null);setWorldMemoryProjectId(null);},[]);
   const closeWorldMemory=useCallback(()=>setWorldMemoryProjectId(null),[]);
   const updatePreferences=useCallback((value:FocusPreferences)=>{setPreferences(value);localStorage.setItem(PREFERENCES_KEY,JSON.stringify(value));},[]);
+  // Android hardware back walks the open overlays top-down (about dialog,
+  // ceremony, building memory, project setup) before it may leave a secondary
+  // tab; at the world root with nothing open it exits the app.
+  useBackLayer(Boolean(creatingProject), () => { discardProjectSetup(); return true; });
+  useBackLayer(Boolean(worldMemoryProjectId), () => { closeWorldMemory(); return true; });
+  useBackLayer(aboutOpen, () => { setAboutOpen(false); return true; });
+  useBackLayer(Boolean(ceremony), () => { setCeremony(null); return true; });
+  const backRouteRef = useRef({ tab, creatingProject });
+  backRouteRef.current = { tab, creatingProject };
+  useEffect(() => {
+    let disposed = false;
+    let unsubscribe: (() => Promise<void>) | null = null;
+    void import('@tomato-clock/platform-capacitor').then(platform => {
+      if (disposed) return;
+      void platform.subscribeHardwareBack(() => {
+        if (handleBack()) return;
+        const route = backRouteRef.current;
+        if (route.creatingProject) { discardProjectSetup(); return; }
+        if (route.tab !== 'world') { navigateTo('world'); return; }
+        void platform.exitAndroidApp();
+      }).then(disposer => { if (disposed) void disposer(); else unsubscribe = disposer; });
+    });
+    return () => { disposed = true; void unsubscribe?.(); };
+  }, [discardProjectSetup, navigateTo]);
   const immersiveFocus = !creatingProject && tab === 'world' && Boolean(active && state.activeFocusSession);
   const [landscape,setLandscape]=useState(()=>matchMedia('(orientation: landscape)').matches);
   useEffect(()=>{const media=matchMedia('(orientation: landscape)');const change=()=>setLandscape(media.matches);media.addEventListener('change',change);return()=>media.removeEventListener('change',change);},[]);
@@ -202,7 +234,7 @@ export function App({ service, resourcePacks }: { service: ApplicationService; r
   </>;
   return <div className={immersiveFocus?'app-shell focus-immersive':'app-shell'}>{!immersiveFocus&&<header className="topbar"><div><span className="brand-mark">方块钟</span><span className="brand-en">Blockcolc</span></div><button className="today" type="button" aria-label="关于方块钟" onClick={()=>setAboutOpen(true)}><TreePine size={16}/>{new Intl.DateTimeFormat('zh-CN',{month:'short',day:'numeric'}).format(new Date())}</button></header>}
     <main data-active-route={tab}>{content}</main>
-    {message && <div className="toast" role="status">{message}</div>}
+    {message && <div className={message.action?'toast has-action':'toast'} role="status">{message.text}{message.action&&<button type="button" className="toast-action" onClick={()=>{const target=message.action!.target;setMessage(null);navigateTo(target);}}>{message.action.label}</button>}</div>}
     {!immersiveFocus&&<nav className="bottom-nav" aria-label="主导航"><NavButton active={tab==='world'} icon={<Clock3/>} label="计时" onClick={()=>{if(creatingProject)setCreatingProject(false);navigateTo('world');}}/><NavButton active={tab==='tasks'} icon={<ListTodo/>} label="任务" onClick={()=>navigateTo('tasks')}/><NavButton active={tab==='stats'} icon={<BarChart3/>} label="统计" onClick={()=>navigateTo('stats')}/><NavButton active={tab==='settings'} icon={<Settings/>} label="设置" onClick={()=>navigateTo('settings')}/></nav>}
     {aboutOpen&&<AboutDialog onClose={()=>setAboutOpen(false)}/>}
     {ceremony&&<CompletionCeremony title={ceremony.title} onClose={()=>setCeremony(null)}/>}
@@ -885,6 +917,12 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, reco
     ?? active.project.importedBlueprint?.title
     ?? blueprintName(blueprintCatalog, active.project.blueprintId);
 
+  // Android back inside the world screen dismisses its own overlays first:
+  // revealed end controls, then the end-focus dialog, then the plan sheet.
+  useBackLayer(Boolean(session && (controlsVisible || controlsLeaving)), () => { hideControls(); return true; });
+  useBackLayer(Boolean(ending), () => { closeEnding(); return true; });
+  useBackLayer(Boolean(planOpen), () => { closePlan(); return true; });
+
   return <div className={session ? 'world-screen is-focusing' : marathonReportPhase ? 'world-screen has-report' : activePendingBlocksWorkbench ? 'world-screen has-report' : activeHabitAwaitingBlocksWorkbench ? 'world-screen is-choosing-habit-building' : 'world-screen'}>
     <WorldCanvasV7 service={service} resourcePacks={resourcePacks} lightingQuality={preferences.lightingQuality} constructionOutlineVisibility={preferences.constructionOutlineVisibility} showWorldCoordinates={preferences.showWorldCoordinates} environmentStyle={state.worldSettings.environmentStyle} worldSeed={state.worldSettings.worldSeed} terrainGenerationVersion={state.worldSettings.terrainGenerationVersion} constructionFeedback={constructionFeedback} sessionActive={!!session} immersiveBand={immersiveBand} focusedProjectId={focusedProjectId} memoryProjectId={memoryProjectId} onSelectProject={onFocusWorldProject} onClearWorldFocus={onClearWorldFocus} onCloseMemory={onCloseWorldMemory} onContinueProject={async(projectId)=>{if(projectId!==active.project.id){const result=await run({type:'SwitchActiveProject',projectId});if(!result?.ok)return;}onCloseWorldMemory();}} switchBlockedReason={session?'结束本轮专注后才能切换任务。':pending.length>0?'先完成当前任务的进度汇报，再切换任务。':undefined} visible={visible} onPickTerrain={setPickedCell} pickedCell={pickedCell}/>
     {visible && <section ref={focusPanelRef} className="focus-panel focus-workbench-panel" onPointerUp={(event) => handlePanelTap({ target: event.target, clientX: event.clientX, clientY: event.clientY })}>
@@ -909,6 +947,7 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, reco
         {(session && state.focusIntegrityPolicy.enabled && integrityNotice?.sessionId === session.id) && <div className={`${integrityNotice.count > 0 ? 'focus-integrity-warning flash active' : 'focus-integrity-warning flash'}${integrityLeaving ? ' is-leaving' : ''}`} role="status"><AlertTriangle/>有效离开 {integrityNotice.count} / {integrityNotice.max} 次</div>}
         {integrityFailure && !integrityEndedHidden && <div className={`focus-integrity-ended${integrityEndedLeaving ? ' is-leaving' : ''}`} role="alert"><AlertTriangle/>本轮专注因达到离开应用次数上限而结束。下次可以从这里继续。</div>}
          <FocusTimer mode={timerMode} endsAt={timerEndsAt} fallbackMs={timerFallbackMs} marathonRemainingMs={marathonRemainingTotalMs} onElapsed={session ? reconcile : finishBreak}/>
+        {session && <div className="focus-building-progress" aria-hidden="true"><span>建筑 · {constructionStage(active.building.completionBasisPoints)}</span><strong>{Math.round(active.building.completionBasisPoints / 100)}%</strong></div>}
         {isBreak ? <button className="primary secondary-action" onClick={skipBreak}>跳过休息</button>
           : reconciledPlan?.status === 'ready' ? <button className="primary" onClick={() => void startFocus()}><Clock3/>{marathonPlan && reconciledPlan.completedRounds === 0 ? startLabel : '开始下一轮'}</button>
             : session ? <div className={`immersive-controls${controlsLeaving ? ' is-leaving' : ''}`}>{(controlsVisible || controlsLeaving)
