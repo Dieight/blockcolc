@@ -19,8 +19,7 @@ $evidencePath = Join-Path $artifactDirectory 'release-evidence.json'
 if (-not (Test-Path -LiteralPath $ReleaseNotesPath -PathType Leaf)) { throw "Release notes not found: $ReleaseNotesPath" }
 if (-not (Test-Path -LiteralPath $evidencePath -PathType Leaf)) { throw "Prepared evidence not found: $evidencePath" }
 $evidence = Get-Content -LiteralPath $evidencePath -Raw | ConvertFrom-Json
-if ($evidence.phase -ne 'prepared') { throw "Evidence is not in prepared phase: $($evidence.phase)" }
-if ($evidence.versionName -ne $context.VersionName -or [int]$evidence.versionCode -ne $context.VersionCode) { throw 'Prepared version does not match version.json.' }
+if ($evidence.phase -ne 'accepted') { throw "Evidence is not in accepted phase: $($evidence.phase). Install and obtain explicit user acceptance for the immutable candidate first." }
 
 function Get-CiRunForCommit {
     param([Parameter(Mandatory)][string]$CommitSha)
@@ -31,12 +30,11 @@ function Get-CiRunForCommit {
 
 Push-Location $context.Root
 try {
-    Assert-StagedState
+    Assert-ReleaseEvidenceVersion -Evidence $evidence -Context $context
+    Assert-AcceptedReleaseEvidence -Evidence $evidence
+    Assert-ReleaseWorkPacketComplete -Context $context
+    Assert-ReleaseEvidenceMatchesStagedState -Evidence $evidence
     Invoke-External -FilePath 'node' -Arguments @('tools/sync-version.mjs', '--check')
-    $currentTree = (Invoke-External -FilePath 'git' -Arguments @('write-tree') -Capture | Select-Object -First 1).ToString().Trim()
-    if ($currentTree -ne $evidence.stagedTree) { throw 'Staged tree changed after release preparation.' }
-    $currentDiffHash = Get-StagedDiffSha256
-    Assert-Sha256Equal -Expected $evidence.stagedDiffSha256 -Actual $currentDiffHash -Boundary 'prepared to publish staged diff'
 
     # Release gate: the branch being released must already be green on CI. A red
     # branch is never published; known environment-only flakes require -AllowRedCi
@@ -51,10 +49,22 @@ try {
         Write-Host "Verified HEAD CI is green (run $($headRun.databaseId))."
     }
 
-    $candidateApk = [string]$evidence.candidateApk
-    $candidateHash = Get-Sha256 -Path $candidateApk
-    Assert-Sha256Equal -Expected $evidence.candidateSha256 -Actual $candidateHash -Boundary 'prepared to publish candidate APK'
-    Assert-ApkMetadata -Path $candidateApk -Context $context | Out-Null
+    $candidate = Assert-ReleaseCandidateEvidence -Evidence $evidence -Context $context -Boundary 'accepted candidate before publish'
+    $candidateApk = $candidate.Path
+    $candidateHash = $candidate.Sha256
+    Assert-Sha256Equal -Expected ([string]$evidence.acceptance.candidateSha256) -Actual $candidateHash -Boundary 'user acceptance to publish candidate'
+
+    $authorized = @(Get-AuthorizedAndroidDevices)
+    $targetSerials = @($evidence.installations | ForEach-Object { [string]$_.Serial } | Where-Object { $_ } | Sort-Object -Unique)
+    if ($targetSerials.Count -eq 0) { throw 'Accepted evidence has no verified device installation.' }
+    foreach ($serial in $targetSerials) {
+        if ($authorized -notcontains $serial) { throw "Accepted Android device is not connected for final release verification: $serial" }
+        $acceptedInstallation = @($evidence.installations | Where-Object { [string]$_.Serial -eq $serial } | Select-Object -First 1)
+        Assert-Sha256Equal -Expected $candidateHash -Actual ([string]$acceptedInstallation[0].InstalledSha256) -Boundary "accepted device $serial installation"
+        # Finish all device availability checks before commit/push/release so a
+        # busy phone cannot turn a safe local pause into a partially published release.
+        Assert-DeviceNotBusy -Serial $serial -Context $context -AllowBusyDevice:$AllowBusyDevice
+    }
 
     if (-not $CommitMessage) { $CommitMessage = "Release $tag" }
     Invoke-External -FilePath 'git' -Arguments @('commit', '-m', $CommitMessage)
@@ -71,7 +81,7 @@ try {
     Assert-ApkMetadata -Path $downloadedApk -Context $context | Out-Null
 
     $devices = @()
-    foreach ($serial in (Get-AuthorizedAndroidDevices)) {
+    foreach ($serial in $targetSerials) {
         $devices += Install-AndVerifyApk -ApkPath $downloadedApk -Serial $serial -Context $context -ExpectedSha256 $downloadedHash -AllowBusyDevice:$AllowBusyDevice
     }
 
@@ -108,16 +118,16 @@ try {
         Start-Sleep -Seconds 10
     }
 
-    $evidence.phase = 'published'
-    $evidence | Add-Member -NotePropertyName publishedAt -NotePropertyValue ((Get-Date).ToUniversalTime().ToString('o'))
-    $evidence | Add-Member -NotePropertyName commit -NotePropertyValue $commit
-    $evidence | Add-Member -NotePropertyName tag -NotePropertyValue $tag
-    $evidence | Add-Member -NotePropertyName redownloadedApk -NotePropertyValue $downloadedApk
-    $evidence | Add-Member -NotePropertyName redownloadedSha256 -NotePropertyValue $downloadedHash
-    $evidence | Add-Member -NotePropertyName publishDevices -NotePropertyValue @($devices)
-    $evidence | Add-Member -NotePropertyName releaseCiRunId -NotePropertyValue $releaseCiRunId
-    $evidence | Add-Member -NotePropertyName releaseCiConclusion -NotePropertyValue $releaseCiConclusion
-    $evidence | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $evidencePath -Encoding utf8
+    Set-EvidenceProperty -Evidence $evidence -Name phase -Value 'published'
+    Set-EvidenceProperty -Evidence $evidence -Name publishedAt -Value ((Get-Date).ToUniversalTime().ToString('o'))
+    Set-EvidenceProperty -Evidence $evidence -Name commit -Value $commit
+    Set-EvidenceProperty -Evidence $evidence -Name tag -Value $tag
+    Set-EvidenceProperty -Evidence $evidence -Name redownloadedApk -Value $downloadedApk
+    Set-EvidenceProperty -Evidence $evidence -Name redownloadedSha256 -Value $downloadedHash
+    Set-EvidenceProperty -Evidence $evidence -Name publishDevices -Value @($devices)
+    Set-EvidenceProperty -Evidence $evidence -Name releaseCiRunId -Value $releaseCiRunId
+    Set-EvidenceProperty -Evidence $evidence -Name releaseCiConclusion -Value $releaseCiConclusion
+    Write-ReleaseEvidence -Evidence $evidence -Path $evidencePath
     Write-Host "Published and verified $tag ($downloadedHash)."
 }
 finally {

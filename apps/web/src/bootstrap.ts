@@ -6,6 +6,14 @@ import { CapacitorFocusLifecyclePort, CapacitorNotificationPort, configureNative
 
 export const APPLICATION_STATE_CHANGED_EVENT = 'blockcolc:application-state-changed';
 
+export interface ApplicationStateChangedDetail {
+  lifecycleType: 'background' | 'foreground';
+  sessionId: string | null;
+  excursionRecorded: boolean;
+  effectiveExcursions: number | null;
+  maxEffectiveExcursions: number;
+}
+
 export async function bootstrap() {
   await configureNativeSystemBars();
   const repository = new IndexedDbStateRepository({ databaseName: 'blockcolc-v1' });
@@ -13,8 +21,22 @@ export async function bootstrap() {
   await service.resume();
   const lifecycle = isCapacitorNative() ? new CapacitorFocusLifecyclePort() : new BrowserFocusLifecyclePort();
   await lifecycle.subscribe(async event => {
-    await service.handleLifecycleEvent(event);
-    window.dispatchEvent(new Event(APPLICATION_STATE_CHANGED_EVENT));
+    const before = service.snapshot().activeFocusSession;
+    const result = await service.handleLifecycleEvent(event);
+    const after = result.state.activeFocusSession;
+    const beforeExcursions = before?.integrity.effectiveExcursions ?? null;
+    const afterExcursions = after?.integrity.effectiveExcursions ?? null;
+    const detail: ApplicationStateChangedDetail = {
+      lifecycleType: event.type,
+      sessionId: after?.id ?? before?.id ?? null,
+      excursionRecorded: event.type === 'foreground'
+        && beforeExcursions !== null
+        && afterExcursions !== null
+        && afterExcursions > beforeExcursions,
+      effectiveExcursions: afterExcursions,
+      maxEffectiveExcursions: result.state.focusIntegrityPolicy.maxEffectiveExcursions,
+    };
+    window.dispatchEvent(new CustomEvent<ApplicationStateChangedDetail>(APPLICATION_STATE_CHANGED_EVENT, { detail }));
   });
   return {
     service,

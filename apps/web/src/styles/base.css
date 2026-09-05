@@ -5,3 +5,4 @@
 :root{--native-safe-area-inset-left:0px;--native-safe-area-inset-top:0px;--native-safe-area-inset-right:0px;--native-safe-area-inset-bottom:0px;--safe-left:max(env(safe-area-inset-left),var(--native-safe-area-inset-left));--safe-top:max(env(safe-area-inset-top),var(--native-safe-area-inset-top));--safe-right:max(env(safe-area-inset-right),var(--native-safe-area-inset-right));--safe-bottom:max(env(safe-area-inset-bottom),var(--native-safe-area-inset-bottom))}
 /* Reset, application shell and cross-feature foundations. */
 html,body,#root{min-height:100%;background:var(--app-bg)}
+.route-pane{min-width:0;min-height:100%}

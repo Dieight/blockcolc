@@ -68,6 +68,26 @@ describe("backup safety", () => {
     expect((await destination.load()).state?.projects[0]!.importedBlueprint).toEqual(sampleImportedBlueprint());
   });
 
+  it("imports a schema-v10 verification backup after stripping only the withdrawn today-next-steps field", async () => {
+    const source = createRepository("withdrawn-today-source");
+    const state = projectState("中文项目 English 项目");
+    await source.save(state, 0);
+    const legacyEnvelope = JSON.parse(await source.exportBackup()) as any;
+    legacyEnvelope.payload.todayNextSteps = {
+      date: "2026-07-23",
+      entries: [{ id: "today-1", projectId: "project-1", subtaskId: "subtask-1", estimatedRounds: 3, createdAt: "2026-07-23T08:00:00.000Z" }],
+    };
+    const { checksum: _checksum, ...unsigned } = legacyEnvelope;
+    legacyEnvelope.checksum = await sha256(unsigned);
+
+    const destination = createRepository("withdrawn-today-destination");
+    await destination.replaceFromImport(JSON.stringify(legacyEnvelope), 0);
+    const restored = (await destination.load()).state!;
+    expect(restored).not.toHaveProperty("todayNextSteps");
+    expect(restored.projects).toEqual(state.projects);
+    expect(restored.focusHistory).toEqual(state.focusHistory);
+  });
+
   it("round-trips decoration resources, source light semantics, and earned reward placement", async () => {
     const source = createRepository("decoration-reward-source");
     const clock = new TestClock(new Date("2026-07-23T08:00:00.000Z"));
@@ -116,12 +136,12 @@ describe("backup safety", () => {
     const destination = createRepository("old-v1-destination");
     await expect(destination.previewImport(JSON.stringify(oldEnvelope))).resolves.toMatchObject({ schemaVersion: 1 });
     await destination.replaceFromImport(JSON.stringify(oldEnvelope), 0);
-    expect((await destination.load()).state?.schemaVersion).toBe(9);
+    expect((await destination.load()).state?.schemaVersion).toBe(10);
     expect((await destination.load()).state?.focusIntegrityPolicy).toEqual({ enabled: true, maxEffectiveExcursions: 3 });
     expect((await destination.load()).state?.projects[0]!.importedBlueprint).toBeNull();
     const normalized = JSON.parse(await destination.exportBackup()) as any;
     expect(normalized.schemaVersion).toBe(1);
-    expect(normalized.payload.schemaVersion).toBe(9);
+    expect(normalized.payload.schemaVersion).toBe(10);
     expect(normalized.payload.worldSettings).toEqual({ worldSeed: "legacy-project-1", terrainGenerationVersion: 4, environmentStyle: "natural-valley" });
     expect(normalized.payload.projects[0]).toHaveProperty("importedBlueprint", null);
   });

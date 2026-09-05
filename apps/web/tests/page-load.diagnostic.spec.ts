@@ -8,10 +8,18 @@ test("reports page load diagnostics on preview", async ({ page }) => {
   });
   page.on("requestfailed", (r) => errors.push("REQFAIL:" + r.url().slice(0, 160)));
   await page.goto("/?__immersiveRightBand=0.35");
-  await page.waitForTimeout(3_000);
+  await page.getByRole('button', { name: '开始建造' }).click();
+  const canvas = page.getByLabel('项目建筑世界');
+  await canvas.waitFor({ state: 'visible' });
+  await page.waitForFunction(() => document.querySelector('canvas[aria-label="项目建筑世界"]')?.getAttribute('data-first-nonempty-frame-ms'));
   const info = await page.evaluate(() => ({
     scripts: [...document.querySelectorAll("script[src]")].map((s) => s.getAttribute("src")),
     sw: navigator.serviceWorker ? "present" : "none",
+    bootstrapDurationMs: Number(document.documentElement.dataset.bootstrapDurationMs),
+    appShellFrameMs: Number(document.documentElement.dataset.appShellFrameMs),
+    firstNonemptyFrameMs: Number(document.querySelector('canvas[aria-label="项目建筑世界"]')?.getAttribute('data-first-nonempty-frame-ms')),
+    worldRebuildCount: Number(document.querySelector('canvas[aria-label="项目建筑世界"]')?.getAttribute('data-world-rebuild-count')),
+    worldRebuildLastMs: Number(document.querySelector('canvas[aria-label="项目建筑世界"]')?.getAttribute('data-world-rebuild-last-ms')),
   }));
   console.log("LOAD_INFO " + JSON.stringify(info));
   console.log("LOAD_ERRORS " + JSON.stringify(errors));

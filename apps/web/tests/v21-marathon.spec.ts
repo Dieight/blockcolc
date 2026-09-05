@@ -5,8 +5,14 @@ import { resolve } from "node:path";
 const sample = resolve(process.cwd(), "../../litematic/bd29cade-7000-42b7-adc1-0631ce512c30.litematic");
 
 async function createDefaultProject(page: import("@playwright/test").Page) {
+  // The first-run blueprint catalog shares the large voxel chunk with the
+  // resident world. A parallel software-WebGL release run can legitimately
+  // take longer than the default 30-second test budget to evaluate that chunk.
+  test.setTimeout(90_000);
   await page.goto("/");
-  await page.getByRole("button", { name: "开始建造" }).click();
+  const create = page.getByRole("button", { name: "开始建造" });
+  await expect(create).toBeEnabled({ timeout: 60_000 });
+  await create.click();
   await expect(page.locator(".world-screen")).toBeVisible();
 }
 
@@ -108,6 +114,9 @@ test("habit plans support an isolated end-time schedule without the finite-task 
   await page.clock.install({ time: new Date("2026-08-03T08:00:00Z") });
   await createDefaultProject(page);
   await page.getByRole("button", { name: "设置" }).click();
+  const focusMinutes = page.getByLabel("普通任务专注分钟");
+  await focusMinutes.fill("2");
+  await focusMinutes.press("Enter");
   const habitMinutes = page.getByLabel("习惯任务专注分钟");
   await habitMinutes.fill("2");
   await habitMinutes.press("Enter");
@@ -162,6 +171,8 @@ test("a locked habit end-time lane keeps its host after another project becomes 
   await page.clock.install({ time: new Date("2026-08-03T08:00:00Z") });
   await createDefaultProject(page);
   await page.getByRole("button", { name: "设置" }).click();
+  await page.getByLabel("普通任务专注分钟").fill("1");
+  await page.getByLabel("普通任务专注分钟").press("Enter");
   await page.getByLabel("习惯任务专注分钟").fill("1");
   await page.getByLabel("习惯任务专注分钟").press("Enter");
   await page.getByLabel("每轮休息分钟").fill("0");
@@ -187,7 +198,7 @@ test("a locked habit end-time lane keeps its host after another project becomes 
 
   await expect(page.getByRole("heading", { name: "按结束时间排程" })).toBeVisible();
   await expect(page.locator(".workbench-context")).toContainText("习惯轮次直接推进建筑");
-  await expect(page.getByText("后来成为当前的普通任务", { exact: true })).toHaveCount(0);
+  await expect(page.locator(".focus-workbench-panel").getByText("后来成为当前的普通任务", { exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "调整本次计划" }).click();
   await expect(page.getByRole("dialog", { name: "安排习惯专注" })).toContainText("结束后不进入普通任务的统一汇报");
   await page.getByRole("button", { name: "关闭本次计划" }).click();

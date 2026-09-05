@@ -13,7 +13,7 @@ This workspace's active product is Tomato Clock.
 - Discussion: inspect and answer; do not change files unless the user confirms a decision or asks for implementation.
 - Diagnosis or review: gather evidence and report findings; do not silently implement a fix.
 - Implementation: update the active version work packet, implement the confirmed scope, and verify by risk.
-- Release: follow `tools/Prepare-Release.ps1` and `tools/Publish-Release.ps1`; publishing always requires explicit user authorization.
+- Release: run `tools/Prepare-Release.ps1`, `tools/Install-ReleaseCandidate.ps1`, `tools/Accept-ReleaseCandidate.ps1`, then `tools/Publish-Release.ps1` against one immutable candidate; recording acceptance and publishing each require the corresponding explicit user authorization.
 
 ## Product Authority
 

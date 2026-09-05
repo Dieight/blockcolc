@@ -5,7 +5,7 @@ import { createBuildingMemory } from './BuildingMemoryPanel';
 
 function stateFixture(): DomainState {
   return {
-    schemaVersion: 9,
+    schemaVersion: 10,
     projects: [{
       id: 'project-a', title: '写作计划', kind: 'finite', settlementIndex: 0,
       blueprintId: 'builtin-small-workshop', importedBlueprint: null,

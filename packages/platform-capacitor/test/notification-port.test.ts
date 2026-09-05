@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BREAK_COMPLETION_NOTIFICATION_ID, BREAK_NOTIFICATION_ID, FOCUS_NOTIFICATION_ID, breakLiveUpdateOptions, breakNotificationKey, getBreakLiveUpdateCapability, mapPermission, openBreakLiveUpdateSettings } from '../src/index';
+import { BREAK_COMPLETION_NOTIFICATION_ID, BREAK_NOTIFICATION_ID, FOCUS_NOTIFICATION_ID, breakLiveUpdateOptions, breakNotificationKey, focusLiveUpdateOptions, focusNotificationKey, getBreakLiveUpdateCapability, mapPermission, openBreakLiveUpdateSettings } from '../src/index';
 
 describe('Capacitor notification contract', () => {
   it('uses one stable Android notification identifier', () => { expect(FOCUS_NOTIFICATION_ID).toBe(42001); });
@@ -19,11 +19,32 @@ describe('Capacitor notification contract', () => {
       totalRounds: 4,
       nextTaskTitle: '整理笔记',
     })).toEqual({
+      kind: 'break',
+      updateKey: ['break', '2026-08-31T12:34:56.000Z', 2, 4, '整理笔记'].join('\u0000'),
       endsAtEpochMs: Date.parse('2026-08-31T12:34:56.000Z'),
       completedRounds: 2,
       totalRounds: 4,
       nextTaskTitle: '整理笔记',
     });
+  });
+  it('uses one idempotent focus key and passes thematic card context to Android', () => {
+    const focus = {
+      sessionId: 'focus-7',
+      endsAt: '2026-09-04T13:00:00.000Z',
+      projectTitle: '完成 V26',
+      taskTitle: '回归测试',
+      marathon: true,
+    };
+    expect(focusLiveUpdateOptions(focus)).toEqual({
+      kind: 'focus',
+      updateKey: focusNotificationKey(focus),
+      endsAtEpochMs: Date.parse(focus.endsAt),
+      projectTitle: '完成 V26',
+      taskTitle: '回归测试',
+      marathon: true,
+    });
+    expect(focusNotificationKey(focus)).toBe(focusNotificationKey({ ...focus }));
+    expect(focusNotificationKey(focus)).not.toBe(focusNotificationKey({ ...focus, sessionId: 'focus-8' }));
   });
   it.each([
     ['granted', 'granted'], ['denied', 'denied'], ['prompt', 'prompt'], ['prompt-with-rationale', 'prompt'],

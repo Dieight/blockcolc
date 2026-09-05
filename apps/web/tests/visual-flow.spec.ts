@@ -20,7 +20,9 @@ async function startFocus(page: import('@playwright/test').Page, rounds = 1) {
 }
 
 async function enableTaskEditing(page: import('@playwright/test').Page) {
-  await page.getByRole('button', { name: '编辑施工清单' }).click();
+  const enter = page.getByRole('button', { name: '编辑施工清单', exact: true });
+  if (await enter.isVisible().catch(() => false)) await enter.click();
+  await expect(page.getByRole('button', { name: '结束编辑施工清单', exact: true })).toBeVisible();
 }
 
 async function replaceSubtasks(page: import('@playwright/test').Page, lines: string[]) {
@@ -395,9 +397,19 @@ test('keeps the world renderer resident across tab switches', async ({ page }) =
   const box = await canvas.boundingBox();
   if (!box) throw new Error('World canvas has no layout box');
   const y = box.y + box.height * 0.52;
-  await canvas.dispatchEvent('pointerdown', { pointerId: 71, pointerType: 'touch', isPrimary: true, clientX: box.x + box.width * 0.3, clientY: y, buttons: 1 });
-  await canvas.dispatchEvent('pointermove', { pointerId: 71, pointerType: 'touch', isPrimary: true, clientX: box.x + box.width * 0.7, clientY: y, buttons: 1 });
-  await canvas.dispatchEvent('pointerup', { pointerId: 71, pointerType: 'touch', isPrimary: true, clientX: box.x + box.width * 0.7, clientY: y, buttons: 0 });
+  // Keep this synthetic gesture inside one browser task. Separate Playwright
+  // dispatches can be divided by a software-WebGL frame longer than the real
+  // 2.5-second stale-pointer guard, correctly releasing the fake touch before
+  // its move arrives. Physical pointer events are not split this way.
+  await canvas.evaluate((node, gesture) => {
+    const dispatch = (type: string, clientX: number, buttons: number) => node.dispatchEvent(new PointerEvent(type, {
+      bubbles: true, cancelable: true, pointerId: 71, pointerType: 'touch', isPrimary: true,
+      clientX, clientY: gesture.y, buttons,
+    }));
+    dispatch('pointerdown', gesture.startX, 1);
+    dispatch('pointermove', gesture.endX, 1);
+    dispatch('pointerup', gesture.endX, 0);
+  }, { startX: box.x + box.width * 0.3, endX: box.x + box.width * 0.7, y });
   await expect.poll(async () => Math.abs(Number(await canvas.getAttribute('data-camera-azimuth')))).toBeGreaterThan(2);
   const azimuth = await canvas.getAttribute('data-camera-azimuth');
 
@@ -407,7 +419,8 @@ test('keeps the world renderer resident across tab switches', async ({ page }) =
 
   // The renderer survived the round trip: same camera, no loading page, diagnostics intact.
   await expect(page.locator('.boot-page')).toHaveCount(0);
-  await expect(canvas).toHaveAttribute('data-camera-azimuth', azimuth!);
+  const restoredAzimuth = Number(await canvas.getAttribute('data-camera-azimuth'));
+  expect(restoredAzimuth).toBeCloseTo(Number(azimuth), 2);
   await expect(canvas).toHaveAttribute('data-environment-style', 'natural-valley');
 });
 

@@ -37,7 +37,11 @@ test('imports a real Litematic under a CSP that forbids eval', async ({ page }) 
   });
 
   await page.goto('/');
-  await page.getByLabel('导入 .litematic').setInputFiles(sample);
+  // Settings stays resident after the V26 cold-start preload, so scope this
+  // import to the visible first-run project setup rather than the hidden
+  // blueprint-library file input.
+  const setup = page.locator('.setup');
+  await setup.getByLabel('导入 .litematic').setInputFiles(sample);
   await expect(page.getByText(/4,301 个方块/)).toBeVisible();
   await expect(page.getByRole('radio')).toHaveCount(4);
 

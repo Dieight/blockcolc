@@ -1,6 +1,6 @@
 {
   "name": "tomato-clock",
-  "version": "1.10.0",
+  "version": "1.11.0",
   "private": true,
   "workspaces": [
     "packages/*",
@@ -17,7 +17,8 @@
     "test:unit:full": "npm run test:fast && npm run test:extended",
     "test:web:smoke": "npm run test:e2e:smoke -w @tomato-clock/web",
     "test:web:diagnostics": "npm run test:e2e:diagnostics -w @tomato-clock/web",
-    "test:web:release": "npm run test:e2e -w @tomato-clock/web -- --workers=1",
+    "test:web:release": "npm run test:e2e:release -w @tomato-clock/web",
+    "test:web:release:check": "npm run test:e2e:release:check -w @tomato-clock/web",
     "test:e2e": "npm run test:e2e --workspaces --if-present"
   }
 }

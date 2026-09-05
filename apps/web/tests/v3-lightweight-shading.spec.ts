@@ -1,23 +1,20 @@
 import { expect, test } from "@playwright/test";
-import { resolve } from "node:path";
 
 test("turns a real blueprint lamp glow on only at night and keeps it attached while rotating", async ({ page }, testInfo) => {
   await page.clock.install({ time: new Date("2026-07-26T12:00:00+08:00") });
   await page.goto("/");
-  const rendererPath = resolve(process.cwd(), "../../packages/voxel/src/renderer.ts").replaceAll("\\", "/");
-  const rendererModuleUrl = `/@fs/${rendererPath}`;
+  await page.waitForFunction(() => Boolean((window as typeof window & { __blockcolcVoxelTest?: unknown }).__blockcolcVoxelTest));
 
   const mountLampScene = async () => {
-    await page.evaluate(async (moduleUrl) => {
+    await page.evaluate(async () => {
       const previous = (window as unknown as { __lampRenderer?: { dispose(): void } }).__lampRenderer;
       previous?.dispose();
       document.body.innerHTML = '<canvas aria-label="灯具光晕验证" style="display:block;width:100vw;height:100vh"></canvas>';
-      const load = new Function("moduleUrl", "return import(moduleUrl)") as (moduleUrl: string) => Promise<{
+      const { createVoxelRenderer } = (window as unknown as { __blockcolcVoxelTest: {
         createVoxelRenderer(canvas: HTMLCanvasElement, options: unknown): {
           setWorld(world: unknown): void; resize(): void; dispose(): void;
         };
-      }>;
-      const { createVoxelRenderer } = await load(moduleUrl);
+      } }).__blockcolcVoxelTest;
       const voxels = [] as Array<Record<string, unknown>>;
       for (let x = -3; x <= 3; x += 1) for (let z = -3; z <= 3; z += 1) {
         voxels.push({ x, y: 0, z, materialId: "stone", buildOrder: 0, sourceBlockId: "minecraft:stone_bricks" });
@@ -42,7 +39,7 @@ test("turns a real blueprint lamp glow on only at night and keeps it attached wh
       });
       renderer.resize();
       (window as unknown as { __lampRenderer?: typeof renderer }).__lampRenderer = renderer;
-    }, rendererModuleUrl);
+    });
   };
 
   await mountLampScene();

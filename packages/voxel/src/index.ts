@@ -15,3 +15,5 @@ export * from './resource-geometry';
 export * from './material-response';
 export * from './original-materials';
 export * from './lighting-postprocess';
+export * from './input-frame-scheduler';
+export * from './terrain-profile';

@@ -277,6 +277,27 @@ describe("initialization and command persistence", () => {
     expect(f.notifications.scheduled.get("focus-session-3")).toEqual({
       sessionId: "focus-session-3",
       endsAt: "2026-07-20T09:25:00.000Z",
+      projectTitle: "Build release",
+      taskTitle: "One",
+    });
+  });
+
+  it("passes habit marathon context to the ongoing focus presentation", async () => {
+    const f = await fixture();
+    await f.service.dispatch({
+      type: "CreateHabitProject",
+      title: "晚间阅读",
+      blueprintId: "cottage",
+      targetRounds: 10,
+    });
+    await f.service.dispatch({ type: "StartFocus", subtaskId: null, plannedDurationMs: 45 * 60_000, marathon: true });
+    const active = f.service.snapshot().activeFocusSession!;
+    expect(f.notifications.scheduled.get(active.id)).toEqual({
+      sessionId: active.id,
+      endsAt: "2026-07-20T09:45:00.000Z",
+      projectTitle: "晚间阅读",
+      taskTitle: "第 1 座习惯建筑",
+      marathon: true,
     });
   });
 

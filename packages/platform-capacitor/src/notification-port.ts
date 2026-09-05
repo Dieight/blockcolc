@@ -2,7 +2,7 @@ import { Capacitor } from '@capacitor/core';
 import { LocalNotifications, type PermissionStatus } from '@capacitor/local-notifications';
 import type { BreakCompletionNotification, FocusCompletionNotification, NotificationCapability, NotificationPermission, NotificationPort } from '@tomato-clock/application';
 import { setNativeProductSystemUiOpen } from './lifecycle';
-import { cancelBreakLiveUpdate, showBreakLiveUpdate } from './break-live-update';
+import { breakNotificationKey, cancelBreakLiveUpdate, cancelFocusLiveUpdate, showBreakLiveUpdate, showFocusLiveUpdate } from './break-live-update';
 
 export const FOCUS_NOTIFICATION_ID = 42001;
 export const BREAK_NOTIFICATION_ID = 42002;
@@ -41,7 +41,10 @@ export class CapacitorNotificationPort implements NotificationPort {
 
   async scheduleFocusCompletion(notification: FocusCompletionNotification): Promise<void> {
     if (!isCapacitorNative()) return;
-    await this.cancelFocusCompletion(notification.sessionId);
+    // The at-time alarm can be safely replaced because it is not visible yet.
+    // The ongoing notification is updated in place by its stable session key,
+    // avoiding the cancel/repost flash on lifecycle recovery.
+    await LocalNotifications.cancel({ notifications: [{ id: FOCUS_NOTIFICATION_ID }] });
     await LocalNotifications.schedule({ notifications: [{
       id: FOCUS_NOTIFICATION_ID,
       title: '专注完成',
@@ -49,10 +52,22 @@ export class CapacitorNotificationPort implements NotificationPort {
       schedule: { at: new Date(notification.endsAt), allowWhileIdle: true },
       extra: { kind: 'focus-completed', sessionId: notification.sessionId, endsAt: notification.endsAt },
     }] });
+    try {
+      await showFocusLiveUpdate(notification);
+    } catch (error) {
+      // Completion recovery remains valid even when the OEM/system refuses a
+      // promoted ongoing notification.
+      console.warn('Android focus Live Update is unavailable', error);
+    }
   }
 
   async cancelFocusCompletion(_sessionId: string): Promise<void> {
     if (!isCapacitorNative()) return;
+    try {
+      await cancelFocusLiveUpdate();
+    } catch (error) {
+      console.warn('Android focus Live Update could not be cancelled', error);
+    }
     await LocalNotifications.cancel({ notifications: [{ id: FOCUS_NOTIFICATION_ID }] });
   }
 
@@ -101,10 +116,6 @@ export class CapacitorNotificationPort implements NotificationPort {
     }
     return { permission, precision, canSchedule: true };
   }
-}
-
-export function breakNotificationKey(notification: BreakCompletionNotification): string {
-  return [notification.endsAt, notification.completedRounds ?? '', notification.totalRounds ?? '', notification.nextTaskTitle ?? ''].join('\u0000');
 }
 
 async function requestExactAlarmOnce(): Promise<void> {

@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { FrameRequestScheduler, PointerOwnership, type ReleasedPointer } from "./input-frame-scheduler";
 import type { BlockFace, ResourcePackManifest } from "@tomato-clock/resource-pack";
 import { BlueprintV1, resolveBuiltinBlueprint, validateBlueprint } from "./blueprint";
 import {
@@ -20,13 +21,13 @@ import {
   layoutVillage,
   placeImportedDecorations,
   roadCellsForVillage,
-  terrainHeightAt,
   type ImportedDecorationPlacement,
   type VillagePlacement,
 } from "./village";
 import {
   createRoadGeometryData,
   createSteppedTerrainData,
+  settlementGroundHeightAt,
   type MergedGeometryData,
   type TerrainEnvironmentStyle,
   type TerrainGenerationVersion,
@@ -135,6 +136,13 @@ export interface RendererDiagnostics {
   pixelRatio: number;
   render: { calls: number; triangles: number; points: number; lines: number };
   memory: { geometries: number; textures: number };
+  /** Complete scene rebuilds since this renderer instance was created. */
+  worldRebuildCount: number;
+  worldRebuildLastMs: number;
+  worldRebuildTotalMs: number;
+  worldRebuildMaxMs: number;
+  /** Time from renderer construction to its first rendered non-empty scene. */
+  firstNonemptyFrameMs: number | null;
   interactionP95Ms: number | null;
   interactionTotalP95Ms: number | null;
   interactionTotalMaxMs: number;
@@ -235,7 +243,7 @@ export interface VoxelResourcePack {
 export interface VoxelRenderer {
   setWorld(world: WorldSnapshot | null): void;
   setWorlds(worlds: readonly WorldSnapshot[]): void;
-  /** Frames one existing building without rebuilding scene geometry or lighting. */
+  /** Frames one existing building, or the complete settlement when null, without rebuilding scene geometry or lighting. */
   focusProject(projectId: string | null): void;
   setResourcePack(pack: VoxelResourcePack | null): Promise<void>;
   setReducedMotion(value: boolean): void;
@@ -495,7 +503,6 @@ export function createVoxelRenderer(
   let glowSprites: TrackedGlowSprite[] = [];
   let reducedMotion = false;
   let disposed = false;
-  let frame = 0;
   /** False while the canvas pane is hidden (tab switch); frame rendering pauses until setVisible(true). */
   let paneVisible = true;
   let constructionPulseUntilMs = 0;
@@ -528,6 +535,12 @@ export function createVoxelRenderer(
   const lightingPostProcessor = new LightingPostProcessor(renderer);
   let postProcessRenderCount = 0;
   let postProcessBypassCount = 0;
+  const rendererCreatedAtMs = performance.now();
+  let worldRebuildCount = 0;
+  let worldRebuildLastMs = 0;
+  let worldRebuildTotalMs = 0;
+  let worldRebuildMaxMs = 0;
+  let firstNonemptyFrameMs: number | null = null;
   let pointerMoveCount = 0;
   let resizeCount = 0;
   let shadowToggleCount = 0;
@@ -581,11 +594,9 @@ export function createVoxelRenderer(
   let immersiveBottomBand = 0;
   /** V21: fraction of the viewport covered by the immersive right-hand column (0 = none). */
   let immersiveRightBand = 0;
-  const pointers = new Map<number, { x: number; y: number }>();
-  const pointerStarts = new Map<number, { x: number; y: number }>();
+  const pointerOwnership = new PointerOwnership(2_500);
   let previousPinchDistance: number | null = null;
   let previousPinchCenterY: number | null = null;
-  let interactionStaleAtMs: number | null = null;
   let cachedShadowTransformSyncs = 0;
   let lastWorlds: readonly WorldSnapshot[] = [];
   let resourcePackGeneration = 0;
@@ -799,6 +810,11 @@ export function createVoxelRenderer(
     canvas.dataset.pixelRatio = renderer.getPixelRatio().toFixed(2);
     canvas.dataset.postProcessRenderCount = String(postProcessRenderCount);
     canvas.dataset.postProcessBypassCount = String(postProcessBypassCount);
+    if (firstNonemptyFrameMs === null && renderer.info.render.triangles > 0) {
+      firstNonemptyFrameMs = performance.now() - rendererCreatedAtMs;
+      canvas.dataset.firstNonemptyFrameMs = firstNonemptyFrameMs.toFixed(2);
+      logNativeRenderDiagnostic(`[blockcolc-first-nonempty-frame] ${JSON.stringify({ durationMs: Number(firstNonemptyFrameMs.toFixed(2)), triangles: renderer.info.render.triangles, rebuildCount: worldRebuildCount })}`);
+    }
     const elapsed = performance.now() - started;
     if (ambientFrameInFlight) {
       // Adapt the ambient cadence to the measured frame cost so a slow
@@ -834,19 +850,24 @@ export function createVoxelRenderer(
     return cameraStillMoving;
   }
 
-  function requestRender(): void {
-    if (disposed || frame !== 0 || !paneVisible) return;
-    frame = requestAnimationFrame(() => {
-      frame = 0;
-      const frameStartedAtMs = performance.now();
+  const frameScheduler = new FrameRequestScheduler({
+    requestFrame: callback => requestAnimationFrame(callback),
+    cancelFrame: frameId => cancelAnimationFrame(frameId),
+    now: () => performance.now(),
+    canRender: () => !disposed && paneVisible,
+    render: frameStartedAtMs => {
       releaseStaleInteraction(frameStartedAtMs);
       const cameraStillMoving = renderFrame(frameStartedAtMs);
       // Software WebGL can spend longer than the entire stale window inside a
       // single frame. Recheck after rendering so a stolen pointer cannot keep
       // scheduling expensive interaction frames while interval tasks starve.
       releaseStaleInteraction(performance.now());
-      if (interacting || nativeInputActive || cameraStillMoving || performance.now() < constructionPulseUntilMs) requestRender();
-    });
+      return interacting || nativeInputActive || cameraStillMoving || performance.now() < constructionPulseUntilMs;
+    },
+  });
+
+  function requestRender(): void {
+    frameScheduler.request();
   }
 
   // V20 CT-01: ambient frames (cloud drift, tree sway) share the same single rAF
@@ -860,7 +881,7 @@ export function createVoxelRenderer(
   let lastAmbientFrameStartedMs = Number.NEGATIVE_INFINITY;
   let ambientFrameInFlight = false;
   function requestAmbientRender(nowMs: number): void {
-    if (disposed || frame !== 0 || !paneVisible || nowMs - lastAmbientFrameStartedMs < ambientFrameIntervalMs) return;
+    if (disposed || frameScheduler.pending || !paneVisible || nowMs - lastAmbientFrameStartedMs < ambientFrameIntervalMs) return;
     lastAmbientFrameStartedMs = nowMs;
     ambientFrameInFlight = true;
     requestRender();
@@ -885,6 +906,7 @@ export function createVoxelRenderer(
   }
 
   function rebuild(worlds: readonly WorldSnapshot[], previousWorlds: readonly WorldSnapshot[] = lastWorlds): void {
+    const rebuildStartedAtMs = performance.now();
     const preserveCameraView = positionedWorlds.length > 0 && sameSpatialWorldLayout(previousWorlds, worlds);
     sceneRevision += 1;
     clearGroup(buildingGroup);
@@ -1001,9 +1023,11 @@ export function createVoxelRenderer(
     canvas.dataset.terrainHydrologyProtectedWater = String(terrainData.hydrology.protectedWaterCellCount);
     canvas.dataset.terrainFarExtent = String(terrainData.bounds.maxX);
     addTerrain(terrainData);
-    addRoads(roads, positioned, [...buildingPads, ...decorationPads]);
+    const environmentStyle = previewMode ? "classic-island" : options.environmentStyle ?? "classic-island";
+    const roadGroundHeightAt = (x: number, z: number) => settlementGroundHeightAt(x, z, environmentStyle);
+    addRoads(roads, positioned, [...buildingPads, ...decorationPads], roadGroundHeightAt);
     const emissivePoints: EmissivePoint[] = [];
-    addRoadLamps(roads, positioned, emissivePoints);
+    addRoadLamps(roads, positioned, emissivePoints, roadGroundHeightAt);
     for (const world of positioned) addBuilding(world, emissivePoints, revealPlans.get(world.projectId) ?? null);
     for (const decoration of importedDecorations) addImportedDecoration(decoration, emissivePoints);
     activeResourcePack?.atlas.pages.forEach((page, pageIndex) => {
@@ -1012,10 +1036,18 @@ export function createVoxelRenderer(
     });
     addClusteredLights(emissivePoints);
     updateSceneBounds(positioned, importedDecorations, terrainData, previewMode);
+    // Frame the new content before capturing the forced shadow sample. Doing
+    // this afterward leaves the sample anchored to the previous camera target,
+    // so the next ordinary lighting tick is misclassified as camera movement.
+    frameScene(!preserveCameraView, preserveCameraView);
     updateWeather(localDateForDate(new Date()), true);
     updateLighting(new Date(), true);
-    frameScene(!preserveCameraView, preserveCameraView);
     cacheStaticWorldTransforms();
+    worldRebuildLastMs = performance.now() - rebuildStartedAtMs;
+    worldRebuildCount += 1;
+    worldRebuildTotalMs += worldRebuildLastMs;
+    worldRebuildMaxMs = Math.max(worldRebuildMaxMs, worldRebuildLastMs);
+    logNativeRenderDiagnostic(`[blockcolc-world-rebuild] ${JSON.stringify({ count: worldRebuildCount, durationMs: Number(worldRebuildLastMs.toFixed(2)), worldCount: worlds.length, environmentStyle: options.environmentStyle ?? 'classic-island' })}`);
     updateDiagnosticsDataset();
     requestRender();
   }
@@ -1226,8 +1258,8 @@ export function createVoxelRenderer(
 
   type TerrainMaterialKey = "grass" | "dirt" | "stone" | "water";
 
-  function addRoads(roads: ReturnType<typeof roadCellsForVillage>, placements: readonly VillagePlacement[], pads: readonly TerrainPad[]): void {
-    const data = createRoadGeometryData(roads, placements, pads);
+  function addRoads(roads: ReturnType<typeof roadCellsForVillage>, placements: readonly VillagePlacement[], pads: readonly TerrainPad[], groundHeightAt: (x: number, z: number) => number): void {
+    const data = createRoadGeometryData(roads, placements, pads, groundHeightAt);
     if (data.indices.length === 0) return;
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute("position", new THREE.Float32BufferAttribute(data.positions, 3));
@@ -1240,7 +1272,7 @@ export function createVoxelRenderer(
     roadGroup.add(mesh);
   }
 
-  function addRoadLamps(roads: ReturnType<typeof roadCellsForVillage>, placements: readonly VillagePlacement[], emissivePoints: EmissivePoint[]): void {
+  function addRoadLamps(roads: ReturnType<typeof roadCellsForVillage>, placements: readonly VillagePlacement[], emissivePoints: EmissivePoint[], groundHeightAt: (x: number, z: number) => number): void {
     if (roads.length < 8) return;
     const occupied = placements.map((placement) => ({
       x: placement.worldPosition.x, z: placement.worldPosition.z,
@@ -1254,7 +1286,7 @@ export function createVoxelRenderer(
     const lanterns = new THREE.InstancedMesh(new THREE.BoxGeometry(0.72, 0.72, 0.72), material("lamp"), selected.length);
     const matrix = new THREE.Matrix4();
     selected.forEach((cell, index) => {
-      const ground = terrainHeightAt(cell.x, cell.z);
+      const ground = groundHeightAt(cell.x, cell.z) - 0.455;
       matrix.makeTranslation(cell.x, ground + 1.25, cell.z); poles.setMatrixAt(index, matrix);
       matrix.makeTranslation(cell.x, ground + 2.55, cell.z); lanterns.setMatrixAt(index, matrix);
       emissivePoints.push({ x: cell.x, y: ground + 2.55, z: cell.z, intensity: 15 });
@@ -2133,15 +2165,12 @@ export function createVoxelRenderer(
   }
 
   function releaseStaleInteraction(nowMs: number): void {
-    if (interacting && interactionStaleAtMs !== null && nowMs > interactionStaleAtMs) {
+    if (interacting && pointerOwnership.releaseIfStale(nowMs)) {
       // A pointer that produced no movement for the stale window was left
       // behind by a system gesture; release it so the ambient drift resumes.
-      pointerStarts.clear();
-      pointers.clear();
       previousPinchDistance = null;
       previousPinchCenterY = null;
       interacting = false;
-      interactionStaleAtMs = null;
       updateDiagnosticsDataset();
       requestRender();
     }
@@ -2442,7 +2471,7 @@ export function createVoxelRenderer(
   }
 
   const pointerDown = (event: PointerEvent): void => {
-    if (pointers.size === 0) {
+    if (pointerOwnership.count === 0) {
       pointerMoveCount = 0;
       interactionAnimationFrameIntervals = [];
       interactionAnimationFrameMaxMs = 0;
@@ -2450,31 +2479,27 @@ export function createVoxelRenderer(
       lastInteractionAnimationFrameMs = null;
     }
     interacting = true;
-    interactionStaleAtMs = performance.now() + 2_500;
-    pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
-    pointerStarts.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    pointerOwnership.begin(event.pointerId, { x: event.clientX, y: event.clientY }, performance.now());
     updateDiagnosticsDataset();
     try { canvas.setPointerCapture(event.pointerId); } catch { /* Synthetic QA events do not own native capture. */ }
-    if (pointers.size === 2) updatePinchReference();
+    if (pointerOwnership.count === 2) updatePinchReference();
     requestRender();
   };
   const pointerMove = (event: PointerEvent): void => {
     pointerMoveCount += 1;
-    const previous = pointers.get(event.pointerId);
-    if (!previous) return;
+    const movement = pointerOwnership.move(event.pointerId, { x: event.clientX, y: event.clientY }, performance.now());
+    if (!movement) return;
     // Only movement from a pointer owned by this canvas can keep an
     // interaction alive. Hover mice, styluses and synthetic QA events may
     // continue moving after Android has stolen a touch pointer; allowing those
     // unrelated IDs to extend the deadline leaves ambient motion stuck.
-    if (interacting) interactionStaleAtMs = performance.now() + 2_500;
-    const next = { x: event.clientX, y: event.clientY };
-    pointers.set(event.pointerId, next);
-    if ((options.readNativeInput || options.subscribeNativeInput) && pointers.size === 1) { requestRender(); return; }
-    if (pointers.size === 1) {
+    const { previous, current: next } = movement;
+    if ((options.readNativeInput || options.subscribeNativeInput) && pointerOwnership.count === 1) { requestRender(); return; }
+    if (pointerOwnership.count === 1) {
       targetCameraAzimuth += (next.x - previous.x) * 0.011;
       targetCameraPitch = THREE.MathUtils.clamp(targetCameraPitch + (next.y - previous.y) * 0.0045, THREE.MathUtils.degToRad(24), THREE.MathUtils.degToRad(64));
-    } else if (pointers.size === 2) {
-      const [first, second] = [...pointers.values()];
+    } else if (pointerOwnership.count === 2) {
+      const [first, second] = pointerOwnership.points();
       const distance = Math.hypot(first!.x - second!.x, first!.y - second!.y);
       const centerY = (first!.y + second!.y) / 2;
       if (previousPinchDistance && distance > 1) {
@@ -2490,10 +2515,8 @@ export function createVoxelRenderer(
     requestRender();
   };
   const pointerUp = (event: PointerEvent): void => {
-    const start = pointerStarts.get(event.pointerId);
-    const wasSinglePointer = pointers.size === 1;
-    releasePointer(event.pointerId);
-    if (wasSinglePointer && start && Math.hypot(event.clientX - start.x, event.clientY - start.y) <= 8) {
+    const released = releasePointer(event.pointerId);
+    if (released?.wasOnlyPointer && Math.hypot(event.clientX - released.start.x, event.clientY - released.start.y) <= 8) {
       pickTerrainAt(event.clientX, event.clientY);
       selectProjectAt(event.clientX, event.clientY);
     }
@@ -2507,24 +2530,22 @@ export function createVoxelRenderer(
   const pointerCancel = (event: PointerEvent): void => {
     releasePointer(event.pointerId);
   };
-  const releasePointer = (pointerId: number): void => {
-    pointerStarts.delete(pointerId);
-    pointers.delete(pointerId);
-    if (pointers.size < 2) { previousPinchDistance = null; previousPinchCenterY = null; }
-    if (pointers.size === 0) {
+  const releasePointer = (pointerId: number): ReleasedPointer | null => {
+    const released = pointerOwnership.release(pointerId);
+    if (!released) return null;
+    if (pointerOwnership.count < 2) { previousPinchDistance = null; previousPinchCenterY = null; }
+    if (pointerOwnership.count === 0) {
       interacting = false;
-      interactionStaleAtMs = null;
       updateDiagnosticsDataset();
       requestRender();
     }
+    return released;
   };
   const windowBlur = (): void => {
-    pointerStarts.clear();
-    pointers.clear();
+    pointerOwnership.clear();
     previousPinchDistance = null;
     previousPinchCenterY = null;
     interacting = false;
-    interactionStaleAtMs = null;
     updateDiagnosticsDataset();
     requestRender();
   };
@@ -2538,7 +2559,7 @@ export function createVoxelRenderer(
   };
 
   function updatePinchReference(): void {
-    const [first, second] = [...pointers.values()];
+    const [first, second] = pointerOwnership.points();
     previousPinchDistance = Math.hypot(first!.x - second!.x, first!.y - second!.y);
     previousPinchCenterY = (first!.y + second!.y) / 2;
   }
@@ -2664,6 +2685,11 @@ export function createVoxelRenderer(
       pixelRatio: renderer.getPixelRatio(),
       render: { ...renderer.info.render },
       memory: { ...renderer.info.memory },
+      worldRebuildCount,
+      worldRebuildLastMs,
+      worldRebuildTotalMs,
+      worldRebuildMaxMs,
+      firstNonemptyFrameMs,
       interactionP95Ms: interactionP95(),
       interactionTotalP95Ms: percentile(interactionTotalDurations, 0.95),
       interactionTotalMaxMs,
@@ -2760,10 +2786,15 @@ export function createVoxelRenderer(
   function updateDiagnosticsDataset(): void {
     const diagnostics = getDiagnostics();
     canvas.dataset.interacting = String(interacting);
-    canvas.dataset.pointerCount = String(pointers.size);
+    canvas.dataset.pointerCount = String(pointerOwnership.count);
     canvas.dataset.renderCalls = String(diagnostics.render.calls);
     canvas.dataset.renderTriangles = String(diagnostics.render.triangles);
     canvas.dataset.pixelRatio = diagnostics.pixelRatio.toFixed(2);
+    canvas.dataset.worldRebuildCount = String(diagnostics.worldRebuildCount);
+    canvas.dataset.worldRebuildLastMs = diagnostics.worldRebuildLastMs.toFixed(2);
+    canvas.dataset.worldRebuildTotalMs = diagnostics.worldRebuildTotalMs.toFixed(2);
+    canvas.dataset.worldRebuildMaxMs = diagnostics.worldRebuildMaxMs.toFixed(2);
+    if (diagnostics.firstNonemptyFrameMs !== null) canvas.dataset.firstNonemptyFrameMs = diagnostics.firstNonemptyFrameMs.toFixed(2);
     canvas.dataset.worldRotation = rotatableWorldRoot.rotation.y.toFixed(4);
     canvas.dataset.cameraAzimuth = cameraAzimuth.toFixed(4);
     canvas.dataset.cameraDistanceRatio = (cameraDistance / fittedDistance).toFixed(4);
@@ -2902,11 +2933,15 @@ export function createVoxelRenderer(
       nativeInputTransport: diagnostics.nativeInputTransport,
     });
     console.info("[blockcolc-render-diagnostic]", payload);
+    logNativeRenderDiagnostic(`[blockcolc-render-diagnostic] ${payload}`);
+  }
+
+  function logNativeRenderDiagnostic(message: string): void {
     try {
       const bridge = (window as unknown as {
-        BlockcolcNativeInput?: { logRenderDiagnostic?: (message: string) => void };
+        BlockcolcNativeInput?: { logRenderDiagnostic?: (value: string) => void };
       }).BlockcolcNativeInput;
-      bridge?.logRenderDiagnostic?.(`[blockcolc-render-diagnostic] ${payload}`);
+      bridge?.logRenderDiagnostic?.(message);
     } catch { /* The native diagnostic bridge is optional on web. */ }
   }
 
@@ -3012,14 +3047,20 @@ export function createVoxelRenderer(
     },
     focusProject(projectId) {
       if (projectId === focusedProjectId) return;
-      const preserveView = projectId === null;
       focusedProjectId = projectId;
-      frameScene(!preserveView, preserveView);
+      // Closing the memory panel no longer clears focus. Reaching null is an
+      // explicit "reset map" action, so restore the settlement target and zoom
+      // instead of preserving the former building as the orbit pivot.
+      frameScene(true);
       requestRender();
     },
     async setResourcePack(pack) {
       const generation = ++resourcePackGeneration;
       if (pack === null) {
+        // Initial boot has already built the untextured world. Treating an
+        // already-null pack as a change used to rebuild the entire terrain a
+        // second time before the first useful frame.
+        if (activeResourcePack === null) return;
         const previous = activeResourcePack;
         const previousAnimations = atlasAnimationControllers;
         activeResourcePack = null;
@@ -3093,7 +3134,7 @@ export function createVoxelRenderer(
       disposed = true;
       if (nativeInputUnsubscribe) void nativeInputUnsubscribe();
       resourcePackGeneration += 1;
-      cancelAnimationFrame(frame);
+      frameScheduler.dispose();
       for (const controller of atlasAnimationControllers) controller?.dispose();
       atlasAnimationControllers = [];
       window.clearInterval(lightingTimer);

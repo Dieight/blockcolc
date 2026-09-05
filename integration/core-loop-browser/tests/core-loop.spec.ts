@@ -12,7 +12,10 @@ test("persists and recovers the complete first backend vertical slice", async ({
   expect(beforeReload.completedLocalDate).toBe("2026-07-23");
   expect(beforeReload.buildingCompletionBasisPoints).toBe(2500);
   expect(beforeReload.buildingConditionBasisPoints).toBe(10000);
-  expect(beforeReload.scheduled).toContainEqual({ sessionId: beforeReload.completedSessionId, endsAt: beforeReload.endsAt });
+  expect(beforeReload.scheduled).toContainEqual(expect.objectContaining({
+    sessionId: beforeReload.completedSessionId,
+    endsAt: beforeReload.endsAt,
+  }));
   expect(beforeReload.cancelled).toContain(beforeReload.completedSessionId);
 
   await page.reload();

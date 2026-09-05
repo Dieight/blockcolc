@@ -24,7 +24,7 @@ import type {
 export function createInitialState(timeZone = "UTC", restWeekdays: number[] = [0, 6]): DomainState {
   assertCalendar(timeZone, restWeekdays);
   return {
-    schemaVersion: 9,
+    schemaVersion: 10,
     projects: [],
     habitBuildings: [],
     activeProjectId: null,

@@ -54,7 +54,7 @@ test('selects a building with a light tap', async ({ page }, testInfo) => {
   await expect(page.getByRole('dialog', { name: '我的第一座工坊' })).toContainText('建筑记忆');
   await expect(page.getByRole('dialog', { name: '我的第一座工坊' })).toContainText('0%');
   await expect(page.getByRole('button', { name: '继续专注' })).toBeVisible();
-  await expect(page.getByRole('button', { name: '返回完整聚落' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '重置地图' })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('v11-building-selected.png'), fullPage: true });
 });
 
@@ -64,7 +64,7 @@ test('retains drag gestures in the selected-building view', async ({ page }) => 
   // code; real-device acceptance covers the gesture). CI already skips it;
   // the release gate skips it too via its deadline env, while local dev runs
   // still execute it.
-  test.skip(Boolean(process.env.CI) || Boolean(process.env.E2E_COMPLETION_DEADLINE_MS), 'Physical-device and local GPU gates own synchronous 3D gesture coverage.');
+  test.skip(Boolean(process.env.CI) || process.env.BLOCKCOLC_E2E_RELEASE_GATE === '1', 'Physical-device and focused local GPU gates own synchronous 3D gesture coverage.');
   // The software-WebGL renderer starves under sustained local-gate load; the
   // canvas attach alone has measured beyond the default budget on warm runs.
   // V20's ambient loop adds a low constant render load that turns the historic

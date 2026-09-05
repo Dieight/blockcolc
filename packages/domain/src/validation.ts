@@ -27,15 +27,15 @@ export class DomainStateValidationError extends Error {
 }
 
 export function parseDomainState(raw: unknown): DomainState {
-  const migrated = migrateV8State(migrateV7State(migrateTerrainV4State(migrateV6State(migrateV5State(migrateV4State(withBuildingBlueprintDefaults(migrateV2State(withDecorationDefaults(migrateV1State(raw))))))))));
+  const migrated = withoutWithdrawnTodayNextSteps(migrateV9State(migrateV8State(migrateV7State(migrateTerrainV4State(migrateV6State(migrateV5State(migrateV4State(withBuildingBlueprintDefaults(migrateV2State(withDecorationDefaults(migrateV1State(raw))))))))))));
   const root = object(migrated, "$", [
     "schemaVersion", "projects", "habitBuildings", "activeProjectId", "retiredSubtaskIds", "activeFocusSession",
     "focusHistory", "progressReports", "dailyGoals", "calendar", "decayPolicy", "projectConditions", "focusIntegrityPolicy",
     "decorationBlueprintResources", "decorationRewards", "buildingBlueprintResources", "worldSettings",
   ]);
-  if (root.schemaVersion !== 9) invalid("$.schemaVersion", "must equal 9");
+  if (root.schemaVersion !== 10) invalid("$.schemaVersion", "must equal 10");
   const state: DomainState = {
-    schemaVersion: 9,
+    schemaVersion: 10,
     projects: array(root.projects, "$.projects", parseProject),
     habitBuildings: array(root.habitBuildings, "$.habitBuildings", parseHabitBuilding),
     activeProjectId: nullableString(root.activeProjectId, "$.activeProjectId"),
@@ -785,6 +785,25 @@ function migrateV8State(raw: unknown): unknown {
   // that were settled without attribution. Old sessions simply lack the field,
   // so the migration only bumps the version.
   return { ...candidate, schemaVersion: 9 };
+}
+
+function migrateV9State(raw: unknown): unknown {
+  const candidate = record(raw, "$");
+  if (candidate.schemaVersion !== 9) return raw;
+  return { ...candidate, schemaVersion: 10 };
+}
+
+/**
+ * A short-lived V26 verification build wrote `todayNextSteps` into schema 10.
+ * The feature was withdrawn before release. Strip only that known field while
+ * preserving the rest of the user's state; all other unknown root fields still
+ * fail closed in `object(...)` below.
+ */
+function withoutWithdrawnTodayNextSteps(raw: unknown): unknown {
+  const candidate = record(raw, "$");
+  if (candidate.schemaVersion !== 10 || !("todayNextSteps" in candidate)) return raw;
+  const { todayNextSteps: _withdrawn, ...preserved } = candidate;
+  return preserved;
 }
 
 function migrateTerrainV4State(raw: unknown): unknown {

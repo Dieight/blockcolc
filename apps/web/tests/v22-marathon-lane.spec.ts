@@ -23,6 +23,20 @@ async function configureOneMinuteRounds(page: import("@playwright/test").Page) {
   await page.getByRole("button", { name: "计时" }).click();
 }
 
+async function configureDistinctNormalAndHabitRounds(page: import("@playwright/test").Page) {
+  await page.getByRole("button", { name: "设置" }).click();
+  const focusMinutes = page.getByLabel("普通任务专注分钟");
+  await focusMinutes.fill("45");
+  await focusMinutes.press("Enter");
+  const habitFocusMinutes = page.getByLabel("习惯任务专注分钟");
+  await habitFocusMinutes.fill("20");
+  await habitFocusMinutes.press("Enter");
+  const breakMinutes = page.getByLabel("每轮休息分钟");
+  await breakMinutes.fill("0");
+  await breakMinutes.press("Enter");
+  await page.getByRole("button", { name: "计时" }).click();
+}
+
 async function revealFocusControls(page: import("@playwright/test").Page) {
   const endButton = page.getByRole("button", { name: "结束本次专注" });
   if (await endButton.isVisible().catch(() => false)) return;
@@ -96,6 +110,8 @@ test("confirming locks the plan and moves the workbench into the end-time lane; 
   await expect(page.getByRole("heading", { name: "我的第一座工坊" })).toBeVisible();
   await expect(page.locator(".workbench-context")).toContainText("确定目标");
   await expect(page.locator(".workbench-context")).toContainText("25%");
+  await expect(page.locator(".timer-label")).toHaveText("每轮时长");
+  await expect(page.locator(".timer-value")).toHaveText("01:00");
 });
 
 test("every end-time round can finish early without advancing a leftover subtask", async ({ page }) => {
@@ -136,8 +152,37 @@ test("cancelling an unstarted locked plan returns straight to the classic lane",
   await page.getByRole("button", { name: "调整本次计划" }).click();
   await sheet.getByRole("button", { name: "取消计划" }).click();
   await expect(page.getByRole("heading", { name: "我的第一座工坊" })).toBeVisible();
+  await expect(page.locator(".timer-label")).toHaveText("每轮时长");
+  await expect(page.locator(".timer-value")).toHaveText("01:00");
   // No settlement for a marathon with zero finished rounds.
   await expect(page.getByRole("heading", { name: "把这次推进汇报给哪些任务？" })).toHaveCount(0);
+});
+
+test("habit marathons use the normal-task round duration everywhere", async ({ page }) => {
+  await page.clock.install({ time: new Date("2026-08-03T08:00:00Z") });
+  await createDefaultProject(page);
+  await configureDistinctNormalAndHabitRounds(page);
+
+  await page.getByRole("button", { name: "任务", exact: true }).click();
+  await page.getByRole("button", { name: "新增任务" }).click();
+  await page.getByRole("button", { name: "习惯任务" }).click();
+  await page.getByLabel("习惯名称").fill("晚间阅读");
+  await page.getByRole("button", { name: "开始建造" }).click();
+
+  await page.getByRole("button", { name: "调整本次计划" }).click();
+  const sheet = page.getByRole("dialog", { name: "安排习惯专注" });
+  await sheet.getByRole("button", { name: "按结束时间" }).click();
+  await expect(sheet.locator(".plan-sheet-note")).toContainText("普通任务设置的 45 分钟为一轮");
+  await expect(sheet.locator(".plan-sheet-note")).not.toContainText("20 分钟为一轮");
+  await sheet.getByRole("button", { name: "确认计划" }).click();
+
+  const summary = (await page.locator(".plan-summary span").first().textContent()) ?? "";
+  expect(summary).toContain("约 2 轮");
+  await page.getByRole("button", { name: /^开始到/ }).click();
+  await expect(page.locator(".timer-label")).toHaveText("本轮剩余");
+  // Rendering and the first tick can consume a few wall-clock seconds; the
+  // value must still be in the 45-minute round, never the 20-minute habit round.
+  await expect(page.locator(".timer-value")).toHaveText(/^(45:00|44:\d{2})$/);
 });
 
 test("settlement splits rounds between a habit building and subtasks on another project", async ({ page }) => {
@@ -178,21 +223,22 @@ test("settlement splits rounds between a habit building and subtasks on another 
   await expect(page.getByRole("heading", { name: "把这次推进汇报给哪些任务？" })).toBeVisible();
   await expect(page.locator(".marathon-settlement-card")).toHaveCount(2);
 
-  // Expand the habit card: the stepper defaults to the full block (2 rounds).
+  // Inspecting a habit must never allocate rounds on the user's behalf. Every
+  // habit starts at zero and changes only through an explicit + action.
   const habitHead = page.locator(".marathon-settlement-head").first();
   await habitHead.click();
   const stepper = page.locator(".habit-round-stepper");
   await expect(stepper).toBeVisible();
-  await expect(stepper.locator("strong")).toHaveText("2");
-  await expect(stepper.locator("button[aria-label='增加计入轮数']")).toBeDisabled();
+  await expect(stepper.locator("strong")).toHaveText("0");
+  await expect(stepper.locator("button[aria-label='减少计入轮数']")).toBeDisabled();
 
-  // With all rounds allocated to the habit, subtask options are disabled.
+  // Merely expanding the habit leaves finite-task allocation available.
   await page.locator(".marathon-settlement-head").nth(1).click();
   const firstRow = page.locator(".marathon-report-row").first();
-  await expect(firstRow.getByRole("button", { name: /推进至 25%/ })).toBeDisabled();
+  await expect(firstRow.getByRole("button", { name: /推进至 25%/ })).toBeEnabled();
 
-  // Split one round to the habit, one to the finite project's subtask.
-  await stepper.locator("button[aria-label='减少计入轮数']").click();
+  // Explicitly split one round to the habit and the remainder to the subtask.
+  await stepper.locator("button[aria-label='增加计入轮数']").click();
   await expect(stepper.locator("strong")).toHaveText("1");
   await firstRow.getByRole("button", { name: /推进至 25%/ }).click();
   await page.getByRole("button", { name: "提交本次推进" }).click();

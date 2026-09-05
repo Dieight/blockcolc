@@ -1,5 +1,7 @@
 import type { VillagePlacement, RoadCell } from "./village";
 import { terrainHeightAt } from "./village";
+import { createTerrainMeshBuffers } from './terrain-mesh';
+import { terrainGenerationProfile, type NaturalValleyTerrainProfile, type OceanIslandTerrainProfile } from './terrain-profile';
 
 export type TerrainMaterial = "grass" | "dirt" | "stone" | "water";
 export type TerrainEnvironmentStyle = "natural-valley" | "classic-island" | "ocean-island";
@@ -76,10 +78,12 @@ export function createSteppedTerrainData(
   const seedHash = stableHash(worldSeed);
   const terrainGenerationVersion = options.terrainGenerationVersion ?? 4;
   if (options.environmentStyle === "ocean-island") {
-    return createOceanIslandTerrainDataV1(placements, roads, additionalPads, radius, seedHash);
+    const profile = terrainGenerationProfile('ocean-island', radius, terrainGenerationVersion);
+    return createOceanIslandTerrainDataV1(placements, roads, additionalPads, radius, seedHash, profile as OceanIslandTerrainProfile);
   }
   if (natural && (terrainGenerationVersion === 2 || terrainGenerationVersion === 3 || terrainGenerationVersion === 4)) {
-    return createNaturalTerrainDataV2(placements, roads, additionalPads, radius, seedHash, terrainGenerationVersion, options.refinedFar);
+    const profile = terrainGenerationProfile('natural-valley', radius, terrainGenerationVersion, options.refinedFar);
+    return createNaturalTerrainDataV2(placements, roads, additionalPads, radius, seedHash, terrainGenerationVersion, profile as NaturalValleyTerrainProfile);
   }
   const cells = new Map<string, number>();
   // The outer ring must still cover the farthest supported phone framing. Keep
@@ -89,7 +93,8 @@ export function createSteppedTerrainData(
   const radiusZ = radius + outerMargin;
   // A 1x1 mesh is useful close up, but a large circular settlement otherwise
   // consumes an excessive number of independent terrain vertices on mobile.
-  const cellSize = radius > 70 ? 2 : 1;
+  const classicProfile = terrainGenerationProfile('classic-island', radius, terrainGenerationVersion);
+  const cellSize = classicProfile.kind === 'classic-island' ? classicProfile.cellSize : 1;
   const waterCells = new Set<string>();
   const naturalTrees: NaturalTreePlacement[] = [];
   let minHeight = Number.POSITIVE_INFINITY;
@@ -119,19 +124,7 @@ export function createSteppedTerrainData(
     }
   }
 
-  const positions: number[] = [];
-  const indicesByMaterial: Record<TerrainMaterial, number[]> = { grass: [], dirt: [], stone: [], water: [] };
-  const sideIndices: { dirt: number[]; stone: number[] } = { dirt: [], stone: [] };
-  const addQuad = (vertices: readonly number[], material: TerrainMaterial): void => {
-    const start = positions.length / 3;
-    positions.push(...vertices);
-    indicesByMaterial[material].push(start, start + 1, start + 2, start, start + 2, start + 3);
-  };
-  const addSideQuad = (vertices: readonly number[], material: "dirt" | "stone"): void => {
-    const start = positions.length / 3;
-    positions.push(...vertices);
-    sideIndices[material].push(start, start + 1, start + 2, start, start + 2, start + 3);
-  };
+  const { positions, indicesByMaterial, sideIndices, addTop: addQuad, addSide: addSideQuad } = createTerrainMeshBuffers();
 
   for (const [key, height] of cells) {
     const [xText, zText] = key.split(":");
@@ -191,6 +184,7 @@ interface V2SupportRect {
 interface V2SupportContext {
   rects: readonly V2SupportRect[];
   roadBuckets: ReadonlyMap<string, readonly RoadCell[]>;
+  roadGroundHeightAt: (x: number, z: number) => number;
 }
 
 interface V2HydrologyPoint {
@@ -281,9 +275,9 @@ function createNaturalTerrainDataV2(
   coreRadius: number,
   seedHash: number,
   terrainGenerationVersion: 2 | 3 | 4,
-  refinedFarOverride?: boolean,
+  profile: NaturalValleyTerrainProfile,
 ): MergedGeometryData {
-  const nearExtent = alignTo(Math.max(80, coreRadius + 28), 8);
+  const { nearExtent, middleExtent, farExtent, farFineExtent, refinedFar, farCellSize } = profile;
   // Every ring boundary must land exactly on the next ring's cell lattice or
   // the rings overlap (far cells intruding into the middle square leave
   // interior steps whose sides nobody builds — the reported boundary rows of
@@ -292,11 +286,9 @@ function createNaturalTerrainDataV2(
   // aligns to 8), middle cells are 2 mod 4 (edges on multiples of 4), and far
   // cells are 8 mod 16 (edges on multiples of 16) — the middle extent must
   // therefore be a multiple of 16 and the near extent a multiple of 4/8.
-  const middleExtent = alignTo(Math.max(160, nearExtent + 64), 16);
   // The camera can see well beyond the settlement framing box on tall mobile
   // viewports. Keep the far envelope outside that frustum so the square LOD
   // boundary never becomes the visual horizon.
-  const farExtent = alignTo(Math.max(720, middleExtent + 80, coreRadius * 4.5), 16);
   // V23 follow-up: the far ring's 16-unit cells still read as giant slabs on
   // the visible horizon. The band between the middle ring and the camera's
   // visible range is exactly where those slabs showed, so it refines to
@@ -310,22 +302,13 @@ function createNaturalTerrainDataV2(
   // share exact edges (2-unit cells sit on odd centers, edges on multiples of
   // 2, which includes multiples of 16). The refinement is v4-only: legacy
   // generators keep their single 16-unit far ring untouched.
-  const refinedFar = refinedFarOverride ?? (terrainGenerationVersion === 4 && farExtent <= 1024);
-  const farFineExtent = refinedFar ? alignTo(Math.max(middleExtent + 96, middleExtent * 1.4), 16) : middleExtent;
   const support = createV2SupportContext(placements, roads, additionalPads);
   const hydrologyExtent = Math.min(farExtent, 560);
   const hydrologyV2 = terrainGenerationVersion === 2 ? createV2Hydrology(hydrologyExtent, seedHash, support) : null;
   const hydrologyV3 = terrainGenerationVersion === 3 || terrainGenerationVersion === 4
     ? createV3Hydrology(hydrologyExtent, seedHash, support, terrainGenerationVersion)
     : null;
-  const positions: number[] = [];
-  const indicesByMaterial: Record<TerrainMaterial, number[]> = { grass: [], dirt: [], stone: [], water: [] };
-  const sideIndices: { dirt: number[]; stone: number[] } = { dirt: [], stone: [] };
-  const addSideQuad = (vertices: readonly number[], material: "dirt" | "stone"): void => {
-    const start = positions.length / 3;
-    positions.push(...vertices);
-    sideIndices[material].push(start, start + 1, start + 2, start, start + 2, start + 3);
-  };
+  const { positions, indicesByMaterial, sideIndices, addTop: addQuad, addSide: addSideQuad } = createTerrainMeshBuffers();
   const naturalTrees: NaturalTreePlacement[] = [];
   const lodCellCounts = { near: 0, middle: 0, far: 0 };
   let minHeight = Number.POSITIVE_INFINITY;
@@ -401,12 +384,6 @@ function createNaturalTerrainDataV2(
     return sample;
   };
 
-  const addQuad = (vertices: readonly number[], material: TerrainMaterial): void => {
-    const start = positions.length / 3;
-    positions.push(...vertices);
-    indicesByMaterial[material].push(start, start + 1, start + 2, start, start + 2, start + 3);
-  };
-
   const addCell = (x: number, z: number, size: number, lod: keyof typeof lodCellCounts): void => {
     const sample = sampleCellAt(x, z, size);
     const half = size / 2;
@@ -419,10 +396,10 @@ function createNaturalTerrainDataV2(
     // lattice centers: sampling a ring boundary neighbor at this cell's size or
     // at an off-lattice position hides real steps and leaves a sky-visible slit
     // along the whole boundary line between the two rings.
-    addV2CellSide(x, z, size, sample, -1, 0, sampleCellAt, nearExtent, middleExtent, farFineExtent, refinedFar, 16, addSideQuad);
-    addV2CellSide(x, z, size, sample, 1, 0, sampleCellAt, nearExtent, middleExtent, farFineExtent, refinedFar, 16, addSideQuad);
-    addV2CellSide(x, z, size, sample, 0, -1, sampleCellAt, nearExtent, middleExtent, farFineExtent, refinedFar, 16, addSideQuad);
-    addV2CellSide(x, z, size, sample, 0, 1, sampleCellAt, nearExtent, middleExtent, farFineExtent, refinedFar, 16, addSideQuad);
+    addV2CellSide(x, z, size, sample, -1, 0, sampleCellAt, nearExtent, middleExtent, farFineExtent, refinedFar, farCellSize, addSideQuad);
+    addV2CellSide(x, z, size, sample, 1, 0, sampleCellAt, nearExtent, middleExtent, farFineExtent, refinedFar, farCellSize, addSideQuad);
+    addV2CellSide(x, z, size, sample, 0, -1, sampleCellAt, nearExtent, middleExtent, farFineExtent, refinedFar, farCellSize, addSideQuad);
+    addV2CellSide(x, z, size, sample, 0, 1, sampleCellAt, nearExtent, middleExtent, farFineExtent, refinedFar, farCellSize, addSideQuad);
     lodCellCounts[lod] += 1;
     terrainSurfaceArea += size * size;
     minHeight = Math.min(minHeight, sample.height);
@@ -504,24 +481,25 @@ function createOceanIslandTerrainDataV1(
   additionalPads: readonly TerrainPad[],
   coreRadius: number,
   seedHash: number,
+  profile: OceanIslandTerrainProfile,
 ): MergedGeometryData {
-  const support = createV2SupportContext(placements, roads, additionalPads);
+  const support = createV2SupportContext(
+    placements,
+    roads,
+    additionalPads,
+    (x, z) => settlementGroundHeightAt(x, z, "ocean-island"),
+  );
   const constructionReach = coreRadius * 0.92;
-  const mainRadius = coreRadius * 1.55 + 20;
-  const beach = Math.max(12, Math.round(mainRadius * 0.22));
-  const nearExtent = alignTo(Math.max(80, coreRadius + 28), 8);
+  const { mainRadius, beach, nearExtent, middleExtent, farExtent, farCellSize, strait } = profile;
   // Keep the whole possible main shoreline out of the 32-unit far-water LOD.
   // A coarse shore cell reads as a square/rectangle attached to the island;
   // 4-unit coast cells retain the intended block character without exposing
   // the background lattice as a geometric feature.
-  const maximumMainCoastReach = mainRadius * 1.2 + beach * 1.18 + 16;
-  const middleExtent = alignTo(Math.max(160, nearExtent + 64, maximumMainCoastReach), 16);
   // The ocean needs a much larger envelope than the valleys: the flat sea
   // makes the terrain edge visible as a hard line when the camera zooms out,
   // so the boundary sits far past any reachable view. The far ring uses
   // 32-unit cells there (flat water, sub-pixel at that distance) so the cost
   // stays tiny.
-  const farExtent = alignTo(Math.max(1200, middleExtent + 80, coreRadius * 5), 16);
   // Main island: an inhabited terrace plus beach bays, rocky headlands, an
   // offset hill chain, an inner lagoon and offshore reefs. The body extends
   // well past every building while actual footprints/roads alone own support
@@ -624,7 +602,6 @@ function createOceanIslandTerrainDataV1(
     }
   }
   const islets: OceanIslet[] = [];
-  const strait = 60;
   for (let index = 0; index < isletCount; index += 1) {
     const angle = isletAngles[index]!;
     const radius = 13 + (hash2d(seedHash, 0x932 + index, 0, 0) % 15);
@@ -750,14 +727,7 @@ function createOceanIslandTerrainDataV1(
     return ocean();
   };
 
-  const positions: number[] = [];
-  const indicesByMaterial: Record<TerrainMaterial, number[]> = { grass: [], dirt: [], stone: [], water: [] };
-  const sideIndices: { dirt: number[]; stone: number[] } = { dirt: [], stone: [] };
-  const addSideQuad = (vertices: readonly number[], material: "dirt" | "stone"): void => {
-    const start = positions.length / 3;
-    positions.push(...vertices);
-    sideIndices[material].push(start, start + 1, start + 2, start, start + 2, start + 3);
-  };
+  const { positions, indicesByMaterial, sideIndices, addTop: addQuad, addSide: addSideQuad } = createTerrainMeshBuffers();
   const naturalTrees: NaturalTreePlacement[] = [];
   const renderCells: OceanRenderCell[] = [];
   const lodCellCounts = { near: 0, middle: 0, far: 0 };
@@ -776,11 +746,6 @@ function createOceanIslandTerrainDataV1(
     const sample = sampleOceanAt(x, z);
     sampleCache.set(key, sample);
     return sample;
-  };
-  const addQuad = (vertices: readonly number[], material: TerrainMaterial): void => {
-    const start = positions.length / 3;
-    positions.push(...vertices);
-    indicesByMaterial[material].push(start, start + 1, start + 2, start, start + 2, start + 3);
   };
   const addCell = (x: number, z: number, size: number, lod: keyof typeof lodCellCounts): void => {
     const sample = sampleCellAt(x, z, size);
@@ -813,7 +778,7 @@ function createOceanIslandTerrainDataV1(
   // same edges. Overlapping islet patches emit each fine cell only once.
   addV2LodSquare(nearExtent, 0, 2, (x, z) => { if (!inIsletPatch(x, z)) addCell(x, z, 2, "near"); });
   addV2LodSquare(middleExtent, nearExtent, 4, (x, z) => { if (!inIsletPatch(x, z)) addCell(x, z, 4, "middle"); });
-  addV2LodSquare(farExtent, middleExtent, 32, (x, z) => { if (!inIsletPatch(x, z)) addCell(x, z, 32, "far"); });
+  addV2LodSquare(farExtent, middleExtent, farCellSize, (x, z) => { if (!inIsletPatch(x, z)) addCell(x, z, farCellSize, "far"); });
   const emittedFineCells = new Set<string>();
   for (const patch of isletPatches) {
     for (let x = patch.minX + 1; x < patch.maxX; x += 2) {
@@ -1263,6 +1228,7 @@ function createV2SupportContext(
   placements: readonly VillagePlacement[],
   roads: readonly RoadCell[],
   additionalPads: readonly TerrainPad[],
+  roadGroundHeightAt: (x: number, z: number) => number = terrainHeightAt,
 ): V2SupportContext {
   const rects: V2SupportRect[] = placements.map((placement) => ({
     minX: placement.worldPosition.x - placement.footprint.width / 2 - 2,
@@ -1285,7 +1251,7 @@ function createV2SupportContext(
     bucket.push(road);
     roadBuckets.set(key, bucket);
   }
-  return { rects, roadBuckets };
+  return { rects, roadBuckets, roadGroundHeightAt };
 }
 
 function sampleV2Support(x: number, z: number, context: V2SupportContext): { influence: number; height: number } {
@@ -1311,7 +1277,7 @@ function sampleV2Support(x: number, z: number, context: V2SupportContext): { inf
         const candidate = 1 - smoothstep(2, 18, distance);
         if (candidate >= influence) {
           influence = candidate;
-          height = terrainHeightAt(road.x, road.z);
+          height = context.roadGroundHeightAt(road.x, road.z);
         }
       }
     }
@@ -1940,11 +1906,12 @@ export function createRoadGeometryData(
   roads: readonly RoadCell[],
   placements: readonly VillagePlacement[],
   additionalPads: readonly TerrainPad[] = [],
+  groundHeightAt: (x: number, z: number) => number = terrainHeightAt,
 ): RoadGeometryData {
   const positions: number[] = [];
   const indices: number[] = [];
   for (const road of roads) {
-    const y = heightForCell(road.x, road.z, placements, additionalPads) - 0.455;
+    const y = heightForCell(road.x, road.z, placements, additionalPads, groundHeightAt) - 0.455;
     const start = positions.length / 3;
     positions.push(
       road.x - 0.49, y, road.z - 0.49,
@@ -1957,11 +1924,28 @@ export function createRoadGeometryData(
   return { positions, indices, cellCount: roads.length, triangleCount: indices.length / 3 };
 }
 
-function heightForCell(x: number, z: number, placements: readonly VillagePlacement[], additionalPads: readonly TerrainPad[]): number {
+function heightForCell(
+  x: number,
+  z: number,
+  placements: readonly VillagePlacement[],
+  additionalPads: readonly TerrainPad[],
+  groundHeightAt: (x: number, z: number) => number = terrainHeightAt,
+): number {
   for (const pad of additionalPads) {
     if (Math.abs(x - pad.x) <= pad.width / 2 + 1 && Math.abs(z - pad.z) <= pad.depth / 2 + 1) return pad.groundLevel;
   }
-  return terrainHeightAt(x, z);
+  return groundHeightAt(x, z);
+}
+
+/**
+ * Roads are part of the inhabited bench, so their support datum must use the
+ * same environment alignment as buildings. Ocean buildings are lifted to the
+ * four-block terrace; sampling the legacy valley height here used to carve the
+ * road and its lamps back down by several layers.
+ */
+export function settlementGroundHeightAt(x: number, z: number, environmentStyle: TerrainEnvironmentStyle): number {
+  const legacyHeight = terrainHeightAt(x, z);
+  return environmentStyle === "ocean-island" ? Math.max(4, legacyHeight) : legacyHeight;
 }
 
 function addExposedSide(

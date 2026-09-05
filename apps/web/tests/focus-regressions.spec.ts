@@ -70,6 +70,7 @@ test("habit-settled rounds are never re-offered by a later plan cancel", async (
   await expect(page.getByRole("heading", { name: "把这次推进汇报给哪些任务？" })).toBeVisible();
   await page.locator(".marathon-settlement-head").first().click();
   await expect(page.locator(".habit-round-stepper")).toBeVisible();
+  await page.getByRole("button", { name: "增加计入轮数" }).click();
   await page.getByRole("button", { name: "提交本次推进" }).click();
   await expect(page.getByRole("heading", { name: "把这次推进汇报给哪些任务？" })).toBeHidden();
   await expect(page.getByRole("heading", { name: "我的第一座工坊" })).toBeVisible();
@@ -121,6 +122,11 @@ test("an app-switch-limit exit keeps the marathon at the same round", async ({ p
       document.dispatchEvent(new Event("visibilitychange"));
     });
     await page.clock.fastForward(400);
+    if (round === 1) {
+      const integrityNotice = page.locator(".focus-integrity-warning.flash");
+      await expect(integrityNotice).toContainText("有效离开 1 / 3 次");
+      await expect(page.locator(".toast")).toHaveCount(0);
+    }
   }
 
   // The session ended with the integrity notice, but the schedule survives at

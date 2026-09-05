@@ -64,6 +64,11 @@ function Get-ReleaseContext {
     }
 }
 
+function Get-ReleaseEvidencePath {
+    param([Parameter(Mandatory)]$Context)
+    return Join-Path $Context.Root "artifacts\release\v$($Context.VersionName)\release-evidence.json"
+}
+
 function Get-Sha256 {
     param([Parameter(Mandatory)][string]$Path)
     return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -202,6 +207,9 @@ function Install-AndVerifyApk {
         [switch]$AllowBusyDevice
     )
 
+    # Refuse before `adb install`: replacing an APK is already a device
+    # mutation, so a late busy check cannot make this stage safely resumable.
+    Assert-DeviceNotBusy -Serial $Serial -Context $Context -AllowBusyDevice:$AllowBusyDevice
     $adb = Get-AdbPath
     $installOutput = (Invoke-External -FilePath $adb -Arguments @('-s', $Serial, 'install', '-r', $ApkPath) -Capture) -join "`n"
     if ($installOutput -notmatch '(?im)^Success\s*$') { throw "ADB install did not report success for $Serial.`n$installOutput" }
@@ -218,7 +226,6 @@ function Install-AndVerifyApk {
     if (-not $deviceHash) { throw "Unable to calculate installed APK SHA-256 on $Serial." }
     Assert-Sha256Equal -Expected $ExpectedSha256 -Actual $deviceHash -Boundary "device $Serial installed base.apk"
 
-    Assert-DeviceNotBusy -Serial $Serial -Context $Context -AllowBusyDevice:$AllowBusyDevice
     $null = Invoke-External -FilePath $adb -Arguments @('-s', $Serial, 'shell', 'am', 'start', '-n', "$($Context.PackageId)/.MainActivity") -Capture
     [pscustomobject]@{ Serial = $Serial; InstalledSha256 = $deviceHash; VersionName = $Context.VersionName; VersionCode = $Context.VersionCode }
 }
@@ -232,6 +239,109 @@ function Get-StagedDiffSha256 {
     finally {
         Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue
     }
+}
+
+function Get-StagedTestFingerprintSha256 {
+    $manifest = [IO.Path]::GetTempFileName()
+    try {
+        $paths = @(Invoke-External -FilePath 'git' -Arguments @('ls-files') -Capture | Where-Object {
+            $_ -match '(^|/)(test|tests|e2e)/' -or
+            $_ -match '(^|/)(playwright|vitest)[^/]*\.(?:ts|js|mjs|json)$' -or
+            $_ -match '(^|/)package(?:-lock)?\.json$' -or
+            $_ -match '^tools/(?:run-web-e2e|Prepare-Release|Test-).+\.(?:mjs|ps1)$'
+        } | Sort-Object -Unique)
+        if ($paths.Count -eq 0) { throw 'No staged test inputs were found for the release fingerprint.' }
+        $entries = foreach ($path in $paths) {
+            $blob = (Invoke-External -FilePath 'git' -Arguments @('rev-parse', ":$path") -Capture | Select-Object -First 1).ToString().Trim()
+            "$path`t$blob"
+        }
+        Set-Content -LiteralPath $manifest -Value $entries -Encoding utf8
+        return Get-Sha256 -Path $manifest
+    }
+    finally {
+        Remove-Item -LiteralPath $manifest -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Set-EvidenceProperty {
+    param(
+        [Parameter(Mandatory)]$Evidence,
+        [Parameter(Mandatory)][string]$Name,
+        [Parameter()]$Value
+    )
+    $Evidence | Add-Member -NotePropertyName $Name -NotePropertyValue $Value -Force
+}
+
+function Write-ReleaseEvidence {
+    param(
+        [Parameter(Mandatory)]$Evidence,
+        [Parameter(Mandatory)][string]$Path
+    )
+    $directory = Split-Path -Parent $Path
+    New-Item -ItemType Directory -Path $directory -Force | Out-Null
+    $Evidence | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $Path -Encoding utf8
+}
+
+function Assert-ReleaseEvidenceVersion {
+    param(
+        [Parameter(Mandatory)]$Evidence,
+        [Parameter(Mandatory)]$Context
+    )
+    if ([string]$Evidence.versionName -ne $Context.VersionName -or [int]$Evidence.versionCode -ne $Context.VersionCode) {
+        throw 'Release evidence version does not match version.json.'
+    }
+    if ([string]$Evidence.packageId -ne $Context.PackageId) { throw 'Release evidence package id does not match release config.' }
+    if ([string]$Evidence.signerSha256 -ne $Context.SignerSha256) { throw 'Release evidence signer does not match release config.' }
+}
+
+function Assert-ReleaseEvidenceMatchesStagedState {
+    param([Parameter(Mandatory)]$Evidence)
+    Assert-StagedState
+    $currentTree = (Invoke-External -FilePath 'git' -Arguments @('write-tree') -Capture | Select-Object -First 1).ToString().Trim()
+    if ($currentTree -ne [string]$Evidence.stagedTree) { throw 'Staged tree changed after release preparation.' }
+    $currentDiffHash = Get-StagedDiffSha256
+    Assert-Sha256Equal -Expected ([string]$Evidence.stagedDiffSha256) -Actual $currentDiffHash -Boundary 'prepared release staged diff'
+    $currentTestFingerprint = Get-StagedTestFingerprintSha256
+    Assert-Sha256Equal -Expected ([string]$Evidence.testFingerprintSha256) -Actual $currentTestFingerprint -Boundary 'prepared release test inputs'
+}
+
+function Assert-ReleaseCandidateEvidence {
+    param(
+        [Parameter(Mandatory)]$Evidence,
+        [Parameter(Mandatory)]$Context,
+        [string]$Boundary = 'release candidate evidence'
+    )
+    $candidateApk = [string]$Evidence.candidateApk
+    $candidateHash = Get-Sha256 -Path $candidateApk
+    Assert-Sha256Equal -Expected ([string]$Evidence.candidateSha256) -Actual $candidateHash -Boundary $Boundary
+    Assert-ApkMetadata -Path $candidateApk -Context $Context | Out-Null
+    return [pscustomobject]@{ Path = $candidateApk; Sha256 = $candidateHash }
+}
+
+function Assert-AcceptedReleaseEvidence {
+    param([Parameter(Mandatory)]$Evidence)
+    if ([string]$Evidence.phase -ne 'accepted') { throw "Release evidence is not accepted: $($Evidence.phase)" }
+    if (-not $Evidence.acceptance) { throw 'Accepted release evidence is missing its acceptance record.' }
+    if (@($Evidence.installations).Count -eq 0) { throw 'Accepted release evidence has no verified device installation.' }
+    Assert-Sha256Equal -Expected ([string]$Evidence.candidateSha256) -Actual ([string]$Evidence.acceptance.candidateSha256) -Boundary 'prepared candidate to user acceptance'
+    if ([string]$Evidence.stagedTree -ne [string]$Evidence.acceptance.stagedTree) { throw 'Accepted staged tree does not match prepared staged tree.' }
+    Assert-Sha256Equal -Expected ([string]$Evidence.stagedDiffSha256) -Actual ([string]$Evidence.acceptance.stagedDiffSha256) -Boundary 'prepared staged diff to user acceptance'
+    Assert-Sha256Equal -Expected ([string]$Evidence.testFingerprintSha256) -Actual ([string]$Evidence.acceptance.testFingerprintSha256) -Boundary 'prepared test inputs to user acceptance'
+    foreach ($installation in @($Evidence.installations)) {
+        Assert-Sha256Equal -Expected ([string]$Evidence.candidateSha256) -Actual ([string]$installation.InstalledSha256) -Boundary "candidate to accepted device $($installation.Serial)"
+    }
+}
+
+function Assert-ReleaseWorkPacketComplete {
+    param([Parameter(Mandatory)]$Context)
+    $packet = Join-Path $Context.Root "docs\versions\V$($Context.VersionCode).md"
+    if (-not (Test-Path -LiteralPath $packet -PathType Leaf)) { throw "Version work packet not found: $packet" }
+    $content = Get-Content -LiteralPath $packet -Raw
+    $rows = [regex]::Matches($content, '(?m)^\|\s*([A-Z]+-\d+-\d+)\s*\|\s*([^|]+?)\s*\|')
+    if ($rows.Count -eq 0) { throw "No requirement status rows found in version work packet: $packet" }
+    $incomplete = @($rows | Where-Object { $_.Groups[2].Value.Trim() -ne '完成' } | ForEach-Object { "$($_.Groups[1].Value)=$($_.Groups[2].Value.Trim())" })
+    if ($incomplete.Count -gt 0) { throw "Version work packet has incomplete requirements: $($incomplete -join ', ')" }
+    Write-Host "Verified version work packet is complete: $packet"
 }
 
 function Assert-StagedState {

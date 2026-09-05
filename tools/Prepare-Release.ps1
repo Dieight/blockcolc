@@ -1,7 +1,5 @@
 [CmdletBinding()]
-param(
-    [switch]$AllowBusyDevice
-)
+param()
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Release-Common.ps1')
@@ -16,8 +14,12 @@ $gateDurations = [ordered]@{}
 Push-Location $context.Root
 try {
     Assert-StagedState
+    Assert-ReleaseWorkPacketComplete -Context $context
     Invoke-TimedReleaseStep -Name 'version' -Durations $gateDurations -Action {
         Invoke-External -FilePath 'node' -Arguments @('tools/sync-version.mjs', '--check')
+    }
+    Invoke-TimedReleaseStep -Name 'releaseWorkflow' -Durations $gateDurations -Action {
+        & (Join-Path $PSScriptRoot 'Test-ReleaseWorkflow.ps1')
     }
     Invoke-TimedReleaseStep -Name 'fixtures' -Durations $gateDurations -Action {
         & (Join-Path $PSScriptRoot 'Test-FixtureHashes.ps1')
@@ -63,15 +65,12 @@ try {
     Assert-Sha256Equal -Expected $buildMetadata.Sha256 -Actual $candidateHash -Boundary 'build output to release candidate copy'
     $candidateMetadata = Assert-ApkMetadata -Path $candidateApk -Context $context
 
-    $devices = @()
-    foreach ($serial in (Get-AuthorizedAndroidDevices)) {
-        $devices += Install-AndVerifyApk -ApkPath $candidateApk -Serial $serial -Context $context -ExpectedSha256 $candidateHash -AllowBusyDevice:$AllowBusyDevice
-    }
-
     Assert-StagedState
     $stagedTree = (Invoke-External -FilePath 'git' -Arguments @('write-tree') -Capture | Select-Object -First 1).ToString().Trim()
+    $stagedDiffSha256 = Get-StagedDiffSha256
+    $testFingerprintSha256 = Get-StagedTestFingerprintSha256
     $evidence = [ordered]@{
-        schemaVersion = 1
+        schemaVersion = 2
         phase = 'prepared'
         preparedAt = (Get-Date).ToUniversalTime().ToString('o')
         versionName = $context.VersionName
@@ -79,16 +78,30 @@ try {
         packageId = $context.PackageId
         signerSha256 = $context.SignerSha256
         stagedTree = $stagedTree
-        stagedDiffSha256 = Get-StagedDiffSha256
+        stagedDiffSha256 = $stagedDiffSha256
+        testFingerprintSha256 = $testFingerprintSha256
         candidateApk = $candidateApk
         candidateSizeBytes = $candidateMetadata.SizeBytes
         candidateSha256 = $candidateHash
-        gates = [ordered]@{ version = 'passed'; fixtures = 'passed'; typecheck = 'passed'; unit = 'passed'; e2e = 'passed'; webBuild = 'passed'; android = 'passed' }
+        gates = [ordered]@{
+            version = 'passed'
+            releaseWorkflow = 'passed'
+            fixtures = 'passed'
+            typecheck = 'passed'
+            unit = 'passed'
+            extendedUnit = 'passed'
+            storageE2e = 'passed'
+            coreLoopE2e = 'passed'
+            webE2e = 'passed'
+            androidBuild = 'passed'
+        }
         gateDurationsSeconds = $gateDurations
-        devices = @($devices)
+        installations = @()
+        acceptance = $null
     }
-    $evidence | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $evidencePath -Encoding utf8
+    Write-ReleaseEvidence -Evidence $evidence -Path $evidencePath
     Write-Host "Release preparation passed: $evidencePath"
+    Write-Host 'The immutable candidate is ready. Install it with tools/Install-ReleaseCandidate.ps1; preparation no longer mutates a connected device.'
 }
 finally {
     Pop-Location

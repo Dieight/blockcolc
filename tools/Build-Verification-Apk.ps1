@@ -106,7 +106,7 @@ try {
     $evidence | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $evidencePath -Encoding utf8
     Write-Host "Verification APK ready: $verificationApk"
     Write-Host "Verification evidence: $evidencePath"
-    Write-Warning 'This signed APK is for device verification only. Run Prepare-Release.ps1 after user acceptance to create a releasable candidate.'
+    Write-Warning 'This signed APK is for iterative device verification only. After scope freeze, run Prepare-Release.ps1, install its immutable candidate, and obtain acceptance for that exact hash before publishing.'
 }
 finally {
     Pop-Location

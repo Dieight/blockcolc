@@ -17,6 +17,7 @@ import type {
   BackupRepository,
   BreakCompletionNotification,
   Clock,
+  FocusCompletionNotification,
   FocusLifecycleEvent,
   IdGenerator,
   NotificationCapability,
@@ -237,10 +238,7 @@ export class ApplicationService {
       }
 
       try {
-        await this.dependencies.notifications.scheduleFocusCompletion({
-          sessionId: refreshedActive.id,
-          endsAt: refreshedActive.endsAt,
-        });
+        await this.dependencies.notifications.scheduleFocusCompletion(focusCompletionNotification(this.state, refreshedActive));
       } catch (cause) {
         warnings.push(warning("NOTIFICATION_SCHEDULE_FAILED", "Focus was restored, but its completion notification could not be scheduled", cause));
       }
@@ -377,7 +375,7 @@ export class ApplicationService {
           warnings.push(warning("NOTIFICATION_INEXACT", "Focus completion notification may be delayed because exact alarms are unavailable"));
         }
         try {
-          await this.dependencies.notifications.scheduleFocusCompletion({ sessionId: active.id, endsAt: active.endsAt });
+          await this.dependencies.notifications.scheduleFocusCompletion(focusCompletionNotification(this.state, active));
         } catch (cause) {
           warnings.push(warning("NOTIFICATION_SCHEDULE_FAILED", "Focus started, but its completion notification could not be scheduled", cause));
         }
@@ -397,6 +395,26 @@ export class ApplicationService {
     this.tail = result.then(() => undefined, () => undefined);
     return result;
   }
+}
+
+function focusCompletionNotification(
+  state: DomainState,
+  active: NonNullable<DomainState["activeFocusSession"]>,
+): FocusCompletionNotification {
+  const project = state.projects.find((candidate) => candidate.id === active.projectId);
+  const projectTitle = project?.title;
+  const taskTitle = project?.kind === "habit"
+    ? `第 ${project.habit?.cycleNumber ?? 1} 座习惯建筑`
+    : active.marathon === true
+      ? "本场专注 · 结束后统一汇报"
+      : project?.subtasks.find((candidate) => candidate.id === active.subtaskId)?.title;
+  return {
+    sessionId: active.id,
+    endsAt: active.endsAt,
+    ...(projectTitle ? { projectTitle } : {}),
+    ...(taskTitle ? { taskTitle } : {}),
+    ...(active.marathon === true ? { marathon: true } : {}),
+  };
 }
 
 function materialize(command: ApplicationCommand, ids: IdGenerator): DomainCommand {

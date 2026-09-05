@@ -47,23 +47,23 @@ describe("parseDomainState", () => {
     expect(parsed.projects[0]!.title).toBe("Project");
   });
 
-  it("keeps schema v9 while accepting one active and multiple paused projects", () => {
+  it("keeps schema v10 while accepting one active and multiple paused projects", () => {
     const clock = new ClockStub();
     const first = execute(createInitialState(), { type: "CreateProject", projectId: "p1", title: "First", blueprintId: "cottage", subtasks: [{ id: "a", title: "A" }] }, clock);
     if (!first.ok) throw new Error(first.message);
     const second = execute(first.state, { type: "CreateProject", projectId: "p2", title: "Second", blueprintId: "tower", subtasks: [{ id: "b", title: "B" }] }, clock);
     if (!second.ok) throw new Error(second.message);
 
-    expect(second.state.schemaVersion).toBe(9);
+    expect(second.state.schemaVersion).toBe(10);
     expect(second.state.projects.map((project) => project.status)).toEqual(["paused", "active"]);
     expect(parseDomainState(second.state)).toEqual(second.state);
   });
 
-  it("migrates old v1 focus and project records to schema v9 defaults", () => {
+  it("migrates old v1 focus and project records to schema v10 defaults", () => {
     const raw = asLegacyV1(validState());
     delete raw.projects[0].importedBlueprint;
     const parsed = parseDomainState(raw);
-    expect(parsed.schemaVersion).toBe(9);
+    expect(parsed.schemaVersion).toBe(10);
     expect(parsed.worldSettings).toEqual({ worldSeed: "legacy-p1", terrainGenerationVersion: 4, environmentStyle: "natural-valley" });
     expect(parsed.projects[0]).toMatchObject({ kind: "finite", habit: null });
     expect(parsed.habitBuildings).toEqual([]);
@@ -92,12 +92,12 @@ describe("parseDomainState", () => {
     raw.schemaVersion = 5;
     delete raw.worldSettings;
     const parsed = parseDomainState(raw);
-    expect(parsed.schemaVersion).toBe(9);
+    expect(parsed.schemaVersion).toBe(10);
     expect(parsed.projects).toEqual(raw.projects);
     expect(parsed.worldSettings).toEqual({ worldSeed: "legacy-p1", terrainGenerationVersion: 4, environmentStyle: "natural-valley" });
   });
 
-  it("migrates v6 terrain and building resource names to schema v9", () => {
+  it("migrates v6 terrain and building resource names to schema v10", () => {
     const raw: any = structuredClone(validState());
     raw.schemaVersion = 6;
     raw.worldSettings.terrainGenerationVersion = 2;
@@ -111,9 +111,30 @@ describe("parseDomainState", () => {
       importedAt: "2026-07-20T09:00:00.000Z",
     }];
     const parsed = parseDomainState(raw);
-    expect(parsed.schemaVersion).toBe(9);
+    expect(parsed.schemaVersion).toBe(10);
     expect(parsed.worldSettings.terrainGenerationVersion).toBe(4);
     expect(parsed.buildingBlueprintResources[0]).toMatchObject({ displayName: "Legacy library house" });
+  });
+
+  it("migrates schema v9 without inventing withdrawn feature state", () => {
+    const raw: any = structuredClone(validState());
+    raw.schemaVersion = 9;
+    const parsed = parseDomainState(raw);
+    expect(parsed.schemaVersion).toBe(10);
+    expect(parsed).not.toHaveProperty("todayNextSteps");
+  });
+
+  it("drops the withdrawn schema-v10 today-next-steps field without weakening unknown-field validation", () => {
+    const raw: any = structuredClone(validState());
+    raw.todayNextSteps = {
+      date: "2026-07-20",
+      entries: [{ id: "today-a", projectId: "p1", subtaskId: "missing", estimatedRounds: 2, createdAt: "2026-07-20T09:00:00.000Z" }],
+    };
+    const parsed = parseDomainState(raw);
+    expect(parsed).not.toHaveProperty("todayNextSteps");
+    expect(parsed.projects).toEqual(raw.projects);
+    raw.unrecognizedV26Field = true;
+    expect(() => parseDomainState(raw)).toThrow(DomainStateValidationError);
   });
 
   it("migrates a schema-v7 terrain-v3 world to v4 without changing user facts", () => {

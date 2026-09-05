@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 import { SMALL_WORKSHOP_BLUEPRINT, TIMBER_HOUSE_BLUEPRINT } from "../src/blueprint";
 import { alignWorldsToEnvironment, layoutWorlds } from "../src/renderer";
-import { createSteppedTerrainData, type MergedGeometryData } from "../src/terrain";
+import { createRoadGeometryData, createSteppedTerrainData, settlementGroundHeightAt, type MergedGeometryData } from "../src/terrain";
 import { roadCellsForVillage } from "../src/village";
 
 const placements = layoutWorlds([
@@ -283,6 +283,18 @@ test("ocean island: foundations use the inhabited terrace datum", () => {
   expect(ocean.every(placement => placement.worldPosition.y >= 4)).toBe(true);
   expect(alignWorldsToEnvironment(legacy, "classic-island").map(placement => placement.worldPosition.y))
     .toEqual(legacy.map(placement => placement.worldPosition.y));
+});
+
+test("ocean island: roads and road lamps share the inhabited terrace datum", () => {
+  const ocean = alignWorldsToEnvironment(placements, "ocean-island");
+  const oceanRoads = roadCellsForVillage(ocean);
+  const ground = (x: number, z: number) => settlementGroundHeightAt(x, z, "ocean-island");
+  const geometry = createRoadGeometryData(oceanRoads, ocean, [], ground);
+  const roadYs = geometry.positions.filter((_, index) => index % 3 === 1);
+
+  expect(roadYs.length).toBeGreaterThan(0);
+  expect(Math.min(...roadYs)).toBeCloseTo(3.545, 3);
+  expect(oceanRoads.every((cell) => ground(cell.x, cell.z) >= 4)).toBe(true);
 });
 
 test("ocean island: main shore never falls back to 32-unit water LOD", () => {

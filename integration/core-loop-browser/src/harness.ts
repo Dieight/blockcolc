@@ -2,6 +2,7 @@ import {
   ApplicationPersistenceError,
   ApplicationService,
   type Clock,
+  type FocusCompletionNotification,
   type IdGenerator,
   type NotificationCapability,
   type NotificationPort,
@@ -25,13 +26,13 @@ class CryptoIdGenerator implements IdGenerator {
 }
 
 class RecordingNotifications implements NotificationPort {
-  readonly scheduled: Array<{ sessionId: string; endsAt: string }> = [];
+  readonly scheduled: FocusCompletionNotification[] = [];
   readonly cancelled: string[] = [];
   private readonly active = new Map<string, string>();
 
   async requestPermission(): Promise<NotificationCapability> { return capability(); }
   async refreshCapability(): Promise<NotificationCapability> { return capability(); }
-  async scheduleFocusCompletion(notification: { sessionId: string; endsAt: string }): Promise<void> {
+  async scheduleFocusCompletion(notification: FocusCompletionNotification): Promise<void> {
     this.scheduled.push(structuredClone(notification));
     this.active.set(notification.sessionId, notification.endsAt);
   }
@@ -82,7 +83,7 @@ export interface BeforeReloadEvidence {
   goalReachedAt: string;
   buildingCompletionBasisPoints: number;
   buildingConditionBasisPoints: number;
-  scheduled: Array<{ sessionId: string; endsAt: string }>;
+  scheduled: FocusCompletionNotification[];
   cancelled: string[];
   persistedRevision: number;
 }

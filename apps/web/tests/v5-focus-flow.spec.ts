@@ -56,7 +56,7 @@ test('one-round early completion records the task and ends the plan without a br
   await expect(page.getByLabel('项目建筑世界')).toHaveAttribute('data-construction-pulse-count', /[1-9]/);
   await expect(page.getByLabel('项目建筑世界')).toHaveAttribute('data-continuous-rendering', 'false');
   await expect(page.getByRole('button', { name: '开始 1 轮' })).toBeVisible();
-  await expect(page.getByText('今日 1 / 8 轮')).toBeVisible();
+  await expect(page.locator('.workbench-context small')).toContainText('今日 1 / 8 轮');
   await page.getByRole('button', { name: '统计' }).click();
   await expect(page.locator('.stats-grid > div').filter({ hasText: '提前完成' })).toContainText('1');
   await expect(page.locator('.stats-grid > div').filter({ hasText: '完整轮次' })).toContainText('0');
@@ -131,7 +131,7 @@ test('keeps each multi-round progress report before its configured break', async
   await expect(page.getByRole('heading', { name: '这次工作推进到哪里？' })).toBeVisible();
 });
 
-test('opens the active task in a restrained world focus and returns to the settlement', async ({ page }, testInfo) => {
+test('opens the active task in a restrained world focus until the map is reset', async ({ page }, testInfo) => {
   await createDefaultProject(page);
   await page.getByRole('button', { name: '任务', exact: true }).click();
   await page.screenshot({ path: testInfo.outputPath('v8-tasks.png'), fullPage: true });
@@ -142,7 +142,10 @@ test('opens the active task in a restrained world focus and returns to the settl
   await expect(world).toHaveAttribute('data-sky-camera-world-offset', '0.0000');
   await page.screenshot({ path: testInfo.outputPath('v7-focused-world.png'), fullPage: true });
   await page.getByRole('button', { name: '关闭建筑记忆' }).click();
+  await expect(page.locator('figure.world')).toHaveClass(/is-project-focused/);
+  await page.getByRole('button', { name: '重置地图' }).click();
   await expect(page.getByText('林边聚落 · 1 栋')).toBeVisible();
+  await expect(page.locator('figure.world')).not.toHaveClass(/is-project-focused/);
   await expect(world).toHaveAttribute('data-sky-camera-world-offset', '0.0000');
 });
 
@@ -214,9 +217,10 @@ test('keeps work-page scroll-end clearance compact above mobile navigation', asy
   await createDefaultProject(page);
   for (const tab of ['任务', '统计', '设置']) {
     await page.getByRole('button', { name: tab, exact: true }).click();
+    await expect(page.locator('main > .route-pane:not([hidden]) > .page')).toBeVisible();
     const layout = await page.evaluate(() => {
       window.scrollTo(0, document.documentElement.scrollHeight);
-      const pageElement = document.querySelector<HTMLElement>('main > .page');
+      const pageElement = document.querySelector<HTMLElement>('main > .route-pane:not([hidden]) > .page');
       const navigation = document.querySelector<HTMLElement>('.bottom-nav');
       const last = pageElement?.lastElementChild?.getBoundingClientRect();
       const navigationRect = navigation?.getBoundingClientRect();

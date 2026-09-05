@@ -92,14 +92,26 @@ test('keeps setup and the focus world usable across the target viewport matrix',
       const action = document.querySelector('.focus-panel .primary')?.getBoundingClientRect();
       const worldRect = document.querySelector('.world-screen .world')?.getBoundingClientRect();
       const panelRect = document.querySelector('.world-screen .focus-panel')?.getBoundingClientRect();
+      const overflowing = [...document.querySelectorAll<HTMLElement>('body *')]
+        .map(element => ({ element, rect: element.getBoundingClientRect() }))
+        .filter(({ rect }) => rect.width > 0 && (rect.left < -1 || rect.right > document.documentElement.clientWidth + 1))
+        .slice(0, 8)
+        .map(({ element, rect }) => `${element.tagName.toLowerCase()}.${element.className || '-'}[${rect.left.toFixed(0)},${rect.right.toFixed(0)}]`);
+      const bounds = ['.app-shell', 'main', '.world-pane', '.world-screen', '.focus-panel', '.workbench-heading']
+        .map(selector => {
+          const rect = document.querySelector<HTMLElement>(selector)?.getBoundingClientRect();
+          return rect ? `${selector}[${rect.left.toFixed(0)},${rect.right.toFixed(0)}]` : `${selector}[missing]`;
+        });
       return {
         overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+        overflowing,
+        bounds,
         actionClearOfNav: !nav || !action || action.bottom <= nav.top || action.top >= nav.bottom,
         actionInViewport: !action || (action.top >= 0 && action.bottom <= innerHeight),
         worldAndPanelShareRow: !worldRect || !panelRect || Math.abs(worldRect.top - panelRect.top) <= 1,
       };
     });
-    expect(layout.overflow).toBeLessThanOrEqual(1);
+    expect(layout.overflow, `${viewport.name}: ${layout.overflowing.join(', ')}; ${layout.bounds.join(', ')}`).toBeLessThanOrEqual(1);
     if (viewport.width < 700) {
       expect(layout.actionClearOfNav).toBe(true);
       expect(layout.actionInViewport).toBe(true);
@@ -112,7 +124,7 @@ test('keeps setup and the focus world usable across the target viewport matrix',
   await expect(page.locator('.app-shell')).toHaveClass(/focus-immersive/);
   await expect(page.getByRole('navigation', { name: '主导航' })).toHaveCount(0);
   await expect(page.locator('.topbar')).toHaveCount(0);
-  await expect(page.getByText('整理所有输入资料并逐项核对')).toBeVisible();
+  await expect(page.locator('.focus-task-context strong')).toHaveText('整理所有输入资料并逐项核对');
   await revealFocusControls(page);
 
   for (const viewport of VIEWPORTS) {

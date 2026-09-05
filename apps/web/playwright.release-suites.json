@@ -1,0 +1,61 @@
+{
+  "schemaVersion": 1,
+  "diagnostics": [
+    "cine-probe.spec.ts",
+    "flat-probe.spec.ts",
+    "fog-diag.spec.ts",
+    "normal-probe.spec.ts",
+    "pack-measure.spec.ts",
+    "page-load.diagnostic.spec.ts",
+    "pick-diag.spec.ts",
+    "v21-right-band-probe.spec.ts",
+    "v24-voidscan.spec.ts",
+    "void-probe.spec.ts"
+  ],
+  "suites": [
+    {
+      "name": "core",
+      "workers": 2,
+      "specs": [
+        "focus-regressions.spec.ts",
+        "navigation-cache.spec.ts",
+        "task-ime.spec.ts",
+        "v10-habit-flow.spec.ts",
+        "v17-continuity.spec.ts",
+        "v21-marathon.spec.ts",
+        "v22-integrity-ended.spec.ts",
+        "v22-marathon-lane.spec.ts",
+        "v24-marathon-settle.spec.ts"
+      ]
+    },
+    {
+      "name": "visual",
+      "workers": 2,
+      "specs": [
+        "building-memory.spec.ts",
+        "responsive-qa.spec.ts",
+        "settings-layout.spec.ts",
+        "v23-appearance.spec.ts",
+        "v5-focus-flow.spec.ts"
+      ]
+    },
+    {
+      "name": "renderer",
+      "workers": 1,
+      "specs": [
+        "litematic-csp.spec.ts",
+        "resource-pack.spec.ts",
+        "v11-world-environment.spec.ts",
+        "v15-lighting-quality.spec.ts",
+        "v16-terrain-clip.spec.ts",
+        "v2-world-interaction.spec.ts",
+        "v20-ambient-motion.spec.ts",
+        "v24-cloud-drift.spec.ts",
+        "v24-ocean.spec.ts",
+        "v3-lightweight-shading.spec.ts",
+        "visual-flow.spec.ts",
+        "world-coordinate-setting.spec.ts"
+      ]
+    }
+  ]
+}

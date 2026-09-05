@@ -47,8 +47,7 @@ export function createOrderedLifecycleDispatcher(
   const enqueue = (operation: () => void | Promise<void>) => {
     tail = tail.then(operation).catch(error => { console.error('Focus lifecycle reconciliation failed', error); });
   };
-  // V23: several native channels report the same physical transition (Capacitor
-  // appStateChange, onResume/onWindowFocusChanged, notification taps), so the
+  // Several native channels can report the same physical transition, so the
   // ordered queue can see background,background or foreground,foreground pairs.
   // The domain already deduplicates the pending background, but every extra
   // foreground still reloads and re-validates the whole persisted state on the
@@ -81,33 +80,47 @@ export class CapacitorFocusLifecyclePort implements FocusLifecyclePort {
       listener,
       () => FocusIntegrity.getLastBackgroundContext(),
     );
-    const appState = await App.addListener('appStateChange', ({ isActive }) => {
-      if (isActive) {
-        dispatcher.foreground();
-        return;
-      }
-      dispatcher.background();
+    // Android's Activity combines pause/resume, window focus, multi-window and
+    // OEM floating-window facts before publishing one authoritative direction.
+    // Listening to Capacitor appStateChange as a second Android source allowed
+    // callback reordering to create a foreground/background/foreground echo.
+    const appState = Capacitor.getPlatform() === 'android' ? null : await App.addListener('appStateChange', ({ isActive }) => {
+      if (isActive) dispatcher.foreground();
+      else dispatcher.background();
     });
-    // V22 follow-up: entering/leaving a multi-window surface (split screen,
-    // OEM floating window) does not fire appStateChange, so the native side
-    // pushes its own signal. Both paths deduplicate in the domain layer: one
-    // session can only carry a single pending background instant.
-    const onMultiWindow = (event: Event) => {
-      const active = (event as CustomEvent<{ active: boolean }>).detail?.active;
-      if (active === true) dispatcher.background();
-      else if (active === false) dispatcher.foreground();
+    const onNativeAttention = (event: Event) => {
+      const background = (event as CustomEvent<{ background: boolean }>).detail?.background;
+      if (background === true) dispatcher.background();
+      else if (background === false) dispatcher.foreground();
     };
-    window.addEventListener('blockcolc-multi-window', onMultiWindow);
+    window.addEventListener('blockcolc-native-attention', onNativeAttention);
     const notification = await LocalNotifications.addListener('localNotificationActionPerformed', () => {
       dispatcher.foreground();
     });
     return async () => {
-      await appState.remove();
+      await appState?.remove();
       await notification.remove();
-      window.removeEventListener('blockcolc-multi-window', onMultiWindow);
+      window.removeEventListener('blockcolc-native-attention', onNativeAttention);
       await dispatcher.drain();
     };
   }
+}
+
+/**
+ * Android hardware back button. Attaching the listener takes over the default
+ * "close activity" behavior, so the web layer must call exitAndroidApp() when
+ * nothing on its overlay stack consumes the gesture.
+ */
+export async function subscribeHardwareBack(handler: () => void): Promise<() => Promise<void>> {
+  if (!Capacitor.isNativePlatform()) return async () => undefined;
+  const handle = await App.addListener('backButton', () => handler());
+  return async () => { await handle.remove(); };
+}
+
+/** Closes the Android activity; a no-op outside the native container. */
+export async function exitAndroidApp(): Promise<void> {
+  if (!Capacitor.isNativePlatform()) return;
+  await App.exitApp();
 }
 
 export async function registerNativeResume(onResume: () => void | Promise<void>): Promise<() => Promise<void>> {

@@ -87,7 +87,7 @@ export function SettingsScreen({service,resourcePacks,state,run,refresh,preferen
     </section>
     <BuildingBlueprintPanel resources={state.buildingBlueprintResources} run={run}/>
     <ResourcePackPanel repository={resourcePacks}/>
-    <BackupPanel service={service} onChanged={refresh}/>
+    <BackupPanel service={service} onChanged={refresh} changeToken={state}/>
   </section>;
 }
 
@@ -107,8 +107,8 @@ function BreakLiveUpdateSetting() {
   useEffect(refresh,[refresh]);
   if(!native)return null;
   const openSettings=()=>{void import('@tomato-clock/platform-capacitor').then(async platform=>{const opened=await platform.openBreakLiveUpdateSettings();if(opened)window.setTimeout(refresh,1500);}).catch(()=>setFailed(true));};
-  const status=failed?'暂时无法读取系统实时通知状态':loading?'正在读取系统实时通知状态':!capability?.supported?'当前系统仅提供普通持续通知':capability.allowed?'已开启 · 流体云与通知抽屉由同一条系统实时通知呈现':'系统未允许实时通知，休息倒计时会退化到通知栏';
-  return <div className="setting-row notification-health live-update-health"><div className="setting-name"><span>休息实时状态</span><small>{status}</small></div><div className="notification-actions">{capability?.supported&&capability.settingsAvailable&&!capability.allowed&&<button type="button" className="settings-text-action" onClick={openSettings}>开启实时通知</button>}<button type="button" className="settings-text-action" aria-label="刷新实时通知状态" title="刷新实时通知状态" disabled={loading} onClick={refresh}><RefreshCw className={loading?'is-spinning':''}/></button></div></div>;
+  const status=failed?'暂时无法读取系统实时通知状态':loading?'正在读取系统实时通知状态':!capability?.supported?'当前系统仅提供普通持续通知':capability.allowed?'已开启 · 专注与休息会显示在流体云、锁屏和通知抽屉':'系统未允许实时通知，专注与休息倒计时会退化到通知栏';
+  return <div className="setting-row notification-health live-update-health"><div className="setting-name"><span>专注与休息实时状态</span><small>{status}</small></div><div className="notification-actions">{capability?.supported&&capability.settingsAvailable&&!capability.allowed&&<button type="button" className="settings-text-action" onClick={openSettings}>开启实时通知</button>}<button type="button" className="settings-text-action" aria-label="刷新实时通知状态" title="刷新实时通知状态" disabled={loading} onClick={refresh}><RefreshCw className={loading?'is-spinning':''}/></button></div></div>;
 }
 
 function BuildingBlueprintPanel({resources,run}:{resources:ReturnType<ApplicationService['snapshot']>['buildingBlueprintResources'];run:(c:ApplicationCommand)=>Promise<unknown>}) {
@@ -150,14 +150,17 @@ function normalizedIntegerDraft(draft:string,minimum:number,maximum:number):numb
 }
 
 const MAX_BACKUP_BYTES = 10 * 1024 * 1024;
-function BackupPanel({service,onChanged}:{service:ApplicationService;onChanged:()=>void}) {
+function BackupPanel({service,onChanged,changeToken}:{service:ApplicationService;onChanged:()=>void;changeToken:ReturnType<ApplicationService['snapshot']>}) {
   const [preview,setPreview]=useState<Awaited<ReturnType<ApplicationService['previewImport']>>|null>(null);
   const [importText,setImportText]=useState<string|null>(null);
   const [rollbacks,setRollbacks]=useState<Awaited<ReturnType<ApplicationService['listRollbackBackups']>>>([]);
   const [restoreTarget,setRestoreTarget]=useState<Awaited<ReturnType<ApplicationService['listRollbackBackups']>>[number]|null>(null);
   const [busy,setBusy]=useState(false); const [error,setError]=useState(''); const [notice,setNotice]=useState('');
   const reloadRollbacks=useCallback(async()=>{ try { setRollbacks(await service.listRollbackBackups()); } catch (cause) { setError(errorMessage(cause)); } },[service]);
-  useEffect(()=>{void reloadRollbacks();},[reloadRollbacks]);
+  // The settings route stays mounted while hidden. Reload when application
+  // state changes so rollbacks created from another route are visible on the
+  // first warm switch back to settings.
+  useEffect(()=>{void reloadRollbacks();},[reloadRollbacks,changeToken]);
   const exportFile=async()=>{setBusy(true);setError('');try{const text=await service.exportBackup();const stamp=new Date().toISOString().replace(/[:.]/g,'-');await saveBackupFile(text,`blockcolc-backup-${stamp}.json`);setNotice('备份已导出。');}catch(cause){setError(errorMessage(cause));}finally{setBusy(false);}};
   const chooseFile=async(file:File|undefined)=>{setPreview(null);setImportText(null);setError('');setNotice('');if(!file)return;if(file.size>MAX_BACKUP_BYTES){setError('备份文件不能超过 10 MB。');return;}setBusy(true);try{const text=await file.text();const next=await service.previewImport(text);setImportText(text);setPreview(next);}catch(cause){setError(`无法读取备份：${errorMessage(cause)}`);}finally{setBusy(false);}};
   const confirmImport=async()=>{if(!importText||!preview)return;setBusy(true);setError('');try{await service.replaceFromImport(importText);setPreview(null);setImportText(null);setNotice('导入完成，已创建回滚备份。');onChanged();await reloadRollbacks();}catch(cause){setError(`导入失败：${errorMessage(cause)}`);}finally{setBusy(false);}};

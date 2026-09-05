@@ -24,7 +24,16 @@ test("renders the current compact world and supports bounded rotate and pinch ge
   const initial = await canvas.screenshot({ path: testInfo.outputPath("v2-world-initial.png") });
   expect(initial.byteLength).toBeGreaterThan(2_000);
   const initialCameraAzimuth = Number(await canvas.getAttribute("data-camera-azimuth"));
-  const initialShadowRefreshes = Number(await canvas.getAttribute("data-shadow-refresh-count"));
+  let initialShadowRefreshes = -1;
+  let shadowStableSince = Date.now();
+  await expect.poll(async () => {
+    const current = Number(await canvas.getAttribute("data-shadow-refresh-count"));
+    if (current !== initialShadowRefreshes) {
+      initialShadowRefreshes = current;
+      shadowStableSince = Date.now();
+    }
+    return Date.now() - shadowStableSince;
+  }, { timeout: 5_000, intervals: [100] }).toBeGreaterThanOrEqual(500);
 
   const box = await canvas.boundingBox();
   if (!box) throw new Error("World canvas has no layout box");

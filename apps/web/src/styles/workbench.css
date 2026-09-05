@@ -1,5 +1,6 @@
 /* Idle focus workbench presentation. */
 .workbench-heading{display:flex;align-items:center;justify-content:space-between;gap:14px}
+.workbench-heading>div:first-child{min-width:0}
 .workbench-heading h1{margin:0;font-size:22px;font-weight:700;line-height:1.25;overflow-wrap:anywhere}
 .task-switch-action{min-height:44px;flex:0 0 auto;display:inline-flex;align-items:center;gap:6px;padding:0 4px;border:0;background:none;color:#276749;font-weight:700}
 .task-switch-action svg{width:18px}

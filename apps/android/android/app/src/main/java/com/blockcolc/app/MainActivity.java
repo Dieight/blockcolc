@@ -4,10 +4,12 @@ import android.os.Bundle;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.content.Intent;
 import android.webkit.WebView;
 import android.view.View;
 import android.view.WindowManager;
+import android.util.Log;
 import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowCompat;
@@ -19,23 +21,16 @@ import java.util.Locale;
 public class MainActivity extends BridgeActivity {
     static final String ACTION_SKIP_BREAK = "com.blockcolc.app.action.SKIP_BREAK";
     private boolean pendingSkipBreak = false;
+    private final long nativeCreatedAtMs = SystemClock.elapsedRealtime();
     private Insets latestSafeInsets = Insets.NONE;
     private boolean miniWindowActive = false;
     private final Runnable miniWindowCheck = this::checkMiniWindowFallback;
-    // V23: every channel that reports a focus leave/return (onPause/onStop,
-    // onWindowFocusChanged, onMultiWindowModeChanged, the area poll) funnels into
-    // one attention state machine. A single physical transition therefore emits
-    // exactly one background and one foreground signal — the notification shade
-    // used to report the same leave through several channels and the domain's
-    // single-pending dedup could not absorb a stale echo arriving after the
-    // return, which counted a second excursion. It also stops the resume-time
-    // duplicate foreground storm that stalled the JS main thread (IndexedDB
-    // reloads) and made world rotation stutter for seconds after coming back.
-    private boolean attentionActive = true;
-    private void setAttention(boolean attending) {
-        if (attending == attentionActive) return;
-        attentionActive = attending;
-        pushMiniWindowSignal(!attending);
+    private final AttentionStateMachine attentionState = new AttentionStateMachine();
+    private void applyAttentionTransition(AttentionStateMachine.Transition transition, String source) {
+        if (transition == AttentionStateMachine.Transition.NONE) return;
+        boolean background = transition == AttentionStateMachine.Transition.BACKGROUND;
+        Log.i("BlockcolcLifecycle", "source=" + source + " transition=" + (background ? "background" : "foreground"));
+        pushAttentionSignal(background);
     }
     // V22 follow-up: OEM side-rail floating windows (ColorOS smart sidebar) hide
     // the host activity without a reliable onStop or multi-window callback, so
@@ -69,6 +64,8 @@ public class MainActivity extends BridgeActivity {
         bridgeBuilder.addWebViewListener(new WebViewListener() {
             @Override
             public void onPageLoaded(WebView webView) {
+                Log.i("BlockcolcStartup", "page-loaded durationMs=" + (SystemClock.elapsedRealtime() - nativeCreatedAtMs));
+                captureWebDiagnostics(webView, 20);
                 publishSafeAreaInsets(latestSafeInsets);
                 dispatchPendingBreakAction();
             }
@@ -102,6 +99,33 @@ public class MainActivity extends BridgeActivity {
         mainHandler.postDelayed(miniWindowPoll, 500);
     }
 
+    private void captureWebDiagnostics(WebView webView, int attemptsRemaining) {
+        if (webView == null || isFinishing() || isDestroyed()) return;
+        webView.evaluateJavascript(
+            "(function(){" +
+                "var root=document.documentElement&&document.documentElement.dataset;" +
+                "var canvas=document.querySelector('canvas[aria-label=\"项目建筑世界\"]');" +
+                "if(!root||!root.bootstrapDurationMs||!root.appShellFrameMs||!canvas||" +
+                    "!canvas.dataset.firstNonemptyFrameMs)return null;" +
+                "return {" +
+                    "bootstrapDurationMs:Number(root.bootstrapDurationMs)," +
+                    "appShellFrameMs:Number(root.appShellFrameMs)," +
+                    "firstNonemptyFrameMs:Number(canvas.dataset.firstNonemptyFrameMs)," +
+                    "worldRebuildCount:Number(canvas.dataset.worldRebuildCount||0)," +
+                    "worldRebuildLastMs:Number(canvas.dataset.worldRebuildLastMs||0)," +
+                    "nativeBridgeReady:typeof window.BlockcolcNativeInput==='object'" +
+                "};" +
+            "})()",
+            value -> {
+                if (value != null && !"null".equals(value)) {
+                    Log.i("BlockcolcRender", "web-diagnostics=" + value);
+                } else if (attemptsRemaining > 0 && !isFinishing() && !isDestroyed()) {
+                    webView.postDelayed(() -> captureWebDiagnostics(webView, attemptsRemaining - 1), 500);
+                }
+            }
+        );
+    }
+
     @Override
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
@@ -127,11 +151,14 @@ public class MainActivity extends BridgeActivity {
         ));
     }
 
-    private void pushMiniWindowSignal(boolean active) {
+    private void pushAttentionSignal(boolean background) {
         if (getBridge() == null || getBridge().getWebView() == null) return;
-        FocusIntegrityPlugin.recordBackgroundContext(this);
+        // The timestamp is the instant attention was actually lost. Recording
+        // it again on foreground used to overwrite a real multi-second absence
+        // with the return time, causing app switches to count as zero.
+        if (background) FocusIntegrityPlugin.recordBackgroundContext(this);
         getBridge().getWebView().post(() -> getBridge().getWebView().evaluateJavascript(
-            "window.dispatchEvent(new CustomEvent('blockcolc-multi-window',{detail:{active:" + active + "}}));",
+            "window.dispatchEvent(new CustomEvent('blockcolc-native-attention',{detail:{background:" + background + "}}));",
             null
         ));
     }
@@ -149,7 +176,7 @@ public class MainActivity extends BridgeActivity {
         boolean mini = ((float) width * (float) height) / ((float) size.x * (float) size.y) < 0.55f;
         if (mini == miniWindowActive) return;
         miniWindowActive = mini;
-        setAttention(!mini);
+        applyAttentionTransition(attentionState.onMiniWindowChanged(mini), "window-area");
     }
 
     private void publishSafeAreaInsets(Insets insets) {
@@ -187,8 +214,6 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     public void onStop() {
-        FocusIntegrityPlugin.recordBackgroundContext(this);
-        setAttention(false);
         super.onStop();
     }
 
@@ -199,20 +224,20 @@ public class MainActivity extends BridgeActivity {
         // report the pause as a potential leave (the 3 s grace absorbs quick
         // system overlays). Repeated leave channels are deduplicated by the
         // attention state machine.
-        setAttention(false);
+        applyAttentionTransition(attentionState.onPause(), "pause");
     }
 
     @Override
     public void onResume() {
         super.onResume();
-        setAttention(true);
+        applyAttentionTransition(attentionState.onResume(), "resume");
     }
 
     @Override
     @android.annotation.TargetApi(24)
     public void onMultiWindowModeChanged(boolean isInMultiWindowMode) {
         super.onMultiWindowModeChanged(isInMultiWindowMode);
-        setAttention(!isInMultiWindowMode);
+        applyAttentionTransition(attentionState.onMultiWindowModeChanged(isInMultiWindowMode), "multi-window");
     }
 
     @Override
@@ -222,7 +247,7 @@ public class MainActivity extends BridgeActivity {
         if (hasFocus) {
             // Returning focus settles a pending focus-leave; the domain grace
             // absorbs quick overlays (notification shade, edge panel).
-            setAttention(true);
+            applyAttentionTransition(attentionState.onWindowFocusChanged(true), "window-focus");
             getBridge().getWebView().postDelayed(() -> getBridge().getWebView().evaluateJavascript(
                 "window.dispatchEvent(new Event('blockcolc-window-focus'));", null
             ), 180);
@@ -231,7 +256,7 @@ public class MainActivity extends BridgeActivity {
             // another app, the notification shade, the recents overview) loses
             // focus without any lifecycle callback; treat it like a leave and
             // let the 3 s grace separate glances from actual slacking.
-            setAttention(false);
+            applyAttentionTransition(attentionState.onWindowFocusChanged(false), "window-focus");
         }
     }
 }

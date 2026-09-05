@@ -70,6 +70,10 @@ export interface NotificationCapability {
 export interface FocusCompletionNotification {
   sessionId: string;
   endsAt: ISOInstant;
+  /** Presentation-only context for Android's ongoing focus countdown. */
+  projectTitle?: string;
+  taskTitle?: string;
+  marathon?: boolean;
 }
 
 export interface BreakCompletionNotification {

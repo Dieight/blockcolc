@@ -209,7 +209,7 @@ export interface WorldSettings {
 }
 
 export interface DomainState {
-  schemaVersion: 9;
+  schemaVersion: 10;
   projects: Project[];
   habitBuildings: HabitBuildingMonument[];
   activeProjectId: string | null;

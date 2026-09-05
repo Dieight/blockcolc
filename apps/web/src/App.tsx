@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { lazy, memo, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import type { ApplicationCommand, ApplicationService } from '@tomato-clock/application';
 import type { FocusInterruptionCategory, ImportedBlueprintStage, ImportedBlueprintV1, WorldEnvironmentStyle } from '@tomato-clock/domain';
@@ -7,23 +7,32 @@ import { completedPomodorosOn, dailyGoalForDate, localDateOf, projectProgressBas
 import { AlertTriangle, BarChart3, Check, Clock3, ExternalLink, FileUp, Hammer, Info, ListTodo, Map as MapIcon, Plus, RefreshCw, RotateCcw, Settings, Square, TreePine, Trophy, X } from 'lucide-react';
 import type { BlueprintCatalogEntry, BlueprintV1, ConstructionOutlineVisibility, VoxelLightingQuality, VoxelRenderer, WorldSnapshot } from '@tomato-clock/voxel';
 import type { ResourcePackRepository } from '@tomato-clock/resource-pack-indexeddb';
-import { TasksScreen } from './TaskManagement';
 import { LoadingPage } from './LoadingPage';
 import { ChoiceMenu } from './ChoiceMenu';
 import { BuildingMemoryPanel, createBuildingMemory, conditionLabel, constructionStage } from './BuildingMemoryPanel';
-import { StatsScreen } from './StatsScreen';
-import { SettingsScreen } from './SettingsScreen';
 import { NativeImeTextEntry, isImeCommitKey, type NativeImeInputRef } from './NativeImeTextEntry';
 import type { FocusPreferences } from './app-types';
+import { backLayerCount, handleBack, useBackLayer } from './back-layer';
 import { focusGlassMaterialFor } from './focus-glass';
 import { LITEMATIC_MAX_COMPRESSED_BYTES, readBrowserFileBytes } from './browser-adapters';
-import { APPLICATION_STATE_CHANGED_EVENT } from './bootstrap';
+import { APPLICATION_STATE_CHANGED_EVENT, type ApplicationStateChangedDetail } from './bootstrap';
 import { MAX_MARATHON_ROUNDS, parseRoundPlan, planRoundsForDuration, plannedDurationMs, reconcileRoundPlan, roundPlansEqual, type RoundPlan } from './round-plan';
 import releaseVersion from '../../../version.json';
+
+let tasksScreenModulePromise: Promise<{ default: (typeof import('./TaskManagement'))['TasksScreen'] }> | null = null;
+let statsScreenModulePromise: Promise<{ default: (typeof import('./StatsScreen'))['StatsScreen'] }> | null = null;
+let settingsScreenModulePromise: Promise<{ default: (typeof import('./SettingsScreen'))['SettingsScreen'] }> | null = null;
+function loadTasksScreen() { return tasksScreenModulePromise ??= import('./TaskManagement').then(module => ({ default: module.TasksScreen })); }
+function loadStatsScreen() { return statsScreenModulePromise ??= import('./StatsScreen').then(module => ({ default: module.StatsScreen })); }
+function loadSettingsScreen() { return settingsScreenModulePromise ??= import('./SettingsScreen').then(module => ({ default: module.SettingsScreen })); }
+const TasksScreen = memo(lazy(loadTasksScreen));
+const StatsScreen = memo(lazy(loadStatsScreen));
+const SettingsScreen = memo(lazy(loadSettingsScreen));
 
 type Tab = 'world' | 'tasks' | 'stats' | 'settings';
 type ImportRole = 'building' | 'decoration';
 interface ProjectSetupDraft { kind: 'finite' | 'habit'; title: string; subtasksText: string; blueprintId: string; habitTargetRounds: number; imported: LitematicImportResult | null; packCompatibility: { name: string; textured: number; fallback: number; total: number } | null; importRole: ImportRole }
+interface RecordedIntegrityNotice { sessionId: string; count: number; max: number; sequence: number }
 const PREFERENCES_KEY = 'blockcolc-focus-preferences-v1';
 const ROUND_PLAN_KEY = 'blockcolc-round-plan-v1';
 const SKIP_BREAK_REQUEST_KEY = 'blockcolc-skip-break-request-v1';
@@ -31,9 +40,10 @@ const APP_VERSION = releaseVersion.versionName;
 const REPOSITORY_URL = 'https://github.com/Dieight/blockcolc';
 const INITIAL_PROJECT_SETUP_DRAFT: ProjectSetupDraft = { kind: 'finite', title: '我的第一座工坊', subtasksText: '确定目标\n完成核心工作\n检查并收尾', blueprintId: 'builtin-small-workshop', habitTargetRounds: 10, imported: null, packCompatibility: null, importRole: 'building' };
 let voxelModulePromise:Promise<typeof import('@tomato-clock/voxel')>|null=null;
-function loadVoxelModule(){voxelModulePromise??=import('@tomato-clock/voxel');return voxelModulePromise;}
-function resourcePackAtlasMaximumSizeForTest():number|undefined{if(!import.meta.env.DEV)return undefined;const value=Number(new URLSearchParams(location.search).get('__atlasPageSize'));return Number.isSafeInteger(value)&&value>=32&&value<=2048?value:undefined;}
-function immersiveBandTestOverride():{bottom:number;right:number}|undefined{if(!import.meta.env.DEV)return undefined;const read=(key:string)=>{const raw=new URLSearchParams(location.search).get(key);if(raw===null)return undefined;const value=Number(raw);return Number.isFinite(value)&&value>=0&&value<=0.75?value:undefined;};const bottom=read('__immersiveBand');const right=read('__immersiveRightBand');if(bottom===undefined&&right===undefined)return undefined;return{bottom:bottom??0,right:right??0};}
+function loadVoxelModule(){voxelModulePromise??=import('@tomato-clock/voxel').then(module=>{if(testBuildEnabled())(window as typeof window&{__blockcolcVoxelTest?:typeof module}).__blockcolcVoxelTest=module;return module;});return voxelModulePromise;}
+function testBuildEnabled():boolean{return import.meta.env.DEV||import.meta.env.MODE==='test';}
+function resourcePackAtlasMaximumSizeForTest():number|undefined{if(!testBuildEnabled())return undefined;const value=Number(new URLSearchParams(location.search).get('__atlasPageSize'));return Number.isSafeInteger(value)&&value>=32&&value<=2048?value:undefined;}
+function immersiveBandTestOverride():{bottom:number;right:number}|undefined{if(!testBuildEnabled())return undefined;const read=(key:string)=>{const raw=new URLSearchParams(location.search).get(key);if(raw===null)return undefined;const value=Number(raw);return Number.isFinite(value)&&value>=0&&value<=0.75?value:undefined;};const bottom=read('__immersiveBand');const right=read('__immersiveRightBand');if(bottom===undefined&&right===undefined)return undefined;return{bottom:bottom??0,right:right??0};}
 let litematicModulePromise:Promise<typeof import('@tomato-clock/litematic')>|null=null;
 function loadLitematicModule(){litematicModulePromise??=import('@tomato-clock/litematic');return litematicModulePromise;}
 function useBlueprintCatalog(){const [catalog,setCatalog]=useState<readonly BlueprintCatalogEntry[]>([]);useEffect(()=>{let active=true;void loadVoxelModule().then(module=>{if(active)setCatalog(module.BUILTIN_BLUEPRINT_CATALOG);});return()=>{active=false;};},[]);return catalog;}
@@ -49,9 +59,15 @@ export function App({ service, resourcePacks }: { service: ApplicationService; r
   const [creatingProject, setCreatingProject] = useState(false);
   const [projectDraft, setProjectDraft] = useState<ProjectSetupDraft | null>(null);
   const [worldFocusProjectId,setWorldFocusProjectId]=useState<string|null>(null);
+  const [worldMemoryProjectId,setWorldMemoryProjectId]=useState<string|null>(null);
   const [aboutOpen,setAboutOpen]=useState(false);
   const [ceremony,setCeremony]=useState<{projectId:string;title:string}|null>(null);
   const [preferences, setPreferences] = useState<FocusPreferences>(loadPreferences);
+  const [recordedIntegrityNotice, setRecordedIntegrityNotice] = useState<RecordedIntegrityNotice | null>(null);
+  const recordedIntegrityNoticeSequenceRef = useRef(0);
+  const navigateTo = useCallback((next: Tab) => {
+    setTab(next);
+  }, []);
   useEffect(() => {
     const media = window.matchMedia('(prefers-color-scheme: dark)');
     const apply = () => {
@@ -115,40 +131,84 @@ export function App({ service, resourcePacks }: { service: ApplicationService; r
     }
   }, [service, refresh]);
   useEffect(() => { const resumeFromPageCache = (event:PageTransitionEvent) => { if(event.persisted)void service.resume().then(refresh); }; window.addEventListener('pageshow',resumeFromPageCache);return()=>window.removeEventListener('pageshow',resumeFromPageCache);},[service,refresh]);
-  useEffect(() => { const refreshAfterLifecycle = () => refresh(); window.addEventListener(APPLICATION_STATE_CHANGED_EVENT,refreshAfterLifecycle);return()=>window.removeEventListener(APPLICATION_STATE_CHANGED_EVENT,refreshAfterLifecycle);},[refresh]);
+  useEffect(() => {
+    const refreshAfterLifecycle = (event: Event) => {
+      const detail = (event as CustomEvent<ApplicationStateChangedDetail>).detail;
+      if (detail?.excursionRecorded && detail.effectiveExcursions !== null && detail.sessionId) {
+        setRecordedIntegrityNotice({
+          sessionId: detail.sessionId,
+          count: detail.effectiveExcursions,
+          max: detail.maxEffectiveExcursions,
+          sequence: ++recordedIntegrityNoticeSequenceRef.current,
+        });
+      }
+      refresh();
+    };
+    window.addEventListener(APPLICATION_STATE_CHANGED_EVENT, refreshAfterLifecycle);
+    return () => window.removeEventListener(APPLICATION_STATE_CHANGED_EVENT, refreshAfterLifecycle);
+  }, [refresh]);
   useEffect(()=>{let observed=localDateOf(new Date(),service.snapshot().calendar.timeZone);const timer=window.setInterval(()=>{const next=localDateOf(new Date(),service.snapshot().calendar.timeZone);if(next!==observed){observed=next;refresh();}},60_000);return()=>window.clearInterval(timer);},[service,refresh]);
   useEffect(()=>{if(!message)return;const timeout=window.setTimeout(()=>setMessage(''),5000);return()=>window.clearTimeout(timeout);},[message]);
   useLayoutEffect(() => { window.scrollTo(0, 0); }, [tab, creatingProject]);
   const state = useMemo(() => service.snapshot(), [service, version]); const active = useMemo(() => service.activeProjectProjection(), [service, version]);
+  useEffect(() => {
+    let cancelled = false;
+    document.documentElement.dataset.routeModules = 'loading';
+    // Load every primary route as one cold-start unit. The chunks stay split so
+    // the entry bundle remains bounded, but a first visit never becomes a
+    // second, user-visible loading phase.
+    void Promise.all([loadTasksScreen(), loadStatsScreen(), loadSettingsScreen()])
+      .then(() => {
+        if (cancelled) return;
+        const durationMs = performance.now();
+        document.documentElement.dataset.routeModules = 'ready';
+        document.documentElement.dataset.routeModulesReadyMs = durationMs.toFixed(2);
+        try {
+          const bridge = (window as typeof window & { BlockcolcNativeInput?: { logRenderDiagnostic?: (message: string) => void } }).BlockcolcNativeInput;
+          bridge?.logRenderDiagnostic?.(`[blockcolc-startup] ${JSON.stringify({ phase: 'all-routes-ready', durationMs: Number(durationMs.toFixed(2)) })}`);
+        } catch { /* Startup diagnostics are optional outside Android. */ }
+      })
+      .catch(() => {
+        if (!cancelled) document.documentElement.dataset.routeModules = 'failed';
+      });
+    return () => { cancelled = true; };
+  }, []);
   const setupDraft=projectDraft??{...INITIAL_PROJECT_SETUP_DRAFT,habitTargetRounds:preferences.habitTargetRounds};
   const updateSetupDraft=useCallback((patch:Partial<ProjectSetupDraft>)=>setProjectDraft(current=>({...current??INITIAL_PROJECT_SETUP_DRAFT,...patch})),[]);
   const beginProjectSetup=useCallback(()=>{setProjectDraft(current=>current??{...INITIAL_PROJECT_SETUP_DRAFT,habitTargetRounds:preferences.habitTargetRounds});setCreatingProject(true);},[preferences.habitTargetRounds]);
   const discardProjectSetup=useCallback(()=>{setCreatingProject(false);setProjectDraft(null);},[]);
-  const completeProjectSetup=useCallback(()=>{setCreatingProject(false);setProjectDraft(null);setTab('world');},[]);
-  const viewProjectInWorld=useCallback((projectId:string)=>{setCreatingProject(false);setWorldFocusProjectId(projectId);setTab('world');},[]);
+  const completeProjectSetup=useCallback(()=>{setCreatingProject(false);setProjectDraft(null);navigateTo('world');},[navigateTo]);
+  const viewProjectInWorld=useCallback((projectId:string)=>{setCreatingProject(false);setWorldFocusProjectId(projectId);setWorldMemoryProjectId(projectId);navigateTo('world');},[navigateTo]);
+  const selectWorldProject=useCallback((projectId:string)=>{setWorldFocusProjectId(projectId);setWorldMemoryProjectId(projectId);},[]);
+  const clearWorldFocus=useCallback(()=>{setWorldFocusProjectId(null);setWorldMemoryProjectId(null);},[]);
+  const closeWorldMemory=useCallback(()=>setWorldMemoryProjectId(null),[]);
+  const updatePreferences=useCallback((value:FocusPreferences)=>{setPreferences(value);localStorage.setItem(PREFERENCES_KEY,JSON.stringify(value));},[]);
   const immersiveFocus = !creatingProject && tab === 'world' && Boolean(active && state.activeFocusSession);
   const [landscape,setLandscape]=useState(()=>matchMedia('(orientation: landscape)').matches);
   useEffect(()=>{const media=matchMedia('(orientation: landscape)');const change=()=>setLandscape(media.matches);media.addEventListener('change',change);return()=>media.removeEventListener('change',change);},[]);
   useEffect(()=>{let live=true;const sync=()=>{if(document.hidden)return;void import('@tomato-clock/platform-capacitor').then(platform=>{if(live)return platform.setNativeFocusImmersive(immersiveFocus||landscape);});};sync();document.addEventListener('visibilitychange',sync);window.addEventListener('focus',sync);window.addEventListener('blockcolc-window-focus',sync);return()=>{live=false;document.removeEventListener('visibilitychange',sync);window.removeEventListener('focus',sync);window.removeEventListener('blockcolc-window-focus',sync);};},[immersiveFocus,landscape]);
   const worldVisible = tab === 'world' && !creatingProject;
-  const worldPane = active ? <div className={worldVisible?'world-pane':'world-pane is-hidden'} aria-hidden={!worldVisible}><WorldScreenV7 service={service} resourcePacks={resourcePacks} run={run} refresh={refresh} preferences={preferences} focusedProjectId={worldFocusProjectId} onFocusWorldProject={setWorldFocusProjectId} onClearWorldFocus={()=>setWorldFocusProjectId(null)} onOpenTasks={()=>setTab('tasks')} visible={worldVisible}/></div> : null;
-  const firstRunSetup = <ProjectSetup run={run} resourcePacks={resourcePacks} buildingBlueprints={state.buildingBlueprintResources} existingProjects={state.projects.filter(project=>project.status==='paused')} draft={setupDraft} onDraftChange={updateSetupDraft} onCreated={()=>{setProjectDraft(null);setTab('world');}}/>;
+  const worldPane = active ? <div className={worldVisible?'world-pane':'world-pane is-hidden'} aria-hidden={!worldVisible}><WorldScreenV7 service={service} resourcePacks={resourcePacks} run={run} refresh={refresh} preferences={preferences} recordedIntegrityNotice={recordedIntegrityNotice} focusedProjectId={worldFocusProjectId} memoryProjectId={worldMemoryProjectId} onFocusWorldProject={selectWorldProject} onClearWorldFocus={clearWorldFocus} onCloseWorldMemory={closeWorldMemory} onOpenTasks={()=>navigateTo('tasks')} visible={worldVisible}/></div> : null;
+  const firstRunSetup = <ProjectSetup run={run} resourcePacks={resourcePacks} buildingBlueprints={state.buildingBlueprintResources} existingProjects={state.projects.filter(project=>project.status==='paused')} draft={setupDraft} onDraftChange={updateSetupDraft} onCreated={()=>{setProjectDraft(null);navigateTo('world');}}/>;
   const creationSetup = <ProjectSetup run={run} resourcePacks={resourcePacks} buildingBlueprints={state.buildingBlueprintResources} existingProjects={[]} draft={setupDraft} onDraftChange={updateSetupDraft} onCancel={discardProjectSetup} onCreated={completeProjectSetup}/>;
-  const otherPane = !active
-    ? tab === 'settings' ? <SettingsScreen service={service} resourcePacks={resourcePacks} state={state} run={run} refresh={refresh} preferences={preferences} onPreferencesChange={value=>{setPreferences(value);localStorage.setItem(PREFERENCES_KEY,JSON.stringify(value));}}/> : tab === 'stats' ? <StatsScreen state={state}/> : firstRunSetup
-    : tab === 'tasks' ? <TasksScreen active={active} state={state} run={run} onCreateProject={beginProjectSetup} onViewProject={viewProjectInWorld}/> : tab === 'stats' ? <StatsScreen state={state}/> : tab === 'settings' ? <SettingsScreen service={service} resourcePacks={resourcePacks} state={state} run={run} refresh={refresh} preferences={preferences} onPreferencesChange={value=>{setPreferences(value);localStorage.setItem(PREFERENCES_KEY,JSON.stringify(value));}}/> : null;
   const content = <>
     {worldPane}
-    {creatingProject ? creationSetup : otherPane}
+    {creatingProject ? creationSetup : <>
+      {!active && (tab === 'world' || tab === 'tasks') && firstRunSetup}
+      {active && <RoutePane active={tab === 'tasks'} route="tasks"><Suspense fallback={<LoadingPage status="正在打开任务…"/>}><TasksScreen active={active} state={state} run={run} onCreateProject={beginProjectSetup} onViewProject={viewProjectInWorld}/></Suspense></RoutePane>}
+      <RoutePane active={tab === 'stats'} route="stats"><Suspense fallback={<LoadingPage status="正在打开统计…"/>}><StatsScreen state={state}/></Suspense></RoutePane>
+      <RoutePane active={tab === 'settings'} route="settings"><Suspense fallback={<LoadingPage status="正在打开设置…"/>}><SettingsScreen service={service} resourcePacks={resourcePacks} state={state} run={run} refresh={refresh} preferences={preferences} onPreferencesChange={updatePreferences}/></Suspense></RoutePane>
+    </>}
   </>;
   return <div className={immersiveFocus?'app-shell focus-immersive':'app-shell'}>{!immersiveFocus&&<header className="topbar"><div><span className="brand-mark">方块钟</span><span className="brand-en">Blockcolc</span></div><button className="today" type="button" aria-label="关于方块钟" onClick={()=>setAboutOpen(true)}><TreePine size={16}/>{new Intl.DateTimeFormat('zh-CN',{month:'short',day:'numeric'}).format(new Date())}</button></header>}
-    <main>{content}</main>
+    <main data-active-route={tab}>{content}</main>
     {message && <div className="toast" role="status">{message}</div>}
-    {!immersiveFocus&&<nav className="bottom-nav" aria-label="主导航"><NavButton active={tab==='world'} icon={<Clock3/>} label="计时" onClick={()=>{if(creatingProject)setCreatingProject(false);setWorldFocusProjectId(null);setTab('world');}}/><NavButton active={tab==='tasks'} icon={<ListTodo/>} label="任务" onClick={()=>setTab('tasks')}/><NavButton active={tab==='stats'} icon={<BarChart3/>} label="统计" onClick={()=>setTab('stats')}/><NavButton active={tab==='settings'} icon={<Settings/>} label="设置" onClick={()=>setTab('settings')}/></nav>}
+    {!immersiveFocus&&<nav className="bottom-nav" aria-label="主导航"><NavButton active={tab==='world'} icon={<Clock3/>} label="计时" onClick={()=>{if(creatingProject)setCreatingProject(false);navigateTo('world');}}/><NavButton active={tab==='tasks'} icon={<ListTodo/>} label="任务" onClick={()=>navigateTo('tasks')}/><NavButton active={tab==='stats'} icon={<BarChart3/>} label="统计" onClick={()=>navigateTo('stats')}/><NavButton active={tab==='settings'} icon={<Settings/>} label="设置" onClick={()=>navigateTo('settings')}/></nav>}
     {aboutOpen&&<AboutDialog onClose={()=>setAboutOpen(false)}/>}
     {ceremony&&<CompletionCeremony title={ceremony.title} onClose={()=>setCeremony(null)}/>}
   </div>;
 }
+function RoutePane({active,route,children}:{active:boolean;route:Exclude<Tab,'world'>;children:ReactNode}) { return <div className="route-pane" data-route={route} data-route-mounted="true" hidden={!active} aria-hidden={!active}>{children}</div>; }
 function NavButton({active,icon,label,onClick}:{active:boolean;icon:ReactNode;label:string;onClick:()=>void}) { return <button className={active?'nav-active':''} onClick={onClick}>{icon}<span>{label}</span></button>; }
 
 function ProjectSetup({run,resourcePacks,buildingBlueprints,existingProjects,draft,onDraftChange,onCancel,onCreated}:{run:(c:ApplicationCommand)=>Promise<any>;resourcePacks:ResourcePackRepository;buildingBlueprints:ReturnType<ApplicationService['snapshot']>['buildingBlueprintResources'];existingProjects:ReturnType<ApplicationService['snapshot']>['projects'];draft:ProjectSetupDraft;onDraftChange:(patch:Partial<ProjectSetupDraft>)=>void;onCancel?:()=>void;onCreated?:()=>void}) {
@@ -246,15 +306,18 @@ function WorldScreen({service,resourcePacks,run,refresh,preferences}:{service:Ap
     )}
   </section></div>; }
 
-function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focusedProjectId, onFocusWorldProject, onClearWorldFocus, onOpenTasks, visible }: {
+function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, recordedIntegrityNotice, focusedProjectId, memoryProjectId, onFocusWorldProject, onClearWorldFocus, onCloseWorldMemory, onOpenTasks, visible }: {
   service: ApplicationService;
   resourcePacks: ResourcePackRepository;
   run: (command: ApplicationCommand) => Promise<any>;
   refresh: () => void;
   preferences: FocusPreferences;
+  recordedIntegrityNotice: RecordedIntegrityNotice | null;
   focusedProjectId: string | null;
+  memoryProjectId: string | null;
   onFocusWorldProject: (projectId: string) => void;
   onClearWorldFocus: () => void;
+  onCloseWorldMemory: () => void;
   onOpenTasks: () => void;
   visible: boolean;
 }) {
@@ -278,7 +341,7 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
   const [controlsVisible, setControlsVisible] = useState(false);
   const [hintVisible, setHintVisible] = useState(false);
   const [pickedCell, setPickedCell] = useState<{ x: number; y: number; z: number } | null>(null);
-  const [integrityFlash, setIntegrityFlash] = useState(false);
+  const [integrityNotice, setIntegrityNotice] = useState<{ sessionId: string; count: number; max: number; sequence: number } | null>(null);
   // V20 FX-04 exit: conditional controls stay mounted for a ~180 ms fade-down
   // after their close/hide action so enter and exit read as one symmetric move.
   const [controlsLeaving, setControlsLeaving] = useState(false);
@@ -290,12 +353,29 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
     const timer = window.setTimeout(done, ms);
     exitTimersRef.current.push(timer);
   };
-  const lastExcursionsRef = useRef<number | null>(null);
+  const integrityNoticeSequenceRef = useRef(0);
+  const integrityNoticeTimerRef = useRef<number | null>(null);
+  const integrityNoticeExitTimerRef = useRef<number | null>(null);
   const lastTapRef = useRef<{ time: number; x: number; y: number } | null>(null);
   const revealTimerRef = useRef<number | null>(null);
   const hideTimerRef = useRef<number | null>(null);
   const [constructionFeedback, setConstructionFeedback] = useState(0);
   const reconciling = useRef(false);
+
+  const showIntegrityNotice = useCallback((sessionId: string, count: number, max: number) => {
+    if (integrityNoticeTimerRef.current !== null) window.clearTimeout(integrityNoticeTimerRef.current);
+    if (integrityNoticeExitTimerRef.current !== null) window.clearTimeout(integrityNoticeExitTimerRef.current);
+    const sequence = ++integrityNoticeSequenceRef.current;
+    setIntegrityLeaving(false);
+    setIntegrityNotice({ sessionId, count, max, sequence });
+    integrityNoticeTimerRef.current = window.setTimeout(() => {
+      setIntegrityLeaving(true);
+      integrityNoticeExitTimerRef.current = window.setTimeout(() => {
+        setIntegrityNotice((current) => current?.sequence === sequence ? null : current);
+        setIntegrityLeaving(false);
+      }, 180);
+    }, 5_000);
+  }, []);
 
   const setPlan = useCallback((next: RoundPlan | null) => {
     setPlanState(next);
@@ -444,26 +524,25 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
     return () => { observer.disconnect(); window.removeEventListener('resize', measure); };
   }, [session?.id]);
 
-  // The integrity count pops up only when the session starts and when a new
-  // excursion is consumed (returning from an app switch); the rest of the time
-  // the band stays quiet.
+  // Preserve the original V19 world-overlay notice. Session start owns the
+  // initial 0/N presentation; subsequent counts come from the authoritative
+  // lifecycle result instead of being inferred from a render-time snapshot.
   useEffect(() => {
     if (!session || !state.focusIntegrityPolicy.enabled) {
-      lastExcursionsRef.current = null;
+      if (integrityNoticeTimerRef.current !== null) window.clearTimeout(integrityNoticeTimerRef.current);
+      if (integrityNoticeExitTimerRef.current !== null) window.clearTimeout(integrityNoticeExitTimerRef.current);
+      integrityNoticeTimerRef.current = null;
+      integrityNoticeExitTimerRef.current = null;
+      setIntegrityLeaving(false);
+      setIntegrityNotice(null);
       return;
     }
-    const count = session.integrity.effectiveExcursions;
-    const previous = lastExcursionsRef.current;
-    lastExcursionsRef.current = count;
-    if (previous !== null && count <= previous) return;
-    setIntegrityLeaving(false);
-    setIntegrityFlash(true);
-    const timer = window.setTimeout(() => {
-      setIntegrityLeaving(true);
-      exitAfter(180, () => { setIntegrityFlash(false); setIntegrityLeaving(false); });
-    }, 5_000);
-    return () => window.clearTimeout(timer);
-  }, [session?.id, session?.integrity.effectiveExcursions, state.focusIntegrityPolicy.enabled]);
+    showIntegrityNotice(session.id, session.integrity.effectiveExcursions, state.focusIntegrityPolicy.maxEffectiveExcursions);
+  }, [session?.id, state.focusIntegrityPolicy.enabled, state.focusIntegrityPolicy.maxEffectiveExcursions, showIntegrityNotice]);
+  useEffect(() => {
+    if (!recordedIntegrityNotice) return;
+    showIntegrityNotice(recordedIntegrityNotice.sessionId, recordedIntegrityNotice.count, recordedIntegrityNotice.max);
+  }, [recordedIntegrityNotice, showIntegrityNotice]);
   // V22 follow-up: the app-switch-limit notice plays the same bounded entrance
   // and fade-out as the other transient controls instead of lingering forever.
   const [integrityEndedLeaving, setIntegrityEndedLeaving] = useState(false);
@@ -483,6 +562,7 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
     return () => window.clearTimeout(timer);
   }, [integrityFailure]);
   useEffect(() => {
+    if (plan?.mode === 'marathon' && reconciledPlan === null) setPlanMode('rounds');
     if (!roundPlansEqual(plan, reconciledPlan)) setPlan(reconciledPlan);
   }, [plan, reconciledPlan, setPlan]);
   const selectedId = reconciledPlan?.subtaskId ?? selected;
@@ -529,7 +609,13 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
       ? state.projects.find((project) => project.id === reconciledPlan.projectId) ?? active.project
       : active.project;
     const marathonHostIsHabit = marathonHost.kind === 'habit';
-    const focusMinutes = marathonHostIsHabit ? preferences.habitFocusMinutes : preferences.focusMinutes;
+    // Marathon is one shared scheduling contract regardless of whether its
+    // host is a finite or habit project. Classic habit rounds keep their own
+    // duration; every end-time round uses the normal-task duration everywhere.
+    const marathonRound = reconciledPlan?.mode === 'marathon' || marathonDraft;
+    const focusMinutes = marathonRound
+      ? preferences.focusMinutes
+      : marathonHostIsHabit ? preferences.habitFocusMinutes : preferences.focusMinutes;
     let marathonTotal = total;
     let marathonEndAt: string | undefined = reconciledPlan?.endAt;
     if (marathonDraft) {
@@ -539,7 +625,6 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
       marathonTotal = schedule.rounds;
       marathonEndAt = new Date(endMs!).toISOString();
     }
-    const marathonRound = reconciledPlan?.mode === 'marathon' || marathonDraft;
     const targetSubtaskId = marathonHostIsHabit
       ? null
       : marathonRound
@@ -580,6 +665,9 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
       closePlan();
       return;
     }
+    // Leaving a locked marathon must also leave its local draft mode. Otherwise
+    // the idle timer keeps counting toward the stale endAt after the plan is gone.
+    setPlanMode('rounds');
     closePlan();
     const soon = service.snapshot().activeFocusSession;
     if (soon) {
@@ -625,7 +713,7 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
       const endMs = marathonEndInstant(endAtDraft);
       const schedule = endMs === null ? null : planRoundsForDuration(
         endMs - Date.now(),
-        isHabit ? preferences.habitFocusMinutes : preferences.focusMinutes,
+        preferences.focusMinutes,
         preferences.breakMinutes,
       );
       if (schedule === null) return;
@@ -646,7 +734,11 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
     }
     closePlan();
   }, [reconciledPlan, planMode, endAtDraft, isHabit, preferences.focusMinutes, preferences.habitFocusMinutes, preferences.breakMinutes, active.project, setPlan, closePlan, cancelPlan]);
-  useEffect(() => () => { for (const timer of exitTimersRef.current) window.clearTimeout(timer); }, []);
+  useEffect(() => () => {
+    for (const timer of exitTimersRef.current) window.clearTimeout(timer);
+    if (integrityNoticeTimerRef.current !== null) window.clearTimeout(integrityNoticeTimerRef.current);
+    if (integrityNoticeExitTimerRef.current !== null) window.clearTimeout(integrityNoticeExitTimerRef.current);
+  }, []);
   const interruptFocus = async (interruptionCategory: FocusInterruptionCategory | null) => {
     const current = service.snapshot().activeFocusSession;
     if (current && Date.parse(current.endsAt) <= Date.now()) {
@@ -695,6 +787,7 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
         ? [...currentPlan.reportedSessionIds, sessionId]
         : currentPlan.reportedSessionIds;
       if (currentPlanIsHabit && (sealed || completed >= currentPlan.totalRounds)) {
+        setPlanMode('rounds');
         setPlan(null);
       } else if (completed >= currentPlan.totalRounds) {
         setPlan({ ...currentPlan, completedRounds: completed, status: 'report', currentSessionId: undefined, reportedSessionIds });
@@ -735,9 +828,12 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
     ? state.projects.find((project) => project.id === reconciledPlan.projectId)
     : active.project;
   const planHostIsHabit = planHostProject?.kind === 'habit';
-  const focusMinutes = planHostIsHabit ? preferences.habitFocusMinutes : preferences.focusMinutes;
   const [marathonNow, setMarathonNow] = useState(Date.now());
   const marathonPlan = reconciledPlan?.mode === 'marathon';
+  const isMarathonContext = marathonPlan || planMode === 'marathon';
+  const focusMinutes = isMarathonContext
+    ? preferences.focusMinutes
+    : planHostIsHabit ? preferences.habitFocusMinutes : preferences.focusMinutes;
   useEffect(() => {
     if (!marathonPlan) return;
     const timer = window.setInterval(() => setMarathonNow(Date.now()), 1000);
@@ -753,7 +849,6 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
   // While idle the clock shows the per-round length for the classic schedule,
   // but for a marathon it keeps counting the total time still left until the
   // chosen end instant.
-  const isMarathonContext = marathonPlan || planMode === 'marathon';
   const marathonEndsAt = isMarathonContext
     ? (reconciledPlan?.endAt ?? (marathonDraftEndMs !== null ? new Date(marathonDraftEndMs).toISOString() : undefined))
     : undefined;
@@ -791,7 +886,7 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
     ?? blueprintName(blueprintCatalog, active.project.blueprintId);
 
   return <div className={session ? 'world-screen is-focusing' : marathonReportPhase ? 'world-screen has-report' : activePendingBlocksWorkbench ? 'world-screen has-report' : activeHabitAwaitingBlocksWorkbench ? 'world-screen is-choosing-habit-building' : 'world-screen'}>
-    <WorldCanvasV7 service={service} resourcePacks={resourcePacks} lightingQuality={preferences.lightingQuality} constructionOutlineVisibility={preferences.constructionOutlineVisibility} showWorldCoordinates={preferences.showWorldCoordinates} environmentStyle={state.worldSettings.environmentStyle} worldSeed={state.worldSettings.worldSeed} terrainGenerationVersion={state.worldSettings.terrainGenerationVersion} constructionFeedback={constructionFeedback} sessionActive={!!session} immersiveBand={immersiveBand} focusedProjectId={focusedProjectId} onSelectProject={onFocusWorldProject} onClearWorldFocus={onClearWorldFocus} onContinueProject={async(projectId)=>{if(projectId!==active.project.id){const result=await run({type:'SwitchActiveProject',projectId});if(!result?.ok)return;}onClearWorldFocus();}} switchBlockedReason={session?'结束本轮专注后才能切换任务。':pending.length>0?'先完成当前任务的进度汇报，再切换任务。':undefined} visible={visible} onPickTerrain={setPickedCell} pickedCell={pickedCell}/>
+    <WorldCanvasV7 service={service} resourcePacks={resourcePacks} lightingQuality={preferences.lightingQuality} constructionOutlineVisibility={preferences.constructionOutlineVisibility} showWorldCoordinates={preferences.showWorldCoordinates} environmentStyle={state.worldSettings.environmentStyle} worldSeed={state.worldSettings.worldSeed} terrainGenerationVersion={state.worldSettings.terrainGenerationVersion} constructionFeedback={constructionFeedback} sessionActive={!!session} immersiveBand={immersiveBand} focusedProjectId={focusedProjectId} memoryProjectId={memoryProjectId} onSelectProject={onFocusWorldProject} onClearWorldFocus={onClearWorldFocus} onCloseMemory={onCloseWorldMemory} onContinueProject={async(projectId)=>{if(projectId!==active.project.id){const result=await run({type:'SwitchActiveProject',projectId});if(!result?.ok)return;}onCloseWorldMemory();}} switchBlockedReason={session?'结束本轮专注后才能切换任务。':pending.length>0?'先完成当前任务的进度汇报，再切换任务。':undefined} visible={visible} onPickTerrain={setPickedCell} pickedCell={pickedCell}/>
     {visible && <section ref={focusPanelRef} className="focus-panel focus-workbench-panel" onPointerUp={(event) => handlePanelTap({ target: event.target, clientX: event.clientX, clientY: event.clientY })}>
       {!session && <div className="workbench-heading">
         <h1>{marathonPlan ? '按结束时间排程' : active.project.title}</h1>
@@ -806,12 +901,12 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
          <button type="button" className="plan-summary" aria-label="调整本次计划" aria-expanded={planOpen} onClick={() => setPlanOpen(true)}><span>{planSummary}</span><span>调整</span></button>
        </>}
        {activeHabitAwaitingBlocksWorkbench ? <HabitBuildingSelection state={state} active={active} resourcePacks={resourcePacks} run={run} targetRounds={preferences.habitTargetRounds}/>
-        : marathonReportPhase ? <MarathonProgressReport state={state} hostProjectId={reconciledPlan!.projectId} run={run} onSubmitted={() => { setPlan(null); fireConstructionFeedback(); }}/>
+        : marathonReportPhase ? <MarathonProgressReport state={state} hostProjectId={reconciledPlan!.projectId} run={run} onSubmitted={() => { setPlanMode('rounds'); setPlan(null); fireConstructionFeedback(); }}/>
         : pending.length > 0 && !marathonPlan ? <ProgressReportV7 active={active} run={run} onSubmitted={afterReport}/> : <>
          {session && <div className="focus-task-context"><strong>{marathonPlan ? `马拉松 第 ${(reconciledPlan?.completedRounds ?? 0) + 1} / ${reconciledPlan?.totalRounds ?? 1} 轮` : isHabit ? active.project.title : subtask!.title}</strong></div>}
         {isBreak && <div className="rest-summary"><span>休息时间</span><strong>{marathonPlan ? `第 ${reconciledPlan?.completedRounds ?? 0} / ${reconciledPlan?.totalRounds ?? 1} 轮已结束` : (reconciledPlan?.endAfterBreak ? '小任务已完成' : '下一轮准备中')}</strong><small>{marathonPlan ? '休息结束后自动进入下一轮' : dailySummary}</small></div>}
         {(isBreak || reconciledPlan?.status === 'ready') && <div className={isBreak ? 'session-kind rest' : 'session-kind'}>{isBreak ? '放松一下，结束后会回到下一步。' : `准备第 ${reconciledPlan!.completedRounds + 1} / ${reconciledPlan!.totalRounds} 轮`}</div>}
-        {(session && state.focusIntegrityPolicy.enabled && (integrityFlash || integrityLeaving)) && <div className={`${session.integrity.effectiveExcursions > 0 ? 'focus-integrity-warning flash active' : 'focus-integrity-warning flash'}${integrityLeaving ? ' is-leaving' : ''}`} role="status"><AlertTriangle/>有效离开 {session.integrity.effectiveExcursions} / {state.focusIntegrityPolicy.maxEffectiveExcursions} 次</div>}
+        {(session && state.focusIntegrityPolicy.enabled && integrityNotice?.sessionId === session.id) && <div className={`${integrityNotice.count > 0 ? 'focus-integrity-warning flash active' : 'focus-integrity-warning flash'}${integrityLeaving ? ' is-leaving' : ''}`} role="status"><AlertTriangle/>有效离开 {integrityNotice.count} / {integrityNotice.max} 次</div>}
         {integrityFailure && !integrityEndedHidden && <div className={`focus-integrity-ended${integrityEndedLeaving ? ' is-leaving' : ''}`} role="alert"><AlertTriangle/>本轮专注因达到离开应用次数上限而结束。下次可以从这里继续。</div>}
          <FocusTimer mode={timerMode} endsAt={timerEndsAt} fallbackMs={timerFallbackMs} marathonRemainingMs={marathonRemainingTotalMs} onElapsed={session ? reconcile : finishBreak}/>
         {isBreak ? <button className="primary secondary-action" onClick={skipBreak}>跳过休息</button>
@@ -828,7 +923,7 @@ function WorldScreenV7({ service, resourcePacks, run, refresh, preferences, focu
       </div>
     )}
     {(planOpen || planLeaving) && !session && <div className={planLeaving ? 'dialog-leave' : undefined}>{planHostIsHabit
-      ? <HabitFocusPlanSheet rounds={rounds} focusMinutes={preferences.habitFocusMinutes} breakMinutes={preferences.breakMinutes} locked={Boolean(reconciledPlan)} mode={reconciledPlan?.mode ?? planMode} endAtDraft={endAtDraft} onModeChange={setPlanMode} onEndAtDraftChange={setEndAtDraft} onRoundsChange={setRounds} onClose={closePlan} onConfirm={confirmPlan} onCancelPlan={cancelPlan}/>
+      ? <HabitFocusPlanSheet rounds={rounds} focusMinutes={(reconciledPlan?.mode ?? planMode) === 'marathon' ? preferences.focusMinutes : preferences.habitFocusMinutes} breakMinutes={preferences.breakMinutes} locked={Boolean(reconciledPlan)} mode={reconciledPlan?.mode ?? planMode} endAtDraft={endAtDraft} onModeChange={setPlanMode} onEndAtDraftChange={setEndAtDraft} onRoundsChange={setRounds} onClose={closePlan} onConfirm={confirmPlan} onCancelPlan={cancelPlan}/>
       : <FocusPlanSheet subtasks={active.project.subtasks} selectedId={reconciledPlan?.subtaskId ?? selected!} rounds={rounds} focusMinutes={preferences.focusMinutes} breakMinutes={preferences.breakMinutes} locked={Boolean(reconciledPlan)} mode={reconciledPlan?.mode ?? planMode} endAtDraft={endAtDraft} onModeChange={setPlanMode} onEndAtDraftChange={setEndAtDraft} onSelect={setSelected} onRoundsChange={setRounds} onClose={closePlan} onConfirm={confirmPlan} onCancelPlan={cancelPlan}/>}</div>}
   </div>;
 }
@@ -942,7 +1037,7 @@ function HabitFocusPlanSheet({ rounds, focusMinutes, breakMinutes, locked, mode,
           ? <p className="plan-sheet-error">请先选择结束时间。</p>
           : schedule === null
             ? <p className="plan-sheet-error">从现在到 {formatClockTime(endMs)} 不足一轮习惯专注（{focusMinutes} 分钟），请选择更晚的时间。</p>
-            : <p className="plan-sheet-note">到 {formatClockTime(endMs)} 共约 {Math.max(1, Math.round((endMs - Date.now()) / 60000))} 分钟：安排 {schedule.rounds} 轮习惯专注{schedule.breaks > 0 ? `、${schedule.breaks} 次休息` : ''}。每轮完成后直接推进当前建筑，结束后不进入普通任务的统一汇报。{capped ? `时间超过上限 ${MAX_MARATHON_ROUNDS} 轮，按前 ${schedule.rounds} 轮（约 ${formatDurationSummary(schedule.usableMs)}）排程。` : ''}{note}</p>}
+            : <p className="plan-sheet-note">到 {formatClockTime(endMs)} 共约 {Math.max(1, Math.round((endMs - Date.now()) / 60000))} 分钟：以普通任务设置的 {focusMinutes} 分钟为一轮，安排 {schedule.rounds} 轮习惯专注{schedule.breaks > 0 ? `、${schedule.breaks} 次休息` : ''}。每轮完成后直接推进当前建筑，结束后不进入普通任务的统一汇报。{capped ? `时间超过上限 ${MAX_MARATHON_ROUNDS} 轮，按前 ${schedule.rounds} 轮（约 ${formatDurationSummary(schedule.usableMs)}）排程。` : ''}{note}</p>}
       </>}
       <button type="button" className={locked ? 'primary destructive' : 'primary'} disabled={!locked && mode === 'marathon' && !marathonValid} onClick={locked ? onCancelPlan : onConfirm}>{locked ? '取消计划' : '确认计划'}</button>
     </section>
@@ -1065,12 +1160,6 @@ function MarathonProgressReport({ state, hostProjectId, run, onSubmitted }: {
       const next = new Set(expanded);
       next.add(projectId);
       setExpanded(next);
-      if (!(projectId in habitRounds)) {
-        const project = habits.find((item) => item.id === projectId);
-        if (!project) return;
-        const max = Math.max(1, Math.min(ownHabitMax(project), totalRounds - allocatedRounds));
-        setHabitRounds((previous) => ({ ...previous, [projectId]: max }));
-      }
     } else {
       const next = new Set(expanded);
       next.delete(projectId);
@@ -1184,8 +1273,8 @@ function MarathonProgressReport({ state, hostProjectId, run, onSubmitted }: {
   </div>;
 }
 
-const WorldCanvasV7 = memo(function WorldCanvasV7({service,resourcePacks,lightingQuality,constructionOutlineVisibility,showWorldCoordinates,environmentStyle,worldSeed,terrainGenerationVersion,constructionFeedback=0,sessionActive=false,immersiveBand={bottom:0,right:0},focusedProjectId,onSelectProject,onClearWorldFocus,onContinueProject,switchBlockedReason,visible,onPickTerrain,pickedCell}:{service:ApplicationService;resourcePacks:ResourcePackRepository;lightingQuality:VoxelLightingQuality;constructionOutlineVisibility:ConstructionOutlineVisibility;showWorldCoordinates:boolean;environmentStyle:WorldEnvironmentStyle;worldSeed:string;terrainGenerationVersion:4;constructionFeedback?:number;sessionActive?:boolean;immersiveBand?:{bottom:number;right:number};focusedProjectId:string|null;onSelectProject:(projectId:string)=>void;onClearWorldFocus:()=>void;onContinueProject:(projectId:string)=>Promise<void>;switchBlockedReason?:string;visible:boolean;onPickTerrain:(position:{x:number;y:number;z:number})=>void;pickedCell:{x:number;y:number;z:number}|null}) {
-  const ref=useRef<HTMLCanvasElement>(null); const renderer=useRef<VoxelRenderer|null>(null); const catalog=useBlueprintCatalog(); const world=service.worldProjection(); const state=service.snapshot(); const importedRef=useRef(new Map<string,BlueprintV1>()); const focusRef=useRef(focusedProjectId); const selectRef=useRef(onSelectProject); const visibleRef=useRef(visible); const appliedPackRef=useRef<string|null|undefined>(undefined); const sessionActiveRef=useRef(sessionActive); const [ready,setReady]=useState(false);
+const WorldCanvasV7 = memo(function WorldCanvasV7({service,resourcePacks,lightingQuality,constructionOutlineVisibility,showWorldCoordinates,environmentStyle,worldSeed,terrainGenerationVersion,constructionFeedback=0,sessionActive=false,immersiveBand={bottom:0,right:0},focusedProjectId,memoryProjectId,onSelectProject,onClearWorldFocus,onCloseMemory,onContinueProject,switchBlockedReason,visible,onPickTerrain,pickedCell}:{service:ApplicationService;resourcePacks:ResourcePackRepository;lightingQuality:VoxelLightingQuality;constructionOutlineVisibility:ConstructionOutlineVisibility;showWorldCoordinates:boolean;environmentStyle:WorldEnvironmentStyle;worldSeed:string;terrainGenerationVersion:4;constructionFeedback?:number;sessionActive?:boolean;immersiveBand?:{bottom:number;right:number};focusedProjectId:string|null;memoryProjectId:string|null;onSelectProject:(projectId:string)=>void;onClearWorldFocus:()=>void;onCloseMemory:()=>void;onContinueProject:(projectId:string)=>Promise<void>;switchBlockedReason?:string;visible:boolean;onPickTerrain:(position:{x:number;y:number;z:number})=>void;pickedCell:{x:number;y:number;z:number}|null}) {
+  const ref=useRef<HTMLCanvasElement>(null); const renderer=useRef<VoxelRenderer|null>(null); const catalog=useBlueprintCatalog(); const world=service.worldProjection(); const state=service.snapshot(); const importedRef=useRef(new Map<string,BlueprintV1>()); const focusRef=useRef(focusedProjectId); const selectRef=useRef(onSelectProject); const visibleRef=useRef(visible); const appliedPackRef=useRef<string|null|undefined>(undefined); const sessionActiveRef=useRef(sessionActive); const pickEnabledRef=useRef(false); const pickTerrainRef=useRef(onPickTerrain); const [ready,setReady]=useState(false);
   const immersiveBandRef=useRef(immersiveBand); immersiveBandRef.current=immersiveBand;
   // V21 top-right HUD reveal: one shared control governs both the immersive
   // view controls and the ordinary world HUD. Tapping the corner shows them,
@@ -1244,10 +1333,11 @@ const WorldCanvasV7 = memo(function WorldCanvasV7({service,resourcePacks,lightin
   // validating a candidate without rebuilding it.
   const pickEnabled=new URLSearchParams(location.search).has('pick')
     || showWorldCoordinates;
+  pickEnabledRef.current=pickEnabled; pickTerrainRef.current=onPickTerrain;
   importedRef.current=new Map(world.projects.flatMap(project=>project.building.importedBlueprint?[[project.building.blueprintId,project.building.importedBlueprint as BlueprintV1]]:[])); focusRef.current=focusedProjectId; selectRef.current=onSelectProject; visibleRef.current=visible;
   const blueprintLabel=(blueprintId:string,importedTitle?:string)=>state.buildingBlueprintResources.find(resource=>resource.id===blueprintId)?.displayName??importedTitle??blueprintName(catalog,blueprintId);
   const decorationDates=decorationDatesByProject(state); const snapshotKey=world.projects.map(project=>`${project.project.id}:${project.building.blueprintId}:${project.building.completionBasisPoints}:${project.building.conditionBasisPoints}:${project.isActive}:${project.settlementIndex}:${(decorationDates.get(project.project.id)??[]).join(',')}:${project.importedDecorations.map(reward=>`${reward.rewardId}@${reward.localPosition.x},${reward.localPosition.z},${reward.rotationQuarterTurns}`).join(';')}`).join('|'); const snapshots=useMemo(()=>toVoxelWorlds(world.projects,state),[snapshotKey]); const summary=world.projects.map(project=>`${project.project.title}，${blueprintLabel(project.building.blueprintId,project.building.importedBlueprint?.title)}，${project.isActive?'正在建造':project.project.status==='paused'?'暂停建造':'纪念建筑'}，建造进度 ${Math.round(project.building.completionBasisPoints/100)}%，保存状况 ${conditionLabel(project.building.conditionBasisPoints)}`).join('；'); const focusedTitle=world.projects.find(project=>project.project.id===focusedProjectId)?.project.title;
-  useEffect(()=>{let cancelled=false;let current:VoxelRenderer|null=null;setReady(false);let raf=0;let timer=0;const begin=()=>{void loadVoxelModule().then(async({createVoxelRenderer,resolveBuiltinBlueprint})=>{if(cancelled||!ref.current)return;current=createVoxelRenderer(ref.current,{resolveBlueprint:id=>importedRef.current.get(id)??resolveBuiltinBlueprint(id),resourcePackAtlasMaximumSize:resourcePackAtlasMaximumSizeForTest(),lightingQuality,constructionOutlineVisibility,environmentStyle,worldSeed,terrainGenerationVersion,onSelectProject:projectId=>selectRef.current(projectId),onPickTerrain:pickEnabled?onPickTerrain:undefined,debugFlatColors:new URLSearchParams(location.search).has('flat'),debugVoidScan:new URLSearchParams(location.search).has('voidscan')});renderer.current=current;current.setReducedMotion(matchMedia('(prefers-reduced-motion: reduce)').matches);current.setVisible(visibleRef.current);current.setImmersiveBandFraction(immersiveBandRef.current.bottom??0,immersiveBandRef.current.right??0);current.setWorlds(toVoxelWorlds(service.worldProjection().projects,service.snapshot()));current.focusProject(focusRef.current);const pack=await resourcePacks.getActive();appliedPackRef.current=pack?`${pack.id}:${pack.manifest.pack.packFormat}`:null;if(!cancelled&&current)await current.setResourcePack(pack?{id:pack.id,manifest:pack.manifest}:null);if(!cancelled)setReady(true);}).catch(error=>{console.error('Voxel world initialization failed',error);if(!cancelled)setReady(true);});};raf=requestAnimationFrame(()=>{timer=window.setTimeout(begin,0);});return()=>{cancelled=true;cancelAnimationFrame(raf);window.clearTimeout(timer);current?.dispose();if(renderer.current===current)renderer.current=null;};},[service,resourcePacks,lightingQuality,constructionOutlineVisibility,environmentStyle,worldSeed,terrainGenerationVersion,pickEnabled]);
+  useEffect(()=>{let cancelled=false;let current:VoxelRenderer|null=null;setReady(false);let raf=0;let timer=0;const markReady=()=>setReady(true);const begin=()=>{void loadVoxelModule().then(async({createVoxelRenderer,resolveBuiltinBlueprint})=>{if(cancelled||!ref.current)return;current=createVoxelRenderer(ref.current,{resolveBlueprint:id=>importedRef.current.get(id)??resolveBuiltinBlueprint(id),resourcePackAtlasMaximumSize:resourcePackAtlasMaximumSizeForTest(),lightingQuality,constructionOutlineVisibility,environmentStyle,worldSeed,terrainGenerationVersion,onSelectProject:projectId=>selectRef.current(projectId),onPickTerrain:position=>{if(pickEnabledRef.current)pickTerrainRef.current(position);},debugFlatColors:new URLSearchParams(location.search).has('flat'),debugVoidScan:new URLSearchParams(location.search).has('voidscan')});renderer.current=current;current.setReducedMotion(matchMedia('(prefers-reduced-motion: reduce)').matches);current.setVisible(visibleRef.current);current.setImmersiveBandFraction(immersiveBandRef.current.bottom??0,immersiveBandRef.current.right??0);current.setWorlds(toVoxelWorlds(service.worldProjection().projects,service.snapshot()));current.focusProject(focusRef.current);const pack=await resourcePacks.getActive();appliedPackRef.current=pack?`${pack.id}:${pack.manifest.pack.packFormat}`:null;if(!cancelled&&current)await current.setResourcePack(pack?{id:pack.id,manifest:pack.manifest}:null);if(!cancelled)markReady();}).catch(error=>{console.error('Voxel world initialization failed',error);if(!cancelled)markReady();});};raf=requestAnimationFrame(()=>{timer=window.setTimeout(begin,0);});return()=>{cancelled=true;cancelAnimationFrame(raf);window.clearTimeout(timer);current?.dispose();if(renderer.current===current)renderer.current=null;};},[service,resourcePacks,lightingQuality,constructionOutlineVisibility,environmentStyle,worldSeed,terrainGenerationVersion]);
   useEffect(()=>{renderer.current?.setVisible(visible);},[visible]);
   // IF-01: bounded construction pulses — round completed (stronger) and focus started (gentle).
   useEffect(()=>{if(constructionFeedback>0)renderer.current?.playConstructionPulse(1);},[constructionFeedback]);
@@ -1257,9 +1347,9 @@ const WorldCanvasV7 = memo(function WorldCanvasV7({service,resourcePacks,lightin
   useEffect(()=>{if(!visible)return;let cancelled=false;void resourcePacks.getActive().then(pack=>{if(cancelled||!renderer.current)return;const key=pack?`${pack.id}:${pack.manifest.pack.packFormat}`:null;if(appliedPackRef.current===key)return;appliedPackRef.current=key;void renderer.current!.setResourcePack(pack?{id:pack.id,manifest:pack.manifest}:null).then(()=>{if(!cancelled)renderer.current?.setVisible(true);});});return()=>{cancelled=true;};},[visible,resourcePacks]);
   useEffect(()=>{renderer.current?.setWorlds(snapshots);},[snapshots]);
   useEffect(()=>{renderer.current?.focusProject(focusedProjectId);},[focusedProjectId]);
-  const focusedProject=world.projects.find(project=>project.project.id===focusedProjectId);
-  const memory=focusedProject?createBuildingMemory(state,focusedProject,blueprintLabel(focusedProject.building.blueprintId,focusedProject.building.importedBlueprint?.title)):null;
-  return <><figure className={focusedProjectId?'world is-project-focused':'world'}><canvas ref={ref} role="img" aria-label="项目建筑世界" aria-describedby="world-summary" data-coordinate-picking={pickEnabled?'true':'false'}/>{visible&&<div className="world-hud-tapzone" aria-hidden="true" onPointerDown={event=>event.stopPropagation()} onPointerUp={event=>{event.stopPropagation();toggleViewControls();}}/>}{visible&&sessionActive&&(viewControlsVisible||viewControlsLeaving)&&<div className={`immersive-view-controls${viewControlsLeaving?' is-leaving':''}`}>{focusedProjectId&&<button type="button" className="immersive-reset-view" aria-label="返回完整聚落" title="返回完整聚落" onClick={()=>runViewAction(onClearWorldFocus)}><MapIcon/></button>}<button type="button" className="immersive-reset-view" aria-label="重置视角" title="重置视角" onClick={()=>runViewAction(()=>renderer.current?.resetCamera())}><RotateCcw/></button></div>}{visible&&<figcaption id="world-summary" className="sr-only">林边聚落，共 {world.projects.length} 栋建筑。{summary}</figcaption>}{visible&&!sessionActive&&<nav className="world-building-index" aria-label="聚落建筑">{world.projects.map(project=><button key={project.project.id} type="button" onClick={()=>onSelectProject(project.project.id)}>查看建筑记忆：{project.project.title}</button>)}</nav>}{visible&&pickEnabled&&pickedCell&&<div className="world-pick-chip" role="status" data-testid="world-pick">x {pickedCell.x} · z {pickedCell.z} · 高 {pickedCell.y}</div>}{visible&&!sessionActive&&(viewControlsVisible||viewControlsLeaving)&&<div className={`world-hud${viewControlsLeaving?' is-leaving':''}`}><span>{focusedTitle?`正在查看 · ${focusedTitle}`:`林边聚落 · ${world.projects.length} 栋`}</span><div className="world-hud-actions">{focusedProjectId&&<button title="返回完整聚落" aria-label="返回完整聚落" onClick={()=>runViewAction(onClearWorldFocus)}><MapIcon/></button>}<button title="重置视角" aria-label="重置视角" onClick={()=>runViewAction(()=>renderer.current?.resetCamera())}><RotateCcw/></button></div></div>}{visible&&constructionFeedback>0&&<div key={constructionFeedback} className="construction-feedback" role="status"><Hammer/><span>材料已送达，继续建造</span><i/><i/><i/></div>}</figure>{visible&&!sessionActive&&memory&&<BuildingMemoryPanel memory={memory} switchBlockedReason={memory.isActive?undefined:switchBlockedReason} onClose={onClearWorldFocus} onContinue={()=>void onContinueProject(memory.projectId)}/>} {!ready&&<LoadingPage status="正在建造世界…"/>}</>;
+  const memoryProject=world.projects.find(project=>project.project.id===memoryProjectId);
+  const memory=memoryProject?createBuildingMemory(state,memoryProject,blueprintLabel(memoryProject.building.blueprintId,memoryProject.building.importedBlueprint?.title)):null;
+  return <><figure className={focusedProjectId?'world is-project-focused':'world'}><canvas ref={ref} role="img" aria-label="项目建筑世界" aria-describedby="world-summary" data-coordinate-picking={pickEnabled?'true':'false'}/>{visible&&<div className="world-hud-tapzone" aria-hidden="true" onPointerDown={event=>event.stopPropagation()} onPointerUp={event=>{event.stopPropagation();toggleViewControls();}}/>}{visible&&sessionActive&&(viewControlsVisible||viewControlsLeaving)&&<div className={`immersive-view-controls${viewControlsLeaving?' is-leaving':''}`}>{focusedProjectId&&<button type="button" className="immersive-reset-view" aria-label="重置地图" title="重置地图" onClick={()=>runViewAction(onClearWorldFocus)}><MapIcon/></button>}<button type="button" className="immersive-reset-view" aria-label="重置视角" title="重置视角" onClick={()=>runViewAction(()=>renderer.current?.resetCamera())}><RotateCcw/></button></div>}{visible&&<figcaption id="world-summary" className="sr-only">林边聚落，共 {world.projects.length} 栋建筑。{summary}</figcaption>}{visible&&!sessionActive&&<nav className="world-building-index" aria-label="聚落建筑">{world.projects.map(project=><button key={project.project.id} type="button" onClick={()=>onSelectProject(project.project.id)}>查看建筑记忆：{project.project.title}</button>)}</nav>}{visible&&pickEnabled&&pickedCell&&<div className="world-pick-chip" role="status" data-testid="world-pick">x {pickedCell.x} · z {pickedCell.z} · 高 {pickedCell.y}</div>}{visible&&!sessionActive&&(viewControlsVisible||viewControlsLeaving)&&<div className={`world-hud${viewControlsLeaving?' is-leaving':''}`}><span>{focusedTitle?`正在查看 · ${focusedTitle}`:`林边聚落 · ${world.projects.length} 栋`}</span><div className="world-hud-actions">{focusedProjectId&&<button title="重置地图" aria-label="重置地图" onClick={()=>runViewAction(onClearWorldFocus)}><MapIcon/></button>}<button title="重置视角" aria-label="重置视角" onClick={()=>runViewAction(()=>renderer.current?.resetCamera())}><RotateCcw/></button></div></div>}{visible&&constructionFeedback>0&&<div key={constructionFeedback} className="construction-feedback" role="status"><Hammer/><span>材料已送达，继续建造</span><i/><i/><i/></div>}</figure>{visible&&!sessionActive&&memory&&<BuildingMemoryPanel memory={memory} switchBlockedReason={memory.isActive?undefined:switchBlockedReason} onClose={onCloseMemory} onContinue={()=>void onContinueProject(memory.projectId)}/>} {!ready&&<LoadingPage status="正在建造世界…"/>}</>;
 });
 
 type FocusTimerMode = 'plan' | 'focus' | 'break' | 'ready' | 'marathon';
