@@ -14,6 +14,34 @@ export interface Subtask {
 
 export type ImportedBlueprintMaterialId = "stone" | "wood" | "plank" | "roof" | "glass" | "accent";
 export type ImportedBlueprintStage = "foundation" | "frame" | "walls" | "roof" | "details";
+export const SIGN_DYE_COLORS = [
+  "white", "orange", "magenta", "light_blue", "yellow", "lime", "pink", "gray",
+  "light_gray", "cyan", "purple", "blue", "brown", "green", "red", "black",
+] as const;
+export type SignDyeColor = (typeof SIGN_DYE_COLORS)[number];
+
+export interface ImportedBlueprintSignFace {
+  lines: string[];
+  dyeColor: SignDyeColor;
+  glowing: boolean;
+}
+
+export interface ImportedBlueprintSignData {
+  front: ImportedBlueprintSignFace;
+  back: ImportedBlueprintSignFace;
+}
+
+export type ImportedBlueprintCampfireSlotIndex = 0 | 1 | 2 | 3;
+
+export interface ImportedBlueprintCampfireSlot {
+  slot: ImportedBlueprintCampfireSlotIndex;
+  itemId: string;
+  count: number;
+}
+
+export interface ImportedBlueprintCampfireData {
+  slots: ImportedBlueprintCampfireSlot[];
+}
 
 export interface ImportedBlueprintVoxel {
   x: number;
@@ -24,6 +52,18 @@ export interface ImportedBlueprintVoxel {
   buildOrder: number;
   sourceBlockId?: string;
   sourceBlockState?: Record<string, string>;
+  movingPistonMovedState?: {
+    blockId: string;
+    properties?: Record<string, string>;
+  };
+  movingPistonPose?: {
+    facing: "down" | "up" | "north" | "south" | "west" | "east";
+    progress: number;
+    extending: boolean;
+    source: boolean;
+  };
+  sign?: ImportedBlueprintSignData;
+  campfire?: ImportedBlueprintCampfireData;
   emissiveKind?: string;
   emissiveLevel?: number;
 }
@@ -91,6 +131,8 @@ export interface FocusSessionBase {
    * active project mid-plan.
    */
   marathon?: boolean;
+  /** V27 minimal focus: no subtask and no per-round habit settlement. */
+  deferredSettlement?: true;
   /**
    * V23: set when a completed marathon round has been settled by one settlement
    * report — attributed to a habit building, shared by subtask entries, or
@@ -150,6 +192,12 @@ export interface ProgressReport {
    * own subtask/project ownership; per-subtask monotonic progress still applies.
    */
   shared?: boolean;
+  /**
+   * F19: an explicit marathon allocation.  Unlike legacy `shared` reports,
+   * every session in this report belongs only to this one target.  The field
+   * is optional so schema-12 backups and old reports keep their semantics.
+   */
+  allocation?: "explicit";
 }
 
 export interface FocusCalendar {
@@ -198,6 +246,7 @@ export interface DecorationReward {
 export interface FocusIntegrityPolicy {
   enabled: boolean;
   maxEffectiveExcursions: number;
+  excursionThresholdSeconds: number;
 }
 
 export type WorldEnvironmentStyle = "natural-valley" | "classic-island" | "ocean-island";
@@ -209,7 +258,7 @@ export interface WorldSettings {
 }
 
 export interface DomainState {
-  schemaVersion: 10;
+  schemaVersion: 12;
   projects: Project[];
   habitBuildings: HabitBuildingMonument[];
   activeProjectId: string | null;
@@ -239,18 +288,18 @@ export type DomainCommand =
   | { type: "RemoveSubtask"; subtaskId: string }
   | { type: "RenameSubtask"; subtaskId: string; title: string }
   | { type: "ReorderSubtasks"; orderedSubtaskIds: string[] }
-  | { type: "StartFocus"; sessionId: string; subtaskId: string | null; plannedDurationMs: number; projectId?: string; marathon?: boolean }
+  | { type: "StartFocus"; sessionId: string; subtaskId: string | null; plannedDurationMs: number; projectId?: string; marathon?: boolean; deferredSettlement?: true }
   | { type: "CompleteFocus" }
   | { type: "CompleteFocusEarly"; reportId: string }
   | { type: "CancelFocus"; interruptionCategory?: FocusInterruptionCategory | null }
-  | { type: "ConfigureFocusIntegrity"; enabled: boolean; maxEffectiveExcursions: number }
+  | { type: "ConfigureFocusIntegrity"; enabled: boolean; maxEffectiveExcursions: number; excursionThresholdSeconds?: number }
   | { type: "GrantFocusLifecycleExemption" }
   | { type: "RecordFocusBackgrounded"; reason: FocusBackgroundReason }
   | { type: "RecordFocusForegrounded" }
   | { type: "ReportSubtaskProgress"; reportId: string; subtaskId: string; focusSessionIds: string[]; progressBasisPoints: number }
   | {
       type: "ReportMarathonFocus";
-      entries: Array<{ reportId: string; projectId: string; subtaskId: string; progressBasisPoints: number }>;
+      entries: Array<{ reportId: string; projectId: string; subtaskId: string; progressBasisPoints: number; rounds?: number }>;
       habitAllocations: Array<{ projectId: string; rounds: number }>;
       focusSessionIds: string[];
     }
@@ -283,7 +332,7 @@ export type DomainEvent =
   | { type: "FocusCompleted"; sessionId: string }
   | { type: "FocusCompletedEarly"; sessionId: string; subtaskId: string | null; actualDurationMs: number }
   | { type: "FocusInterrupted"; sessionId: string; reason: FocusInterruptionReason; category: FocusInterruptionCategory | null }
-  | { type: "FocusIntegrityConfigured"; enabled: boolean; maxEffectiveExcursions: number }
+  | { type: "FocusIntegrityConfigured"; enabled: boolean; maxEffectiveExcursions: number; excursionThresholdSeconds: number }
   | { type: "FocusLifecycleExemptionGranted"; sessionId: string }
   | { type: "FocusBackgrounded"; sessionId: string; reason: FocusBackgroundReason; backgroundedAt: ISOInstant }
   | { type: "FocusExcursionRecorded"; sessionId: string; effectiveExcursions: number; maxEffectiveExcursions: number }

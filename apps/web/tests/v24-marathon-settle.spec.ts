@@ -46,7 +46,9 @@ test("marathon settlement shows exactly the plan rounds with no auto-advance wor
   await expect(report).not.toContainText("自动推进");
   await page.screenshot({ path: "test-results/v24-marathon-normal.png", fullPage: true });
   await page.locator(".marathon-settlement-head").first().click();
-  await page.locator(".marathon-report-row").first().getByRole("button", { name: /推进至 50%/ }).click();
+  const firstRow = page.locator(".marathon-report-row").first();
+  await firstRow.getByRole("button", { name: /推进至 50%/ }).click();
+  await firstRow.getByRole("button", { name: /增加 .*计入轮数/ }).click();
   await page.getByRole("button", { name: "提交本次推进" }).click();
   await expect(report).toBeHidden();
 });

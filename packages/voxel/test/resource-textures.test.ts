@@ -7,23 +7,66 @@ import { builtinMaterialBlockId } from "../src/original-materials";
 import {
   BLOCK_FACE_SLOTS,
   buildResourcePackAtlas,
+  cropAtlasTilePixels,
   createAtlasMaterial,
   createTextureBatches,
   createTexturedBoxGeometry,
   faceSlotForNormal,
   faceTintKind,
+  ATTACHED_STEM_FACE_TINT,
+  ATTACHED_STEM_TINT_RGB,
   FOLIAGE_FACE_TINT,
+  GROWING_STEM_FACE_TINT,
   GRASS_FACE_TINT,
+  DRY_FOLIAGE_FACE_TINT,
+  SPRUCE_LEAVES_FACE_TINT,
+  BIRCH_LEAVES_FACE_TINT,
+  LILY_PAD_FACE_TINT,
+  REDSTONE_WIRE_FACE_TINT,
+  resolveBlockStateTint,
   WATER_FACE_TINT,
   packFaceUvTransform,
   packFaceTintKinds,
+  patchFluidSurfaceVertexShader,
+  patchAtlasUvVertexShader,
   planTexturedVoxel,
   planTexturedVoxelPages,
+  resolvePackTileRect,
   unpackFaceTintKinds,
   unpackFaceUvTransform,
 } from "../src/resource-textures";
 
 describe("resource-pack voxel texture planning", () => {
+  it("crops a terrain atlas tile without neighboring page pixels", () => {
+    const source = new Uint8Array(4 * 2 * 4);
+    for (let index = 0; index < source.length; index += 4) {
+      source[index] = (index % 16) < 8 ? 12 : 220;
+      source[index + 3] = 255;
+    }
+    const cropped = cropAtlasTilePixels(source, 4, 2, { u0: 0, v0: 0, u1: 0.5, v1: 1 });
+    expect(cropped).toMatchObject({ width: 2, height: 2 });
+    expect([...cropped.pixels.filter((_, index) => index % 4 === 0)]).toEqual([12, 12, 12, 12]);
+  });
+
+  it("patches non-atlas fluid geometry with bounded corner and flowing-top data", () => {
+    const source = "#include <common>\nvoid main() {\n#include <begin_vertex>\n#include <uv_vertex>\n}";
+    const patched = patchFluidSurfaceVertexShader(source);
+    expect(patched.match(/attribute float instanceFaceOcclusion;/g)).toHaveLength(1);
+    expect(patched.match(/attribute float instanceMaterialResponse;/g)).toHaveLength(1);
+    expect(patched).toContain("blockcolcCornerSouthWest");
+    expect(patched).toContain("blockcolcUvFluidAngle");
+    expect(patched).toContain("vMapUv = blockcolcFlowUv");
+
+    const atlasPatched = patchFluidSurfaceVertexShader(patchAtlasUvVertexShader(source), true);
+    expect(atlasPatched).not.toContain("blockcolcFaceUvWordA1");
+    expect(atlasPatched).not.toContain("blockcolcFaceUvWordB1");
+    expect(atlasPatched).toContain("blockcolcFaceSlot < 4.5 ? instanceFaceUvWordA1.y : instanceFaceUvWordA1.z");
+    expect(atlasPatched).toContain("blockcolcFaceSlot < 4.5 ? instanceFaceUvWordB1.y : instanceFaceUvWordB1.z");
+    expect(atlasPatched).toContain("blockcolcLocalUv = position.z < 0.0");
+    expect(atlasPatched).toContain("vBlockcolcFluidAngle = blockcolcUvFluidAngle");
+    expect(atlasPatched).toContain("vBlockcolcMaterialResponse = blockcolcUvFluidActive > 0.5 ? 4.0");
+  });
+
   it("keeps the down/up/north/south/west/east face-slot order", () => {
     const faces = Object.fromEntries(BLOCK_FACE_SLOTS.map((face) => [face, `minecraft:block/${face}`])) as Record<BlockFace, string>;
     const manifest = manifestFor([{ blockId: "minecraft:test", modelId: "minecraft:block/test", faces }]);
@@ -46,7 +89,7 @@ describe("resource-pack voxel texture planning", () => {
     expect([...geometry.getAttribute("instanceFaceUvWordA1").array]).toEqual(plan!.faceUvWordsA.slice(3, 6));
     expect([...geometry.getAttribute("instanceFaceUvWordB0").array]).toEqual(plan!.faceUvWordsB.slice(0, 3));
     expect([...geometry.getAttribute("instanceFaceUvWordB1").array]).toEqual(plan!.faceUvWordsB.slice(3, 6));
-    expect(new Set(geometry.getAttribute("faceSlot").array)).toEqual(new Set([0, 1, 2, 3, 4, 5]));
+    expect(geometry.getAttribute("faceSlot")).toBeUndefined();
     for (let face = 0; face < BLOCK_FACE_SLOTS.length; face += 1) {
       expect(unpackFaceUvTransform(plan!.faceUvWordsA[face]!, plan!.faceUvWordsB[face]!)).toEqual({
         cropUv: [0, 0, 1, 1],
@@ -58,8 +101,10 @@ describe("resource-pack voxel texture planning", () => {
     // Eleven geometry attributes plus four instanceMatrix slots stay within the
     // WebGL2 minimum MAX_VERTEX_ATTRIBS guarantee of 16.
     expect(Object.keys(geometry.attributes)).toHaveLength(12);
+    expect(geometry.getAttribute("instanceFaceOcclusion")).toBeDefined();
     expect(Object.keys(geometry.attributes).length + 4).toBeLessThanOrEqual(16);
     expect(atlas.pages[0]!.texture.minFilter).toBe(THREE.NearestMipmapLinearFilter);
+    expect(atlas.pages[0]!.texture.flipY).toBe(false);
     expect(atlas.pages[0]!.texture.mipmaps).toHaveLength(atlas.source.safeMipLevels + 1);
     expect(atlas.pages[0]!.texture.mipmaps?.map((mipmap) => [mipmap.width, mipmap.height])).toEqual([
       [atlas.pages[0]!.width, atlas.pages[0]!.height],
@@ -99,6 +144,25 @@ describe("resource-pack voxel texture planning", () => {
     expect(planTexturedVoxel(builtinPlank, emptyManifest, emptyAtlas)).toBeUndefined();
     atlas.dispose();
     emptyAtlas.dispose();
+  });
+
+  it("uses the origin model choice for one shared terrain tile", () => {
+    const manifest = manifestFor([
+      { blockId: "minecraft:terrain_test", modelId: "minecraft:block/terrain_first", faces: allFaces("minecraft:block/terrain_first") },
+      { blockId: "minecraft:other", modelId: "minecraft:block/terrain_second", faces: allFaces("minecraft:block/terrain_second") },
+    ]);
+    manifest.blockStates[0]!.variants[0]!.choices.push({
+      model: "minecraft:block/terrain_second", x: 0, y: 0, uvlock: false, weight: 1,
+    });
+    const atlas = buildResourcePackAtlas(manifest);
+    const voxelPlan = planTexturedVoxel(sourceVoxel("minecraft:terrain_test"), manifest, atlas);
+    const tile = atlas.source.entries.find((entry) => entry.resourceId === "minecraft:block/terrain_second")!;
+
+    expect(voxelPlan?.faceTiles[1]).toBe(tile.index);
+    expect(resolvePackTileRect(manifest, atlas, "minecraft:terrain_test", "up")).toEqual({
+      page: tile.page, u0: tile.uv.u0, v0: tile.uv.v0, u1: tile.uv.u1, v1: tile.uv.v1,
+    });
+    atlas.dispose();
   });
 
   it("keeps distinct atlas tiles isolated through the safe mip levels", () => {
@@ -166,6 +230,135 @@ describe("resource-pack voxel texture planning", () => {
     atlas.dispose();
   });
 
+  it("maps 26.3 vanilla foliage tint sources, including dry foliage and fixed leaf colors", () => {
+    expect(faceTintKind("minecraft:leaf_litter", 0)).toBe(DRY_FOLIAGE_FACE_TINT);
+    expect(faceTintKind("minecraft:pink_petals", 1)).toBe(GRASS_FACE_TINT);
+    expect(faceTintKind("minecraft:wildflowers", 1)).toBe(GRASS_FACE_TINT);
+    expect(faceTintKind("minecraft:spruce_leaves", 0)).toBe(SPRUCE_LEAVES_FACE_TINT);
+    expect(faceTintKind("minecraft:birch_leaves", 0)).toBe(BIRCH_LEAVES_FACE_TINT);
+    expect(faceTintKind("minecraft:lily_pad", 0)).toBe(LILY_PAD_FACE_TINT);
+    expect(faceTintKind("minecraft:cherry_leaves", 0)).toBe(0);
+    expect(faceTintKind("minecraft:redstone_wire", 0)).toBe(REDSTONE_WIRE_FACE_TINT);
+    expect(faceTintKind("minecraft:pumpkin_stem", 0)).toBe(GROWING_STEM_FACE_TINT);
+    expect(faceTintKind("minecraft:attached_melon_stem", 0)).toBe(ATTACHED_STEM_FACE_TINT);
+    expect(faceTintKind("example:oak_leaves", 0)).toBeUndefined();
+
+    const packed = packFaceTintKinds([
+      FOLIAGE_FACE_TINT, GRASS_FACE_TINT, WATER_FACE_TINT,
+      DRY_FOLIAGE_FACE_TINT, SPRUCE_LEAVES_FACE_TINT, LILY_PAD_FACE_TINT,
+    ]);
+    expect(new Float32Array([packed])[0]).toBe(packed);
+    expect(unpackFaceTintKinds(packed)).toEqual([1, 2, 3, 4, 5, 7]);
+  });
+
+  it("matches the pinned Java 26.3 state-dependent tint colors without fallback", () => {
+    const redstoneColors = [
+      0x4c0000, 0x700000, 0x7a0000, 0x840000, 0x8e0000, 0x990000, 0xa30000, 0xad0000,
+      0xb70000, 0xc10000, 0xcc0000, 0xd60000, 0xe00000, 0xea0600, 0xf41b00, 0xff3200,
+    ];
+    const stemColors = [0x00ff00, 0x20f704, 0x40ef08, 0x60e70c, 0x80df10, 0xa0d714, 0xc0cf18, 0xe0c71c];
+    expect(Array.from({ length: 16 }, (_, power) => resolveBlockStateTint("minecraft:redstone_wire", { power: String(power) })))
+      .toEqual(redstoneColors.map((rgb) => ({ status: "resolved", rgb })));
+    for (const blockId of ["minecraft:melon_stem", "minecraft:pumpkin_stem"]) {
+      expect(Array.from({ length: 8 }, (_, age) => resolveBlockStateTint(blockId, { age: String(age) })))
+        .toEqual(stemColors.map((rgb) => ({ status: "resolved", rgb })));
+    }
+    expect(resolveBlockStateTint("minecraft:attached_melon_stem")).toEqual({ status: "resolved", rgb: 0xe0c71c });
+    expect(resolveBlockStateTint("minecraft:attached_pumpkin_stem")).toEqual({ status: "resolved", rgb: ATTACHED_STEM_TINT_RGB });
+    expect(resolveBlockStateTint("minecraft:redstone_wire")).toEqual({ status: "resolved", rgb: redstoneColors[0] });
+    expect(resolveBlockStateTint("minecraft:melon_stem")).toEqual({ status: "resolved", rgb: stemColors[0] });
+    expect(resolveBlockStateTint("minecraft:redstone_wire", { power: "16" })).toEqual({ status: "invalid" });
+    expect(resolveBlockStateTint("minecraft:melon_stem", { age: "-1" })).toEqual({ status: "invalid" });
+
+    const blockIds = [
+      "minecraft:redstone_wire", "minecraft:attached_melon_stem", "minecraft:attached_pumpkin_stem",
+      "minecraft:melon_stem", "minecraft:pumpkin_stem",
+    ];
+    const manifest = manifestFor(blockIds.map((blockId) => {
+      const texture = `minecraft:block/${blockId.slice("minecraft:".length)}`;
+      return {
+        blockId,
+        modelId: `minecraft:block/${blockId.slice("minecraft:".length)}`,
+        faces: allFaces(texture),
+        faceMetadata: { north: { texture, uv: [0, 0, 16, 16] as const, rotation: 0 as const, tintIndex: 0 } },
+      };
+    }));
+    const atlas = buildResourcePackAtlas(manifest);
+    const redstoneStates: Record<string, string>[] = [];
+    for (let power = 0; power < 16; power += 1) {
+      for (const north of ["none", "side", "up"]) {
+        for (const east of ["none", "side", "up"]) {
+          for (const south of ["none", "side", "up"]) {
+            for (const west of ["none", "side", "up"]) {
+              redstoneStates.push({ north, east, south, west, power: String(power) });
+            }
+          }
+        }
+      }
+    }
+    const attachedStates = ["north", "east", "south", "west"];
+    const voxelStates = [
+      ...redstoneStates.map((state, index) => sourceVoxel("minecraft:redstone_wire", index, state)),
+      ...stemColors.map((_, age) => sourceVoxel("minecraft:melon_stem", 1296 + age, { age: String(age) })),
+      ...stemColors.map((_, age) => sourceVoxel("minecraft:pumpkin_stem", 1304 + age, { age: String(age) })),
+      ...attachedStates.map((facing, index) => sourceVoxel("minecraft:attached_melon_stem", 1312 + index, { facing, attached: "true" })),
+      ...attachedStates.map((facing, index) => sourceVoxel("minecraft:attached_pumpkin_stem", 1316 + index, { facing, attached: "true" })),
+    ];
+    const result = createTextureBatches(voxelStates, manifest, atlas);
+    const redstoneBatchColors = new Map(result.batches
+      .filter((batch) => batch.entries[0]?.voxel.sourceBlockId === "minecraft:redstone_wire")
+      .map((batch) => [batch.entries[0]!.voxel.sourceBlockState?.power, batch.stateTintRgb]));
+    const redstoneBatches = result.batches.filter((batch) => batch.entries[0]?.voxel.sourceBlockId === "minecraft:redstone_wire");
+    const stemBatchColors = new Map(result.batches
+      .filter((batch) => batch.entries[0]?.voxel.sourceBlockId === "minecraft:melon_stem")
+      .map((batch) => [batch.entries[0]!.voxel.sourceBlockState?.age, batch.stateTintRgb]));
+
+    expect(result.fallbackVoxels).toEqual([]);
+    expect(redstoneStates).toHaveLength(1296);
+    expect(voxelStates).toHaveLength(1320);
+    expect(redstoneBatchColors).toEqual(new Map(redstoneColors.map((rgb, power) => [String(power), rgb])));
+    expect(redstoneBatches).toHaveLength(16);
+    expect(redstoneBatches.every((batch) => batch.entries.length === 81)).toBe(true);
+    expect(stemBatchColors).toEqual(new Map(stemColors.map((rgb, age) => [String(age), rgb])));
+    const redstonePlan = result.batches.flatMap((batch) => batch.entries)
+      .find((entry) => entry.voxel.sourceBlockId === "minecraft:redstone_wire")!;
+    const stemPlan = result.batches.flatMap((batch) => batch.entries)
+      .find((entry) => entry.voxel.sourceBlockId === "minecraft:melon_stem")!;
+    const attachedPlan = result.batches.flatMap((batch) => batch.entries)
+      .find((entry) => entry.voxel.sourceBlockId === "minecraft:attached_melon_stem")!;
+    expect(unpackFaceTintKinds(redstonePlan.faceTintWord)[2]).toBe(REDSTONE_WIRE_FACE_TINT);
+    expect(unpackFaceTintKinds(stemPlan.faceTintWord)[2]).toBe(GROWING_STEM_FACE_TINT);
+    expect(unpackFaceTintKinds(attachedPlan.faceTintWord)[2]).toBe(ATTACHED_STEM_FACE_TINT);
+    expect(result.batches.find((batch) => batch.entries.some((entry) => entry.voxel.sourceBlockId === "minecraft:attached_melon_stem"))?.stateTintRgb)
+      .toBe(ATTACHED_STEM_TINT_RGB);
+    expect(result.batches.filter((batch) => batch.entries.some((entry) => entry.voxel.sourceBlockId === "minecraft:attached_melon_stem" || entry.voxel.sourceBlockId === "minecraft:attached_pumpkin_stem")))
+      .toHaveLength(1);
+    expect(
+      result.batches.flatMap((batch) => batch.entries)
+        .filter((entry) => entry.voxel.sourceBlockId?.includes("attached_")),
+    ).toHaveLength(8);
+    atlas.dispose();
+  });
+
+  it("does not split vanilla state batches when a custom model has no tint-index faces", () => {
+    const manifest = manifestFor([{
+      blockId: "minecraft:redstone_wire",
+      modelId: "minecraft:block/redstone_wire",
+      faces: allFaces("minecraft:block/redstone_wire"),
+    }]);
+    const atlas = buildResourcePackAtlas(manifest);
+    const result = createTextureBatches([
+      sourceVoxel("minecraft:redstone_wire", 0, { power: "0" }),
+      sourceVoxel("minecraft:redstone_wire", 1, { power: "15" }),
+    ], manifest, atlas);
+
+    expect(result.fallbackVoxels).toEqual([]);
+    expect(result.batches).toHaveLength(1);
+    expect(result.batches[0]?.stateTintRgb).toBeUndefined();
+    expect(result.batches[0]?.entries).toHaveLength(2);
+    atlas.dispose();
+  });
+
   it("builds a compact animated-tile lookup while leaving the color atlas static", () => {
     const manifest = manifestFor([{
       blockId: "minecraft:animated",
@@ -191,7 +384,7 @@ describe("resource-pack voxel texture planning", () => {
     const material = createAtlasMaterial(page, "opaque");
     const shader = {
       uniforms: {},
-      vertexShader: "#include <common>\nvoid main() {\n#include <uv_vertex>\n}",
+      vertexShader: "#include <common>\nvoid main() {\n#include <begin_vertex>\n#include <uv_vertex>\n}",
       fragmentShader: "#include <common>\nvoid main() {\n#include <map_fragment>\n}",
     };
     material.onBeforeCompile(shader as THREE.WebGLProgramParametersWithUniforms, {} as THREE.WebGLRenderer);
@@ -200,7 +393,7 @@ describe("resource-pack voxel texture planning", () => {
     expect(lookup.sequences[0]).toMatchObject({ totalTicks: 5, interpolate: true });
     expect(lookup.pixels.byteLength).toBeLessThan(page.texture.image.data.byteLength);
     expect(page.columns).toBe(atlas.source.pages[0]!.columns);
-    expect(material.customProgramCacheKey()).toBe("blockcolc-atlas-v4-opaque-animated");
+    expect(material.customProgramCacheKey()).toBe("blockcolc-atlas-v6-fluid-opaque-animated");
     expect(shader.vertexShader).toContain("uniform sampler2D blockcolcAnimationLookup;");
     expect(shader.vertexShader).toContain("uniform sampler2D blockcolcAnimationBlendLookup;");
     expect(shader.vertexShader).toContain("texture2D(blockcolcAnimationLookup");
@@ -271,26 +464,46 @@ describe("resource-pack voxel texture planning", () => {
       modelId: "minecraft:block/known",
       faces: allFaces("minecraft:block/known"),
     }]);
+    manifest.colormaps = [{
+      kind: "dry_foliage",
+      resourceId: "minecraft:colormap/dry_foliage",
+      archivePath: "assets/minecraft/textures/colormap/dry_foliage.png",
+      width: 256,
+      height: 256,
+      png: solidRgbaPng(256, 256, [20, 30, 40, 255]),
+    }];
     const atlas = buildResourcePackAtlas(manifest);
     const page = atlas.pages[0]!;
-    const material = createAtlasMaterial(page, "opaque");
+    const material = createAtlasMaterial(page, "opaque", undefined, 0xea0600);
     const shader = {
       uniforms: {},
-      vertexShader: "#include <common>\nvoid main() {\n#include <uv_vertex>\n}",
+      vertexShader: "#include <common>\nvoid main() {\n#include <begin_vertex>\n#include <uv_vertex>\n}",
       fragmentShader: "#include <common>\nvoid main() {\n#include <map_fragment>\n}",
     };
 
     material.onBeforeCompile(shader as THREE.WebGLProgramParametersWithUniforms, {} as THREE.WebGLRenderer);
 
-    expect(material.customProgramCacheKey()).toBe("blockcolc-atlas-v4-opaque-static");
+    expect(material.customProgramCacheKey()).toBe("blockcolc-atlas-v6-fluid-opaque-static");
     expect(shader.vertexShader).toContain("attribute vec3 instanceFaceUvWordA0;");
     expect(shader.vertexShader).toContain("attribute vec3 instanceFaceUvWordA1;");
     expect(shader.vertexShader).toContain("attribute vec3 instanceFaceUvWordB0;");
     expect(shader.vertexShader).toContain("attribute vec3 instanceFaceUvWordB1;");
     expect(shader.vertexShader).toContain("attribute float instanceFaceTintKinds;");
     expect(shader.vertexShader).toContain("uniform vec3 blockcolcFoliageTint;");
-    expect(shader.vertexShader).toContain("uniform vec3 blockcolcGrassTint;");
-    expect(shader.vertexShader).toContain("blockcolcTintKind > 1.5 ? blockcolcGrassTint");
+    expect(shader.vertexShader).toContain("uniform vec3 blockcolcDryFoliageTint;");
+    expect(shader.vertexShader).toContain("uniform vec3 blockcolcStateTint;");
+    expect(shader.vertexShader).toContain("blockcolcTintKind < 10.5 ? blockcolcStateTint");
+    expect(shader.vertexShader).toContain("blockcolcTintKind < 2.5 ? blockcolcGrassTint");
+    expect(shader.vertexShader).toContain("mod(floor(instanceFaceTintKinds / blockcolcTintDivisor), 16.0)");
+    expect(shader.vertexShader).toContain("float blockcolcFaceSlot = abs(normal.x)");
+    expect(shader.vertexShader.match(/attribute float instanceFaceOcclusion;/g)).toHaveLength(1);
+    expect(shader.vertexShader.match(/attribute float instanceMaterialResponse;/g)).toHaveLength(1);
+    expect(shader.vertexShader).toContain("blockcolcPositionFluidMeta = instanceFaceOcclusion - 1000000.0");
+    expect(shader.vertexShader).toContain("blockcolcCornerNorthWest");
+    expect(shader.vertexShader).toContain("blockcolcUvFluidAngle");
+    expect(shader.vertexShader).toContain("vBlockcolcFluidFlowing");
+    expect(shader.vertexShader).toContain("blockcolcFaceSlot > 0.5 && blockcolcFaceSlot < 1.5");
+    expect(shader.vertexShader).toContain("blockcolcFaceFluidMeta > 0.5 ? 0.0");
     expect(shader.vertexShader).toContain("blockcolcTintDivisor");
     expect(shader.fragmentShader).toContain("diffuseColor.rgb *= vBlockcolcTint;");
     expect(shader.vertexShader).toContain("/ 2047.0");
@@ -305,9 +518,12 @@ describe("resource-pack voxel texture planning", () => {
       blockcolcAtlasColumns: { value: page.columns },
       blockcolcAtlasCellSize: { value: page.cellSize },
       blockcolcAtlasPadding: { value: page.padding },
-      blockcolcFoliageTint: { value: new THREE.Color(0x619a52) },
-      blockcolcGrassTint: { value: new THREE.Color(0x78a95a) },
     });
+    const materialUniforms = shader.uniforms as Record<string, THREE.IUniform>;
+    expect((materialUniforms.blockcolcFoliageTint?.value as THREE.Color).equals(new THREE.Color(0x77ab2f))).toBe(true);
+    expect((materialUniforms.blockcolcGrassTint?.value as THREE.Color).equals(new THREE.Color(0x91bd59))).toBe(true);
+    expect((materialUniforms.blockcolcDryFoliageTint?.value as THREE.Color).equals(new THREE.Color(0x141e28))).toBe(true);
+    expect((materialUniforms.blockcolcStateTint?.value as THREE.Color).equals(new THREE.Color(0xea0600))).toBe(true);
 
     material.dispose();
     atlas.dispose();
@@ -461,8 +677,11 @@ function manifestFor(blocks: readonly BlockFixture[]): ResourcePackManifest {
   };
 }
 
-function sourceVoxel(sourceBlockId: string, x = 0): BlueprintVoxel {
-  return { x, y: 0, z: 0, materialId: "stone", buildOrder: 10000, sourceBlockId };
+function sourceVoxel(sourceBlockId: string, x = 0, sourceBlockState?: Record<string, string>): BlueprintVoxel {
+  return {
+    x, y: 0, z: 0, materialId: "stone", buildOrder: 10000, sourceBlockId,
+    ...(sourceBlockState ? { sourceBlockState } : {}),
+  };
 }
 
 function allFaces(texture: string): Record<BlockFace, string> {
@@ -471,6 +690,21 @@ function allFaces(texture: string): Record<BlockFace, string> {
 
 function rgbaPng(color: readonly [number, number, number, number]): Uint8Array {
   return rgbaStripPng([color]);
+}
+
+function solidRgbaPng(width: number, height: number, color: readonly [number, number, number, number]): Uint8Array {
+  const signature = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
+  const ihdr = new Uint8Array(13);
+  const view = new DataView(ihdr.buffer);
+  view.setUint32(0, width, false);
+  view.setUint32(4, height, false);
+  ihdr.set([8, 6, 0, 0, 0], 8);
+  const stride = width * 4 + 1;
+  const rows = new Uint8Array(height * stride);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) rows.set(color, y * stride + 1 + x * 4);
+  }
+  return concat(signature, pngChunk("IHDR", ihdr), pngChunk("IDAT", zlibSync(rows)), pngChunk("IEND", new Uint8Array()));
 }
 
 function rgbaStripPng(colors: readonly (readonly [number, number, number, number])[]): Uint8Array {

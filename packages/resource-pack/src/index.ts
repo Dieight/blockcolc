@@ -6,22 +6,38 @@ import {
   type NormalizedBlockState,
 } from "./block-models";
 import { parseResourcePackColormaps, type ResourcePackColormap } from "./colormap";
-import { inspectPngDimensions } from "./png";
+import { DEFAULT_PNG_RGBA_LIMITS, inspectPngDimensions } from "./png";
+import {
+  parseResourcePackSpecialTextures,
+  type ResourcePackSpecialTexture,
+  type ResourcePackSpecialTextureIssueCode,
+} from "./special-textures";
 
 export * from "./block-models";
 export * from "./atlas";
 export * from "./compatibility";
 export * from "./colormap";
+export * from "./layering";
 export * from "./png";
-export * from "./png";
+export * from "./special-textures";
 
 export const DEFAULT_RESOURCE_PACK_LIMITS = Object.freeze({
   maxInputBytes: 32 * 1024 * 1024,
-  maxFileCount: 8192,
+  maxFileCount: 16_384,
   maxSingleFileBytes: 4 * 1024 * 1024,
   maxTotalUncompressedBytes: 64 * 1024 * 1024,
   maxPackMetadataBytes: 64 * 1024,
   maxTextureMetadataBytes: 64 * 1024,
+});
+
+/** Separate bounded envelope for importing only assets from the vanilla 26.3 client JAR. */
+export const JAVA_263_CLIENT_JAR_LIMITS = Object.freeze({
+  maxInputBytes: 64 * 1024 * 1024,
+  maxFileCount: 50_000,
+  maxAssetFileCount: 16_384,
+  maxAssetFileBytes: 4 * 1024 * 1024,
+  maxAssetUncompressedBytes: 64 * 1024 * 1024,
+  maxVersionMetadataBytes: 64 * 1024,
 });
 
 export interface ResourcePackLimits {
@@ -61,9 +77,15 @@ export class ResourcePackError extends Error {
 }
 
 export interface ResourcePackMetadata {
+  /** Legacy pack_format, or the highest supported major for modern range-only packs. */
   packFormat: number;
   description: unknown;
+  /** Modern pack.mcmeta range. A max minor of 0x7fffffff means any minor in that major. */
+  minFormat?: [major: number, minor: number];
+  maxFormat?: [major: number, minor: number];
 }
+
+export type ResourcePackTextureSize = 16 | 32 | 64 | 128 | 256;
 
 export type TextureIssueCode =
   | "INVALID_NAMESPACE"
@@ -81,8 +103,8 @@ export interface ResourcePackAnimationFrame {
 }
 
 export interface ResourcePackTextureAnimation {
-  frameWidth: 16 | 32;
-  frameHeight: 16 | 32;
+  frameWidth: ResourcePackTextureSize;
+  frameHeight: ResourcePackTextureSize;
   /** Row-major source grid dimensions. Omitted only by legacy 16xN persisted manifests. */
   sourceColumns?: number;
   sourceRows?: number;
@@ -92,7 +114,7 @@ export interface ResourcePackTextureAnimation {
   frames: ResourcePackAnimationFrame[];
 }
 
-export type ResourcePackIssueCode = TextureIssueCode | BlockModelIssueCode | "INVALID_COLORMAP";
+export type ResourcePackIssueCode = TextureIssueCode | BlockModelIssueCode | "INVALID_COLORMAP" | ResourcePackSpecialTextureIssueCode;
 
 export interface ResourcePackCompatibilityIssue {
   path: string;
@@ -105,7 +127,7 @@ export interface ResourcePackTexture {
   namespace: string;
   texturePath: string;
   archivePath: string;
-  /** Source sheet width. Static textures remain 16x16; animated sheets may use 16px or 32px square frames. */
+  /** Source sheet width. Static textures use 16px, 32px, or 64px square frames. */
   width: number;
   height: number;
   png: Uint8Array;
@@ -128,6 +150,8 @@ export interface ResourcePackManifest {
   schemaVersion: 1;
   pack: ResourcePackMetadata;
   textures: ResourcePackTexture[];
+  /** Entity/special-renderer assets. Kept separate from the block atlas. */
+  specialTextures?: ResourcePackSpecialTexture[];
   colormaps?: ResourcePackColormap[];
   blockStates: NormalizedBlockState[];
   models: NormalizedBlockModel[];
@@ -140,6 +164,23 @@ interface ZipEntryAudit {
   isDirectory: boolean;
 }
 
+interface ParsedPackOverlay {
+  directory: string;
+  appliesToTarget: boolean;
+}
+
+interface ParsedPackMetadata {
+  metadata: ResourcePackMetadata;
+  overlays: ParsedPackOverlay[];
+}
+
+interface ParsedArchiveFiles {
+  files: Record<string, Uint8Array>;
+  paths: string[];
+  archiveFileCount: number;
+  pack: ResourcePackMetadata;
+}
+
 const textDecoder = new TextDecoder("utf-8", { fatal: true });
 const namespacePattern = /^[a-z0-9_.-]+$/;
 const resourcePathPattern = /^[a-z0-9._/-]+$/;
@@ -148,54 +189,16 @@ const textureMetadataPattern = /^assets\/([^/]+)\/textures\/block\/(.+)\.png\.mc
 const MAX_ANIMATION_SOURCE_FRAMES = 256;
 const MAX_ANIMATION_SEQUENCE_FRAMES = 4096;
 const MAX_ANIMATION_FRAME_TIME = 1_000_000;
+const TARGET_RESOURCE_PACK_FORMAT = [97, 1] as const;
+const MAX_PACK_OVERLAY_ENTRIES = 64;
 
 export function parseJava16xResourcePack(
   zipBytes: Uint8Array,
   overrides: Partial<ResourcePackLimits> = {},
 ): ResourcePackManifest {
   const limits = validateLimits({ ...DEFAULT_RESOURCE_PACK_LIMITS, ...overrides });
-  if (zipBytes.byteLength > limits.maxInputBytes) {
-    throw new ResourcePackError(
-      "INPUT_TOO_LARGE",
-      `Resource pack is ${zipBytes.byteLength} bytes; limit is ${limits.maxInputBytes}.`,
-    );
-  }
-
-  const auditedEntries = auditZip(zipBytes, limits);
-  let files: Record<string, Uint8Array>;
-  try {
-    files = unzipSync(zipBytes);
-  } catch (cause) {
-    throw new ResourcePackError(
-      "INVALID_ZIP",
-      `Resource pack could not be decompressed: ${errorMessage(cause)}`,
-    );
-  }
-  let extractedTotal = 0;
-  for (const [path, bytes] of Object.entries(files)) {
-    if (bytes.byteLength > limits.maxSingleFileBytes) {
-      throw new ResourcePackError("FILE_TOO_LARGE", `${path} exceeds the extracted per-file limit.`, path);
-    }
-    extractedTotal += bytes.byteLength;
-    if (extractedTotal > limits.maxTotalUncompressedBytes) {
-      throw new ResourcePackError("TOTAL_UNCOMPRESSED_TOO_LARGE", "Extracted ZIP exceeds the total size limit.");
-    }
-  }
-
-  const packBytes = files["pack.mcmeta"];
-  if (!packBytes) {
-    throw new ResourcePackError("MISSING_PACK_MCMETA", "pack.mcmeta must exist at the ZIP root.");
-  }
-  if (packBytes.byteLength > limits.maxPackMetadataBytes) {
-    throw new ResourcePackError(
-      "INVALID_PACK_MCMETA",
-      `pack.mcmeta exceeds ${limits.maxPackMetadataBytes} bytes.`,
-      "pack.mcmeta",
-    );
-  }
-  const pack = parsePackMetadata(packBytes);
-
-  const paths = auditedEntries.filter((entry) => !entry.isDirectory).map((entry) => entry.path);
+  const extracted = extractResourceArchive(zipBytes, limits);
+  const { files, paths, pack, archiveFileCount } = extracted;
   const metadataPaths = new Set(paths.filter((path) => textureMetadataPattern.test(path)));
   const candidatePaths = paths.filter((path) => texturePattern.test(path)).sort(comparePath);
   const issues: ResourcePackCompatibilityIssue[] = [];
@@ -203,6 +206,7 @@ export function parseJava16xResourcePack(
   const consumedMetadata = new Set<string>();
   const blockAssets = parseBlockAssets(files, paths, parseJsonObject);
   const parsedColormaps = parseResourcePackColormaps(files, paths);
+  const parsedSpecialTextures = parseResourcePackSpecialTextures(files, paths, limits.maxSingleFileBytes);
 
   for (const archivePath of candidatePaths) {
     const match = texturePattern.exec(archivePath);
@@ -247,24 +251,39 @@ export function parseJava16xResourcePack(
       }
     }
 
+    if (dimensions.width > DEFAULT_PNG_RGBA_LIMITS.maxDimension
+      || dimensions.height > DEFAULT_PNG_RGBA_LIMITS.maxDimension
+      || dimensions.width * dimensions.height > DEFAULT_PNG_RGBA_LIMITS.maxPixels) {
+      issues.push(issue(
+        archivePath,
+        "INVALID_PNG",
+        `Texture sheet ${dimensions.width}x${dimensions.height} exceeds the ${DEFAULT_PNG_RGBA_LIMITS.maxDimension}px dimension or ${DEFAULT_PNG_RGBA_LIMITS.maxPixels}-pixel decode limit.`,
+      ));
+      continue;
+    }
+    const staticSquare = isSupportedTextureSize(dimensions.width) && dimensions.height === dimensions.width;
     let animation: ResourcePackTextureAnimation | undefined;
     try {
       animation = normalizeTextureAnimation(metadata, dimensions.width, dimensions.height);
     } catch (cause) {
       issues.push(issue(metadata === undefined ? archivePath : metadataPath, "INVALID_TEXTURE_ANIMATION", errorMessage(cause)));
-      continue;
+      // A malformed animation sidecar need not discard an otherwise usable
+      // square block texture. Keep its static first frame; strips/grids still
+      // require valid animation metadata to avoid guessing frame layout.
+      if (!staticSquare) continue;
+      metadata = undefined;
     }
-    if (animation === undefined && (dimensions.width !== 16 || dimensions.height !== 16)) {
+    if (animation === undefined && !staticSquare) {
       if (
-        dimensions.width === 16
-        && dimensions.height > 16
-        && dimensions.height % 16 === 0
-        && dimensions.height / 16 <= MAX_ANIMATION_SOURCE_FRAMES
+        isSupportedTextureSize(dimensions.width)
+        && dimensions.height > dimensions.width
+        && dimensions.height % dimensions.width === 0
+        && dimensions.height / dimensions.width <= MAX_ANIMATION_SOURCE_FRAMES
       ) {
         issues.push(issue(archivePath, "INVALID_TEXTURE_ANIMATION", "Vertical texture strips require an animation object in .png.mcmeta."));
         continue;
       }
-      issues.push(issue(archivePath, "NOT_16X16", `Static texture is ${dimensions.width}x${dimensions.height}; expected 16x16.`));
+      issues.push(issue(archivePath, "NOT_16X16", `Static texture is ${dimensions.width}x${dimensions.height}; supported square sizes are 16, 32, 64, 128, and 256 pixels.`));
       continue;
     }
 
@@ -289,22 +308,25 @@ export function parseJava16xResourcePack(
 
   issues.push(...blockAssets.issues);
   issues.push(...parsedColormaps.issues);
+  issues.push(...parsedSpecialTextures.issues);
 
   issues.sort((left, right) => comparePath(left.path, right.path) || left.code.localeCompare(right.code));
-  const namespaces = [...new Set(textures.map((texture) => texture.namespace))].sort(comparePath);
+  const namespaces = [...new Set([...textures, ...parsedSpecialTextures.textures].map((texture) => texture.namespace))].sort(comparePath);
   const recognizedPaths = new Set([
     "pack.mcmeta", ...candidatePaths, ...metadataPaths, ...blockAssets.recognizedPaths, ...parsedColormaps.recognizedPaths,
+    ...parsedSpecialTextures.recognizedPaths,
   ]);
 
   return {
     schemaVersion: 1,
     pack,
     textures,
+    ...(parsedSpecialTextures.textures.length === 0 ? {} : { specialTextures: parsedSpecialTextures.textures }),
     ...(parsedColormaps.colormaps.length === 0 ? {} : { colormaps: parsedColormaps.colormaps }),
     blockStates: blockAssets.blockStates,
     models: blockAssets.models,
     summary: {
-      archiveFileCount: paths.length,
+      archiveFileCount,
       candidateTextureCount: candidatePaths.length,
       acceptedTextureCount: textures.length,
       rejectedTextureCount: candidatePaths.length - textures.length,
@@ -324,7 +346,159 @@ function validateLimits(limits: ResourcePackLimits): ResourcePackLimits {
   return limits;
 }
 
-function auditZip(bytes: Uint8Array, limits: ResourcePackLimits): ZipEntryAudit[] {
+function extractResourceArchive(bytes: Uint8Array, limits: ResourcePackLimits): ParsedArchiveFiles {
+  if (bytes.byteLength > JAVA_263_CLIENT_JAR_LIMITS.maxInputBytes) {
+    throw new ResourcePackError(
+      "INPUT_TOO_LARGE",
+      `Resource archive is ${bytes.byteLength} bytes; hard limit is ${JAVA_263_CLIENT_JAR_LIMITS.maxInputBytes}.`,
+    );
+  }
+  const auditedEntries = auditZip(bytes);
+  const physicalPaths = auditedEntries.filter((entry) => !entry.isDirectory).map((entry) => entry.path);
+  const archiveFileCount = physicalPaths.length;
+  const rootPackMetadata = auditedEntries.find((entry) => entry.path === "pack.mcmeta" && !entry.isDirectory);
+  if (rootPackMetadata) {
+    if (bytes.byteLength > limits.maxInputBytes) {
+      throw new ResourcePackError(
+        "INPUT_TOO_LARGE",
+        `Resource pack is ${bytes.byteLength} bytes; limit is ${limits.maxInputBytes}.`,
+      );
+    }
+    validateArchiveBudget(auditedEntries, limits, () => true);
+    const files = unzipArchive(bytes);
+    validateExtractedBudget(files, limits);
+    const packBytes = files["pack.mcmeta"];
+    if (!packBytes) {
+      throw new ResourcePackError("INVALID_ZIP", "Root pack.mcmeta was not extracted.", "pack.mcmeta");
+    }
+    if (packBytes.byteLength > limits.maxPackMetadataBytes) {
+      throw new ResourcePackError(
+        "INVALID_PACK_MCMETA",
+        `pack.mcmeta exceeds ${limits.maxPackMetadataBytes} bytes.`,
+        "pack.mcmeta",
+      );
+    }
+    const parsedMetadata = parsePackMetadata(packBytes);
+    const effective = applyResourcePackOverlays(files, physicalPaths, parsedMetadata.overlays);
+    return {
+      ...effective,
+      archiveFileCount,
+      pack: parsedMetadata.metadata,
+    };
+  }
+
+  const versionEntry = auditedEntries.find((entry) => entry.path === "version.json" && !entry.isDirectory);
+  if (!versionEntry || !hasMinecraftClientAssets(physicalPaths)) {
+    throw new ResourcePackError("MISSING_PACK_MCMETA", "pack.mcmeta must exist at the ZIP root.");
+  }
+  const clientLimits = {
+    ...limits,
+    maxFileCount: JAVA_263_CLIENT_JAR_LIMITS.maxFileCount,
+    maxInputBytes: JAVA_263_CLIENT_JAR_LIMITS.maxInputBytes,
+    maxSingleFileBytes: Math.min(limits.maxSingleFileBytes, JAVA_263_CLIENT_JAR_LIMITS.maxAssetFileBytes),
+    maxTotalUncompressedBytes: Math.min(limits.maxTotalUncompressedBytes, JAVA_263_CLIENT_JAR_LIMITS.maxAssetUncompressedBytes),
+  };
+  if (auditedEntries.length > clientLimits.maxFileCount) {
+    throw new ResourcePackError(
+      "TOO_MANY_FILES",
+      `Minecraft client JAR contains ${auditedEntries.length} entries; limit is ${clientLimits.maxFileCount}.`,
+    );
+  }
+  if (versionEntry.originalSize > Math.min(limits.maxPackMetadataBytes, JAVA_263_CLIENT_JAR_LIMITS.maxVersionMetadataBytes)) {
+    throw new ResourcePackError("FILE_TOO_LARGE", "version.json exceeds the client metadata limit.", "version.json");
+  }
+  const selectedAssetEntries = auditedEntries.filter((entry) => !entry.isDirectory && entry.path.startsWith("assets/"));
+  if (selectedAssetEntries.length > JAVA_263_CLIENT_JAR_LIMITS.maxAssetFileCount) {
+    throw new ResourcePackError(
+      "TOO_MANY_FILES",
+      `Minecraft client JAR contains ${selectedAssetEntries.length} selected asset files; limit is ${JAVA_263_CLIENT_JAR_LIMITS.maxAssetFileCount}.`,
+    );
+  }
+  validateArchiveBudget(auditedEntries, clientLimits, (entry) => entry.path.startsWith("assets/"));
+  const versionFiles = unzipArchive(bytes, (file) => file.name === "version.json");
+  const versionBytes = versionFiles["version.json"];
+  if (!versionBytes || !isMinecraft263Client(versionBytes)) {
+    throw new ResourcePackError("MISSING_PACK_MCMETA", "Only a Java 26.3 client JAR with resource pack format 97.1 can omit pack.mcmeta.");
+  }
+  const files = unzipArchive(bytes, (file) => file.name.startsWith("assets/"));
+  validateExtractedBudget(files, clientLimits);
+  const paths = selectedAssetEntries.map((entry) => entry.path).sort(comparePath);
+  return {
+    files,
+    paths,
+    archiveFileCount,
+    pack: {
+      packFormat: TARGET_RESOURCE_PACK_FORMAT[0],
+      minFormat: [...TARGET_RESOURCE_PACK_FORMAT],
+      maxFormat: [...TARGET_RESOURCE_PACK_FORMAT],
+      description: { text: "Minecraft Java Edition 26.3 client assets" },
+    },
+  };
+}
+
+function hasMinecraftClientAssets(paths: readonly string[]): boolean {
+  return paths.some((path) => path.startsWith("assets/minecraft/blockstates/"))
+    && paths.some((path) => path.startsWith("assets/minecraft/textures/block/"));
+}
+
+function isMinecraft263Client(bytes: Uint8Array): boolean {
+  try {
+    const version = parseJsonObject(bytes, "version.json");
+    if (version.id !== "26.3" || !isRecord(version.pack_version)) return false;
+    return version.pack_version.resource_major === TARGET_RESOURCE_PACK_FORMAT[0]
+      && version.pack_version.resource_minor === TARGET_RESOURCE_PACK_FORMAT[1];
+  } catch {
+    return false;
+  }
+}
+
+function unzipArchive(bytes: Uint8Array, filter?: (file: { name: string }) => boolean): Record<string, Uint8Array> {
+  try {
+    return unzipSync(bytes, filter ? { filter } : undefined);
+  } catch (cause) {
+    throw new ResourcePackError("INVALID_ZIP", `Resource archive could not be decompressed: ${errorMessage(cause)}`);
+  }
+}
+
+function validateArchiveBudget(
+  entries: readonly ZipEntryAudit[],
+  limits: ResourcePackLimits,
+  include: (entry: ZipEntryAudit) => boolean,
+): void {
+  if (entries.length > limits.maxFileCount) {
+    throw new ResourcePackError("TOO_MANY_FILES", `ZIP contains ${entries.length} entries; limit is ${limits.maxFileCount}.`);
+  }
+  let total = 0;
+  for (const entry of entries) {
+    if (!include(entry)) continue;
+    if (entry.originalSize > limits.maxSingleFileBytes) {
+      throw new ResourcePackError(
+        "FILE_TOO_LARGE",
+        `${entry.path} expands to ${entry.originalSize} bytes; per-file limit is ${limits.maxSingleFileBytes}.`,
+        entry.path,
+      );
+    }
+    total += entry.originalSize;
+    if (total > limits.maxTotalUncompressedBytes) {
+      throw new ResourcePackError("TOTAL_UNCOMPRESSED_TOO_LARGE", `ZIP expands beyond ${limits.maxTotalUncompressedBytes} selected bytes.`);
+    }
+  }
+}
+
+function validateExtractedBudget(files: Record<string, Uint8Array>, limits: ResourcePackLimits): void {
+  let extractedTotal = 0;
+  for (const [path, bytes] of Object.entries(files)) {
+    if (bytes.byteLength > limits.maxSingleFileBytes) {
+      throw new ResourcePackError("FILE_TOO_LARGE", `${path} exceeds the extracted per-file limit.`, path);
+    }
+    extractedTotal += bytes.byteLength;
+    if (extractedTotal > limits.maxTotalUncompressedBytes) {
+      throw new ResourcePackError("TOTAL_UNCOMPRESSED_TOO_LARGE", "Extracted resource archive exceeds the selected size limit.");
+    }
+  }
+}
+
+function auditZip(bytes: Uint8Array): ZipEntryAudit[] {
   if (bytes.byteLength < 22) throw new ResourcePackError("INVALID_ZIP", "ZIP is too short.");
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const eocd = findEocd(view);
@@ -344,8 +518,11 @@ function auditZip(bytes: Uint8Array, limits: ResourcePackLimits): ZipEntryAudit[
   ) {
     throw new ResourcePackError("ZIP64_UNSUPPORTED", "Multi-disk and ZIP64 resource packs are not supported.");
   }
-  if (entryCount > limits.maxFileCount) {
-    throw new ResourcePackError("TOO_MANY_FILES", `ZIP contains ${entryCount} entries; limit is ${limits.maxFileCount}.`);
+  if (entryCount > JAVA_263_CLIENT_JAR_LIMITS.maxFileCount) {
+    throw new ResourcePackError(
+      "TOO_MANY_FILES",
+      `ZIP contains ${entryCount} entries; hard limit is ${JAVA_263_CLIENT_JAR_LIMITS.maxFileCount}.`,
+    );
   }
   if (centralOffset + centralSize > eocd || centralOffset + centralSize > bytes.byteLength) {
     throw new ResourcePackError("INVALID_ZIP", "ZIP central directory is outside the archive.");
@@ -355,7 +532,6 @@ function auditZip(bytes: Uint8Array, limits: ResourcePackLimits): ZipEntryAudit[
   const exact = new Set<string>();
   const folded = new Map<string, string>();
   let offset = centralOffset;
-  let total = 0;
   for (let index = 0; index < entryCount; index += 1) {
     if (offset + 46 > bytes.byteLength || view.getUint32(offset, true) !== 0x02014b50) {
       throw new ResourcePackError("INVALID_ZIP", "Malformed ZIP central directory.");
@@ -388,20 +564,6 @@ function auditZip(bytes: Uint8Array, limits: ResourcePackLimits): ZipEntryAudit[
     exact.add(path);
     folded.set(lower, path);
 
-    if (originalSize > limits.maxSingleFileBytes) {
-      throw new ResourcePackError(
-        "FILE_TOO_LARGE",
-        `${path} expands to ${originalSize} bytes; per-file limit is ${limits.maxSingleFileBytes}.`,
-        path,
-      );
-    }
-    total += originalSize;
-    if (total > limits.maxTotalUncompressedBytes) {
-      throw new ResourcePackError(
-        "TOTAL_UNCOMPRESSED_TOO_LARGE",
-        `ZIP expands beyond ${limits.maxTotalUncompressedBytes} bytes.`,
-      );
-    }
     entries.push({ path, originalSize, isDirectory: path.endsWith("/") });
     offset = recordEnd;
   }
@@ -446,7 +608,7 @@ function normalizeArchivePath(raw: string): string {
   return `${segments.join("/")}${trailingSlash ? "/" : ""}`;
 }
 
-function parsePackMetadata(bytes: Uint8Array): ResourcePackMetadata {
+function parsePackMetadata(bytes: Uint8Array): ParsedPackMetadata {
   let value: unknown;
   try {
     value = parseJsonObject(bytes, "pack.mcmeta");
@@ -457,18 +619,197 @@ function parsePackMetadata(bytes: Uint8Array): ResourcePackMetadata {
   if (!isRecord(pack)) {
     throw new ResourcePackError("INVALID_PACK_MCMETA", "pack.mcmeta must contain a pack object.", "pack.mcmeta");
   }
-  const packFormat = pack.pack_format;
-  if (!Number.isSafeInteger(packFormat) || (packFormat as number) <= 0) {
+  const legacyPackFormat = pack.pack_format;
+  if (legacyPackFormat !== undefined && (!Number.isSafeInteger(legacyPackFormat) || (legacyPackFormat as number) <= 0)) {
     throw new ResourcePackError(
       "INVALID_PACK_MCMETA",
       "pack.pack_format must be a positive integer.",
       "pack.mcmeta",
     );
   }
+  const hasModernRange = pack.min_format !== undefined || pack.max_format !== undefined;
+  if (hasModernRange && (pack.min_format === undefined || pack.max_format === undefined)) {
+    throw new ResourcePackError(
+      "INVALID_PACK_MCMETA",
+      "pack.min_format and pack.max_format must be supplied together.",
+      "pack.mcmeta",
+    );
+  }
+  let minFormat: ResourcePackMetadata["minFormat"];
+  let maxFormat: ResourcePackMetadata["maxFormat"];
+  if (hasModernRange) {
+    minFormat = parsePackFormatBound(pack.min_format, "min_format", 0);
+    maxFormat = parsePackFormatBound(pack.max_format, "max_format", 0x7fffffff);
+    if (minFormat[0] > maxFormat[0] || (minFormat[0] === maxFormat[0] && minFormat[1] > maxFormat[1])) {
+      throw new ResourcePackError("INVALID_PACK_MCMETA", "pack.min_format must not exceed pack.max_format.", "pack.mcmeta");
+    }
+    if (minFormat[0] < 65 && legacyPackFormat === undefined) {
+      throw new ResourcePackError(
+        "INVALID_PACK_MCMETA",
+        "pack.pack_format is required when the supported range includes resource-pack formats before 65.",
+        "pack.mcmeta",
+      );
+    }
+  } else if (legacyPackFormat === undefined) {
+    throw new ResourcePackError(
+      "INVALID_PACK_MCMETA",
+      "pack.pack_format or a modern min_format/max_format range is required.",
+      "pack.mcmeta",
+    );
+  }
   if (!("description" in pack)) {
     throw new ResourcePackError("INVALID_PACK_MCMETA", "pack.description is required.", "pack.mcmeta");
   }
-  return { packFormat: packFormat as number, description: pack.description };
+  return {
+    metadata: {
+      packFormat: (legacyPackFormat as number | undefined) ?? maxFormat![0],
+      description: pack.description,
+      ...(minFormat && maxFormat ? { minFormat, maxFormat } : {}),
+    },
+    overlays: parsePackOverlays((value as Record<string, unknown>).overlays),
+  };
+}
+
+function parsePackOverlays(raw: unknown): ParsedPackOverlay[] {
+  if (raw === undefined) return [];
+  if (!isRecord(raw) || !Array.isArray(raw.entries) || raw.entries.length > MAX_PACK_OVERLAY_ENTRIES) {
+    throw new ResourcePackError(
+      "INVALID_PACK_MCMETA",
+      `pack.overlays.entries must be an array of at most ${MAX_PACK_OVERLAY_ENTRIES} entries.`,
+      "pack.mcmeta",
+    );
+  }
+  const directories = new Set<string>();
+  return raw.entries.map((entry, index) => {
+    if (!isRecord(entry)) throw invalidOverlayMetadata(index, "entry must be an object.");
+    const directory = entry.directory;
+    if (typeof directory !== "string" || directory.length > 64 || !/^[a-z0-9_-]+$/.test(directory)) {
+      throw invalidOverlayMetadata(index, "directory must contain only lowercase letters, digits, underscores, and hyphens.");
+    }
+    if (directories.has(directory)) throw invalidOverlayMetadata(index, `directory ${directory} is declared more than once.`);
+    directories.add(directory);
+
+    const hasModernMin = entry.min_format !== undefined;
+    const hasModernMax = entry.max_format !== undefined;
+    if (hasModernMin !== hasModernMax) {
+      throw invalidOverlayMetadata(index, "min_format and max_format must be supplied together.");
+    }
+    const hasLegacyFormats = entry.formats !== undefined;
+    if (!hasModernMin && !hasLegacyFormats) {
+      throw invalidOverlayMetadata(index, "a formats range or min_format/max_format pair is required.");
+    }
+
+    let modernRangeMatches = true;
+    if (hasModernMin && hasModernMax) {
+      let minimum: [number, number];
+      let maximum: [number, number];
+      try {
+        minimum = parsePackFormatBound(entry.min_format, `overlays.entries[${index}].min_format`, 0);
+        maximum = parsePackFormatBound(entry.max_format, `overlays.entries[${index}].max_format`, 0x7fffffff);
+      } catch (cause) {
+        throw invalidOverlayMetadata(index, errorMessage(cause));
+      }
+      if (comparePackFormat(minimum, maximum) > 0) {
+        throw invalidOverlayMetadata(index, "min_format must not exceed max_format.");
+      }
+      if (minimum[0] < 65 && !hasLegacyFormats) {
+        throw invalidOverlayMetadata(index, "formats is required when min_format includes resource-pack formats before 65.");
+      }
+      modernRangeMatches = packFormatInRange(TARGET_RESOURCE_PACK_FORMAT, minimum, maximum);
+    }
+
+    let legacyRangeMatches = true;
+    if (hasLegacyFormats) {
+      const legacyRange = parseLegacyOverlayFormats(entry.formats, index);
+      legacyRangeMatches = TARGET_RESOURCE_PACK_FORMAT[0] >= legacyRange[0]
+        && TARGET_RESOURCE_PACK_FORMAT[0] <= legacyRange[1];
+    }
+    return { directory, appliesToTarget: modernRangeMatches && legacyRangeMatches };
+  });
+}
+
+function parseLegacyOverlayFormats(raw: unknown, index: number): [number, number] {
+  let minimum: unknown;
+  let maximum: unknown;
+  if (Number.isSafeInteger(raw) && (raw as number) > 0) {
+    minimum = raw;
+    maximum = raw;
+  } else if (Array.isArray(raw) && raw.length === 2) {
+    [minimum, maximum] = raw;
+  } else if (isRecord(raw)) {
+    minimum = raw.min_inclusive;
+    maximum = raw.max_inclusive;
+  } else {
+    throw invalidOverlayMetadata(index, "formats must be a positive format or an inclusive [min, max] range.");
+  }
+  if (!Number.isSafeInteger(minimum) || (minimum as number) <= 0
+    || !Number.isSafeInteger(maximum) || (maximum as number) < (minimum as number)) {
+    throw invalidOverlayMetadata(index, "formats must be a non-inverted inclusive positive-integer range.");
+  }
+  return [minimum as number, maximum as number];
+}
+
+function invalidOverlayMetadata(index: number, message: string): ResourcePackError {
+  return new ResourcePackError(
+    "INVALID_PACK_MCMETA",
+    `pack.overlays.entries[${index}]: ${message}`,
+    "pack.mcmeta",
+  );
+}
+
+function comparePackFormat(left: readonly [number, number], right: readonly [number, number]): number {
+  return left[0] - right[0] || left[1] - right[1];
+}
+
+function packFormatInRange(
+  format: readonly [number, number],
+  minimum: readonly [number, number],
+  maximum: readonly [number, number],
+): boolean {
+  return comparePackFormat(format, minimum) >= 0 && comparePackFormat(format, maximum) <= 0;
+}
+
+function applyResourcePackOverlays(
+  files: Record<string, Uint8Array>,
+  physicalPaths: readonly string[],
+  overlays: readonly ParsedPackOverlay[],
+): Pick<ParsedArchiveFiles, "files" | "paths"> {
+  const effectiveFiles: Record<string, Uint8Array> = Object.create(null) as Record<string, Uint8Array>;
+  for (const path of physicalPaths) {
+    if (path.startsWith("overlays/")) continue;
+    const bytes = files[path];
+    if (bytes) effectiveFiles[path] = bytes;
+  }
+
+  for (const overlay of overlays) {
+    if (!overlay.appliesToTarget) continue;
+    const prefix = `overlays/${overlay.directory}/`;
+    for (const archivePath of physicalPaths) {
+      if (!archivePath.startsWith(prefix)) continue;
+      const path = archivePath.slice(prefix.length);
+      if (!path || path === "pack.mcmeta" || path === "pack.png") continue;
+      const bytes = files[archivePath];
+      if (bytes) effectiveFiles[path] = bytes;
+    }
+  }
+  const paths = Object.keys(effectiveFiles).sort(comparePath);
+  return { files: effectiveFiles, paths };
+}
+
+function parsePackFormatBound(value: unknown, field: string, integerMinor: number): [number, number] {
+  const parts = Array.isArray(value) ? value : [value];
+  const validLength = parts.length === 1 || parts.length === 2;
+  const major = parts[0];
+  const minor = parts.length === 2 ? parts[1] : integerMinor;
+  if (!validLength || !Number.isSafeInteger(major) || (major as number) <= 0 ||
+      !Number.isSafeInteger(minor) || (minor as number) < 0 || (minor as number) > 0x7fffffff) {
+    throw new ResourcePackError(
+      "INVALID_PACK_MCMETA",
+      `pack.${field} must be a positive major or [major, minor] version.`,
+      "pack.mcmeta",
+    );
+  }
+  return [major as number, minor as number];
 }
 
 function normalizeTextureAnimation(metadata: unknown, sheetWidth: number, sheetHeight: number): ResourcePackTextureAnimation | undefined {
@@ -482,7 +823,7 @@ function normalizeTextureAnimation(metadata: unknown, sheetWidth: number, sheetH
   const rawFrameHeight = rawAnimation.height ?? rawAnimation.width ?? defaultFrameSize;
   const frameWidth = animationFrameSize(rawFrameWidth, "animation.width");
   const frameHeight = animationFrameSize(rawFrameHeight, "animation.height");
-  if (frameWidth !== frameHeight) throw new Error("Only square 16px or 32px animation frames are supported.");
+  if (frameWidth !== frameHeight) throw new Error("Only square 16px, 32px, 64px, 128px, or 256px animation frames are supported.");
   if (sheetWidth % frameWidth !== 0 || sheetHeight % frameHeight !== 0) {
     throw new Error(`Texture sheet ${sheetWidth}x${sheetHeight} must contain complete ${frameWidth}x${frameHeight} frames.`);
   }
@@ -514,9 +855,13 @@ function normalizeTextureAnimation(metadata: unknown, sheetWidth: number, sheetH
   return { frameWidth, frameHeight, sourceColumns, sourceRows, sourceFrameCount, frametime, interpolate, frames };
 }
 
-function animationFrameSize(raw: unknown, name: string): 16 | 32 {
-  if (raw !== 16 && raw !== 32) throw new Error(`${name} must be 16 or 32.`);
+function animationFrameSize(raw: unknown, name: string): ResourcePackTextureSize {
+  if (!isSupportedTextureSize(raw)) throw new Error(`${name} must be 16, 32, 64, 128, or 256.`);
   return raw;
+}
+
+function isSupportedTextureSize(value: unknown): value is ResourcePackTextureSize {
+  return value === 16 || value === 32 || value === 64 || value === 128 || value === 256;
 }
 
 function animationFrameIndex(raw: unknown, sourceFrameCount: number, position: number): number {

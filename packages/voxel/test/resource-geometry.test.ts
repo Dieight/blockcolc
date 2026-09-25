@@ -18,6 +18,7 @@ import {
   isSupportedGeometryBlock,
   MAX_GEOMETRY_BATCHES,
   planGeometryVoxel,
+  planGeometryVoxelPages,
 } from "../src/resource-geometry";
 import type { ResourcePackAtlas, ResourcePackAtlasPage } from "../src/resource-textures";
 
@@ -115,8 +116,53 @@ describe("P1/P2 geometry signature planning", () => {
     unsafe.elements[2]!.faces.east = face(12, "opaque", 1);
 
     expect(batchGeometryPlans([northA, northB, northEast])).toHaveLength(2);
-    expect(compileMappedGeometryVoxel(voxel("minecraft:oak_fence"), unsafe)).toBeUndefined();
+    expect(compileMappedGeometryVoxel(voxel("example:oak_fence"), unsafe)).toBeUndefined();
     expect(geometryVoxelCacheKey(northEast.voxel)).not.toBe(geometryVoxelCacheKey(northA.voxel));
+  });
+
+  it("resolves vanilla state tint per geometry instance and splits uniform batches by color", () => {
+    const redstone0 = compileMappedGeometryVoxel(
+      voxel("minecraft:redstone_wire", 0, { power: "0" }), slabGeometry(1, 2, "opaque", 0),
+    )!;
+    const redstone15 = compileMappedGeometryVoxel(
+      voxel("minecraft:redstone_wire", 1, { power: "15" }), slabGeometry(1, 2, "opaque", 0),
+    )!;
+    const melon0 = compileMappedGeometryVoxel(
+      voxel("minecraft:melon_stem", 2, { age: "0" }), slabGeometry(1, 2, "opaque", 0),
+    )!;
+    const pumpkin7 = compileMappedGeometryVoxel(
+      voxel("minecraft:pumpkin_stem", 3, { age: "7" }), slabGeometry(1, 2, "opaque", 0),
+    )!;
+    const attached = compileMappedGeometryVoxel(
+      voxel("minecraft:attached_pumpkin_stem", 4, { facing: "north" }), slabGeometry(1, 2, "opaque", 0),
+    )!;
+    const plans = [redstone0, redstone15, melon0, pumpkin7, attached];
+    const batches = batchGeometryPlans(plans);
+
+    expect(plans.map((plan) => plan.stateTintRgb)).toEqual([0x4c0000, 0xff3200, 0x00ff00, 0xe0c71c, 0xe0c71c]);
+    expect(new Set(batches.map((batch) => batch.stateTintRgb))).toEqual(new Set([0x4c0000, 0xff3200, 0x00ff00, 0xe0c71c]));
+    expect(batches.find((batch) => batch.stateTintRgb === 0x4c0000)?.entries).toEqual([redstone0]);
+    expect(batches.find((batch) => batch.stateTintRgb === 0xff3200)?.entries).toEqual([redstone15]);
+    expect(batches.find((batch) => batch.stateTintRgb === 0xe0c71c)?.entries).toEqual([pumpkin7, attached]);
+
+    const page = atlasPage();
+    const material = createAtlasGeometryMaterial(page, "opaque", "default", 0xff3200);
+    const shader = {
+      uniforms: {},
+      vertexShader: "#include <common>\nvoid main(){\n#include <uv_vertex>\n}",
+      fragmentShader: "#include <common>\nvoid main(){\n#include <map_fragment>\n}",
+    };
+    material.onBeforeCompile(shader as THREE.WebGLProgramParametersWithUniforms, {} as THREE.WebGLRenderer);
+    const geometry = createAtlasGeometry(batches.find((batch) => batch.stateTintRgb === 0xff3200)!);
+
+    expect(shader.uniforms).toMatchObject({ blockcolcStateTint: { value: new THREE.Color(0xff3200) } });
+    expect(shader.vertexShader).toContain("blockcolcTintKind < 10.5 ? blockcolcStateTint");
+    expect(Object.keys(geometry.attributes).length + 4).toBe(15);
+    geometry.dispose();
+    material.dispose();
+    page.animationLookup!.texture.dispose();
+    page.animationLookup!.blendTexture.dispose();
+    page.texture.dispose();
   });
 
   it("builds only declared slab and stair faces without completing cuboids", () => {
@@ -187,6 +233,95 @@ describe("P1/P2 geometry signature planning", () => {
     expect(new Set(quad.positions.filter((_value, index) => index % 3 === 2)).size).toBeGreaterThan(1);
   });
 
+  it("uses reversed element bounds for winding while keeping AO face and shade override separate", () => {
+    const reversed = slabGeometry(1, 2);
+    reversed.elements[0]!.from = [16, 0, 0];
+    reversed.elements[0]!.to = [0, 8, 16];
+    reversed.elements[0]!.shadeDirectionOverride = "north";
+    const plan = compileMappedGeometryVoxel(voxel("minecraft:oak_slab"), reversed)!;
+    const north = plan.topology.quads.find((quad) => quad.face === "north")!;
+    const buffer = createAtlasGeometry(batchGeometryPlans([plan])[0]!);
+
+    expect(north.positions.slice(0, 6)).toEqual([0, 0, 0, 16, 0, 0]);
+    expect(north.normal).toEqual([0, 0, 1]);
+    expect(north.faceOcclusionSlot).toBe(2);
+    expect(north.shadeFactor).toBe(0.8);
+    expect(new Set(plan.topology.quads.map((quad) => quad.shadeFactor))).toEqual(new Set([0.8]));
+    expect(buffer.getAttribute("faceOcclusionSlot").getX(0)).toBe(plan.topology.quads[0]!.faceOcclusionSlot);
+    expect(buffer.getAttribute("faceShadeFactor").getX(0)).toBeCloseTo(plan.topology.quads[0]!.shadeFactor, 6);
+    buffer.dispose();
+  });
+
+  it("rotates the vault's 26.3 inverted cage through Y facings and preserves winding under X rotation", () => {
+    const rotations = [
+      { x: 0 as const, y: 90 as const, face: "west" as const, normal: [1, 0, 0] as const, faceSlot: 4, shadeFactor: 0.6 },
+      { x: 0 as const, y: 180 as const, face: "south" as const, normal: [0, 0, -1] as const, faceSlot: 3, shadeFactor: 0.8 },
+      { x: 0 as const, y: 270 as const, face: "east" as const, normal: [-1, 0, 0] as const, faceSlot: 5, shadeFactor: 0.6 },
+      { x: 90 as const, y: 0 as const, face: "up" as const, normal: [0, -1, 0] as const, faceSlot: 1, shadeFactor: 1 },
+    ];
+    const from = [15.998, 3.002, 0.002] as const;
+    const to = [0.002, 15.998, 15.998] as const;
+    const template = slabGeometry(1, 2);
+    template.elements[0]!.from = from;
+    template.elements[0]!.to = to;
+    template.elements[0]!.faces = { north: face(1, "opaque", undefined, [1, 0, 0, 13 / 16]) };
+    const unrotated = compileMappedGeometryVoxel(voxel("minecraft:vault"), template)!.topology.quads[0]!;
+
+    for (const rotation of rotations) {
+      const rotated = structuredClone(template);
+      rotated.elements[0]!.blockRotation = { x: rotation.x, y: rotation.y };
+      const quad = compileMappedGeometryVoxel(voxel("minecraft:vault"), rotated)!.topology.quads[0]!;
+      const expectedPositions = rotateQuadBlock(unrotated.positions, rotation.x, rotation.y);
+
+      expect(quad.face).toBe(rotation.face);
+      quad.positions.forEach((position, index) => expect(position).toBeCloseTo(expectedPositions[index]!, 10));
+      quad.normal.forEach((component, index) => expect(component).toBeCloseTo(rotation.normal[index]!, 10));
+      expect(quad.faceOcclusionSlot).toBe(rotation.faceSlot);
+      expect(quad.shadeFactor).toBe(rotation.shadeFactor);
+      expect(quad.bakedUvs).toEqual(unrotated.bakedUvs);
+    }
+  });
+
+  it("splits one atlas page into complete geometry plans when it needs more than six texture slots", () => {
+    const geometry = slabGeometry(1, 2);
+    geometry.elements[0]!.faces = {
+      down: face(1), up: face(2), north: face(3), south: face(4), west: face(5), east: face(6),
+    };
+    geometry.elements.push({
+      from: [0, 8, 0], to: [16, 16, 16], shade: true,
+      faces: { north: face(7) },
+    });
+
+    const plans = compileMappedGeometryVoxelPages(voxel("minecraft:dried_ghast"), geometry)!;
+
+    expect(plans).toHaveLength(2);
+    expect(plans.map((plan) => plan.topology.elementCount)).toEqual([1, 1]);
+    expect(plans.map((plan) => plan.topology.textureSlotCount)).toEqual([6, 1]);
+    expect(plans.map((plan) => plan.topology.quads.length)).toEqual([6, 1]);
+    expect(plans.map((plan) => plan.faceTiles.slice(0, plan.topology.textureSlotCount))).toEqual([
+      [1, 2, 3, 4, 5, 6],
+      [7],
+    ]);
+    expect(plans.every((plan) => plan.page === 0)).toBe(true);
+  });
+
+  it("ignores zero-area faces on valid zero-thickness planes", () => {
+    const plane: AtlasBlockGeometry = {
+      status: "resolved_geometry",
+      modelId: "minecraft:block/glow_lichen_plane",
+      elements: [{
+        from: [0, 0, 0.1],
+        to: [16, 16, 0.1],
+        shade: true,
+        faces: { north: face(1), south: face(1), west: face(1) },
+      }],
+    };
+    const plan = compileMappedGeometryVoxel(voxel("minecraft:glow_lichen"), plane)!;
+
+    expect(plan.topology.quads.map((quad) => quad.face)).toEqual(["north", "south"]);
+    expect(plan.topology.quads.every((quad) => quad.positions.every(Number.isFinite))).toBe(true);
+  });
+
   it("batches by signature, material response, alpha and emissive state without using texture IDs", () => {
     const plainA = compileMappedGeometryVoxel(voxel("minecraft:oak_slab"), slabGeometry(1, 2))!;
     const plainB = compileMappedGeometryVoxel(voxel("minecraft:stone_slab", 1), slabGeometry(8, 9))!;
@@ -205,32 +340,85 @@ describe("P1/P2 geometry signature planning", () => {
     expect(batches.find((batch) => batch.entries.includes(translucent))?.alphaMode).toBe("translucent");
   });
 
-  it("caps scene geometry batches and falls excess shapes back atomically", () => {
-    const manifest = manyShapeManifest(MAX_GEOMETRY_BATCHES + 1);
+  it.each([65, 128, 256])("keeps %i distinct valid shapes in real geometry batches and reports the soft target", (shapeCount) => {
+    const manifest = manyShapeManifest(shapeCount);
     const atlas = multipartAtlas();
-    const voxels = Array.from({ length: MAX_GEOMETRY_BATCHES + 1 }, (_, index) => (
+    const voxels = Array.from({ length: shapeCount }, (_, index) => (
       voxel("minecraft:shape", index, { mode: String(index) })
     ));
 
     const result = createGeometryBatches(voxels, manifest, atlas);
+    const geometries = result.batches.map(createAtlasGeometry);
+    const geometryBytes = geometries.reduce((total, geometry) => {
+      const attributeBytes = Object.values(geometry.attributes)
+        .reduce((bytes, attribute) => bytes + attribute.array.byteLength, 0);
+      return total + attributeBytes + (geometry.index?.array.byteLength ?? 0);
+    }, 0);
+    const vertexCount = geometries.reduce((total, geometry) => total + geometry.getAttribute("position").count, 0);
+    const triangleCount = geometries.reduce((total, geometry) => total + (geometry.index?.count ?? 0) / 3, 0);
 
-    expect(result.batches).toHaveLength(MAX_GEOMETRY_BATCHES);
-    expect(result.fallbackVoxels).toHaveLength(1);
+    expect(result.batches).toHaveLength(shapeCount);
+    expect(result.fallbackVoxels).toHaveLength(0);
     expect(result.batches.every((batch) => batch.entries.length === 1)).toBe(true);
+    expect(result.batchBudget).toEqual({
+      target: MAX_GEOMETRY_BATCHES,
+      actual: shapeCount,
+      overTarget: shapeCount - MAX_GEOMETRY_BATCHES,
+    });
+    expect(new Set(result.batches.map((batch) => batch.topology.signature)).size).toBe(shapeCount);
+    expect(vertexCount).toBe(shapeCount * 4);
+    expect(triangleCount).toBe(shapeCount * 2);
+    // One one-quad topology and one instance uses 224 bytes of typed geometry/index data.
+    expect(geometryBytes).toBe(shapeCount * 224);
+    for (const geometry of geometries) geometry.dispose();
     atlas.dispose();
   });
 
-  it("uses 11 vertex slots including instanceMatrix and accepts bounded unshaded geometry", () => {
+  it("does not reuse the first coordinate's weighted model through the geometry cache", () => {
+    const manifest = manyShapeManifest(2);
+    const choices = manifest.blockStates[0]!.variants.flatMap((variant) => variant.choices);
+    manifest.blockStates[0]!.variants = [{ key: "", conditions: {}, choices }];
+    const atlas = multipartAtlas();
+    const voxels = Array.from({ length: 24 }, (_, x) => voxel("minecraft:shape", x));
+    const expectedSignatures = voxels.map((source) => planGeometryVoxelPages(source, manifest, atlas)![0]!.topology.signature);
+
+    const result = createGeometryBatches(voxels, manifest, atlas);
+
+    expect(new Set(expectedSignatures).size).toBe(2);
+    expect(result.fallbackVoxels).toEqual([]);
+    expect(result.batches).toHaveLength(2);
+    expect(result.batches.reduce((count, batch) => count + batch.entries.length, 0)).toBe(voxels.length);
+    for (const batch of result.batches) {
+      for (const entry of batch.entries) {
+        expect(entry.topology.signature).toBe(expectedSignatures[entry.voxel.x]);
+      }
+    }
+    atlas.dispose();
+  });
+
+  it("keeps unsupported geometry on the established fallback path and reports no batch pressure", () => {
+    const atlas = multipartAtlas();
+    const unsupported = voxel("minecraft:unlisted_shape");
+
+    const result = createGeometryBatches([unsupported], multipartManifest(), atlas);
+
+    expect(result.batches).toEqual([]);
+    expect(result.fallbackVoxels).toEqual([unsupported]);
+    expect(result.batchBudget).toEqual({ target: MAX_GEOMETRY_BATCHES, actual: 0, overTarget: 0 });
+    atlas.dispose();
+  });
+
+  it("uses 11 geometry attributes plus instanceMatrix and accepts bounded unshaded geometry", () => {
     const plan = compileMappedGeometryVoxel(voxel("minecraft:oak_slab"), slabGeometry(1, 2))!;
     const geometry = createAtlasGeometry(batchGeometryPlans([plan])[0]!);
 
     expect(Object.keys(geometry.attributes)).toEqual([
-      "position", "normal", "uv", "faceSlot", "instanceFaceTilesA", "instanceFaceTilesB", "instanceFaceTintKinds",
-      "instanceMaterialResponse",
+      "position", "normal", "uv", "faceSlot", "faceOcclusionSlot", "faceShadeFactor",
+      "instanceFaceTilesA", "instanceFaceTilesB", "instanceFaceTintKinds", "instanceFaceOcclusion", "instanceMaterialResponse",
     ]);
-    expect(Object.keys(geometry.attributes).length + 4).toBe(12);
+    expect(Object.keys(geometry.attributes).length + 4).toBe(15);
     expect(compileMappedGeometryVoxel(voxel("minecraft:oak_slab"), slabGeometry(1, 2, "translucent"))?.alphaMode).toBe("translucent");
-    expect(compileMappedGeometryVoxel(voxel("minecraft:oak_slab"), slabGeometry(1, 2, "opaque", 0))).toBeUndefined();
+    expect(compileMappedGeometryVoxel(voxel("example:oak_slab"), slabGeometry(1, 2, "opaque", 0))).toBeUndefined();
     const unshaded = slabGeometry(1, 2);
     unshaded.elements[0]!.shade = false;
     expect(compileMappedGeometryVoxel(voxel("minecraft:oak_slab"), unshaded)?.topology.quads.every((quad) => !quad.shade)).toBe(true);
@@ -311,6 +499,21 @@ describe("P1/P2 geometry signature planning", () => {
 
 function voxel(sourceBlockId: string, x = 0, sourceBlockState: Record<string, string> = {}): BlueprintVoxel {
   return { x, y: 0, z: 0, materialId: "wood", buildOrder: 10_000, sourceBlockId, sourceBlockState };
+}
+
+function rotateQuadBlock(
+  positions: readonly [number, number, number, number, number, number, number, number, number, number, number, number],
+  xDegrees: 0 | 90 | 180 | 270,
+  yDegrees: 0 | 90 | 180 | 270,
+): typeof positions {
+  const output: number[] = [];
+  for (let index = 0; index < positions.length; index += 3) {
+    let [x, y, z] = positions.slice(index, index + 3) as [number, number, number];
+    for (let turn = 0; turn < xDegrees / 90; turn += 1) [y, z] = [16 - z, y];
+    for (let turn = 0; turn < yDegrees / 90; turn += 1) [x, z] = [z, 16 - x];
+    output.push(x, y, z);
+  }
+  return output as unknown as typeof positions;
 }
 
 function slabGeometry(

@@ -24,7 +24,7 @@ import type {
 export function createInitialState(timeZone = "UTC", restWeekdays: number[] = [0, 6]): DomainState {
   assertCalendar(timeZone, restWeekdays);
   return {
-    schemaVersion: 10,
+    schemaVersion: 12,
     projects: [],
     habitBuildings: [],
     activeProjectId: null,
@@ -41,7 +41,7 @@ export function createInitialState(timeZone = "UTC", restWeekdays: number[] = [0
       damagePerMissedPlannedDayBasisPoints: null,
     },
     projectConditions: [],
-    focusIntegrityPolicy: { enabled: true, maxEffectiveExcursions: 3 },
+    focusIntegrityPolicy: { enabled: true, maxEffectiveExcursions: 3, excursionThresholdSeconds: FOCUS_INTEGRITY_GRACE_MS / 1000 },
     decorationBlueprintResources: [],
     decorationRewards: [],
     buildingBlueprintResources: [],
@@ -289,6 +289,10 @@ function handle(state: DomainState, command: DomainCommand, clock: Clock): Comma
       return ok(state, [{ type: "SubtasksReordered" }]);
     }
     case "StartFocus": {
+      if (command.deferredSettlement !== undefined && command.deferredSettlement !== true) throw new Error("Invalid deferred settlement mode");
+      if (command.deferredSettlement === true && (command.marathon !== true || command.subtaskId !== null)) {
+        throw new Error("Deferred settlement requires a marathon with no subtask");
+      }
       const project = command.projectId === undefined
         ? activeProject(state)
         : state.projects.find((item) => item.id === command.projectId);
@@ -302,8 +306,8 @@ function handle(state: DomainState, command: DomainCommand, clock: Clock): Comma
       if (state.focusHistory.some((item) => item.id === command.sessionId)) return fail(state, "DUPLICATE_ID", "Session ID already exists");
       if (project.kind === "habit") {
         if (command.subtaskId !== null) return fail(state, "SUBTASK_NOT_FOUND", "Habit focus cannot target a subtask");
-        if (requireHabit(project).awaitingNextBuilding) return fail(state, "HABIT_BUILDING_SELECTION_REQUIRED", "Select the next habit building before focusing");
-      } else if (command.subtaskId === null || !project.subtasks.some((item) => item.id === command.subtaskId)) {
+        if (requireHabit(project).awaitingNextBuilding && command.deferredSettlement !== true) return fail(state, "HABIT_BUILDING_SELECTION_REQUIRED", "Select the next habit building before focusing");
+      } else if (command.deferredSettlement !== true && (command.subtaskId === null || !project.subtasks.some((item) => item.id === command.subtaskId))) {
         return fail(state, "SUBTASK_NOT_FOUND", "Subtask does not exist");
       }
       if (!Number.isInteger(command.plannedDurationMs) || command.plannedDurationMs <= 0) throw new Error("plannedDurationMs must be a positive integer");
@@ -317,6 +321,7 @@ function handle(state: DomainState, command: DomainCommand, clock: Clock): Comma
         plannedDurationMs: command.plannedDurationMs,
         timeZoneAtStart: state.calendar.timeZone,
         ...(command.marathon === true ? { marathon: true } : {}),
+        ...(command.deferredSettlement === true ? { deferredSettlement: true as const } : {}),
         integrity: {
           effectiveExcursions: 0,
           backgroundedAt: null,
@@ -339,7 +344,7 @@ function handle(state: DomainState, command: DomainCommand, clock: Clock): Comma
       requireNonBlank(command.reportId, "reportId");
       const project = state.projects.find((candidate) => candidate.id === active.projectId);
       if (!project) return fail(state, "PROJECT_NOT_FOUND", "Focus session project does not exist");
-      if (project.kind === "habit") {
+      if (project.kind === "habit" && active.deferredSettlement !== true) {
         const actualDurationMs = Math.max(0, Date.parse(now) - Date.parse(active.startedAt));
         const session: FocusSession = {
           ...focusSessionBase(active), status: "completed-early", completedAt: now,
@@ -422,7 +427,12 @@ function handle(state: DomainState, command: DomainCommand, clock: Clock): Comma
       if (!Number.isInteger(command.maxEffectiveExcursions) || command.maxEffectiveExcursions < 1 || command.maxEffectiveExcursions > 5) {
         throw new Error("maxEffectiveExcursions must be an integer from 1 through 5");
       }
-      state.focusIntegrityPolicy = { enabled: command.enabled, maxEffectiveExcursions: command.maxEffectiveExcursions };
+      const excursionThresholdSeconds = command.excursionThresholdSeconds === undefined
+        ? state.focusIntegrityPolicy.excursionThresholdSeconds : command.excursionThresholdSeconds;
+      if (!Number.isInteger(excursionThresholdSeconds) || excursionThresholdSeconds < 1 || excursionThresholdSeconds > 60) {
+        throw new Error("excursionThresholdSeconds must be an integer from 1 through 60");
+      }
+      state.focusIntegrityPolicy = { enabled: command.enabled, maxEffectiveExcursions: command.maxEffectiveExcursions, excursionThresholdSeconds };
       return ok(state, [{ type: "FocusIntegrityConfigured", ...state.focusIntegrityPolicy }]);
     }
     case "GrantFocusLifecycleExemption": {
@@ -453,7 +463,7 @@ function handle(state: DomainState, command: DomainCommand, clock: Clock): Comma
       active.integrity.backgroundReason = null;
       const elapsedMs = Date.parse(now) - Date.parse(backgroundedAt);
       const counts = state.focusIntegrityPolicy.enabled
-        && elapsedMs > FOCUS_INTEGRITY_GRACE_MS
+        && elapsedMs > state.focusIntegrityPolicy.excursionThresholdSeconds * 1000
         && (reason === "app-switch" || reason === "web-visibility");
       if (!counts) return ok(state, []);
       active.integrity.effectiveExcursions += 1;
@@ -502,11 +512,10 @@ function handle(state: DomainState, command: DomainCommand, clock: Clock): Comma
       return ok(state, events);
     }
     case "ReportMarathonFocus": {
-      // V22: marathon settlement. The host project's completed blocks are split:
-      // habitAllocations take the first K rounds (in order) for habit buildings;
-      // the remaining N-K rounds are shared by every chosen subtask across any
-      // finite project (one shared progress report per entry over the same
-      // remainder block).
+      // F19: a new caller supplies `rounds` for every ordinary target.  Those
+      // rounds are assigned to one target in deterministic completion order.
+      // Calls without the optional field retain the V22 shared-report behavior
+      // for compatibility with old UI callers and old backup facts.
       const sessionIds = [...new Set(command.focusSessionIds)];
       if (sessionIds.length === 0 || sessionIds.length !== command.focusSessionIds.length) {
         return fail(state, "PROGRESS_REQUIRES_COMPLETED_FOCUS", "A marathon report needs unique completed focus sessions");
@@ -566,6 +575,16 @@ function handle(state: DomainState, command: DomainCommand, clock: Clock): Comma
         return fail(state, "DUPLICATE_ID", "Marathon report ID already exists");
       }
       const entryContexts: Array<{ project: Project; subtask: Project["subtasks"][number] }> = [];
+      const explicitRounds = entries.some((entry) => entry.rounds !== undefined);
+      if (explicitRounds && entries.some((entry) => entry.rounds === undefined)) {
+        return fail(state, "MARATHON_SPLIT_INVALID", "Explicit marathon allocation requires rounds on every ordinary target");
+      }
+      if (explicitRounds && entries.some((entry) => !Number.isInteger(entry.rounds) || entry.rounds! <= 0)) {
+        return fail(state, "MARATHON_SPLIT_INVALID", "Ordinary target rounds must be positive integers");
+      }
+      const completionTime = (session: typeof sessions[number]) =>
+        Date.parse(session!.status === "completed" || session!.status === "completed-early" ? session!.completedAt : session!.endsAt);
+      const orderedSessions = [...sessions].sort((left, right) => completionTime(left) - completionTime(right) || left!.id.localeCompare(right!.id));
       for (const entry of entries) {
         requireNonBlank(entry.reportId, "reportId");
         requireNonBlank(entry.projectId, "projectId");
@@ -584,27 +603,53 @@ function handle(state: DomainState, command: DomainCommand, clock: Clock): Comma
         }
         entryContexts.push({ project, subtask });
       }
+      const remainder = orderedSessions.slice(habitRounds);
+      if (explicitRounds) {
+        const requestedRounds = entries.reduce((sum, entry) => sum + (entry.rounds ?? 0), 0);
+        if (requestedRounds > remainder.length) {
+          return fail(state, "MARATHON_SPLIT_INVALID", "Ordinary target rounds exceed the unallocated session pool");
+        }
+      }
       const events: DomainEvent[] = [];
       let offset = 0;
       for (const entry of allocations) {
         const project = state.projects.find((candidate) => candidate.id === entry.projectId)!;
         for (let index = 0; index < entry.rounds; index += 1) {
-          advanceHabitBuilding(state, project, sessions[offset + index]!, events);
+          advanceHabitBuilding(state, project, orderedSessions[offset + index]!, events);
         }
         offset += entry.rounds;
       }
-      const remainder = sessionIds.slice(habitRounds);
-      for (const [index, entry] of entries.entries()) {
-        const { project, subtask } = entryContexts[index]!;
-        subtask.progressBasisPoints = entry.progressBasisPoints;
-        state.progressReports.push({
-          id: entry.reportId, projectId: project.id, subtaskId: entry.subtaskId,
-          focusSessionIds: [...remainder], progressBasisPoints: entry.progressBasisPoints, reportedAt: now, shared: true,
-        });
-        events.push({ type: "SubtaskProgressReported", subtaskId: entry.subtaskId, progressBasisPoints: entry.progressBasisPoints });
-        if (entry.progressBasisPoints > 0 && !project.subtaskStructureLocked) {
-          project.subtaskStructureLocked = true;
-          events.push({ type: "SubtaskStructureLocked" });
+      if (explicitRounds) {
+        let entryOffset = 0;
+        for (const [index, entry] of entries.entries()) {
+          const { project, subtask } = entryContexts[index]!;
+          const assigned = remainder.slice(entryOffset, entryOffset + entry.rounds!);
+          entryOffset += entry.rounds!;
+          subtask.progressBasisPoints = entry.progressBasisPoints;
+          state.progressReports.push({
+            id: entry.reportId, projectId: project.id, subtaskId: entry.subtaskId,
+            focusSessionIds: assigned.map((session) => session!.id), progressBasisPoints: entry.progressBasisPoints,
+            reportedAt: now, allocation: "explicit",
+          });
+          events.push({ type: "SubtaskProgressReported", subtaskId: entry.subtaskId, progressBasisPoints: entry.progressBasisPoints });
+          if (entry.progressBasisPoints > 0 && !project.subtaskStructureLocked) {
+            project.subtaskStructureLocked = true;
+            events.push({ type: "SubtaskStructureLocked" });
+          }
+        }
+      } else {
+        for (const [index, entry] of entries.entries()) {
+          const { project, subtask } = entryContexts[index]!;
+          subtask.progressBasisPoints = entry.progressBasisPoints;
+          state.progressReports.push({
+            id: entry.reportId, projectId: project.id, subtaskId: entry.subtaskId,
+            focusSessionIds: remainder.map((session) => session!.id), progressBasisPoints: entry.progressBasisPoints, reportedAt: now, shared: true,
+          });
+          events.push({ type: "SubtaskProgressReported", subtaskId: entry.subtaskId, progressBasisPoints: entry.progressBasisPoints });
+          if (entry.progressBasisPoints > 0 && !project.subtaskStructureLocked) {
+            project.subtaskStructureLocked = true;
+            events.push({ type: "SubtaskStructureLocked" });
+          }
         }
       }
       for (const entry of entries) {
@@ -700,7 +745,7 @@ function handle(state: DomainState, command: DomainCommand, clock: Clock): Comma
       const existing = state.decorationBlueprintResources.find((resource) => resource.id === blueprint.id);
       if (existing) {
         if (JSON.stringify(existing.blueprint) === JSON.stringify(blueprint)) return ok(state, []);
-        if (!isSourceBlockStateEnrichment(existing.blueprint, blueprint)) throw new Error("Decoration blueprint ID conflicts with different content");
+        if (!isOptionalBlueprintDataEnrichment(existing.blueprint, blueprint)) throw new Error("Decoration blueprint ID conflicts with different content");
         existing.blueprint = blueprint;
         return ok(state, [{ type: "DecorationBlueprintImported", resourceId: blueprint.id }]);
       }
@@ -712,7 +757,7 @@ function handle(state: DomainState, command: DomainCommand, clock: Clock): Comma
       const existing = state.buildingBlueprintResources.find((resource) => resource.id === blueprint.id);
       if (existing) {
         if (JSON.stringify(existing.blueprint) === JSON.stringify(blueprint)) return ok(state, []);
-        if (!isSourceBlockStateEnrichment(existing.blueprint, blueprint)) throw new Error("Building blueprint ID conflicts with different content");
+        if (!isOptionalBlueprintDataEnrichment(existing.blueprint, blueprint)) throw new Error("Building blueprint ID conflicts with different content");
         existing.blueprint = blueprint;
         return ok(state, [{ type: "BuildingBlueprintImported", resourceId: blueprint.id }]);
       }
@@ -741,21 +786,25 @@ function handle(state: DomainState, command: DomainCommand, clock: Clock): Comma
   }
 }
 
-function isSourceBlockStateEnrichment(existing: ImportedBlueprintV1, incoming: ImportedBlueprintV1): boolean {
-  const stripStates = (blueprint: ImportedBlueprintV1) => ({
+function isOptionalBlueprintDataEnrichment(existing: ImportedBlueprintV1, incoming: ImportedBlueprintV1): boolean {
+  const stripOptionalData = (blueprint: ImportedBlueprintV1) => ({
     ...blueprint,
-    voxels: blueprint.voxels.map(({ sourceBlockState: _sourceBlockState, ...voxel }) => voxel),
+    voxels: blueprint.voxels.map(({ sourceBlockState: _sourceBlockState, sign: _sign, campfire: _campfire, ...voxel }) => voxel),
   });
-  if (JSON.stringify(stripStates(existing)) !== JSON.stringify(stripStates(incoming))) return false;
+  if (JSON.stringify(stripOptionalData(existing)) !== JSON.stringify(stripOptionalData(incoming))) return false;
   let enriched = false;
   for (let index = 0; index < existing.voxels.length; index += 1) {
-    const before = existing.voxels[index]!.sourceBlockState;
-    const after = incoming.voxels[index]!.sourceBlockState;
-    if (before === undefined) {
-      if (after !== undefined) enriched = true;
-      continue;
+    const beforeVoxel = existing.voxels[index]!;
+    const afterVoxel = incoming.voxels[index]!;
+    for (const key of ["sourceBlockState", "sign", "campfire"] as const) {
+      const before = beforeVoxel[key];
+      const after = afterVoxel[key];
+      if (before === undefined) {
+        if (after !== undefined) enriched = true;
+        continue;
+      }
+      if (after === undefined || JSON.stringify(before) !== JSON.stringify(after)) return false;
     }
-    if (after === undefined || JSON.stringify(before) !== JSON.stringify(after)) return false;
   }
   return enriched;
 }
@@ -774,7 +823,7 @@ function completeActiveFocus(state: DomainState, active: NonNullable<DomainState
   applyRepair(state, session.projectId, session.completedAt, events);
   const project = state.projects.find((candidate) => candidate.id === session.projectId);
   if (!project) throw new Error("Completed focus references a missing project");
-  if (project.kind === "habit") advanceHabitBuilding(state, project, session, events);
+  if (project.kind === "habit" && session.deferredSettlement !== true) advanceHabitBuilding(state, project, session, events);
   reachGoalForDate(state, session.completedLocalDate, session.completedAt, events, session.projectId);
   return events;
 }

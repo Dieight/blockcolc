@@ -20,26 +20,30 @@ html[data-theme="dark"],html[data-theme="dark"] body,html[data-theme="dark"] #ro
 [data-theme="dark"] .primary{color:#0c1410}
 [data-theme="dark"] .switch-control,[data-theme="dark"] .integrity-controls .switch-control{color:#e6efe9}
 [data-theme="dark"] input[type="checkbox"]{accent-color:var(--focus)}
-[data-theme="dark"] .segmented-control{background:#1a241f}
-[data-theme="dark"] .segmented-control button[aria-pressed="true"]{background:#17211c;color:var(--focus)}
 
-/* Cards, dialogs and sheets */
-[data-theme="dark"] .task-list>div,[data-theme="dark"] .blueprint-choice,[data-theme="dark"] .report,[data-theme="dark"] .focus-hour-card,[data-theme="dark"] .focus-heatmap-card,[data-theme="dark"] .rhythm-grid>div,[data-theme="dark"] .stats-grid>div,[data-theme="dark"] .import-preview,[data-theme="dark"] .resource-pack-original,[data-theme="dark"] .resource-pack-list li,[data-theme="dark"] .marathon-settlement-card,[data-theme="dark"] .confirm-dialog,[data-theme="dark"] .focus-plan-sheet,[data-theme="dark"] .daily-goal-sheet,[data-theme="dark"] .daily-goal,[data-theme="dark"] .end-focus-dialog,[data-theme="dark"] .about-dialog,[data-theme="dark"] .current-work{background:#17211c;border-color:var(--line)}
-[data-theme="dark"] .resource-pack-original.active,[data-theme="dark"] .resource-pack-list li.active,[data-theme="dark"] .daily-goal-workbench{background:#1a2920;border-color:#3a5545}
+/* Cards, dialogs and sheets. V27: the plan sheet uses the sheet-glass tokens
+ * (defined for both themes in tokens.css), so it is not on this solid list. */
+[data-theme="dark"] .task-list>div,[data-theme="dark"] .blueprint-choice,[data-theme="dark"] .report,[data-theme="dark"] .import-preview,[data-theme="dark"] .resource-pack-original,[data-theme="dark"] .resource-pack-list li,[data-theme="dark"] .marathon-settlement-card,[data-theme="dark"] .confirm-dialog,[data-theme="dark"] .end-focus-dialog,[data-theme="dark"] .about-dialog,[data-theme="dark"] .current-work{background:#17211c;border-color:var(--line)}
+[data-theme="dark"] .resource-pack-original.active,[data-theme="dark"] .resource-pack-list li.active{background:#1a2920;border-color:#3a5545}
 
 /* Text */
 [data-theme="dark"] .settings-group>h2,[data-theme="dark"] .setting-value,[data-theme="dark"] .workbench-context strong,[data-theme="dark"] .plan-summary,[data-theme="dark"] .number-field input,[data-theme="dark"] .setup-subtasks-head,[data-theme="dark"] .marathon-report-copy{color:#e6efe9}
-[data-theme="dark"] .settings-head p,[data-theme="dark"] .setting-name small,[data-theme="dark"] .task-queue-label,[data-theme="dark"] .stats-intro,[data-theme="dark"] .project-allocation span,[data-theme="dark"] .allocation-legend span,[data-theme="dark"] .focus-hour-axis,[data-theme="dark"] .focus-hour-legend,[data-theme="dark"] .workbench-context span,[data-theme="dark"] .workbench-context small,[data-theme="dark"] .habit-selection-heading p,[data-theme="dark"] .marathon-report-row span,[data-theme="dark"] .interruption-summary p,[data-theme="dark"] .stats-note,[data-theme="dark"] .backup-panel>div>p,[data-theme="dark"] .resource-pack-panel header p,[data-theme="dark"] .number-field,[data-theme="dark"] .text-toggle button{color:var(--muted)}
+[data-theme="dark"] .settings-head p,[data-theme="dark"] .setting-name small,[data-theme="dark"] .task-queue-label,[data-theme="dark"] .workbench-context span,[data-theme="dark"] .workbench-context small,[data-theme="dark"] .habit-selection-heading p,[data-theme="dark"] .marathon-report-row span,[data-theme="dark"] .backup-panel>div>p,[data-theme="dark"] .resource-pack-panel header p,[data-theme="dark"] .number-field,[data-theme="dark"] .text-toggle button{color:var(--muted)}
+
+/* Blueprint previews sit inside import cards and also render before WebGL is
+ * ready. Keep their frame, card and status legible on the dark surface. */
+[data-theme="dark"] .blueprint-preview,[data-theme="dark"] .blueprint-loading{background:#101915;border-color:#405247}
+[data-theme="dark"] .blueprint-loading{color:#e6efe9}
+[data-theme="dark"] .imported-blueprint-role{background:#17211c;border-color:#405247;color:#e6efe9}
+[data-theme="dark"] .imported-blueprint-role>small,[data-theme="dark"] .imported-blueprint-role .dialog-actions button:not(.primary){color:var(--muted)}
+[data-theme="dark"] .preview-hud span,[data-theme="dark"] .preview-hud button{color:#f3faf6;border-color:rgba(230,239,233,.28)}
 
 /* V27: settings separators, group borders and glass card materials are owned
  * by settings.css through tokens; the old hairline overrides are retired. */
 
 /* Accents */
-[data-theme="dark"] .report>svg,[data-theme="dark"] .about-icon,[data-theme="dark"] .task-list b,[data-theme="dark"] .rhythm-grid strong,[data-theme="dark"] .build-percent,[data-theme="dark"] .stats-section-heading>span,[data-theme="dark"] .plan-summary span:last-child,[data-theme="dark"] .task-switch-action,[data-theme="dark"] .project-view-action,[data-theme="dark"] .settings-text-action,[data-theme="dark"] .resource-pack-original button,[data-theme="dark"] .resource-pack-list li button:not(.resource-pack-delete),[data-theme="dark"] .backup-actions button,[data-theme="dark"] .file-button,[data-theme="dark"] .rollback-heading button,[data-theme="dark"] .rollback-list li button{color:var(--focus)}
+[data-theme="dark"] .report>svg,[data-theme="dark"] .about-icon,[data-theme="dark"] .task-list b,[data-theme="dark"] .build-percent,[data-theme="dark"] .plan-summary span:last-child,[data-theme="dark"] .task-switch-action,[data-theme="dark"] .settings-text-action,[data-theme="dark"] .resource-pack-original button,[data-theme="dark"] .resource-pack-list li button:not(.resource-pack-delete),[data-theme="dark"] .backup-actions button,[data-theme="dark"] .file-button,[data-theme="dark"] .rollback-heading button,[data-theme="dark"] .rollback-list li button{color:var(--focus)}
 [data-theme="dark"] .meter{background:#24312a}
-[data-theme="dark"] .allocation-bar,[data-theme="dark"] .project-allocation i{background:#24312a}
-[data-theme="dark"] .allocation-bar .allocation-other,[data-theme="dark"] .allocation-legend li>i.allocation-other{background:#33463c}
-[data-theme="dark"] .project-allocation i b{background:#4f8f63}
 [data-theme="dark"] .text-toggle button:hover{background:rgba(230,239,233,.08)}
 [data-theme="dark"] .number-field input:focus-visible{background:#121a16}
 [data-theme="dark"] .glass-transparency-control{color:#e6efe9}
@@ -52,29 +56,13 @@ html[data-theme="dark"],html[data-theme="dark"] body,html[data-theme="dark"] #ro
 [data-theme="dark"] .backup-notice{color:#7fd6a1;background:#16271c;border-color:#2d4a37}
 
 /* Heatmap */
-[data-theme="dark"] .focus-heatmap-cell{background:#26312b}
-[data-theme="dark"] .heat-level-1{background:#2e4a37}
-[data-theme="dark"] .heat-level-2{background:#3f6b4c}
-[data-theme="dark"] .heat-level-3{background:#55905f}
-[data-theme="dark"] .heat-level-4{background:#74b37e}
-[data-theme="dark"] .focus-heatmap-cell.is-future{background:#1a221d;border-color:#26312b}
-[data-theme="dark"] .focus-heatmap-legend .heat-level-0{background:#26312b}
 
 /* World HUD already dark; deepen slightly for consistency */
 [data-theme="dark"] .world-hud span,[data-theme="dark"] .world-hud button,[data-theme="dark"] .immersive-reset-view,[data-theme="dark"] .world-pick-chip{background:var(--world-glass-background)}
 
 /* Tasks screen boxes */
-[data-theme="dark"] .task-editor-row,[data-theme="dark"] .subtask-group-toggle,[data-theme="dark"] .project-portfolio-row>button{background:#17211c;border-color:var(--line);color:#e6efe9}
-[data-theme="dark"] .task-editor-row.task-current{background:#1a2920;border-color:#3a5545}
-[data-theme="dark"] .task-editor-row.task-complete{background:#141d19;border-color:#2c3a31}
-[data-theme="dark"] .task-order{background:#24312a;color:#7fd6a1}
-[data-theme="dark"] .task-editor-row.task-current .task-order{background:#276749;color:#0c1410}
-[data-theme="dark"] .task-editor-row.task-complete .task-order{background:#1f3329;color:#3f7d4e}
-[data-theme="dark"] .subtask-group-toggle{color:#e6efe9}
-[data-theme="dark"] .add-subtask button,[data-theme="dark"] .daily-goal button{background:#17211c;border-color:#3a5545;color:#7fd6a1}
-[data-theme="dark"] .daily-goal-adjust{background:#17211c!important;border-color:#3a5545!important;color:#7fd6a1!important}
-[data-theme="dark"] .daily-goal-controls>label:not(.switch-control){color:var(--muted)}
-[data-theme="dark"] .task-copy small,[data-theme="dark"] .subtask-group-toggle small,[data-theme="dark"] .subtask-group-toggle span{color:var(--muted)}
+[data-theme="dark"] .add-subtask button{background:#17211c;border-color:#3a5545;color:#7fd6a1}
+[data-theme="dark"] .task-copy small{color:var(--muted)}
 [data-theme="dark"] .task-row-actions button{border-color:var(--line)}
 [data-theme="dark"] .task-section-heading,[data-theme="dark"] .task-section-actions .icon-action{color:var(--muted)}
 
@@ -84,11 +72,6 @@ html[data-theme="dark"],html[data-theme="dark"] body,html[data-theme="dark"] #ro
 [data-theme="dark"] .end-focus-choices>button small{color:var(--muted)}
 
 /* Stats: settlement totals + project allocation */
-[data-theme="dark"] .settlement-totals{background:#17211c;border-color:var(--line)}
-[data-theme="dark"] .project-allocation{background:#17211c;border-color:var(--line)}
-[data-theme="dark"] .settlement-totals strong,[data-theme="dark"] .settlement-totals .stats-grid>div{color:#e6efe9}
-[data-theme="dark"] .project-allocation strong{color:#e6efe9}
-[data-theme="dark"] .allocation-bar .allocation-other,[data-theme="dark"] .allocation-legend li>i.allocation-other{background:#33463c}
 
 /* World workbench + settlement overview */
 [data-theme="dark"] .workbench-context{background:#17211c;border-color:var(--line);border-left-color:#276749}
@@ -108,8 +91,11 @@ html[data-theme="dark"],html[data-theme="dark"] body,html[data-theme="dark"] #ro
 [data-theme="dark"] .focus-immersive .is-focusing .immersive-hint{color:var(--muted)}
 @media(prefers-reduced-transparency:reduce){[data-theme="dark"] .focus-immersive .is-focusing .focus-panel{background:rgba(20,29,25,.92)}}
 
-/* Remaining light controls: dropdowns, pickers, tabs, switchers, settlement, steppers */
-[data-theme="dark"] .choice-menu-trigger,[data-theme="dark"] .choice-menu-options button,[data-theme="dark"] .round-picker button,[data-theme="dark"] .period-tabs button,[data-theme="dark"] .project-switcher>button,[data-theme="dark"] .project-switcher-actions button,[data-theme="dark"] .resume-projects>button,[data-theme="dark"] .waiting-buildings button,[data-theme="dark"] .marathon-settlement-toggle,[data-theme="dark"] .marathon-report-options button,[data-theme="dark"] .time-stepper button,[data-theme="dark"] .check-update,[data-theme="dark"] .litematic-file,[data-theme="dark"] .setup-actions>button:not(.primary),[data-theme="dark"] .daily-goal-adjust,[data-theme="dark"] .daily-goal-reward-panel button,[data-theme="dark"] .notification-health>button,[data-theme="dark"] .import-role button{background:#17211c;border-color:#3a5545;color:#e6efe9}
+/* Remaining light controls: dropdowns, pickers, tabs, switchers, settlement, steppers.
+ * A1-04: the floating choice-menu options and the switcher action buttons now
+ * derive their dark look from tokens (sheet glass / --focus / --surface), so
+ * they are no longer force-filled here. */
+[data-theme="dark"] .choice-menu-trigger,[data-theme="dark"] .round-picker button,[data-theme="dark"] .period-tabs button,[data-theme="dark"] .project-switcher>button,[data-theme="dark"] .resume-projects>button,[data-theme="dark"] .waiting-buildings button,[data-theme="dark"] .marathon-settlement-toggle,[data-theme="dark"] .marathon-report-options button,[data-theme="dark"] .time-stepper button,[data-theme="dark"] .check-update,[data-theme="dark"] .litematic-file,[data-theme="dark"] .setup-actions>button:not(.primary),[data-theme="dark"] .notification-health>button,[data-theme="dark"] .import-role button{background:#17211c;border-color:#3a5545;color:#e6efe9}
 [data-theme="dark"] .choice-menu-options button[aria-selected="true"],[data-theme="dark"] .round-picker button.selected,[data-theme="dark"] .period-tabs .selected,[data-theme="dark"] .import-role button[aria-pressed="true"]{background:#1f3329;border-color:var(--focus);color:var(--focus)}
 [data-theme="dark"] .choice-menu-options button:hover{background:#1a241f}
 [data-theme="dark"] .time-stepper strong{background:#121a16;color:#e6efe9}
@@ -124,16 +110,13 @@ html[data-theme="dark"],html[data-theme="dark"] body,html[data-theme="dark"] #ro
 [data-theme="dark"] .bottom-nav .nav-active{color:var(--focus)}
 [data-theme="dark"] .period-tabs .selected{color:var(--focus)}
 [data-theme="dark"] .text-toggle button[aria-pressed="true"]{color:#e6efe9}
-[data-theme="dark"] .focus-heatmap-cell.is-selected{outline-color:#6fce96}
 [data-theme="dark"] .marathon-settlement-toggle{color:#7fd6a1}
 [data-theme="dark"] .update-result{background:#16271c;color:#7fd6a1!important;border-color:#2d4a37}
 [data-theme="dark"] .focus-integrity-warning{background:#17211c;border-color:var(--line)}
 [data-theme="dark"] .focus-integrity-warning.active{background:#2a2013;border-color:#6b5220;color:#e8c88a}
 [data-theme="dark"] .today:active{background:#24312a;color:#e6efe9}
-[data-theme="dark"] .daily-goal-workbench .daily-goal-reward-panel{background:#1a2920}
-
-/* Dropdown container (choice menus for subtask / queue lists) */
-[data-theme="dark"] .choice-menu-options{background:#17211c;border-color:var(--line)}
+/* Dropdown container (choice menus): V27 uses the sheet-glass tokens defined
+ * for both themes in tokens.css; the old solid dark override is retired. */
 
 /* Plan sheet mode tabs (fixed rounds / end-time) */
 [data-theme="dark"] .plan-mode button{color:var(--muted)}
@@ -145,8 +128,6 @@ html[data-theme="dark"],html[data-theme="dark"] body,html[data-theme="dark"] #ro
 [data-theme="dark"] .task-drag-handle{background:#24312a;color:#7fd6a1}
 
 /* Stats: interruption reason labels and bars */
-[data-theme="dark"] .interruption-list span,[data-theme="dark"] .interruption-list strong{color:#e6efe9}
-[data-theme="dark"] .interruption-bar{background:#3a3329}
 
 /* Immersive board: focused task name must read on the dark glass */
 [data-theme="dark"] .focus-immersive .is-focusing .focus-task-context strong{color:#e6efe9}
@@ -155,5 +136,4 @@ html[data-theme="dark"],html[data-theme="dark"] body,html[data-theme="dark"] #ro
 [data-theme="dark"] .boot-page{background:#0e1512}
 [data-theme="dark"] .boot-page-mark{color:#e6efe9}
 [data-theme="dark"] .boot-page-status{color:#93b0a0}
-[data-theme="dark"] .boot-page-hint{color:#6c8577}
 [data-theme="dark"] .boot-page-blocks i{background:#4f8f63}

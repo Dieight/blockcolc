@@ -6,6 +6,7 @@ import {
   type DomainState,
 } from "@tomato-clock/domain";
 import type { ApplicationCommand, ApplicationResult, ApplicationWarning } from "./model.js";
+import { projectAchievements, type AchievementProgress } from './achievements.js';
 import {
   projectActiveState,
   projectWorldState,
@@ -54,6 +55,20 @@ export class ApplicationService {
   private snapshotCache: { epoch: number; value: DomainState } | null = null;
   private worldProjectionCache: { epoch: number; value: WorldProjection } | null = null;
   private activeProjectionCache: { epoch: number; value: ActiveProjectProjection | null } | null = null;
+  private achievementsCache: readonly AchievementProgress[] | null = null;
+  private readonly committedObservers = new Set<(event: { replacement: boolean; breakEndsAt?: string | null }) => void>();
+
+  /** Read-only post-adoption signal. Observer failures never affect a saved command. */
+  subscribeCommitted(observer: (event: { replacement: boolean; breakEndsAt?: string | null }) => void): () => void {
+    this.committedObservers.add(observer);
+    return () => { this.committedObservers.delete(observer); };
+  }
+
+  private signalCommitted(event: { replacement: boolean; breakEndsAt?: string | null }): void {
+    for (const observer of this.committedObservers) {
+      try { observer(event); } catch { /* A read-only integration cannot fail the command. */ }
+    }
+  }
 
   private constructor(private readonly dependencies: ApplicationDependencies, initialState: DomainState, revision: number) {
     this.state = initialState;
@@ -96,6 +111,15 @@ export class ApplicationService {
     return value;
   }
 
+  achievementsProjection(): readonly AchievementProgress[] {
+    return this.achievementsCache ??= projectAchievements(this.state);
+  }
+
+  /** Monotonic persistence revision for cheap lifecycle adoption checks. */
+  stateRevision(): number {
+    return this.revision;
+  }
+
   notificationCapability(): Promise<NotificationCapability> {
     return this.dependencies.notifications.refreshCapability();
   }
@@ -104,11 +128,77 @@ export class ApplicationService {
     return this.serial(() => this.dispatchInternal(materialize(command, this.dependencies.ids), "user"));
   }
 
+  /**
+   * Starts one previously reserved automatic round at its absolute schedule
+   * instant. The round-plan contract must persist the matching reservation
+   * before calling this method. A matching active/history session makes retries
+   * idempotent; an elapsed scheduled round is completed immediately on recovery.
+   */
+  startScheduledFocus(
+    command: Extract<ApplicationCommand, { type: "StartFocus" }>,
+    reservation: { sessionId: string; scheduledAt: string },
+  ): Promise<ApplicationResult> {
+    return this.serial(async () => {
+      const scheduledAtMs = Date.parse(reservation.scheduledAt);
+      if (!command.projectId?.trim() || command.projectId.length > 256
+        || !reservation.sessionId.trim() || reservation.sessionId.length > 256
+        || !Number.isFinite(scheduledAtMs) || new Date(scheduledAtMs).toISOString() !== reservation.scheduledAt
+        || scheduledAtMs > nowMs(this.dependencies.clock)) {
+        return {
+          ok: false,
+          state: this.snapshot(),
+          code: "INVALID_INPUT",
+          message: "Scheduled focus needs an explicit project, a reserved session ID, and a valid elapsed absolute start time",
+          warnings: [],
+        };
+      }
+
+      const staleSessionId = this.state.activeFocusSession?.id ?? null;
+      const loaded = await this.loadCurrentSnapshot();
+      if (loaded.state === null) return this.resetMissingState(staleSessionId, loaded.revision);
+      this.adoptIfChanged(loaded.state, loaded.revision);
+
+      const requestedProjectId = command.projectId;
+      const existing = this.state.activeFocusSession?.id === reservation.sessionId
+        ? this.state.activeFocusSession
+        : this.state.focusHistory.find(session => session.id === reservation.sessionId);
+      if (existing) {
+        const sameScheduledRound = existing.projectId === requestedProjectId
+          && existing.subtaskId === command.subtaskId
+          && existing.startedAt === reservation.scheduledAt
+          && existing.plannedDurationMs === command.plannedDurationMs
+          && existing.marathon === command.marathon
+          && existing.deferredSettlement === command.deferredSettlement;
+        if (!sameScheduledRound) {
+          return { ok: false, state: this.snapshot(), code: "DUPLICATE_ID", message: "Reserved focus session ID belongs to a different round", warnings: [] };
+        }
+        if (this.state.activeFocusSession?.id === reservation.sessionId
+          && Date.parse(this.state.activeFocusSession.endsAt) <= nowMs(this.dependencies.clock)) {
+          return this.resumeInternal();
+        }
+        return success(this.state, [], []);
+      }
+
+      const started = await this.dispatchInternal(
+        materialize(command, this.dependencies.ids, reservation.sessionId),
+        "recovery",
+        { now: () => new Date(scheduledAtMs) },
+      );
+      if (!started.ok) return started;
+      const active = started.state.activeFocusSession;
+      if (active?.id === reservation.sessionId && Date.parse(active.endsAt) <= nowMs(this.dependencies.clock)) {
+        return combineSuccessfulResults(started, await this.resumeInternal(), []);
+      }
+      return started;
+    });
+  }
+
   scheduleBreakCompletion(notification: BreakCompletionNotification): Promise<ApplicationWarning[]> {
     return this.serial(async () => {
-      if (Date.parse(notification.endsAt) <= nowMs(this.dependencies.clock)) {
+      if (Date.parse(notification.endsAt) <= nowMs(this.dependencies.clock) && notification.deadlineReached !== true) {
         return this.cancelBreakCompletionInternal();
       }
+      this.signalCommitted({ replacement: false, breakEndsAt: notification.endsAt });
       const warnings: ApplicationWarning[] = [];
       let capability: NotificationCapability;
       try {
@@ -191,12 +281,17 @@ export class ApplicationService {
 
   private async resumeInternal(): Promise<ApplicationResult> {
       const staleSessionId = this.state.activeFocusSession?.id ?? null;
-      const loaded = await this.dependencies.repository.load();
+      const loaded = await this.loadCurrentSnapshot();
       if (loaded.state === null) {
         return this.resetMissingState(staleSessionId, loaded.revision);
       }
 
-      this.adopt(loaded.state, loaded.revision);
+      // A native foreground callback often arrives with the exact state and
+      // revision already held by this service. Re-adopting that clone bumps
+      // the projection epoch and wakes renderer subscribers even though no
+      // persisted fact changed (the notification shade path is especially
+      // sensitive to that duplicate work).
+      this.adoptIfChanged(loaded.state, loaded.revision);
       const active = loaded.state.activeFocusSession;
       const warnings = staleSessionId !== null && staleSessionId !== active?.id
         ? await this.cancelStaleNotification(staleSessionId)
@@ -255,17 +350,24 @@ export class ApplicationService {
     expectedSession: NonNullable<DomainState["activeFocusSession"]>,
     priorWarnings: ApplicationWarning[],
   ): Promise<{ active: NonNullable<DomainState["activeFocusSession"]>; result?: never } | { active?: never; result: ApplicationResult }> {
-    const loaded = await this.dependencies.repository.load();
+    const loaded = await this.loadCurrentSnapshot();
     if (loaded.state === null) {
       return { result: mergeWarnings(await this.resetMissingState(expectedSession.id, loaded.revision), priorWarnings) };
     }
 
-    this.adopt(loaded.state, loaded.revision);
+    this.adoptIfChanged(loaded.state, loaded.revision);
     if (loaded.state.activeFocusSession?.id === expectedSession.id && loaded.state.activeFocusSession.endsAt === expectedSession.endsAt) {
       return { active: loaded.state.activeFocusSession };
     }
     const cancelWarnings = await this.cancelStaleNotification(expectedSession.id);
     return { result: success(loaded.state, [], [...priorWarnings, ...cancelWarnings]) };
+  }
+
+  private async loadCurrentSnapshot() {
+    const repository = this.dependencies.repository;
+    if (!repository.loadIfChanged) return repository.load();
+    return await repository.loadIfChanged(this.revision)
+      ?? { state: this.state, revision: this.revision };
   }
 
   private async resetMissingState(staleSessionId: string | null, expectedRevision: number): Promise<ApplicationResult> {
@@ -274,7 +376,7 @@ export class ApplicationService {
       this.dependencies.initialRestWeekdays ?? [0, 6],
     );
     const committedRevision = await saveOrThrow(this.dependencies.repository, initial, expectedRevision);
-    this.adopt(initial, committedRevision);
+    this.adopt(initial, committedRevision, true);
     const warnings = staleSessionId === null ? [] : await this.cancelStaleNotification(staleSessionId);
     return success(initial, [], warnings);
   }
@@ -289,6 +391,7 @@ export class ApplicationService {
   }
 
   private async cancelBreakCompletionInternal(): Promise<ApplicationWarning[]> {
+    this.signalCommitted({ replacement: false, breakEndsAt: null });
     try {
       await this.dependencies.notifications.cancelBreakCompletion();
       return [];
@@ -297,19 +400,35 @@ export class ApplicationService {
     }
   }
 
-  private adopt(state: DomainState, revision: number): void {
+  private adopt(state: DomainState, revision: number, replacement = false): void {
     this.state = state;
     this.revision = revision;
     this.stateEpoch += 1;
     this.snapshotCache = null;
     this.worldProjectionCache = null;
     this.activeProjectionCache = null;
+    this.achievementsCache = null;
+    this.signalCommitted({ replacement });
+  }
+
+  private adoptIfChanged(state: DomainState, revision: number, replacement = false): boolean {
+    if (revision === this.revision) return false;
+    this.adopt(state, revision, replacement);
+    return true;
   }
 
   private async dispatchInternal(command: DomainCommand, origin: "user" | "recovery", clock: Clock = this.dependencies.clock): Promise<ApplicationResult> {
     const result = execute(this.state, command, clock);
     if (!result.ok) {
       return { ok: false, state: structuredClone(result.state), code: result.code, message: result.message, warnings: [] };
+    }
+
+    // Native attention callbacks can report the same physical transition more
+    // than once. A lifecycle no-op must not write the cloned aggregate, bump
+    // the epoch, or notify renderer consumers; a real foreground reconciliation
+    // that merely clears the pending background still differs and is saved.
+    if (origin === "recovery" && result.events.length === 0 && sameRecoveryFacts(this.state, result.state)) {
+      return success(this.state, [], []);
     }
 
     const deleted = result.events.find((event) => event.type === "ProjectDeleted");
@@ -336,7 +455,7 @@ export class ApplicationService {
   private async synchronizeAfterReplacement(staleSessionId: string | null): Promise<ApplicationResult> {
     const loaded = await this.dependencies.repository.load();
     if (loaded.state === null) return this.resetMissingState(staleSessionId, loaded.revision);
-    this.adopt(loaded.state, loaded.revision);
+    this.adopt(loaded.state, loaded.revision, true);
     const warnings = staleSessionId !== null && staleSessionId !== loaded.state.activeFocusSession?.id
       ? await this.cancelStaleNotification(staleSessionId)
       : [];
@@ -356,6 +475,7 @@ export class ApplicationService {
       if (event.type === "FocusStarted") {
         const active = this.state.activeFocusSession;
         if (!active || active.id !== event.sessionId) continue;
+        if (origin === "recovery" && Date.parse(active.endsAt) <= nowMs(this.dependencies.clock)) continue;
         let capability: NotificationCapability;
         try {
           capability = origin === "user"
@@ -402,8 +522,10 @@ function focusCompletionNotification(
   active: NonNullable<DomainState["activeFocusSession"]>,
 ): FocusCompletionNotification {
   const project = state.projects.find((candidate) => candidate.id === active.projectId);
-  const projectTitle = project?.title;
-  const taskTitle = project?.kind === "habit"
+  const projectTitle = active.deferredSettlement === true ? "极简专注" : project?.title;
+  const taskTitle = active.deferredSettlement === true
+    ? "本场专注 · 结束后统一汇报"
+    : project?.kind === "habit"
     ? `第 ${project.habit?.cycleNumber ?? 1} 座习惯建筑`
     : active.marathon === true
       ? "本场专注 · 结束后统一汇报"
@@ -417,7 +539,7 @@ function focusCompletionNotification(
   };
 }
 
-function materialize(command: ApplicationCommand, ids: IdGenerator): DomainCommand {
+function materialize(command: ApplicationCommand, ids: IdGenerator, reservedSessionId?: string): DomainCommand {
   switch (command.type) {
     case "CreateProject":
       return {
@@ -430,7 +552,7 @@ function materialize(command: ApplicationCommand, ids: IdGenerator): DomainComma
     case "AddSubtask":
       return { ...command, subtaskId: ids.next("subtask") };
     case "StartFocus":
-      return { ...command, sessionId: ids.next("focus-session") };
+      return { ...command, sessionId: reservedSessionId ?? ids.next("focus-session") };
     case "ReportSubtaskProgress":
       return { ...command, reportId: ids.next("progress-report") };
     case "ReportMarathonFocus":
@@ -472,6 +594,15 @@ function combineSuccessfulResults(first: ApplicationResult, second: ApplicationR
     events: [...first.events, ...second.events],
     warnings: [...priorWarnings, ...first.warnings, ...second.warnings],
   };
+}
+
+function sameRecoveryFacts(left: DomainState, right: DomainState): boolean {
+  // A recovery command may be eventless while the aggregate still changes a
+  // non-active fact (for example a daily/decay value loaded by a newer
+  // revision). Comparing only activeFocusSession silently discarded that
+  // state. The full validated aggregate is the only proof this command is a
+  // no-op; the JSON shape is deterministic because execute() clones it.
+  return JSON.stringify(left) === JSON.stringify(right);
 }
 
 function nowMs(clock: Clock): number {

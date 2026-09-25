@@ -2,6 +2,11 @@ import { expect, test } from '@playwright/test';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 
+// The seven supplemental blueprints are packaged only in the local asset build.
+// Keep the legacy three-blueprint assertions valid on a clean checkout while
+// counting any packaged additions when they are present.
+const LOCAL_BUILTIN_TITLE_PATTERN = /Dieight的高级火柴盒plus|Dieight的高级火柴盒pro|Dieight的高级火柴盒|karry_steven的豪宅|GYPpro的豪宅（一层）|GYPpro的简易小仓库|Dieight的小别墅/;
+
 async function createDefaultProject(page: import('@playwright/test').Page) {
   await page.goto('/');
   await page.getByRole('button', { name: '开始建造' }).click();
@@ -152,21 +157,41 @@ test('@smoke creates a project, renders the world and persists focus state', asy
 });
 
 test('previews three blueprints and persists the selected building', async ({ page }, testInfo) => {
+  await page.clock.setFixedTime(new Date('2026-09-25T08:00:00Z'));
   await page.goto('/');
   const radios = page.getByRole('radio');
-  await expect(radios).toHaveCount(3);
   await expect(page.getByRole('radio', { name: /林边工坊/ })).toBeChecked();
+  const localBuiltinCount = await page.locator('label.blueprint-option').filter({ hasText: LOCAL_BUILTIN_TITLE_PATTERN }).count();
+  await expect(radios).toHaveCount(3 + localBuiltinCount);
 
   const preview = page.getByRole('img', { name: /完整建筑预览/ });
   await expect(preview).toHaveAttribute('aria-label', /林边工坊/);
+  await expect(preview).toHaveAttribute('data-preview-blueprint-id', 'builtin-small-workshop');
+  await expect.poll(async () => Number(await preview.getAttribute('data-world-rebuild-count'))).toBeGreaterThan(0);
+  const workshopRebuilds = Number(await preview.getAttribute('data-world-rebuild-count'));
+  await preview.evaluate(element => element.scrollIntoView({ block: 'center' }));
   await page.waitForTimeout(300);
   const workshopPreview = await preview.screenshot({ path: testInfo.outputPath('workshop-preview.png') });
 
+  await page.getByRole('radio', { name: /河岸木屋/ }).check();
+  await expect(preview).toHaveAttribute('aria-label', /河岸木屋/);
+  await expect(preview).toHaveAttribute('data-preview-blueprint-id', 'builtin-timber-house');
+  await expect.poll(async () => Number(await preview.getAttribute('data-world-rebuild-count'))).toBeGreaterThan(workshopRebuilds);
+  const timberRebuilds = Number(await preview.getAttribute('data-world-rebuild-count'));
+  await preview.evaluate(element => element.scrollIntoView({ block: 'center' }));
+  await page.waitForTimeout(300);
+  const timberPreview = await preview.screenshot({ path: testInfo.outputPath('timber-preview.png') });
+
   await page.getByRole('radio', { name: /村庄礼拜堂/ }).check();
   await expect(preview).toHaveAttribute('aria-label', /村庄礼拜堂/);
+  await expect(preview).toHaveAttribute('data-preview-blueprint-id', 'builtin-village-chapel');
   await expect(page.getByText('蓝图在创建后不可更换，请确认完整预览。')).toBeVisible();
+  await expect.poll(async () => Number(await preview.getAttribute('data-world-rebuild-count'))).toBeGreaterThan(timberRebuilds);
+  await preview.evaluate(element => element.scrollIntoView({ block: 'center' }));
   await page.waitForTimeout(300);
   const chapelPreview = await preview.screenshot({ path: testInfo.outputPath('chapel-preview.png') });
+  expect(Buffer.compare(workshopPreview, timberPreview)).not.toBe(0);
+  expect(Buffer.compare(timberPreview, chapelPreview)).not.toBe(0);
   expect(Buffer.compare(workshopPreview, chapelPreview)).not.toBe(0);
   await page.screenshot({ path: testInfo.outputPath('blueprint-selection.png'), fullPage: true });
 
@@ -185,7 +210,8 @@ test('imports a local litematic, previews it and persists its normalized bluepri
   test.skip(!existsSync(sample), 'The real Litematic compatibility fixture stays local.');
   await page.goto('/');
   await page.getByLabel('导入 .litematic').setInputFiles(sample);
-  await expect(page.getByRole('radio')).toHaveCount(4);
+  const localBuiltinCount = await page.locator('label.blueprint-option').filter({ hasText: LOCAL_BUILTIN_TITLE_PATTERN }).count();
+  await expect(page.getByRole('radio')).toHaveCount(4 + localBuiltinCount);
   await expect(page.getByText(/4,301 个方块/)).toBeVisible();
   await expect(page.getByText(/忽略 340 个实体、方块实体或计划刻/)).toBeVisible();
   const selectedImport = page.getByRole('radio').last();
@@ -229,7 +255,7 @@ test('renders a monument with the active building and restores both after deleti
   await page.getByRole('button', { name: '完成小任务' }).click();
   await page.getByRole('button', { name: '回到聚落' }).click();
 
-  await expect(page.getByRole('heading', { name: '建立你的第一项任务' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '建立新任务' })).toBeVisible();
   await page.getByLabel('大型任务').fill('开始第二栋建筑');
   await replaceSubtasks(page, ['完成第二项工作']);
   await page.getByRole('radio', { name: /河岸木屋/ }).check();
@@ -241,6 +267,7 @@ test('renders a monument with the active building and restores both after deleti
   await expect(page.getByText('林边聚落 · 2 栋')).toBeVisible();
 
   await openTasks(page);
+  await page.locator('.task-management-disclosure summary').click();
   await page.getByRole('button', { name: '删除当前任务' }).click();
   await page.getByRole('alertdialog', { name: '删除这项任务？' }).getByRole('button', { name: '删除任务' }).click();
   await page.getByRole('button', { name: '设置' }).click();
@@ -444,10 +471,11 @@ test('persists focus and break preferences and exposes period statistics', async
   await expect(page.getByLabel('普通任务专注分钟')).toHaveValue('45');
   await expect(page.getByLabel('开启专注完整性')).toBeChecked();
   await expect(page.getByLabel('允许有效离开次数')).toHaveValue('3');
+  // Empty drafts restore their current value when the field loses focus.
   await page.getByLabel('允许有效离开次数').fill('');
   await expect(page.getByLabel('允许有效离开次数')).toHaveValue('');
   await page.getByRole('heading', { name: '设置' }).click();
-  await expect(page.getByLabel('允许有效离开次数')).toHaveValue('1');
+  await expect(page.getByLabel('允许有效离开次数')).toHaveValue('3');
   await page.getByLabel('允许有效离开次数').fill('4');
   await expect(page.getByLabel('允许有效离开次数')).toHaveValue('4');
   await page.getByRole('heading', { name: '设置' }).click();
@@ -455,24 +483,28 @@ test('persists focus and break preferences and exposes period statistics', async
   await page.getByLabel('普通任务专注分钟').fill('');
   await expect(page.getByLabel('普通任务专注分钟')).toHaveValue('');
   await page.getByRole('heading', { name: '设置' }).click();
-  await expect(page.getByLabel('普通任务专注分钟')).toHaveValue('1');
+  await expect(page.getByLabel('普通任务专注分钟')).toHaveValue('45');
   await page.getByLabel('普通任务专注分钟').fill('50');
   await page.getByLabel('每轮休息分钟').fill('10');
   await page.getByLabel('允许有效离开次数').fill('5');
   await expect(page.getByLabel('允许有效离开次数')).toHaveValue('5');
   await expect(page.getByLabel('开启专注完整性')).toBeEnabled();
   await page.getByLabel('开启专注完整性').uncheck();
-  await expect(page.getByLabel('允许有效离开次数')).toBeDisabled();
+  await expect(page.getByLabel('允许有效离开次数')).toHaveCount(0);
+  await expect(page.getByLabel('离开阈值秒数')).toHaveCount(0);
   await expect(page.locator('.integrity-setting')).toHaveAttribute('aria-busy', 'false');
   await page.reload();
   await page.getByRole('button', { name: '设置' }).click();
   await expect(page.getByLabel('普通任务专注分钟')).toHaveValue('50');
   await expect(page.getByLabel('每轮休息分钟')).toHaveValue('10');
   await expect(page.getByLabel('开启专注完整性')).not.toBeChecked();
+  await expect(page.getByLabel('允许有效离开次数')).toHaveCount(0);
+  await page.getByLabel('开启专注完整性').check();
   await expect(page.getByLabel('允许有效离开次数')).toHaveValue('5');
+  await expect(page.getByLabel('离开阈值秒数')).toHaveValue('3');
   await page.getByRole('button', { name: '统计' }).click();
-  await expect(page.getByRole('heading', { name: '近 26 周' })).toBeVisible();
-  await expect(page.locator('.focus-heatmap-cell')).toHaveCount(26 * 7);
+  await expect(page.getByRole('heading', { name: '过去 26 周的投入' })).toBeVisible();
+  await expect(page.locator('.focus-calendar-chart [data-date]')).toHaveCount(26 * 7);
   await expect(page.getByRole('tab')).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath('focus-heatmap.png'), fullPage: true });
 });
@@ -489,7 +521,7 @@ test('runs a configured multi-round focus and break plan', async ({ page }) => {
   await page.clock.fastForward(61_000);
   await expect(page.getByRole('heading', { name: '这次工作推进到哪里？' })).toBeVisible();
   await page.getByRole('button', { name: '推进至 25%' }).click();
-  await expect(page.getByText('休息时间')).toBeVisible();
+  await expect(page.locator('.focus-task-context strong').filter({ hasText: '休息中' })).toBeVisible();
   await page.clock.fastForward(61_000);
   await expect(page.getByRole('button', { name: '开始下一轮' })).toBeVisible();
 });
@@ -626,28 +658,32 @@ test('persists daily goal target changes and disabled state', async ({ page }, t
   await goalTarget.press('Enter');
   await expect(goal.getByLabel('今日目标次数')).toHaveValue('2');
   await goal.getByRole('button', { name: '关闭今日目标' }).click();
-  await expect(page.getByText('今日 0 / 2')).toBeVisible();
+  const dailyGoalCard = page.getByRole('region', { name: '今日目标' });
+  await expect(dailyGoalCard.getByRole('progressbar', { name: '今日 0 / 2 轮' })).toBeVisible();
 
   await page.reload();
   await openTasks(page);
   goal = await openDailyGoal(page);
   await expect(goal.getByRole('switch')).toBeChecked();
   await expect(goal.getByLabel('今日目标次数')).toHaveValue('2');
+  await expect(goal.locator('#daily-goal-sheet-summary')).toHaveText('今日已完成 0 / 2 轮');
 
   await goal.getByLabel('今日目标次数').fill('4');
   await goal.getByLabel('今日目标次数').press('Enter');
   await goal.getByRole('button', { name: '关闭今日目标' }).click();
-  await expect(page.getByText('今日 0 / 4')).toBeVisible();
+  await expect(dailyGoalCard.getByRole('progressbar', { name: '今日 0 / 4 轮' })).toBeVisible();
   goal = await openDailyGoal(page);
   await goal.getByRole('switch').uncheck();
-  await expect(page.getByText('今日已完成 0 轮，目标未开启')).toBeVisible();
+  await expect(dailyGoalCard.locator('.daily-goal-tally')).toHaveText('0轮 · 目标未开启');
 
   await page.reload();
   await openTasks(page);
   goal = await openDailyGoal(page);
   await expect(goal.getByRole('switch')).not.toBeChecked();
   await expect(goal.getByLabel('今日目标次数')).toHaveValue('4');
-  await expect(page.getByText('今日已完成 0 轮，目标未开启')).toBeVisible();
+  await expect(goal.locator('#daily-goal-sheet-summary')).toHaveText('今日已完成 0 轮');
+  await goal.getByRole('button', { name: '关闭今日目标' }).click();
+  await expect(dailyGoalCard.locator('.daily-goal-tally')).toHaveText('0轮 · 目标未开启');
 });
 
 test('renames an imported building blueprint without changing its stored snapshot', async ({ page }, testInfo) => {
@@ -657,6 +693,60 @@ test('renames an imported building blueprint without changing its stored snapsho
   await createDefaultProject(page);
   await page.getByRole('button', { name: '设置' }).click();
   await page.getByLabel('导入 .litematic').setInputFiles(sample);
+  const importPreview = page.locator('.imported-blueprint-role .blueprint-preview');
+  await expect(importPreview).toBeVisible();
+  await expect(importPreview.getByRole('img', { name: /完整建筑预览，可拖动旋转/ })).toHaveAttribute('data-preview-blueprint-id', /.+/);
+  await expect(importPreview.getByRole('button', { name: '重置预览视角' })).toBeVisible();
+  await importPreview.screenshot({ path: testInfo.outputPath('v27-library-import-preview.png') });
+  await page.getByRole('button', { name: '深色', exact: true }).click();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  const darkStyle = await importPreview.evaluate((preview) => {
+    const card = preview.closest('.imported-blueprint-role') as HTMLElement;
+    const cardStyle = getComputedStyle(card);
+    const previewStyle = getComputedStyle(preview);
+    const hudTextStyle = getComputedStyle(preview.querySelector('.preview-hud span')!);
+    const hudButtonStyle = getComputedStyle(preview.querySelector('.preview-hud button')!);
+    const loading = document.createElement('div');
+    loading.className = 'blueprint-loading';
+    loading.textContent = '正在准备建筑预览...';
+    Object.assign(loading.style, { position: 'absolute', inset: '0', zIndex: '6' });
+    preview.append(loading);
+    const loadingStyle = getComputedStyle(loading);
+    const result = {
+      cardBackground: cardStyle.backgroundColor,
+      cardBorder: cardStyle.borderTopColor,
+      previewBackground: previewStyle.backgroundColor,
+      previewBorder: previewStyle.borderTopColor,
+      hudText: hudTextStyle.color,
+      hudButton: hudButtonStyle.color,
+      loadingBackground: loadingStyle.backgroundColor,
+      loadingBorder: loadingStyle.borderTopColor,
+      loadingText: loadingStyle.color,
+    };
+    loading.remove();
+    return result;
+  });
+  expect(darkStyle).toEqual({
+    cardBackground: 'rgb(23, 33, 28)',
+    cardBorder: 'rgb(64, 82, 71)',
+    previewBackground: 'rgb(16, 25, 21)',
+    previewBorder: 'rgb(64, 82, 71)',
+    hudText: 'rgb(243, 250, 246)',
+    hudButton: 'rgb(243, 250, 246)',
+    loadingBackground: 'rgb(16, 25, 21)',
+    loadingBorder: 'rgb(64, 82, 71)',
+    loadingText: 'rgb(230, 239, 233)',
+  });
+  await importPreview.evaluate((preview) => {
+    const loading = document.createElement('div');
+    loading.className = 'blueprint-loading';
+    loading.textContent = '正在准备建筑预览...';
+    Object.assign(loading.style, { position: 'absolute', inset: '0', zIndex: '6' });
+    preview.append(loading);
+  });
+  await importPreview.screenshot({ path: testInfo.outputPath('v27-library-import-preview-loading-dark.png') });
+  await importPreview.locator('.blueprint-loading').evaluate(element => element.remove());
+  await page.locator('.imported-blueprint-role').screenshot({ path: testInfo.outputPath('v27-library-import-preview-dark.png') });
   const saveToLibrary = page.getByRole('button', { name: '保存到建筑蓝图库' });
   await expect(saveToLibrary).toBeVisible();
   // V19 regression: the confirm row must keep both buttons readable and evenly sized.
@@ -728,6 +818,7 @@ test('keeps large-project deletion unavailable during an immersive active focus'
   await expect(page.getByRole('button', { name: '删除当前任务' })).toHaveCount(0);
   await interruptFocus(page);
   await openTasks(page);
+  await page.locator('.task-management-disclosure summary').click();
   const deleteProject = page.getByRole('button', { name: '删除当前任务' });
   await expect(deleteProject).toBeEnabled();
 });
@@ -761,11 +852,12 @@ test('leaves immersive UI after lifecycle reconciliation interrupts focus', asyn
 test('deletes a completed-idle project with rollback and restores it from settings', async ({ page }) => {
   await createDefaultProject(page);
   await openTasks(page);
+  await page.locator('.task-management-disclosure summary').click();
   await page.getByRole('button', { name: '删除当前任务' }).click();
   const dialog = page.getByRole('alertdialog', { name: '删除这项任务？' });
   await expect(dialog).toBeVisible();
   await dialog.getByRole('button', { name: '删除任务' }).click();
-  await expect(page.getByRole('heading', { name: '建立你的第一项任务' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '建立新任务' })).toBeVisible();
 
   await page.getByRole('button', { name: '设置' }).click();
   await expect(page.getByRole('heading', { name: '设置' })).toBeVisible();

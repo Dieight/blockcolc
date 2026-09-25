@@ -11,6 +11,7 @@ test('world coordinates can be enabled for QA and disabled persistently without 
   await expect(canvas).toHaveAttribute('data-first-nonempty-frame-ms', /\d/);
   const initialRebuildCount = await canvas.getAttribute('data-world-rebuild-count');
   expect(initialRebuildCount).toBe('1');
+  await expect(canvas).toHaveAttribute('data-renderer-generation', '1');
   await page.getByRole('button', { name: '设置' }).click();
   const toggle = page.getByLabel('显示世界坐标');
   await expect(toggle).not.toBeChecked();
@@ -32,6 +33,7 @@ test('world coordinates can be enabled for QA and disabled persistently without 
   await expect(canvas).toHaveAttribute('data-coordinate-picking', 'false');
   await expect(canvas).toHaveAttribute('data-world-rebuild-count', initialRebuildCount!);
   await expect(page.getByTestId('world-pick')).toBeHidden();
+  await expect(canvas).toHaveAttribute('data-renderer-generation', '1');
 
   await page.reload();
   await expect(page.getByLabel('项目建筑世界')).toHaveAttribute('data-coordinate-picking', 'false');

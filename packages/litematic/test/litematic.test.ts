@@ -3,7 +3,7 @@ import { gzipSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
 import { LitematicParseError, parseLitematic, readPackedIndex } from "../src/index.js";
 import { parseJavaNbt } from "../src/nbt.js";
-import { testNbt as nbt, writeJavaNbt } from "./nbt-fixture.js";
+import { testNbt as nbt, writeJavaNbt, type TestNbtTag } from "./nbt-fixture.js";
 
 const samples = [
   { file: "a94f3c5d-b4ad-42e1-ba26-f474b204b0ea.litematic", dataVersion: 3953, dimensions: { width: 18, height: 35, depth: 20 }, blocks: 1846 },
@@ -152,6 +152,336 @@ describe("Litematic decoding boundaries", () => {
     expect(stone).not.toHaveProperty("sourceBlockState");
   });
 
+  it("extracts only a moving piston entity's moved block ID and state", async () => {
+    const input = makeLitematic({ regions: { piston: makeRegion({
+      position: { x: 10, y: 4, z: 8 }, size: { x: 3, y: 1, z: 1 },
+      palette: [
+        { name: "minecraft:moving_piston", properties: { facing: "east", type: "normal" } },
+        "minecraft:stone",
+      ],
+      values: [0, 1, 0],
+      tileEntities: [
+        pistonTileEntity(0, 0, 0, nbt.compound({
+          Name: nbt.string("minecraft:oak_log"),
+          Properties: nbt.compound({ axis: nbt.string("x") }),
+          Command: nbt.string("must never be retained"),
+        })),
+        pistonTileEntity(1, 0, 0, nbt.compound({ Name: nbt.string("minecraft:stone") })),
+        nbt.compound({
+          x: nbt.int(2), y: nbt.int(0), z: nbt.int(0), id: nbt.string("minecraft:piston"),
+          movedState: nbt.compound({
+            id: nbt.string("minecraft:oak_log"),
+            properties: nbt.compound({ axis: nbt.string("z") }),
+          }),
+        }),
+      ],
+    }) } });
+
+    const result = await parseLitematic(input);
+    const movingPistons = result.blueprint.voxels.filter((voxel) => voxel.sourceBlockId === "minecraft:moving_piston");
+    const movingPiston = movingPistons.find((voxel) => voxel.x === 0);
+    expect(movingPiston?.movingPistonMovedState).toEqual({ blockId: "minecraft:oak_log", properties: { axis: "x" } });
+    expect(movingPistons.find((voxel) => voxel.x === 2)?.movingPistonMovedState).toEqual({
+      blockId: "minecraft:oak_log", properties: { axis: "z" },
+    });
+    expect(result.preview.compatibility).toMatchObject({
+      ignoredTileEntities: 1,
+      preservedMovingPistonMovedStates: 2,
+    });
+    expect(JSON.stringify(result.blueprint)).not.toContain("must never be retained");
+    expect(movingPiston).not.toHaveProperty("Command");
+  });
+
+  it("maps piston block entities through nonzero region positions and negative signed sizes", async () => {
+    const input = makeLitematic({ regions: { negativePiston: makeRegion({
+      position: { x: 10, y: 4, z: 8 }, size: { x: -2, y: -1, z: -1 },
+      palette: [{ name: "minecraft:moving_piston", properties: { facing: "west", type: "normal" } }],
+      values: [0, 0],
+      tileEntities: [
+        pistonTileEntity(0, 0, 0, nbt.compound({ Name: nbt.string("minecraft:oak_log") })),
+        pistonTileEntity(1, 0, 0, nbt.compound({ Name: nbt.string("minecraft:stone") })),
+        pistonTileEntity(2, 0, 0, nbt.compound({ Name: nbt.string("minecraft:diamond_block") })),
+      ],
+    }) } });
+
+    const result = await parseLitematic(input);
+    const movingPistons = result.blueprint.voxels.filter((voxel) => voxel.sourceBlockId === "minecraft:moving_piston");
+    expect(movingPistons.find((voxel) => voxel.x === 1)?.movingPistonMovedState).toEqual({ blockId: "minecraft:oak_log" });
+    expect(movingPistons.find((voxel) => voxel.x === 0)?.movingPistonMovedState).toEqual({ blockId: "minecraft:stone" });
+    expect(movingPistons.every((voxel) => voxel.movingPistonMovedState?.blockId !== "minecraft:diamond_block")).toBe(true);
+    expect(result.preview.compatibility).toMatchObject({
+      ignoredTileEntities: 1,
+      preservedMovingPistonMovedStates: 2,
+    });
+  });
+
+  it("preserves only a valid 26.3 piston movement pose alongside moved state", async () => {
+    const validPoses = [
+      { facing: 0, progress: 0, extending: 0, source: 0 },
+      { facing: 1, progress: 0.2, extending: 1, source: 0 },
+      { facing: 2, progress: 0.375, extending: 0, source: 1 },
+      { facing: 3, progress: 0.5, extending: 1, source: 1 },
+      { facing: 4, progress: 0.8, extending: 0, source: 0 },
+      { facing: 5, progress: 1, extending: 1, source: 0 },
+    ] as const;
+    const validEntities = validPoses.map((pose, x) => pistonTileEntity(
+      x, 0, 0,
+      nbt.compound({ Name: nbt.string("minecraft:oak_log"), Properties: nbt.compound({ axis: nbt.string("x") }) }),
+      {
+        facing: nbt.int(pose.facing), progress: nbt.float(pose.progress),
+        extending: nbt.byte(pose.extending), source: nbt.byte(pose.source),
+      },
+      x === 0 ? { privateField: nbt.string("must not be retained") } : undefined,
+    ));
+    const invalidEntities = [
+      pistonTileEntity(6, 0, 0, nbt.compound({ Name: nbt.string("minecraft:stone") }), {
+        facing: nbt.int(6), progress: nbt.float(0.5), extending: nbt.byte(0), source: nbt.byte(0),
+      }),
+      pistonTileEntity(7, 0, 0, nbt.compound({ Name: nbt.string("minecraft:stone") }), {
+        facing: nbt.int(2), progress: nbt.float(Number.NaN), extending: nbt.byte(0), source: nbt.byte(0),
+      }),
+      pistonTileEntity(8, 0, 0, nbt.compound({ Name: nbt.string("minecraft:stone") }), {
+        facing: nbt.int(2), progress: nbt.float(1.01), extending: nbt.byte(0), source: nbt.byte(0),
+      }),
+      pistonTileEntity(9, 0, 0, nbt.compound({ Name: nbt.string("minecraft:stone") }), {
+        facing: nbt.int(2), progress: nbt.float(0.5), extending: nbt.byte(2), source: nbt.byte(0),
+      }),
+      pistonTileEntity(10, 0, 0, nbt.compound({ Name: nbt.string("minecraft:stone") }), {
+        facing: nbt.string("north"), progress: nbt.float(0.5), extending: nbt.byte(0), source: nbt.byte(0),
+      }),
+      pistonTileEntity(11, 0, 0, nbt.compound({ Name: nbt.string("minecraft:stone") }), {
+        facing: nbt.int(2), progress: nbt.float(0.5), extending: nbt.byte(0),
+      }),
+      pistonTileEntity(12, 0, 0, nbt.compound({ Name: nbt.string("minecraft:stone") }), {
+        facing: nbt.float(2), progress: nbt.float(0.5), extending: nbt.byte(0), source: nbt.byte(0),
+      }),
+      pistonTileEntity(13, 0, 0, nbt.compound({ Name: nbt.string("minecraft:stone") }), {
+        facing: nbt.int(2), progress: nbt.int(0), extending: nbt.byte(0), source: nbt.byte(0),
+      }),
+      pistonTileEntity(14, 0, 0, nbt.compound({ Name: nbt.string("minecraft:stone") }), {
+        facing: nbt.int(2), progress: nbt.float(0.5), extending: nbt.int(1), source: nbt.byte(0),
+      }),
+      pistonTileEntity(15, 0, 0, nbt.compound({ Name: nbt.string("minecraft:stone") }), {
+        facing: nbt.int(2), progress: nbt.float(0.5), extending: nbt.byte(0), source: nbt.int(0),
+      }),
+    ];
+    const input = makeLitematic({ regions: { poses: makeRegion({
+      position: { x: 0, y: 0, z: 0 }, size: { x: 16, y: 1, z: 1 },
+      palette: [{ name: "minecraft:moving_piston", properties: { facing: "north", type: "normal" } }],
+      values: Array(16).fill(0),
+      tileEntities: [...validEntities, ...invalidEntities],
+    }) } });
+
+    const result = await parseLitematic(input);
+    const voxels = result.blueprint.voxels;
+    const expectedFacings = ["down", "up", "north", "south", "west", "east"];
+    for (let x = 0; x < validPoses.length; x += 1) {
+      const pose = validPoses[x]!;
+      expect(voxels.find((voxel) => voxel.x === x)?.movingPistonPose).toEqual({
+        facing: expectedFacings[x], progress: Math.fround(pose.progress),
+        extending: pose.extending === 1, source: pose.source === 1,
+      });
+    }
+    for (let x = validPoses.length; x < 16; x += 1) {
+      expect(voxels.find((voxel) => voxel.x === x)).not.toHaveProperty("movingPistonPose");
+    }
+    expect(voxels.every((voxel) => voxel.movingPistonMovedState !== undefined)).toBe(true);
+    expect(result.preview.compatibility).toMatchObject({
+      ignoredTileEntities: 0,
+      preservedMovingPistonMovedStates: 16,
+      preservedMovingPistonPoses: 6,
+    });
+    expect(JSON.stringify(result.blueprint)).not.toContain("privateField");
+  });
+
+  it("ignores absent, malformed, out-of-bounds, and non-piston moved-state payloads", async () => {
+    const input = makeLitematic({ regions: { invalidEntities: makeRegion({
+      position: { x: 0, y: 0, z: 0 }, size: { x: 5, y: 1, z: 1 },
+      palette: [{ name: "minecraft:moving_piston", properties: { facing: "north", type: "sticky" } }],
+      values: Array(5).fill(0),
+      tileEntities: [
+        nbt.compound({ x: nbt.int(0), y: nbt.int(0), z: nbt.int(0), id: nbt.string("minecraft:piston") }),
+        pistonTileEntity(1, 0, 0, nbt.compound({ Name: nbt.string("example:oak_log") })),
+        pistonTileEntity(2, 0, 0, nbt.compound({
+          Name: nbt.string("minecraft:oak_log"),
+          Properties: nbt.compound(Object.fromEntries([["__proto__", nbt.string("unsafe")]])),
+        })),
+        pistonTileEntity(3, 0, 0, nbt.compound({
+          Name: nbt.string("minecraft:oak_log"),
+          Properties: nbt.compound({ axis: nbt.string("not a block-state value") }),
+        })),
+        nbt.compound({
+          x: nbt.int(4), y: nbt.int(0), z: nbt.int(0), id: nbt.string("minecraft:chest"),
+          blockState: nbt.compound({ Name: nbt.string("minecraft:oak_log") }),
+        }),
+        pistonTileEntity(25, 0, 0, nbt.compound({ Name: nbt.string("minecraft:oak_log") })),
+        nbt.compound({
+          x: nbt.int(4), y: nbt.int(0), z: nbt.int(0), id: nbt.string("minecraft:piston"),
+          blockState: nbt.compound({ Name: nbt.string("minecraft:oak_log") }),
+          movedState: nbt.compound({ Name: nbt.string("minecraft:stone") }),
+        }),
+        pistonTileEntity(0, 0, 0, nbt.compound({
+          Name: nbt.string("minecraft:oak_log"),
+          Properties: nbt.compound(Object.fromEntries(Array.from({ length: 33 }, (_, index) => [`p${index}`, nbt.string("x")]))),
+        })),
+        pistonTileEntity(0, 0, 0, nbt.compound({
+          Name: nbt.string("minecraft:oak_log"),
+          Properties: nbt.compound(Object.fromEntries([["k".repeat(65), nbt.string("x")]])),
+        })),
+        pistonTileEntity(0, 0, 0, nbt.compound({
+          Name: nbt.string("minecraft:oak_log"),
+          Properties: nbt.compound({ axis: nbt.string("x".repeat(129)) }),
+        })),
+        pistonTileEntity(0, 0, 0, nbt.compound({ Name: nbt.string(`minecraft:${"a".repeat(247)}`) })),
+      ],
+    }) } });
+
+    const result = await parseLitematic(input);
+    expect(result.blueprint.voxels.every((voxel) => !("movingPistonMovedState" in voxel))).toBe(true);
+    expect(result.preview.compatibility).toMatchObject({
+      ignoredTileEntities: 11,
+      preservedMovingPistonMovedStates: 0,
+    });
+  });
+
+  it("normalizes sign faces and campfire slots while dropping raw component actions and unrelated NBT", async () => {
+    const input = makeLitematic({ regions: { blockEntities: makeRegion({
+      position: { x: 4, y: 0, z: 0 }, size: { x: -2, y: 1, z: 1 },
+      palette: ["minecraft:oak_wall_sign", "minecraft:soul_campfire"], values: [0, 1],
+      tileEntities: [
+        blockTileEntity("minecraft:sign", 0, 0, 0, {
+          front_text: nbt.compound({
+            messages: nbt.list(8, [
+              nbt.string(JSON.stringify({ text: "Front", extra: [{ text: " side", clickEvent: { action: "run_command", value: "/discard" }, hoverEvent: { action: "show_text", value: "discard" } }] })),
+              nbt.string(JSON.stringify({ text: "Second" })),
+            ]),
+            color: nbt.string("red"), has_glowing_text: nbt.byte(1),
+          }),
+          back_text: nbt.compound({
+            messages: nbt.list(8, [nbt.string(JSON.stringify({ text: "Back" }))]),
+            color: nbt.string("light_blue"), has_glowing_text: nbt.byte(0),
+          }),
+          waxed: nbt.byte(1), unrelated: nbt.string("discard"),
+        }),
+        blockTileEntity("minecraft:campfire", 1, 0, 0, {
+          Items: nbt.list(10, [
+            nbt.compound({ Slot: nbt.byte(3), id: nbt.string("minecraft:stick"), Count: nbt.byte(2), components: nbt.compound({}) }),
+            nbt.compound({ Slot: nbt.byte(0), id: nbt.string("minecraft:bread"), count: nbt.byte(1) }),
+          ]),
+          cookingTimes: nbt.int(900), unrelated: nbt.string("discard"),
+        }),
+      ],
+    }) } });
+
+    const result = await parseLitematic(input);
+    const sign = result.blueprint.voxels.find((voxel) => voxel.sourceBlockId === "minecraft:oak_wall_sign");
+    const campfire = result.blueprint.voxels.find((voxel) => voxel.sourceBlockId === "minecraft:soul_campfire");
+    expect(sign?.sign).toEqual({
+      front: { lines: ["Front side", "Second"], dyeColor: "red", glowing: true },
+      back: { lines: ["Back"], dyeColor: "light_blue", glowing: false },
+    });
+    expect(campfire?.campfire).toEqual({ slots: [
+      { slot: 0, itemId: "minecraft:bread", count: 1 },
+      { slot: 3, itemId: "minecraft:stick", count: 2 },
+    ] });
+    expect(result.preview.compatibility).toMatchObject({
+      ignoredTileEntities: 0,
+      preservedSignBlockEntities: 1,
+      preservedCampfireBlockEntities: 1,
+    });
+    const normalized = JSON.stringify(result.blueprint);
+    expect(normalized).not.toContain("clickEvent");
+    expect(normalized).not.toContain("hoverEvent");
+    expect(normalized).not.toContain("waxed");
+    expect(normalized).not.toContain("cookingTimes");
+    expect(normalized).not.toContain("unrelated");
+  });
+
+  it("accepts empty sign lines from older Litematic exporters", async () => {
+    const input = makeLitematic({ regions: { sign: makeRegion({
+      position: { x: 0, y: 0, z: 0 }, size: { x: 1, y: 1, z: 1 },
+      palette: ["minecraft:oak_sign"], values: [0],
+      tileEntities: [blockTileEntity("minecraft:sign", 0, 0, 0, {
+        front_text: nbt.compound({ messages: nbt.list(8, [nbt.string(""), nbt.string(JSON.stringify({ text: "visible" }))]) }),
+        back_text: nbt.compound({ messages: nbt.list(8, [nbt.string("")]) }),
+      })],
+    }) } });
+
+    const result = await parseLitematic(input);
+    expect(result.blueprint.voxels[0]?.sign).toEqual({
+      front: { lines: ["", "visible"], dyeColor: "black", glowing: false },
+      back: { lines: [""], dyeColor: "black", glowing: false },
+    });
+  });
+
+  it("reports unsupported campfire item components and rejects malformed bounded block-entity data", async () => {
+    const withCampfire = (items: TestNbtTag[]) => makeLitematic({ regions: { campfire: makeRegion({
+      position: { x: 0, y: 0, z: 0 }, size: { x: 1, y: 1, z: 1 },
+      palette: ["minecraft:campfire"], values: [0],
+      tileEntities: [blockTileEntity("minecraft:campfire", 0, 0, 0, { Items: nbt.list(10, items) })],
+    }) } });
+    const componentPayload = withCampfire([nbt.compound({
+      Slot: nbt.byte(0), id: nbt.string("minecraft:stick"), count: nbt.byte(1),
+      components: nbt.compound({ "minecraft:custom_model_data": nbt.int(7) }),
+    })]);
+    await expect(parseLitematic(componentPayload)).rejects.toMatchObject({
+      code: "UNSUPPORTED_BLOCK_ENTITY_DATA",
+      message: expect.stringMatching(/item components.*unsupported/i),
+    });
+
+    await expect(parseLitematic(withCampfire([
+      nbt.compound({ Slot: nbt.byte(0), id: nbt.string("minecraft:stick"), count: nbt.byte(1) }),
+      nbt.compound({ Slot: nbt.byte(0), id: nbt.string("minecraft:bread"), count: nbt.byte(1) }),
+    ]))).rejects.toMatchObject({ code: "INVALID_LITEMATIC" });
+    await expect(parseLitematic(withCampfire([
+      nbt.compound({ Slot: nbt.byte(4), id: nbt.string("minecraft:stick"), count: nbt.byte(1) }),
+    ]))).rejects.toMatchObject({ code: "INVALID_LITEMATIC" });
+
+    const translated = makeLitematic({ regions: { sign: makeRegion({
+      position: { x: 0, y: 0, z: 0 }, size: { x: 1, y: 1, z: 1 },
+      palette: ["minecraft:oak_sign"], values: [0],
+      tileEntities: [blockTileEntity("minecraft:sign", 0, 0, 0, {
+        front_text: nbt.compound({ messages: nbt.list(8, [nbt.string(JSON.stringify({ translate: "unsupported.key" }))]) }),
+      })],
+    }) } });
+    await expect(parseLitematic(translated)).rejects.toMatchObject({
+      code: "UNSUPPORTED_BLOCK_ENTITY_DATA",
+      message: expect.stringMatching(/dynamic sign text.*unsupported/i),
+    });
+  });
+
+  it("processes a bounded batch of moved states without carrying block-entity payloads", async () => {
+    const side = 16;
+    const height = 2;
+    const count = side * side * height;
+    const input = makeLitematic({ regions: { batch: makeRegion({
+      position: { x: 0, y: 0, z: 0 }, size: { x: side, y: height, z: side },
+      palette: [{ name: "minecraft:moving_piston", properties: { facing: "north", type: "normal" } }],
+      values: Array(count).fill(0),
+      tileEntities: Array.from({ length: count }, (_, index) => pistonTileEntity(
+        index % side,
+        Math.floor(index / (side * side)),
+        Math.floor(index / side) % side,
+        nbt.compound({
+          Name: nbt.string("minecraft:oak_log"),
+          Properties: nbt.compound({ axis: nbt.string("y") }),
+          PrivateUnrelatedData: nbt.string("x".repeat(512)),
+        }),
+        {
+          facing: nbt.int(2), progress: nbt.float(0.5), extending: nbt.byte(1), source: nbt.byte(0),
+        },
+      )),
+    }) } });
+
+    const result = await parseLitematic(input);
+    expect(result.blueprint.voxels).toHaveLength(count);
+    expect(result.preview.compatibility.preservedMovingPistonMovedStates).toBe(count);
+    expect(result.preview.compatibility.preservedMovingPistonPoses).toBe(count);
+    expect(result.preview.compatibility.ignoredTileEntities).toBe(0);
+    expect(JSON.stringify(result.blueprint)).not.toContain("PrivateUnrelatedData");
+    expect(JSON.stringify(result.blueprint).length).toBeLessThan(count * 384);
+  });
+
   it("rejects unsafe block-state property names and empty values", async () => {
     const propertyCases: Array<Record<string, string>> = [{ Uppercase: "north" }, { facing: "" }];
     for (const properties of propertyCases) {
@@ -214,9 +544,36 @@ describe("Litematic decoding boundaries", () => {
     await expect(parseLitematic(maxAllowed)).resolves.toBeTruthy();
   }, 15_000);
 
+  it("imports a dense 60 x 60 x 60 volume without argument-spread or output truncation", async () => {
+    const side = 60;
+    const input = makeLitematic({ regions: { dense: makeRegion({
+      position: { x: 0, y: 0, z: 0 },
+      size: { x: side, y: side, z: side },
+      palette: ["minecraft:air", "minecraft:stone"],
+      values: Array(side * side * side).fill(1),
+    }) } });
+    const result = await parseLitematic(input);
+    expect(result.preview.dimensions).toEqual({ width: side, height: side, depth: side });
+    expect(result.preview.nonAirBlockCount).toBe(side * side * side);
+    expect(result.blueprint.voxels).toHaveLength(216_000);
+    expect(result.blueprint.bounds).toEqual({ minX: 0, maxX: 59, minY: 0, maxY: 59, minZ: 0, maxZ: 59 });
+    expect(result.blueprint.voxels[0]?.buildOrder).toBe(0);
+    expect(result.blueprint.voxels.at(-1)?.buildOrder).toBe(10_000);
+  }, 30_000);
+
   it("rejects a packed array whose length cannot represent the region", async () => {
     const input = makeLitematic({ regions: { broken: makeRegion({ position: { x: 0, y: 0, z: 0 }, size: { x: 3, y: 1, z: 1 }, palette: ["minecraft:air", "minecraft:stone"], values: [1, 1, 1], omitLastLong: true }) } });
     await expect(parseLitematic(input)).rejects.toBeInstanceOf(LitematicParseError);
+  });
+
+  it("reports an explicit output-voxel limit instead of truncating a dense import", async () => {
+    const input = makeLitematic({ regions: { capped: makeRegion({
+      position: { x: 0, y: 0, z: 0 }, size: { x: 2, y: 2, z: 2 },
+      palette: ["minecraft:air", "minecraft:stone"], values: Array(8).fill(1),
+    }) } });
+    await expect(parseLitematic(input, { limits: { maxOutputVoxels: 7 } })).rejects.toEqual(
+      expect.objectContaining({ code: "LIMIT_EXCEEDED", message: expect.stringContaining("Output block count exceeds 7") }),
+    );
   });
 
   it("rejects malformed NBT collection lengths and excessive nesting before Litematic traversal", () => {
@@ -247,7 +604,7 @@ type Point = { x: number; y: number; z: number };
 type PaletteInput = string | { name: string; properties?: Record<string, string> };
 type RegionInput = ReturnType<typeof makeRegion>;
 
-function makeRegion(input: { position: Point; size: Point; palette: PaletteInput[]; values: number[]; omitLastLong?: boolean }) {
+function makeRegion(input: { position: Point; size: Point; palette: PaletteInput[]; values: number[]; omitLastLong?: boolean; tileEntities?: TestNbtTag[] }) {
   const bits = Math.max(2, Math.ceil(Math.log2(input.palette.length)));
   const packed = pack(input.values, bits);
   if (input.omitLastLong) packed.pop();
@@ -265,10 +622,29 @@ function makeRegion(input: { position: Point; size: Point; palette: PaletteInput
     })),
     BlockStates: nbt.longArray(packed),
     Entities: nbt.list(10, []),
-    TileEntities: nbt.list(10, []),
+    TileEntities: nbt.list(10, input.tileEntities ?? []),
     PendingBlockTicks: nbt.list(10, []),
     PendingFluidTicks: nbt.list(10, []),
   };
+}
+
+function pistonTileEntity(
+  x: number,
+  y: number,
+  z: number,
+  blockState: TestNbtTag,
+  pose?: Partial<Record<"facing" | "progress" | "extending" | "source", TestNbtTag>>,
+  extraTags?: Readonly<Record<string, TestNbtTag>>,
+): TestNbtTag {
+  return nbt.compound({
+    x: nbt.int(x), y: nbt.int(y), z: nbt.int(z), id: nbt.string("minecraft:piston"), blockState,
+    ...pose,
+    ...extraTags,
+  });
+}
+
+function blockTileEntity(id: string, x: number, y: number, z: number, fields: Readonly<Record<string, TestNbtTag>>): TestNbtTag {
+  return nbt.compound({ x: nbt.int(x), y: nbt.int(y), z: nbt.int(z), id: nbt.string(id), ...fields });
 }
 
 function makeLitematic(input: { regions: Record<string, RegionInput> }): Buffer {

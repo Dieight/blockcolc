@@ -61,7 +61,7 @@ describe("bounded multipart geometry", () => {
     });
   });
 
-  it("supports one-axis zero-thickness iron-bar planes but rejects unsafe degeneracy and face directions", () => {
+  it("supports zero-thickness planes with degenerate off-axis faces but rejects unsafe degeneracy", () => {
     const manifest = pack({
       "assets/minecraft/blockstates/iron_bars.json": json({ multipart: [{ apply: { model: "minecraft:block/planes" } }] }),
       "assets/minecraft/models/block/planes.json": json({ textures: { all: "minecraft:block/texture" }, elements: [
@@ -78,12 +78,15 @@ describe("bounded multipart geometry", () => {
     });
     expect(resolveBlockGeometry(manifest, "minecraft:iron_bars")).toMatchObject({ status: "resolved_geometry", elements: [{ from: [8, 0, 7], to: [8, 16, 9] }, { from: [7, 0, 8], to: [9, 16, 8] }] });
     expect(manifest.models.some((model) => model.resourceId === "minecraft:block/two_axes")).toBe(false);
-    expect(manifest.models.some((model) => model.resourceId === "minecraft:block/wrong_face")).toBe(false);
+    // Java 26.3 models can declare off-axis faces on a zero-thickness plane.
+    // Parsing preserves the model; the voxel geometry compiler discards only
+    // those faces because their resulting quads have zero area.
+    expect(manifest.models.some((model) => model.resourceId === "minecraft:block/wrong_face")).toBe(true);
   });
 
   it("accepts bounded weighted and array apply choices across namespaces, but rejects oversized definitions", () => {
     const tooMany = Array.from({ length: 65 }, () => ({ apply: { model: "minecraft:block/post" } }));
-    const tooManyApply = Array.from({ length: 9 }, () => ({ model: "minecraft:block/post" }));
+    const tooManyApply = Array.from({ length: 33 }, () => ({ model: "minecraft:block/post" }));
     const tooManyOr = Array.from({ length: 17 }, (_, index) => ({ north: String(index) }));
     const manifest = pack({
       "assets/minecraft/blockstates/weighted_fence.json": json({ multipart: [{ apply: { model: "minecraft:block/post", weight: 2 } }] }),

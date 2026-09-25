@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { readBrowserFileBytes } from './browser-adapters.js';
+import { readBackupFileText, readBrowserFileBytes } from './browser-adapters.js';
 
 const originalFileReader = globalThis.FileReader;
 
@@ -38,5 +38,25 @@ describe('browser binary file input', () => {
 
     const actualLarge = { size: 1, arrayBuffer: async () => new Uint8Array(5).buffer } as unknown as File;
     await expect(readBrowserFileBytes(actualLarge, 4)).rejects.toMatchObject({ code: 'INPUT_TOO_LARGE' });
+  });
+});
+
+describe('browser backup file input', () => {
+  it('rejects a declared oversized backup before reading its text', async () => {
+    const text = vi.fn(async () => '{"format":"tomato-clock-backup"}');
+    const file = { size: 5, text } as unknown as File;
+    await expect(readBackupFileText(file, 4)).rejects.toMatchObject({ code: 'BACKUP_TOO_LARGE' });
+    expect(text).not.toHaveBeenCalled();
+  });
+
+  it('rejects decoded backup bytes when a provider under-reports the file size', async () => {
+    const file = { size: 1, text: vi.fn(async () => '😀😀') } as unknown as File;
+    await expect(readBackupFileText(file, 4)).rejects.toMatchObject({ code: 'BACKUP_TOO_LARGE' });
+    expect(file.text).toHaveBeenCalledTimes(1);
+  });
+
+  it('accepts a backup at the configured byte limit', async () => {
+    const file = { size: 4, text: vi.fn(async () => 'test') } as unknown as File;
+    await expect(readBackupFileText(file, 4)).resolves.toBe('test');
   });
 });

@@ -8,6 +8,7 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import org.junit.Test;
 
 public class SafeDocumentReaderTest {
@@ -76,6 +77,48 @@ public class SafeDocumentReaderTest {
         assertEquals(1000, SafeDocumentReader.clampRequestedMax(2000, 1000));
         assertEquals(1000, SafeDocumentReader.clampRequestedMax(0, 1000));
         assertEquals(1000, SafeDocumentReader.clampRequestedMax(null, 1000));
+    }
+
+    @Test
+    public void keepsLitematicBridgeLimitAt64MiBAndClampsLargerRequests() {
+        int litematicLimit = 64 * 1024 * 1024;
+        assertEquals(litematicLimit, LitematicFilePickerPlugin.LITEMATIC_MAX_BYTES);
+        assertEquals(litematicLimit, SafeDocumentReader.clampRequestedMax(litematicLimit * 2, LitematicFilePickerPlugin.LITEMATIC_MAX_BYTES));
+        assertEquals(litematicLimit, SafeDocumentReader.clampRequestedMax(null, LitematicFilePickerPlugin.LITEMATIC_MAX_BYTES));
+    }
+
+    @Test
+    public void rejectsAStreamingDocumentThatExceedsThe64MiBNativeLimit() {
+        final int litematicLimit = LitematicFilePickerPlugin.LITEMATIC_MAX_BYTES;
+        InputStream oversized = new InputStream() {
+            private long remaining = (long) litematicLimit + 1;
+
+            @Override
+            public int read(byte[] buffer, int offset, int length) {
+                if (remaining == 0) return -1;
+                int count = (int) Math.min(remaining, length);
+                java.util.Arrays.fill(buffer, offset, offset + count, (byte) 7);
+                remaining -= count;
+                return count;
+            }
+
+            @Override
+            public int read() {
+                if (remaining == 0) return -1;
+                remaining -= 1;
+                return 7;
+            }
+        };
+        assertThrows(
+            SafeDocumentReader.FileTooLargeException.class,
+            () -> SafeDocumentReader.copyBounded(oversized, new OutputStream() {
+                @Override
+                public void write(int value) {}
+
+                @Override
+                public void write(byte[] buffer, int offset, int length) {}
+            }, litematicLimit)
+        );
     }
 
     @Test

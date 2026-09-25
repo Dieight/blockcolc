@@ -7,17 +7,26 @@ import type {
   ResolvedBlockGeometry,
   ResolvedBlockTextures,
 } from "./block-models";
-import type { ResourcePackManifest, ResourcePackTextureAnimation } from "./index";
-import { decodePngRgba } from "./png";
+import type { ResourcePackManifest, ResourcePackTextureAnimation, ResourcePackTextureSize } from "./index";
+import { DEFAULT_PNG_RGBA_LIMITS, decodePngRgba, estimatePngRgbaDecodeMemory } from "./png";
 
 export type TextureAlphaMode = "opaque" | "cutout" | "translucent";
 
 export const DEFAULT_TEXTURE_ATLAS_LIMITS = Object.freeze({
-  maxTextures: 2048,
+  maxTextures: 4096,
   maxPageSize: 2048,
   maxPages: 4,
   gutter: 2,
-  maxDecodedBytes: 64 * 1024 * 1024,
+  maxPngBytes: 4 * 1024 * 1024,
+  maxSourcePixelsPerTexture: DEFAULT_PNG_RGBA_LIMITS.maxPixels,
+  // Bounds the conservative simultaneous CPU/GPU estimate, including output
+  // pages, their generated mip levels, resident source PNG bytes, and the
+  // largest one-PNG decode working set. Normalized-frame copies are avoided.
+  maxDecodedBytes: 128 * 1024 * 1024,
+  /** Resident CPU/GPU atlas bytes retained while a replacement is built. */
+  reservedAtlasBytes: 0,
+  /** Other known transient allocations owned by the atlas caller, such as colormaps. */
+  additionalWorkingSetBytes: 0,
 });
 
 export interface TextureAtlasLimits {
@@ -25,7 +34,11 @@ export interface TextureAtlasLimits {
   maxPageSize: number;
   maxPages: number;
   gutter: number;
+  maxPngBytes: number;
+  maxSourcePixelsPerTexture: number;
   maxDecodedBytes: number;
+  reservedAtlasBytes: number;
+  additionalWorkingSetBytes: number;
 }
 
 export type TextureAtlasErrorCode =
@@ -65,8 +78,8 @@ export interface TextureAtlasEntry {
   pageTextureIndex: number;
   x: number;
   y: number;
-  width: 16;
-  height: 16;
+  width: ResourcePackTextureSize;
+  height: ResourcePackTextureSize;
   uv: TextureAtlasUvRect;
   alphaMode: TextureAlphaMode;
   animation?: TextureAtlasAnimation;
@@ -90,6 +103,8 @@ export interface TextureAtlasAnimation {
 
 export interface TextureAtlasPage {
   index: number;
+  /** Native frame size for every tile on this page. */
+  textureSize?: ResourcePackTextureSize;
   width: number;
   height: number;
   columns: number;
@@ -99,12 +114,29 @@ export interface TextureAtlasPage {
 
 export interface TextureAtlas {
   schemaVersion: 1;
-  textureSize: 16;
+  /** Largest source tile size, retained for legacy whole-atlas consumers. */
+  textureSize: ResourcePackTextureSize;
   gutter: number;
   /** Gutter protects this many generated mip levels from immediate neighbour bleeding. */
   safeMipLevels: number;
   pages: TextureAtlasPage[];
   entries: TextureAtlasEntry[];
+  memoryEstimate?: TextureAtlasMemoryEstimate;
+}
+
+export interface TextureAtlasMemoryEstimate {
+  limitBytes: number;
+  reservedAtlasBytes: number;
+  additionalWorkingSetBytes: number;
+  sourcePngBytes: number;
+  sourceRgbaBytes: number;
+  decoderWorkingSetBytes: number;
+  normalizationBytes: 0;
+  pageRgbaBytes: number;
+  mipmapRgbaBytes: number;
+  animationLookupRgbaBytes: number;
+  estimatedGpuBytes: number;
+  estimatedPeakBytes: number;
 }
 
 export interface AtlasFaceReference {
@@ -134,6 +166,7 @@ export interface AtlasGeometryElement {
   from: BlockElementVector;
   to: BlockElementVector;
   shade: boolean;
+  shadeDirectionOverride?: BlockFace;
   faces: Partial<Record<BlockFace, AtlasGeometryFaceReference>>;
   rotation?: BlockElementRotation;
   blockRotation?: { x: 0 | 90 | 180 | 270; y: 0 | 90 | 180 | 270 };
@@ -165,7 +198,34 @@ type ResolutionWithOptionalFaceMetadata = ResolvedBlockTextures & {
   faceMetadata?: Partial<Record<BlockFace, ResolvedBlockFace>>;
 };
 
-const TEXTURE_SIZE = 16;
+interface AtlasTexturePlan {
+  texture: ResourcePackManifest["textures"][number];
+  layout: AtlasFrameLayout;
+  textureSize: ResourcePackTextureSize;
+  frameReferences: Array<(TextureAtlasAnimationFrame & { x: number; y: number }) | undefined>;
+  alphaMode?: TextureAlphaMode;
+}
+
+interface PlannedAtlasTile {
+  texture: AtlasTexturePlan;
+  sourceFrame: number;
+  pageTextureIndex: number;
+}
+
+interface PlannedAtlasPage {
+  index: number;
+  textureSize: ResourcePackTextureSize;
+  cellSize: number;
+  columns: number;
+  rows: number;
+  width: number;
+  height: number;
+  rgbaBytes: number;
+  mipmapBytes: number;
+  animationLookupBytes: number;
+  tiles: PlannedAtlasTile[];
+  textures: AtlasTexturePlan[];
+}
 
 export function buildJava16xTextureAtlas(
   manifest: Pick<ResourcePackManifest, "textures">,
@@ -181,113 +241,165 @@ export function buildJava16xTextureAtlas(
     if (ids.has(texture.resourceId)) throw new TextureAtlasError("DUPLICATE_TEXTURE_ID", `Duplicate texture ${texture.resourceId}.`, texture.resourceId);
     ids.add(texture.resourceId);
   }
-  if (textures.length === 0) return { schemaVersion: 1, textureSize: 16, gutter: limits.gutter, safeMipLevels: safeMipLevels(limits.gutter), pages: [], entries: [] };
-
-  const decoded = textures.map((texture) => {
-    try {
-      const decodedPng = decodePngRgba(texture.png, {
-        expectedWidth: texture.width,
-        expectedHeight: texture.height,
-        maxWidth: 4096,
-        maxHeight: 4096,
-        maxPixels: 32 * 32 * 256,
-        maxDecodedBytes: 32 * 32 * 256 * 4,
-      });
-      const layout = validateAtlasAnimation(texture.animation, texture.width, texture.height);
-      const framesRgba = normalizeFrameTiles(decodedPng.rgba, texture.width, layout);
-      return {
-        texture,
-        rgba: framesRgba,
-        decodedSourceBytes: decodedPng.rgba.byteLength,
-        sourceFrameCount: layout.sourceFrameCount,
-        alphaMode: classifyAlpha(decodedPng.rgba),
-      };
-    } catch (cause) {
-      const code = errorMessage(cause).startsWith("Animation ") ? "INVALID_ANIMATION" : "INVALID_PNG_PIXELS";
-      throw new TextureAtlasError(code, `${texture.resourceId}: ${errorMessage(cause)}`, texture.resourceId);
-    }
-  });
-  const physicalTiles = decoded.flatMap((item) => Array.from(
-    { length: item.sourceFrameCount },
-    (_, sourceFrame) => ({ item, sourceFrame }),
-  ));
-  if (physicalTiles.length > limits.maxTextures) {
-    throw new TextureAtlasError("TOO_MANY_TEXTURES", `Atlas frame count ${physicalTiles.length} exceeds ${limits.maxTextures}.`);
+  if (textures.length === 0) {
+    return {
+      schemaVersion: 1,
+      textureSize: 16,
+      gutter: limits.gutter,
+      safeMipLevels: safeMipLevels(limits.gutter),
+      pages: [],
+      entries: [],
+      memoryEstimate: emptyMemoryEstimate(limits),
+    };
   }
-  const cellSize = TEXTURE_SIZE + limits.gutter * 2;
-  const cellsPerAxis = Math.floor(limits.maxPageSize / cellSize);
-  if (cellsPerAxis < 1) throw new TextureAtlasError("INVALID_LIMITS", "maxPageSize cannot fit one padded 16x texture.");
-  const pageCapacity = cellsPerAxis * cellsPerAxis;
-  for (const item of decoded) {
-    if (item.sourceFrameCount > pageCapacity) {
+
+  const plans: AtlasTexturePlan[] = [];
+  let physicalTileCount = 0;
+  let sourcePngBytes = 0;
+  let sourceRgbaBytes = 0;
+  let decoderWorkingSetBytes = 0;
+  for (const texture of textures) {
+    if (!(texture.png instanceof Uint8Array) || texture.png.byteLength < 1 || texture.png.byteLength > limits.maxPngBytes) {
       throw new TextureAtlasError(
-        "ATLAS_TOO_LARGE",
-        `Texture animation requires ${item.sourceFrameCount} tiles but one page fits ${pageCapacity}.`,
-        item.texture.resourceId,
+        "INVALID_PNG_PIXELS",
+        `${texture.resourceId}: PNG byte length ${texture.png?.byteLength ?? 0} exceeds the per-texture limit of ${limits.maxPngBytes} bytes.`,
+        texture.resourceId,
       );
     }
-  }
-  // Keep every physical frame of one source texture on the same page. This
-  // lets the runtime animate a page-bound material without rebinding textures.
-  const pageGroups: Array<typeof physicalTiles> = [];
-  let currentPage: typeof physicalTiles = [];
-  for (const item of decoded) {
-    const itemTiles = Array.from(
-      { length: item.sourceFrameCount },
-      (_, sourceFrame) => ({ item, sourceFrame }),
-    );
-    if (currentPage.length > 0 && currentPage.length + itemTiles.length > pageCapacity) {
-      pageGroups.push(currentPage);
-      currentPage = [];
+    const estimate = estimatePngRgbaDecodeMemory(texture.png);
+    if (!estimate || estimate.width !== texture.width || estimate.height !== texture.height) {
+      throw new TextureAtlasError("INVALID_PNG_PIXELS", `${texture.resourceId}: PNG dimensions do not match the manifest or the PNG structure is invalid.`, texture.resourceId);
     }
-    currentPage.push(...itemTiles);
-  }
-  if (currentPage.length > 0) pageGroups.push(currentPage);
-  const pageCount = pageGroups.length;
-  if (pageCount > limits.maxPages) throw new TextureAtlasError("TOO_MANY_PAGES", `Atlas requires ${pageCount} pages; limit is ${limits.maxPages}.`);
-  const pages: TextureAtlasPage[] = [];
-  const tileReferences: Array<TextureAtlasAnimationFrame & { x: number; y: number }> = [];
-  let decodedBytes = decoded.reduce((sum, item) => sum + item.decodedSourceBytes + item.rgba.byteLength, 0);
-
-  for (let pageIndex = 0; pageIndex < pageCount; pageIndex += 1) {
-    const pageItems = pageGroups[pageIndex]!;
-    const columns = Math.min(cellsPerAxis, Math.ceil(Math.sqrt(pageItems.length)));
-    const rows = Math.ceil(pageItems.length / columns);
-    const width = nextPowerOfTwo(columns * cellSize);
-    const height = nextPowerOfTwo(rows * cellSize);
-    if (width > limits.maxPageSize || height > limits.maxPageSize) throw new TextureAtlasError("ATLAS_TOO_LARGE", "Atlas page exceeds its configured dimensions.");
-    const pageBytes = width * height * 4;
-    if (!Number.isSafeInteger(pageBytes) || decodedBytes + pageBytes > limits.maxDecodedBytes) {
-      throw new TextureAtlasError("ATLAS_TOO_LARGE", `Decoded textures and atlas pages exceed ${limits.maxDecodedBytes} bytes.`);
+    if (estimate.width > DEFAULT_PNG_RGBA_LIMITS.maxDimension || estimate.height > DEFAULT_PNG_RGBA_LIMITS.maxDimension
+      || estimate.pixelCount > limits.maxSourcePixelsPerTexture) {
+      throw new TextureAtlasError(
+        "ATLAS_TOO_LARGE",
+        `${texture.resourceId}: PNG ${estimate.width}x${estimate.height} has ${estimate.pixelCount} pixels; per-texture decode limit is ${limits.maxSourcePixelsPerTexture} pixels (${limits.maxSourcePixelsPerTexture * 4} RGBA bytes).`,
+        texture.resourceId,
+      );
     }
-    const rgba = new Uint8Array(pageBytes);
-    decodedBytes += pageBytes;
-    pageItems.forEach((item, localIndex) => {
-      const column = localIndex % columns;
-      const row = Math.floor(localIndex / columns);
-      const x = column * cellSize + limits.gutter;
-      const y = row * cellSize + limits.gutter;
-      blitWithGutter(rgba, width, item.item.rgba, item.sourceFrame * TEXTURE_SIZE, x, y, limits.gutter);
-      const globalIndex = tileReferences.length;
-      tileReferences.push({
-        textureIndex: globalIndex,
-        page: pageIndex,
-        pageTextureIndex: localIndex,
-        x,
-        y,
-        uv: { u0: x / width, v0: y / height, u1: (x + TEXTURE_SIZE) / width, v1: (y + TEXTURE_SIZE) / height },
-        time: 1,
-      });
+    let layout: AtlasFrameLayout;
+    try {
+      layout = validateAtlasAnimation(texture.animation, texture.width, texture.height);
+    } catch (cause) {
+      throw new TextureAtlasError("INVALID_ANIMATION", `${texture.resourceId}: ${errorMessage(cause)}`, texture.resourceId);
+    }
+    physicalTileCount += layout.sourceFrameCount;
+    if (physicalTileCount > limits.maxTextures) {
+      throw new TextureAtlasError("TOO_MANY_TEXTURES", `Atlas frame count ${physicalTileCount} exceeds ${limits.maxTextures}.`);
+    }
+    sourcePngBytes += texture.png.byteLength;
+    sourceRgbaBytes += estimate.rgbaBytes;
+    decoderWorkingSetBytes = Math.max(decoderWorkingSetBytes, estimate.workingSetBytes);
+    plans.push({
+      texture,
+      layout,
+      textureSize: layout.frameWidth,
+      frameReferences: new Array(layout.sourceFrameCount),
     });
-    pages.push({ index: pageIndex, width, height, columns, rows, rgba });
   }
-  const entries: TextureAtlasEntry[] = [];
-  let physicalOffset = 0;
-  for (const item of decoded) {
-    const playback = item.texture.animation?.frames ?? [{ index: 0, time: 1 }];
+
+  const pagePlans = planAtlasPages(plans, limits);
+  if (pagePlans.length > limits.maxPages) {
+    const pageCounts = [...new Set(plans.map((plan) => plan.textureSize))]
+      .sort((left, right) => left - right)
+      .map((size) => `${size}px: ${pagePlans.filter((page) => page.textureSize === size).length}`)
+      .join(", ");
+    throw new TextureAtlasError("TOO_MANY_PAGES", `Atlas requires ${pagePlans.length} pages (${pageCounts}); limit is ${limits.maxPages}.`);
+  }
+
+  const safeMips = safeMipLevels(limits.gutter);
+  const pageRgbaBytes = pagePlans.reduce((sum, page) => sum + page.rgbaBytes, 0);
+  const mipmapRgbaBytes = pagePlans.reduce((sum, page) => sum + page.mipmapBytes, 0);
+  const animationLookupRgbaBytes = pagePlans.reduce((sum, page) => sum + page.animationLookupBytes, 0);
+  // Reserve CPU page buffers, CPU mip buffers and a second complete copy for
+  // GPU upload, plus all resident source PNGs and the worst one-image decoder
+  // working set. Normalization buffers are zero because frames are blitted
+  // directly from the decoded source sheet into native-resolution pages.
+  const estimatedGpuBytes = pageRgbaBytes + mipmapRgbaBytes + animationLookupRgbaBytes;
+  const estimatedPeakBytes = limits.reservedAtlasBytes + limits.additionalWorkingSetBytes + sourcePngBytes
+    + pageRgbaBytes + mipmapRgbaBytes + animationLookupRgbaBytes + estimatedGpuBytes + decoderWorkingSetBytes;
+  const memoryEstimate: TextureAtlasMemoryEstimate = {
+    limitBytes: limits.maxDecodedBytes,
+    reservedAtlasBytes: limits.reservedAtlasBytes,
+    additionalWorkingSetBytes: limits.additionalWorkingSetBytes,
+    sourcePngBytes,
+    sourceRgbaBytes,
+    decoderWorkingSetBytes,
+    normalizationBytes: 0,
+    pageRgbaBytes,
+    mipmapRgbaBytes,
+    animationLookupRgbaBytes,
+    estimatedGpuBytes,
+    estimatedPeakBytes,
+  };
+  if (!Number.isSafeInteger(estimatedPeakBytes) || estimatedPeakBytes > limits.maxDecodedBytes) {
+    throw new TextureAtlasError(
+      "ATLAS_TOO_LARGE",
+      `Atlas memory estimate ${estimatedPeakBytes} bytes exceeds ${limits.maxDecodedBytes} bytes `
+      + `(previous atlas resident ${limits.reservedAtlasBytes}, additional working set ${limits.additionalWorkingSetBytes}, `
+        + `source PNGs ${sourcePngBytes}, one-PNG decode working set ${decoderWorkingSetBytes}, `
+        + `page RGBA ${pageRgbaBytes}, mipmaps ${mipmapRgbaBytes}, animation lookups ${animationLookupRgbaBytes}, `
+        + `estimated GPU upload ${estimatedGpuBytes}, normalization buffers 0).`,
+    );
+  }
+
+  const pages: TextureAtlasPage[] = [];
+  let nextGlobalTileIndex = 0;
+  for (const plan of pagePlans) {
+    const rgba = new Uint8Array(plan.rgbaBytes);
+    for (const texturePlan of plan.textures) {
+      let decoded: ReturnType<typeof decodePngRgba>;
+      try {
+        decoded = decodePngRgba(texturePlan.texture.png, {
+          expectedWidth: texturePlan.texture.width,
+          expectedHeight: texturePlan.texture.height,
+          maxWidth: DEFAULT_PNG_RGBA_LIMITS.maxDimension,
+          maxHeight: DEFAULT_PNG_RGBA_LIMITS.maxDimension,
+          maxPixels: limits.maxSourcePixelsPerTexture,
+          maxDecodedBytes: limits.maxSourcePixelsPerTexture * 4,
+        });
+      } catch (cause) {
+        throw new TextureAtlasError("INVALID_PNG_PIXELS", `${texturePlan.texture.resourceId}: ${errorMessage(cause)}`, texturePlan.texture.resourceId);
+      }
+      texturePlan.alphaMode = classifyAlpha(decoded.rgba);
+      for (const tile of plan.tiles) {
+        if (tile.texture !== texturePlan) continue;
+        const x = (tile.pageTextureIndex % plan.columns) * plan.cellSize + limits.gutter;
+        const y = Math.floor(tile.pageTextureIndex / plan.columns) * plan.cellSize + limits.gutter;
+        blitSourceFrameWithGutter(rgba, plan.width, decoded.rgba, texturePlan.texture.width, texturePlan.layout, tile.sourceFrame, x, y, limits.gutter);
+        texturePlan.frameReferences[tile.sourceFrame] = {
+          textureIndex: nextGlobalTileIndex++,
+          page: plan.index,
+          pageTextureIndex: tile.pageTextureIndex,
+          x,
+          y,
+          uv: {
+            u0: x / plan.width,
+            v0: y / plan.height,
+            u1: (x + plan.textureSize) / plan.width,
+            v1: (y + plan.textureSize) / plan.height,
+          },
+          time: 1,
+        };
+      }
+    }
+    pages.push({
+      index: plan.index,
+      textureSize: plan.textureSize,
+      width: plan.width,
+      height: plan.height,
+      columns: plan.columns,
+      rows: plan.rows,
+      rgba,
+    });
+  }
+
+  const entries: TextureAtlasEntry[] = plans.map((plan) => {
+    const playback = plan.texture.animation?.frames ?? [{ index: 0, time: 1 }];
     const animationFrames = playback.map((frame) => {
-      const tile = tileReferences[physicalOffset + frame.index];
-      if (!tile) throw new TextureAtlasError("INVALID_ANIMATION", `Animation frame ${frame.index} has no atlas tile.`, item.texture.resourceId);
+      const tile = plan.frameReferences[frame.index];
+      if (!tile) throw new TextureAtlasError("INVALID_ANIMATION", `Animation frame ${frame.index} has no atlas tile.`, plan.texture.resourceId);
       return {
         textureIndex: tile.textureIndex,
         page: tile.page,
@@ -297,29 +409,32 @@ export function buildJava16xTextureAtlas(
       };
     });
     const first = animationFrames[0]!;
-    const firstTile = tileReferences[first.textureIndex]!;
-    entries.push({
-      resourceId: item.texture.resourceId,
+    const firstTile = plan.frameReferences[playback[0]!.index]!;
+    return {
+      resourceId: plan.texture.resourceId,
       index: first.textureIndex,
       page: first.page,
       pageTextureIndex: first.pageTextureIndex,
       x: firstTile.x,
       y: firstTile.y,
-      width: 16,
-      height: 16,
+      width: plan.textureSize,
+      height: plan.textureSize,
       uv: { ...first.uv },
-      alphaMode: item.alphaMode,
-      ...(item.texture.animation === undefined ? {} : {
+      alphaMode: plan.alphaMode ?? "opaque",
+      ...(plan.texture.animation === undefined ? {} : {
         animation: {
-          interpolate: item.texture.animation.interpolate,
+          interpolate: plan.texture.animation.interpolate,
           totalTicks: animationFrames.reduce((sum, frame) => sum + frame.time, 0),
           frames: animationFrames,
         },
       }),
-    });
-    physicalOffset += item.sourceFrameCount;
-  }
-  return { schemaVersion: 1, textureSize: 16, gutter: limits.gutter, safeMipLevels: safeMipLevels(limits.gutter), pages, entries };
+    };
+  });
+  const textureSize = plans.reduce<ResourcePackTextureSize>(
+    (largest, plan) => Math.max(largest, plan.textureSize) as ResourcePackTextureSize,
+    16,
+  );
+  return { schemaVersion: 1, textureSize, gutter: limits.gutter, safeMipLevels: safeMips, pages, entries, memoryEstimate };
 }
 
 export function mapBlockTexturesToAtlas(
@@ -385,6 +500,7 @@ export function mapBlockGeometryToAtlas(
       from: [...element.from] as unknown as BlockElementVector,
       to: [...element.to] as unknown as BlockElementVector,
       shade: element.shade,
+      ...(element.shadeDirectionOverride === undefined ? {} : { shadeDirectionOverride: element.shadeDirectionOverride }),
       faces: mappedFaces,
       ...(element.rotation === undefined ? {} : { rotation: structuredClone(element.rotation) }),
       ...(element.blockRotation === undefined ? {} : { blockRotation: { ...element.blockRotation } }),
@@ -400,7 +516,7 @@ function validGeometryElements(elements: readonly unknown[]): elements is Resolv
     if (!element || typeof element !== "object") return false;
     const candidate = element as ResolvedBlockGeometry["elements"][number];
     if (!validElementVector(candidate.from) || !validElementVector(candidate.to) || typeof candidate.shade !== "boolean") return false;
-    if (candidate.from.some((value, axis) => value > candidate.to[axis]!)) return false;
+    if (candidate.shadeDirectionOverride !== undefined && !isBlockFace(candidate.shadeDirectionOverride)) return false;
     if (candidate.rotation !== undefined && !validElementRotation(candidate.rotation)) return false;
     if (candidate.blockRotation !== undefined
       && (![0, 90, 180, 270].includes(candidate.blockRotation.x) || ![0, 90, 180, 270].includes(candidate.blockRotation.y))) return false;
@@ -411,12 +527,6 @@ function validGeometryElements(elements: readonly unknown[]): elements is Resolv
     if (quadCount > 768) return false;
     const zeroAxes = candidate.from.map((value, axis) => value === candidate.to[axis]).flatMap((zero, axis) => zero ? [axis] : []);
     if (zeroAxes.length > 1) return false;
-    if (zeroAxes.length === 1 && candidate.rotation === undefined) {
-      const allowed = zeroAxes[0] === 0 ? new Set(["west", "east"])
-        : zeroAxes[0] === 1 ? new Set(["down", "up"])
-          : new Set(["north", "south"]);
-      if (faceKeys.some((face) => !allowed.has(face))) return false;
-    }
   }
   return true;
 }
@@ -483,12 +593,137 @@ function classifyAlpha(rgba: Uint8Array): TextureAlphaMode {
   return sawTransparent ? "cutout" : "opaque";
 }
 
-function blitWithGutter(target: Uint8Array, targetWidth: number, source: Uint8Array, sourceY: number, x: number, y: number, gutter: number): void {
-  for (let dy = -gutter; dy < TEXTURE_SIZE + gutter; dy += 1) {
-    for (let dx = -gutter; dx < TEXTURE_SIZE + gutter; dx += 1) {
-      const sourceX = Math.max(0, Math.min(TEXTURE_SIZE - 1, dx));
-      const clampedSourceY = sourceY + Math.max(0, Math.min(TEXTURE_SIZE - 1, dy));
-      const sourceOffset = (clampedSourceY * TEXTURE_SIZE + sourceX) * 4;
+function planAtlasPages(plans: readonly AtlasTexturePlan[], limits: TextureAtlasLimits): PlannedAtlasPage[] {
+  const pages: PlannedAtlasPage[] = [];
+  const sizes = [...new Set(plans.map((plan) => plan.textureSize))].sort((left, right) => left - right);
+  for (const textureSize of sizes) {
+    const cellSize = textureSize + limits.gutter * 2;
+    const cellsPerAxis = Math.floor(limits.maxPageSize / cellSize);
+    if (cellsPerAxis < 1) throw new TextureAtlasError("INVALID_LIMITS", `maxPageSize cannot fit one padded ${textureSize}px texture tile.`);
+    const pageCapacity = cellsPerAxis * cellsPerAxis;
+    let currentTiles: PlannedAtlasTile[] = [];
+    const flush = () => {
+      if (currentTiles.length === 0) return;
+      const columns = Math.min(cellsPerAxis, Math.ceil(Math.sqrt(currentTiles.length)));
+      const rows = Math.ceil(currentTiles.length / columns);
+      const width = nextPowerOfTwo(columns * cellSize);
+      const height = nextPowerOfTwo(rows * cellSize);
+      if (width > limits.maxPageSize || height > limits.maxPageSize) {
+        throw new TextureAtlasError("ATLAS_TOO_LARGE", `${textureSize}px atlas page exceeds its configured ${limits.maxPageSize}px dimensions.`);
+      }
+      const pageTextures: AtlasTexturePlan[] = [];
+      const pageTextureSet = new Set<AtlasTexturePlan>();
+      for (const tile of currentTiles) {
+        if (pageTextureSet.has(tile.texture)) continue;
+        pageTextureSet.add(tile.texture);
+        pageTextures.push(tile.texture);
+      }
+      const hasAnimatedSequence = pageTextures.some((plan) => (plan.texture.animation?.frames.length ?? 0) > 1);
+      let animationLookupBytes = 0;
+      if (hasAnimatedSequence) {
+        let greatestReferencedTile = -1;
+        for (const texture of pageTextures) {
+          const animation = texture.texture.animation;
+          const referencedFrames = animation && animation.frames.length > 1
+            ? [animation.frames[0]!.index, ...animation.frames.map((frame) => frame.index)]
+            : [animation?.frames[0]?.index ?? 0];
+          for (const sourceFrame of referencedFrames) {
+            const tileIndex = currentTiles.find((tile) => tile.texture === texture && tile.sourceFrame === sourceFrame)?.pageTextureIndex;
+            if (tileIndex !== undefined) greatestReferencedTile = Math.max(greatestReferencedTile, tileIndex);
+          }
+        }
+        const lookupTileCount = greatestReferencedTile + 1;
+        if (lookupTileCount > 0) {
+          const lookupWidth = Math.min(limits.maxPageSize, lookupTileCount);
+          const lookupHeight = Math.ceil(lookupTileCount / lookupWidth);
+          animationLookupBytes = lookupWidth * lookupHeight * 8;
+        }
+      }
+      pages.push({
+        index: pages.length,
+        textureSize,
+        cellSize,
+        columns,
+        rows,
+        width,
+        height,
+        rgbaBytes: width * height * 4,
+        mipmapBytes: mipmapRgbaByteCount(width, height, safeMipLevels(limits.gutter)),
+        animationLookupBytes,
+        tiles: currentTiles,
+        textures: pageTextures,
+      });
+      currentTiles = [];
+    };
+
+    for (const plan of plans) {
+      if (plan.textureSize !== textureSize) continue;
+      const frameCount = plan.layout.sourceFrameCount;
+      if (frameCount > pageCapacity) {
+        throw new TextureAtlasError(
+          "ATLAS_TOO_LARGE",
+          `${plan.texture.resourceId}: animation has ${frameCount} source tiles; one ${textureSize}px page fits ${pageCapacity} tiles (${cellsPerAxis}x${cellsPerAxis}).`,
+          plan.texture.resourceId,
+        );
+      }
+      if (currentTiles.length > 0 && currentTiles.length + frameCount > pageCapacity) flush();
+      for (let sourceFrame = 0; sourceFrame < frameCount; sourceFrame += 1) {
+        currentTiles.push({ texture: plan, sourceFrame, pageTextureIndex: currentTiles.length });
+      }
+    }
+    flush();
+  }
+  return pages;
+}
+
+function emptyMemoryEstimate(limits: TextureAtlasLimits): TextureAtlasMemoryEstimate {
+  return {
+    limitBytes: limits.maxDecodedBytes,
+    reservedAtlasBytes: limits.reservedAtlasBytes,
+    additionalWorkingSetBytes: limits.additionalWorkingSetBytes,
+    sourcePngBytes: 0,
+    sourceRgbaBytes: 0,
+    decoderWorkingSetBytes: 0,
+    normalizationBytes: 0,
+    pageRgbaBytes: 0,
+    mipmapRgbaBytes: 0,
+    animationLookupRgbaBytes: 0,
+    estimatedGpuBytes: 0,
+    estimatedPeakBytes: limits.reservedAtlasBytes + limits.additionalWorkingSetBytes,
+  };
+}
+
+function mipmapRgbaByteCount(width: number, height: number, safeLevels: number): number {
+  let bytes = 0;
+  let mipWidth = width;
+  let mipHeight = height;
+  const levelCount = Math.max(0, Math.min(safeLevels, Math.floor(Math.log2(Math.max(1, Math.min(width, height))))));
+  for (let level = 0; level < levelCount; level += 1) {
+    mipWidth = Math.max(1, Math.floor(mipWidth / 2));
+    mipHeight = Math.max(1, Math.floor(mipHeight / 2));
+    bytes += mipWidth * mipHeight * 4;
+  }
+  return bytes;
+}
+
+function blitSourceFrameWithGutter(
+  target: Uint8Array,
+  targetWidth: number,
+  source: Uint8Array,
+  sourceWidth: number,
+  layout: AtlasFrameLayout,
+  frameIndex: number,
+  x: number,
+  y: number,
+  gutter: number,
+): void {
+  const frameColumn = frameIndex % layout.sourceColumns;
+  const frameRow = Math.floor(frameIndex / layout.sourceColumns);
+  for (let dy = -gutter; dy < layout.frameHeight + gutter; dy += 1) {
+    for (let dx = -gutter; dx < layout.frameWidth + gutter; dx += 1) {
+      const sourceX = frameColumn * layout.frameWidth + Math.max(0, Math.min(layout.frameWidth - 1, dx));
+      const sourceY = frameRow * layout.frameHeight + Math.max(0, Math.min(layout.frameHeight - 1, dy));
+      const sourceOffset = (sourceY * sourceWidth + sourceX) * 4;
       const targetOffset = ((y + dy) * targetWidth + x + dx) * 4;
       target.set(source.subarray(sourceOffset, sourceOffset + 4), targetOffset);
     }
@@ -496,8 +731,8 @@ function blitWithGutter(target: Uint8Array, targetWidth: number, source: Uint8Ar
 }
 
 interface AtlasFrameLayout {
-  frameWidth: 16 | 32;
-  frameHeight: 16 | 32;
+  frameWidth: ResourcePackTextureSize;
+  frameHeight: ResourcePackTextureSize;
   sourceColumns: number;
   sourceRows: number;
   sourceFrameCount: number;
@@ -505,13 +740,13 @@ interface AtlasFrameLayout {
 
 function validateAtlasAnimation(animation: ResourcePackTextureAnimation | undefined, sheetWidth: number, sheetHeight: number): AtlasFrameLayout {
   if (animation === undefined) {
-    if (sheetWidth !== 16 || sheetHeight !== 16) throw new Error("Animation metadata is required for a non-16x16 texture.");
-    return { frameWidth: 16, frameHeight: 16, sourceColumns: 1, sourceRows: 1, sourceFrameCount: 1 };
+    if (!isTextureSize(sheetWidth) || sheetHeight !== sheetWidth) throw new Error("Animation metadata is required for a non-square 16px/32px/64px/128px/256px texture.");
+    return { frameWidth: sheetWidth, frameHeight: sheetWidth, sourceColumns: 1, sourceRows: 1, sourceFrameCount: 1 };
   }
   const sourceColumns = animation.sourceColumns ?? sheetWidth / animation.frameWidth;
   const sourceRows = animation.sourceRows ?? sheetHeight / animation.frameHeight;
   if (
-    (animation.frameWidth !== 16 && animation.frameWidth !== 32)
+    !isTextureSize(animation.frameWidth)
     || animation.frameHeight !== animation.frameWidth
     || !Number.isSafeInteger(sourceColumns)
     || sourceColumns < 1
@@ -547,47 +782,16 @@ function validateAtlasAnimation(animation: ResourcePackTextureAnimation | undefi
   };
 }
 
-function normalizeFrameTiles(source: Uint8Array, sourceWidth: number, layout: AtlasFrameLayout): Uint8Array {
-  const output = new Uint8Array(layout.sourceFrameCount * TEXTURE_SIZE * TEXTURE_SIZE * 4);
-  const scale = layout.frameWidth / TEXTURE_SIZE;
-  for (let frameIndex = 0; frameIndex < layout.sourceFrameCount; frameIndex += 1) {
-    const frameColumn = frameIndex % layout.sourceColumns;
-    const frameRow = Math.floor(frameIndex / layout.sourceColumns);
-    for (let y = 0; y < TEXTURE_SIZE; y += 1) for (let x = 0; x < TEXTURE_SIZE; x += 1) {
-      const target = (frameIndex * TEXTURE_SIZE * TEXTURE_SIZE + y * TEXTURE_SIZE + x) * 4;
-      if (scale === 1) {
-        const sourceOffset = ((frameRow * 16 + y) * sourceWidth + frameColumn * 16 + x) * 4;
-        output.set(source.subarray(sourceOffset, sourceOffset + 4), target);
-      } else {
-        downsamplePremultiplied2x2(source, sourceWidth, frameColumn * 32 + x * 2, frameRow * 32 + y * 2, output, target);
-      }
-    }
-  }
-  return output;
-}
-
-function downsamplePremultiplied2x2(source: Uint8Array, sourceWidth: number, x: number, y: number, target: Uint8Array, targetOffset: number): void {
-  let alphaSum = 0;
-  let redSum = 0;
-  let greenSum = 0;
-  let blueSum = 0;
-  for (let dy = 0; dy < 2; dy += 1) for (let dx = 0; dx < 2; dx += 1) {
-    const offset = ((y + dy) * sourceWidth + x + dx) * 4;
-    const alpha = source[offset + 3] ?? 0;
-    alphaSum += alpha;
-    redSum += (source[offset] ?? 0) * alpha;
-    greenSum += (source[offset + 1] ?? 0) * alpha;
-    blueSum += (source[offset + 2] ?? 0) * alpha;
-  }
-  target[targetOffset] = alphaSum === 0 ? 0 : Math.round(redSum / alphaSum);
-  target[targetOffset + 1] = alphaSum === 0 ? 0 : Math.round(greenSum / alphaSum);
-  target[targetOffset + 2] = alphaSum === 0 ? 0 : Math.round(blueSum / alphaSum);
-  target[targetOffset + 3] = Math.round(alphaSum / 4);
+function isTextureSize(value: number): value is ResourcePackTextureSize {
+  return value === 16 || value === 32 || value === 64 || value === 128 || value === 256;
 }
 
 function validateLimits(limits: TextureAtlasLimits): TextureAtlasLimits {
   for (const [key, value] of Object.entries(limits)) {
-    if (!Number.isSafeInteger(value) || value <= 0) throw new TextureAtlasError("INVALID_LIMITS", `${key} must be a positive safe integer.`);
+    const allowsZero = key === "reservedAtlasBytes" || key === "additionalWorkingSetBytes";
+    if (!Number.isSafeInteger(value) || (allowsZero ? value < 0 : value <= 0)) {
+      throw new TextureAtlasError("INVALID_LIMITS", `${key} must be a ${allowsZero ? "non-negative" : "positive"} safe integer.`);
+    }
   }
   if (limits.maxPageSize > 4096 || limits.gutter > 16) throw new TextureAtlasError("INVALID_LIMITS", "Atlas dimensions or gutter exceed hard safety bounds.");
   return limits;

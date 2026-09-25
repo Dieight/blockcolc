@@ -45,12 +45,23 @@ export class IndexedDbStateRepository implements StateRepository {
     return this.readSnapshot();
   }
 
-  private async readSnapshot(): Promise<{ state: DomainState | null; revision: number }> {
+  async loadIfChanged(knownRevision: number): Promise<{ state: DomainState | null; revision: number } | null> {
+    assertExpectedRevision(knownRevision);
+    return this.readSnapshot(knownRevision);
+  }
+
+  private readSnapshot(): Promise<{ state: DomainState | null; revision: number }>;
+  private readSnapshot(knownRevision: number): Promise<{ state: DomainState | null; revision: number } | null>;
+  private async readSnapshot(knownRevision?: number): Promise<{ state: DomainState | null; revision: number } | null> {
     const db = await this.database();
     const tx = db.transaction(APP_STATE_STORE, "readonly");
     const done = transactionDone(tx);
     const record = await requestResult<CurrentStateRecord | undefined>(tx.objectStore(APP_STATE_STORE).get(CURRENT_KEY));
     await done;
+    // Keep the transaction read (including changes made by another tab), but
+    // avoid repeated schema validation and a second clone of large blueprints.
+    // IndexedDB still performs its own structured clone; this is not a cache.
+    if (knownRevision !== undefined && (record?.revision ?? 0) === knownRevision) return null;
     return {
       state: record?.state == null ? null : cloneAndParseState(record.state),
       revision: record?.revision ?? 0,

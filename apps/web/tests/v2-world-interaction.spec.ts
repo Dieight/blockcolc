@@ -67,8 +67,17 @@ test("renders the current compact world and supports bounded rotate and pinch ge
   await touch(cdp, "touchEnd", []);
   await expect.poll(async () => Number(await canvas.getAttribute("data-camera-distance-ratio"))).toBeLessThan(beforePinch);
   const zoomRatio = Number(await canvas.getAttribute("data-camera-distance-ratio"));
-  expect(zoomRatio).toBeGreaterThanOrEqual(0.5);
+  expect(zoomRatio).toBeCloseTo(0.45, 2);
   expect(zoomRatio).toBeLessThanOrEqual(1.14);
+  expect(Number(await canvas.getAttribute("data-camera-minimum-distance-ratio"))).toBeCloseTo(0.45, 2);
+  await expect(canvas).toHaveAttribute("data-visibility-near-clip-safe", "true");
+  await expect(canvas).toHaveAttribute("data-visibility-far-clip-safe", "true");
+  const zoomedInNear = Number(await canvas.getAttribute("data-camera-near"));
+  const zoomedInFar = Number(await canvas.getAttribute("data-camera-far"));
+  const zoomedInNearestTerrain = Number(await canvas.getAttribute("data-visibility-nearest-distance"));
+  const zoomedInFarthestTerrain = Number(await canvas.getAttribute("data-visibility-farthest-distance"));
+  expect(zoomedInNear).toBeLessThanOrEqual(Math.max(0.5, zoomedInNearestTerrain * 0.72) + 0.01);
+  expect(zoomedInFar - zoomedInFarthestTerrain).toBeGreaterThanOrEqual(23.99);
   const zoomed = await canvas.screenshot({ path: testInfo.outputPath("v2-world-pinched.png") });
   expect(Buffer.compare(rotated, zoomed)).not.toBe(0);
 
@@ -100,6 +109,41 @@ test("renders the current compact world and supports bounded rotate and pinch ge
   expect(Number(await canvas.getAttribute("data-render-calls"))).toBeGreaterThan(0);
   expect(Number(await canvas.getAttribute("data-render-calls"))).toBeLessThan(120);
   expect(Number(await canvas.getAttribute("data-pixel-ratio"))).toBeLessThanOrEqual(1.75);
+});
+
+test("lets the settlement inspect the same large blueprint closer than its preview", async ({ page }) => {
+  await page.addInitScript(() => localStorage.clear());
+  await page.goto("/");
+  await page.locator("label.blueprint-option").filter({ hasText: "GYPpro的豪宅（一层）" }).click();
+  const preview = page.locator('canvas[data-preview-blueprint-id="builtin-local-gyp-mansion-first-floor"]');
+  await expect(preview).toBeVisible();
+  await expect.poll(async () => Number(await preview.getAttribute("data-camera-distance-ratio"))).toBeGreaterThan(0);
+  await page.addStyleTag({ content: ".blueprint-preview,.world{width:420px!important;height:320px!important;min-height:320px!important;max-height:320px!important}" });
+  const previewBox = await preview.boundingBox();
+  if (!previewBox) throw new Error("Blueprint preview has no layout box");
+  await preview.dispatchEvent("wheel", { deltaY: -4_000, deltaMode: 0 });
+  await expect.poll(async () => Number(await preview.getAttribute("data-camera-distance-ratio"))).toBeCloseTo(0.65, 2);
+  const previewDistance = Number(await preview.getAttribute("data-camera-distance"));
+  const previewRatio = Number(await preview.getAttribute("data-camera-distance-ratio"));
+
+  await page.getByLabel("大型任务").fill("相机缩放对照");
+  await page.getByRole("button", { name: "开始建造" }).click();
+  const world = page.getByLabel("项目建筑世界");
+  await expect(world).toBeVisible();
+  await expect.poll(async () => Number(await world.getAttribute("data-camera-distance-ratio"))).toBeGreaterThan(0);
+  const worldBox = await world.boundingBox();
+  if (!worldBox) throw new Error("Settlement world has no layout box");
+  expect(Math.abs(worldBox.width - previewBox.width)).toBeLessThanOrEqual(2);
+  expect(Math.abs(worldBox.height - previewBox.height)).toBeLessThanOrEqual(2);
+  await world.dispatchEvent("wheel", { deltaY: -4_000, deltaMode: 0 });
+  await expect.poll(async () => Number(await world.getAttribute("data-camera-distance-ratio"))).toBeCloseTo(0.45, 2);
+  const worldDistance = Number(await world.getAttribute("data-camera-distance"));
+  const worldRatio = Number(await world.getAttribute("data-camera-distance-ratio"));
+
+  expect(worldDistance, `preview=${previewDistance} (ratio ${previewRatio}), settlement=${worldDistance} (ratio ${worldRatio})`)
+    .toBeLessThan(previewDistance * 0.95);
+  await expect(world).toHaveAttribute("data-visibility-near-clip-safe", "true");
+  await expect(world).toHaveAttribute("data-visibility-far-clip-safe", "true");
 });
 
 async function touch(

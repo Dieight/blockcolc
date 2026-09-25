@@ -26,6 +26,14 @@ export const DEFAULT_JAVA_NBT_LIMITS: Readonly<JavaNbtLimits> = Object.freeze({
   maxStringBytes: 65_535,
 });
 
+export const JAVA_NBT_TAG_TYPE = Object.freeze({ BYTE: TAG_BYTE, INT: TAG_INT, FLOAT: TAG_FLOAT } as const);
+export type PistonEntityNumericField = "facing" | "progress" | "extending" | "source";
+
+export interface JavaNbtPistonDocument {
+  root: Record<string, unknown>;
+  getNumericTagType(entity: Record<string, unknown>, field: PistonEntityNumericField): number | undefined;
+}
+
 export class JavaNbtParseError extends Error {
   override readonly name = "JavaNbtParseError";
 }
@@ -43,15 +51,30 @@ export function parseJavaNbt(
   return new JavaNbtReader(input, resolved).parseRootCompound();
 }
 
+/** Parses Litematic NBT while retaining only the primitive tag kinds needed to validate piston pose fields. */
+export function parseJavaNbtWithPistonNumericTagTypes(
+  input: Uint8Array,
+  limits: Partial<JavaNbtLimits> = {},
+): JavaNbtPistonDocument {
+  const reader = new JavaNbtReader(input, resolveLimits(limits), true);
+  const root = reader.parseRootCompound();
+  return {
+    root,
+    getNumericTagType: (entity, field) => reader.getPistonNumericTagType(entity, field),
+  };
+}
+
 class JavaNbtReader {
   private readonly view: DataView;
   private readonly decoder = new TextDecoder("utf-8", { fatal: true });
   private offset = 0;
   private tagCount = 0;
+  private readonly pistonNumericTagTypes = new WeakMap<Record<string, unknown>, number>();
 
   constructor(
     private readonly bytes: Uint8Array,
     private readonly limits: JavaNbtLimits,
+    private readonly trackPistonNumericTagTypes = false,
   ) {
     this.view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   }
@@ -66,7 +89,15 @@ class JavaNbtReader {
     return root as Record<string, unknown>;
   }
 
-  private readPayload(type: number, depth: number): unknown {
+  getPistonNumericTagType(entity: Record<string, unknown>, field: PistonEntityNumericField): number | undefined {
+    const mask = this.pistonNumericTagTypes.get(entity);
+    if (mask === undefined) return undefined;
+    const index = PISTON_NUMERIC_FIELDS.indexOf(field);
+    const tagType = (mask >>> (index * 4)) & 0xf;
+    return tagType === 0 ? undefined : tagType;
+  }
+
+  private readPayload(type: number, depth: number, isTileEntityList = false, isPistonTileEntity = false): unknown {
     if (depth > this.limits.maxDepth) this.fail(`NBT depth exceeds ${this.limits.maxDepth}`);
     switch (type) {
       case TAG_BYTE: return this.readInt8("byte payload");
@@ -77,28 +108,39 @@ class JavaNbtReader {
       case TAG_DOUBLE: return this.readFloat64("double payload");
       case TAG_BYTE_ARRAY: return this.readByteArray();
       case TAG_STRING: return this.readString("string payload");
-      case TAG_LIST: return this.readList(depth);
-      case TAG_COMPOUND: return this.readCompound(depth);
+      case TAG_LIST: return this.readList(depth, isTileEntityList);
+      case TAG_COMPOUND: return this.readCompound(depth, isPistonTileEntity);
       case TAG_INT_ARRAY: return this.readIntArray();
       case TAG_LONG_ARRAY: return this.readLongArray();
       default: this.fail(`Unsupported NBT tag type ${type}`);
     }
   }
 
-  private readCompound(depth: number): Record<string, unknown> {
+  private readCompound(depth: number, isPistonTileEntity: boolean): Record<string, unknown> {
     const output: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
+    let pistonNumericTagTypeMask = 0;
     while (true) {
       const type = this.readUint8("compound tag type");
-      if (type === TAG_END) return output;
+      if (type === TAG_END) {
+        if (this.trackPistonNumericTagTypes && isPistonTileEntity
+          && output.id === "minecraft:piston" && pistonNumericTagTypeMask !== 0) {
+          this.pistonNumericTagTypes.set(output, pistonNumericTagTypeMask);
+        }
+        return output;
+      }
       this.assertPayloadType(type);
       this.countTag();
       const name = this.readString("compound tag name");
       if (Object.prototype.hasOwnProperty.call(output, name)) this.fail(`Duplicate compound tag ${JSON.stringify(name)}`);
-      output[name] = this.readPayload(type, depth + 1);
+      output[name] = this.readPayload(type, depth + 1, !isPistonTileEntity && name === "TileEntities" && type === TAG_LIST);
+      if (this.trackPistonNumericTagTypes && isPistonTileEntity && type >= TAG_BYTE && type <= TAG_DOUBLE) {
+        const fieldIndex = PISTON_NUMERIC_FIELDS.indexOf(name as PistonEntityNumericField);
+        if (fieldIndex >= 0) pistonNumericTagTypeMask |= type << (fieldIndex * 4);
+      }
     }
   }
 
-  private readList(depth: number): unknown[] {
+  private readList(depth: number, isTileEntityList: boolean): unknown[] {
     const itemType = this.readUint8("list item type");
     const length = this.readCollectionLength("list");
     if (itemType === TAG_END && length !== 0) this.fail("TAG_End list type is only valid for an empty list");
@@ -107,7 +149,7 @@ class JavaNbtReader {
     const output = new Array<unknown>(length);
     for (let index = 0; index < length; index += 1) {
       this.countTag();
-      output[index] = this.readPayload(itemType, depth + 1);
+      output[index] = this.readPayload(itemType, depth + 1, false, isTileEntityList && itemType === TAG_COMPOUND);
     }
     return output;
   }
@@ -235,6 +277,8 @@ class JavaNbtReader {
     throw new JavaNbtParseError(`${message} at byte ${this.offset}`);
   }
 }
+
+const PISTON_NUMERIC_FIELDS: readonly PistonEntityNumericField[] = ["facing", "progress", "extending", "source"];
 
 function resolveLimits(overrides: Partial<JavaNbtLimits>): JavaNbtLimits {
   const limits = { ...DEFAULT_JAVA_NBT_LIMITS, ...overrides };

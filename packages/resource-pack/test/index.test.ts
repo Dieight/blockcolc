@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildJava16xTextureAtlas,
   classifyJava16xPngAlpha,
+  decodePngRgba,
   mapBlockTexturesToAtlas,
   parseJava16xResourcePack,
   resolveFaceTextureRotation,
@@ -51,6 +52,59 @@ describe("parseJava16xResourcePack", () => {
     ).toThrowError(expect.objectContaining({ code: "INVALID_PACK_MCMETA" }));
   });
 
+  it("accepts modern 26.3 pack ranges without the optional legacy pack_format", () => {
+    const pack = parseJava16xResourcePack(makeZip({
+      "pack.mcmeta": strToU8(JSON.stringify({ pack: {
+        min_format: [97, 1], max_format: 97, description: { text: "26.3 pack" },
+      } })),
+    })).pack;
+    expect(pack).toEqual({
+      packFormat: 97,
+      minFormat: [97, 1],
+      maxFormat: [97, 0x7fffffff],
+      description: { text: "26.3 pack" },
+    });
+  });
+
+  it("keeps bounded large weighted variants used by texture-variation packs", () => {
+    const choices = Array.from({ length: 80 }, (_, index) => ({ model: `block/dirt${index}`, weight: 1 }));
+    const manifest = parseJava16xResourcePack(makeZip({
+      "pack.mcmeta": packMetadata,
+      "assets/minecraft/blockstates/dirt.json": strToU8(JSON.stringify({ variants: { "": choices } })),
+    }));
+    expect(manifest.blockStates[0]?.variants[0]?.choices).toHaveLength(80);
+    const rejected = parseJava16xResourcePack(makeZip({
+      "pack.mcmeta": packMetadata,
+      "assets/minecraft/blockstates/dirt.json": strToU8(JSON.stringify({ variants: { "": [...choices, ...choices] } })),
+    }));
+    expect(rejected.summary.issues).toEqual([expect.objectContaining({ code: "INVALID_BLOCKSTATE_JSON" })]);
+  });
+
+  it("decodes compact 1-bit grayscale PNGs used by real resource packs", () => {
+    const png = makeGrayscale1BitPng();
+    const decoded = decodePngRgba(png);
+    expect(pixelAt(decoded.rgba, 16, 0, 0)).toEqual([0, 0, 0, 0]);
+    expect(pixelAt(decoded.rgba, 16, 15, 0)).toEqual([255, 255, 255, 255]);
+    const manifest = parseJava16xResourcePack(makeZip({
+      "pack.mcmeta": packMetadata,
+      "assets/minecraft/textures/block/grayscale.png": png,
+    }));
+    expect(buildJava16xTextureAtlas(manifest).entries[0]?.alphaMode).toBe("cutout");
+  });
+
+  it("rejects malformed or inverted modern pack ranges and pre-65 ranges without pack_format", () => {
+    for (const pack of [
+      { min_format: [97, 1], description: "missing max" },
+      { min_format: [97, 2], max_format: [97, 1], description: "inverted" },
+      { min_format: [97, -1], max_format: 97, description: "negative minor" },
+      { min_format: 34, max_format: 97, description: "missing legacy format" },
+    ]) {
+      expect(() => parseJava16xResourcePack(makeZip({
+        "pack.mcmeta": strToU8(JSON.stringify({ pack })),
+      }))).toThrowError(expect.objectContaining({ code: "INVALID_PACK_MCMETA" }));
+    }
+  });
+
   it("accepts the larger file lists used by current 16x packs while retaining an explicit override gate", () => {
     const files: Record<string, Uint8Array> = { "pack.mcmeta": packMetadata };
     for (let index = 0; index < 4_200; index += 1) files[`assets/minecraft/opt/${index}.json`] = strToU8("{}");
@@ -63,11 +117,11 @@ describe("parseJava16xResourcePack", () => {
     );
   });
 
-  it("reports non-16x and invalid PNG files without inventing textures", () => {
+  it("reports unsupported static dimensions and invalid PNG files without inventing textures", () => {
     const result = parseJava16xResourcePack(
       makeZip({
         "pack.mcmeta": packMetadata,
-        "assets/minecraft/textures/block/high_res.png": makePng(32, 32),
+        "assets/minecraft/textures/block/high_res.png": makePng(48, 48),
         "assets/minecraft/textures/block/broken.png": strToU8("not a png"),
       }),
     );
@@ -495,6 +549,19 @@ function makeRgbaPng(pixel: (x: number, y: number) => readonly [number, number, 
     for (let x = 0; x < 16; x += 1) rows.set(pixel(x, y), row + 1 + x * 4);
   }
   return concat(signature, pngChunk("IHDR", ihdr), pngChunk("IDAT", zlibSync(rows)), pngChunk("IEND", new Uint8Array()));
+}
+
+function makeGrayscale1BitPng(): Uint8Array {
+  const signature = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
+  const ihdr = new Uint8Array(13);
+  const view = new DataView(ihdr.buffer);
+  view.setUint32(0, 16, false);
+  view.setUint32(4, 16, false);
+  ihdr.set([1, 0, 0, 0, 0], 8);
+  const rows = new Uint8Array(16 * 3);
+  for (let y = 0; y < 16; y += 1) rows.set([0, 0x00, 0xff], y * 3);
+  return concat(signature, pngChunk("IHDR", ihdr), pngChunk("tRNS", new Uint8Array([0, 0])),
+    pngChunk("IDAT", zlibSync(rows)), pngChunk("IEND", new Uint8Array()));
 }
 
 function pixelAt(rgba: Uint8Array, width: number, x: number, y: number): number[] {

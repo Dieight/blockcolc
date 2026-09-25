@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 const state = (title: string) => ({
-  schemaVersion: 10 as const,
+  schemaVersion: 12 as const,
   projects: [{ id: "p1", kind: "finite" as const, habit: null, settlementIndex: 0, title, blueprintId: "small", importedBlueprint: null, createdAt: "2026-07-23T08:00:00.000Z", status: "active" as const, subtaskStructureLocked: false, subtasks: [{ id: "s1", title: "First", order: 0, progressBasisPoints: 0 }] }],
   habitBuildings: [],
   activeProjectId: "p1",
@@ -13,7 +13,7 @@ const state = (title: string) => ({
   calendar: { timeZone: "Asia/Shanghai", restWeekdays: [0, 6] },
   decayPolicy: { enabled: false, gracePlannedDays: 2, repairMultiplierBasisPoints: 20_000, damagePerMissedPlannedDayBasisPoints: null },
   projectConditions: [{ projectId: "p1", conditionBasisPoints: 10_000, inactivityAnchorAt: null, assessedMissedPlannedDays: 0 }],
-  focusIntegrityPolicy: { enabled: true, maxEffectiveExcursions: 3 },
+  focusIntegrityPolicy: { enabled: true, maxEffectiveExcursions: 3, excursionThresholdSeconds: 3 },
   decorationBlueprintResources: [],
   decorationRewards: [],
   buildingBlueprintResources: [],

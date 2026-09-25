@@ -208,6 +208,168 @@ async function createProject(service: ApplicationService, subtasks = ["Foundatio
 }
 
 describe("initialization and command persistence", () => {
+  it("starts a reserved round at its absolute instant and makes deadline recovery retries idempotent", async () => {
+    const f = await fixture();
+    f.clock.set("2026-07-20T08:30:00.000Z");
+    const project = await createProject(f.service, ["One"]);
+    f.clock.set("2026-07-20T09:00:00.000Z");
+    const command = { type: "StartFocus" as const, projectId: project.id, subtaskId: project.subtasks[0]!.id, plannedDurationMs: 120_000 };
+    const reservation = { sessionId: "auto-plan-a-round-2", scheduledAt: "2026-07-20T08:59:00.000Z" };
+    const started = await f.service.startScheduledFocus(command, reservation);
+    expect(started).toMatchObject({ ok: true, state: { activeFocusSession: {
+      id: reservation.sessionId, startedAt: reservation.scheduledAt, endsAt: "2026-07-20T09:01:00.000Z",
+    } } });
+    expect(f.notifications.requestCount).toBe(0);
+    const savesAfterStart = f.repository.saves;
+
+    await expect(f.service.startScheduledFocus(command, reservation)).resolves.toMatchObject({ ok: true, events: [] });
+    expect(f.repository.saves).toBe(savesAfterStart);
+    expect(f.service.snapshot().activeFocusSession?.id).toBe(reservation.sessionId);
+
+    // If the process wakes after this reserved round has already elapsed, the
+    // same request completes it at its persisted absolute end and replaying it
+    // again cannot add a duplicate history record.
+    f.clock.set("2026-07-20T09:10:00.000Z");
+    await expect(f.service.startScheduledFocus(command, reservation)).resolves.toMatchObject({
+      ok: true, state: { activeFocusSession: null }, events: [{ type: "FocusCompleted", sessionId: reservation.sessionId }],
+    });
+    const savesAfterRecovery = f.repository.saves;
+    await expect(f.service.startScheduledFocus(command, reservation)).resolves.toMatchObject({ ok: true, events: [] });
+    expect(f.repository.saves).toBe(savesAfterRecovery);
+    expect(f.service.snapshot().focusHistory.filter(session => session.id === reservation.sessionId)).toHaveLength(1);
+    expect(f.service.snapshot().focusHistory[0]).toMatchObject({ completedAt: "2026-07-20T09:01:00.000Z", actualDurationMs: 120_000 });
+  });
+
+  it("retries a scheduled start after a failed save and rejects future or mismatched reservations", async () => {
+    const f = await fixture();
+    f.clock.set("2026-07-20T08:30:00.000Z");
+    const project = await createProject(f.service, ["One"]);
+    f.clock.set("2026-07-20T09:00:00.000Z");
+    const command = { type: "StartFocus" as const, projectId: project.id, subtaskId: project.subtasks[0]!.id, plannedDurationMs: 60_000 };
+    const reservation = { sessionId: "auto-plan-b-round-2", scheduledAt: "2026-07-20T08:59:00.000Z" };
+    f.repository.failNextSave = true;
+    await expect(f.service.startScheduledFocus(command, reservation)).rejects.toThrow();
+    expect(f.service.snapshot().activeFocusSession).toBeNull();
+    await expect(f.service.startScheduledFocus(command, reservation)).resolves.toMatchObject({ ok: true });
+
+    const saves = f.repository.saves;
+    await expect(f.service.startScheduledFocus(command, {
+      sessionId: "auto-plan-b-round-3", scheduledAt: "2026-07-20T09:05:00.000Z",
+    })).resolves.toMatchObject({ ok: false, code: "INVALID_INPUT" });
+    await expect(f.service.startScheduledFocus(command, {
+      ...reservation, scheduledAt: "2026-07-20T08:58:00.000Z",
+    })).resolves.toMatchObject({ ok: false, code: "DUPLICATE_ID" });
+    expect(f.repository.saves).toBe(saves);
+  });
+
+  it("uses fresh conditional reads across every notification boundary without cloning unchanged repository state", async () => {
+    const f = await fixture();
+    const project = await createProject(f.service, ["One"]);
+    await f.service.dispatch({ type: "StartFocus", subtaskId: project.subtasks[0]!.id, plannedDurationMs: 60_000 });
+    const revisions: number[] = [];
+    Object.assign(f.repository, { loadIfChanged: async (known: number) => {
+      revisions.push(known);
+      return known === f.repository.revision ? null : f.repository.load();
+    } });
+    f.log.length = 0;
+    const before = f.service.snapshot();
+    await f.service.resume();
+    expect(revisions).toEqual([f.repository.revision, f.repository.revision, f.repository.revision]);
+    expect(f.log).not.toContain("load");
+    expect(f.service.snapshot()).toBe(before);
+
+    // An external replacement during the asynchronous native capability read
+    // must still be adopted, with the obsolete notification cancelled.
+    let release!: () => void;
+    f.notifications.refreshGate = new Promise<void>(resolve => { release = resolve; });
+    const priorRefreshCount = f.notifications.refreshCount;
+    const pending = f.service.resume();
+    await waitUntil(() => f.notifications.refreshCount > priorRefreshCount);
+    f.repository.externalReplace(createInitialState());
+    release();
+    const result = await pending;
+    expect(result.state.activeFocusSession).toBeNull();
+    expect(f.service.snapshot().projects).toEqual([]);
+    expect(f.notifications.scheduled.size).toBe(0);
+  });
+
+  it('signals read-only observers only after a successful saved adoption', async () => {
+    const f = await fixture(); const saved: number[] = [];
+    f.service.subscribeCommitted(() => { saved.push(f.repository.persisted!.focusIntegrityPolicy.excursionThresholdSeconds); });
+    await f.service.dispatch({ type: 'ConfigureFocusIntegrity', enabled: true, maxEffectiveExcursions: 3, excursionThresholdSeconds: 15 });
+    expect(saved).toEqual([15]);
+    f.repository.failNextSave = true;
+    await expect(f.service.dispatch({ type: 'ConfigureFocusIntegrity', enabled: true, maxEffectiveExcursions: 3, excursionThresholdSeconds: 20 })).rejects.toThrow();
+    expect(saved).toEqual([15]);
+    expect(f.service.snapshot().focusIntegrityPolicy.excursionThresholdSeconds).toBe(15);
+  });
+  it('isolates a throwing export observer and supports unsubscribing', async () => {
+    const f = await fixture(); let calls = 0;
+    f.service.subscribeCommitted(() => { throw new Error('export unavailable'); });
+    const unsubscribe = f.service.subscribeCommitted(() => { calls++; });
+    await expect(f.service.dispatch({ type: 'ConfigureFocusIntegrity', enabled: true, maxEffectiveExcursions: 4 })).resolves.toMatchObject({ ok: true });
+    expect(calls).toBe(1); unsubscribe();
+    await f.service.dispatch({ type: 'ConfigureFocusIntegrity', enabled: false, maxEffectiveExcursions: 4 });
+    expect(calls).toBe(1);
+    expect(f.repository.persisted?.focusIntegrityPolicy.enabled).toBe(false);
+  });
+  it('signals break context even when notification capability is denied', async () => {
+    const f = await fixture(); const events: Array<{ replacement: boolean; breakEndsAt?: string | null }> = [];
+    f.notifications.capability = { permission: 'denied', precision: 'unavailable', canSchedule: false };
+    f.service.subscribeCommitted(event => events.push(event));
+    await f.service.scheduleBreakCompletion({ endsAt: '2026-07-20T09:05:00.000Z' });
+    await f.service.cancelBreakCompletion();
+    expect(events).toEqual([{ replacement: false, breakEndsAt: '2026-07-20T09:05:00.000Z' }, { replacement: false, breakEndsAt: null }]);
+    expect(f.notifications.requestCount).toBe(0);
+  });
+  it('marks import and rollback as replacement but not ordinary commands', async () => {
+    const repository = new BackupMemoryRepository();
+    const service = await ApplicationService.initialize({ repository, backupRepository: repository, notifications: new FakeNotifications(), clock: new TestClock(), ids: new SequentialIds() });
+    const replacements: boolean[] = [];
+    service.subscribeCommitted(event => replacements.push(event.replacement));
+    await createProject(service);
+    expect(replacements).toEqual([false]);
+    await service.replaceFromImport(JSON.stringify(createInitialState()));
+    expect(replacements.filter(Boolean)).toHaveLength(1);
+    await service.restoreRollback('rollback-1');
+    expect(replacements.filter(Boolean)).toHaveLength(2);
+  });
+  it('marks externally missing-state recovery as replacement', async () => {
+    const f = await fixture(); const replacements: boolean[] = [];
+    f.service.subscribeCommitted(event => replacements.push(event.replacement));
+    f.repository.externalReplace(null);
+    await f.service.resume();
+    expect(replacements).toContain(true);
+  });
+  it("does not adopt a failed threshold save and restores the persisted policy", async () => {
+    const f = await fixture();
+    await f.service.dispatch({ type: "ConfigureFocusIntegrity", enabled: true, maxEffectiveExcursions: 4, excursionThresholdSeconds: 15 });
+    f.repository.failNextSave = true;
+    await expect(f.service.dispatch({ type: "ConfigureFocusIntegrity", enabled: false, maxEffectiveExcursions: 1, excursionThresholdSeconds: 60 })).rejects.toThrow();
+    expect(f.service.snapshot().focusIntegrityPolicy).toEqual({ enabled: true, maxEffectiveExcursions: 4, excursionThresholdSeconds: 15 });
+    const restored = await fixture({ state: f.repository.persisted! });
+    expect(restored.service.snapshot().focusIntegrityPolicy).toEqual(f.service.snapshot().focusIntegrityPolicy);
+  });
+  it.each(['finite', 'habit'] as const)("persists deferred %s focus and uses neutral notification context after recovery", async kind => {
+    const f = await fixture();
+    if (kind === 'finite') await createProject(f.service);
+    else await f.service.dispatch({ type: 'CreateHabitProject', title: 'Habit host', blueprintId: 'cottage', targetRounds: 10 });
+    const result = await f.service.dispatch({ type: 'StartFocus', subtaskId: null, plannedDurationMs: 60_000, marathon: true, deferredSettlement: true });
+    expect(result.ok).toBe(true);
+    const active = f.service.snapshot().activeFocusSession!;
+    expect(f.repository.persisted?.activeFocusSession).toMatchObject({ id: active.id, subtaskId: null, deferredSettlement: true });
+    expect(f.notifications.scheduled.get(active.id)).toMatchObject({
+      projectTitle: '极简专注', taskTitle: '本场专注 · 结束后统一汇报', marathon: true, endsAt: active.endsAt,
+    });
+    const restored = await fixture({ state: f.repository.persisted!, clock: f.clock });
+    await restored.service.resume();
+    expect(restored.notifications.scheduled.get(active.id)).toMatchObject({ projectTitle: '极简专注', taskTitle: '本场专注 · 结束后统一汇报' });
+    restored.clock.set('2026-07-20T09:01:00.000Z');
+    await restored.service.resume();
+    expect(restored.service.snapshot().activeFocusSession).toBeNull();
+    expect(restored.service.snapshot().focusHistory[0]).toMatchObject({ status: 'completed', deferredSettlement: true });
+    if (kind === 'habit') expect(restored.service.snapshot().projects[0]?.habit?.completedFocusSessionIds).toEqual([]);
+  });
   it("exposes a read-only notification capability refresh without requesting permission", async () => {
     const { service, notifications } = await fixture();
     notifications.capability = { permission: "granted", precision: "inexact", canSchedule: true };
@@ -345,6 +507,25 @@ describe("initialization and command persistence", () => {
     expect(f.notifications.refreshCount).toBe(0);
   });
 
+  it("keeps a due return reminder schedulable after the authoritative clock crosses the break deadline", async () => {
+    const f = await fixture();
+    f.log.length = 0;
+    const endsAt = "2026-07-20T09:05:00.000Z";
+    const notification = { endsAt, completedRounds: 2, totalRounds: 4, nextTaskTitle: "整理笔记", returnToFocus: true };
+    await expect(f.service.scheduleBreakCompletion(notification)).resolves.toEqual([]);
+
+    // The elapsed retry represents the native deadline receiver/WebView
+    // competition: only the explicitly marked due path may replace the
+    // countdown with the already-due return reminder.
+    f.clock.set(endsAt);
+    await expect(f.service.scheduleBreakCompletion({ ...notification, deadlineReached: true })).resolves.toEqual([]);
+    expect(f.notifications.scheduledBreak).toMatchObject({ ...notification, deadlineReached: true });
+    expect(f.log).toEqual(["refresh", "schedule-break", "refresh", "schedule-break"]);
+
+    await expect(f.service.cancelBreakCompletion()).resolves.toEqual([]);
+    expect(f.notifications.scheduledBreak).toBeNull();
+  });
+
   it("rejects a stale service revision and writes only after resume adopts repository truth", async () => {
     const repository = new MemoryRepository();
     const clock = new TestClock();
@@ -471,6 +652,32 @@ describe("lifecycle recovery", () => {
     expect(f.service.snapshot().activeFocusSession?.integrity.effectiveExcursions).toBe(1);
   });
 
+  it("coalesces duplicate native lifecycle no-ops without another save or epoch adoption", async () => {
+    const f = await fixture();
+    const project = await createProject(f.service, ["One"]);
+    await f.service.dispatch({ type: "StartFocus", subtaskId: project.subtasks[0]!.id, plannedDurationMs: 60_000 });
+    const savesBefore = f.repository.saves;
+    await f.service.handleLifecycleEvent({ type: "background", source: "native" });
+    const savesAfterFirst = f.repository.saves;
+    expect(savesAfterFirst).toBe(savesBefore + 1);
+    await expect(f.service.handleLifecycleEvent({ type: "background", source: "native" })).resolves.toMatchObject({ ok: true, events: [] });
+    expect(f.repository.saves).toBe(savesAfterFirst);
+    expect(f.notifications.refreshCount).toBe(0);
+  });
+
+  it("does not re-adopt an unchanged repository on a repeated foreground", async () => {
+    const f = await fixture();
+    const project = await createProject(f.service, ["One"]);
+    await f.service.dispatch({ type: "StartFocus", subtaskId: project.subtasks[0]!.id, plannedDurationMs: 60_000 });
+    let commits = 0;
+    f.service.subscribeCommitted(() => { commits += 1; });
+    const saves = f.repository.saves;
+    await f.service.resume();
+    await f.service.resume();
+    expect(commits).toBe(0);
+    expect(f.repository.saves).toBe(saves);
+  });
+
   it("counts multi-window stops as app-switch excursions (split-screen anti-cheat)", async () => {
     const f = await fixture();
     const project = await createProject(f.service, ["One"]);
@@ -531,6 +738,24 @@ describe("lifecycle recovery", () => {
     expect(f.notifications.requestCount).toBe(0);
     expect(f.notifications.refreshCount).toBe(1);
     expect(f.notifications.scheduled.get("f")?.endsAt).toBe("2026-07-20T09:01:00.000Z");
+  });
+
+  it("publishes a newer persisted revision when only daily and decay facts changed", async () => {
+    const f = await fixture();
+    const project = await createProject(f.service, ["One"]);
+    await f.service.dispatch({ type: "StartFocus", subtaskId: project.subtasks[0]!.id, plannedDurationMs: 60_000 });
+    const replacement = structuredClone(f.repository.persisted!);
+    replacement.dailyGoals.push({ date: "2026-07-20", targetPomodoros: 4, reachedAt: null, enabled: true });
+    replacement.decayPolicy = { ...replacement.decayPolicy, enabled: true, damagePerMissedPlannedDayBasisPoints: 250 };
+    f.repository.externalReplace(replacement);
+    const adopted: Array<{ replacement: boolean }> = [];
+    f.service.subscribeCommitted(event => adopted.push({ replacement: event.replacement }));
+
+    const result = await f.service.resume();
+    expect(result).toMatchObject({ ok: true, events: [] });
+    expect(f.service.snapshot().dailyGoals).toEqual(replacement.dailyGoals);
+    expect(f.service.snapshot().decayPolicy).toEqual(replacement.decayPolicy);
+    expect(adopted).toEqual([{ replacement: false }]);
   });
 
   it("completes delayed cross-midnight focus at endsAt and saves before cancelling", async () => {
@@ -907,11 +1132,18 @@ describe("serialization and projection", () => {
       project: { status: "active", blueprintId: "tower" },
       building: { completionBasisPoints: 0, conditionBasisPoints: 10_000 },
     });
+    const achievements = f.service.achievementsProjection();
+    const savesBeforeProjection = f.repository.saves;
+    expect(f.service.achievementsProjection()).toBe(achievements);
+    expect(achievements.find(item => item.id === 'building-first')?.unlocked).toBe(true);
+    expect(f.repository.saves).toBe(savesBeforeProjection);
     // Projections are epoch-cached shared copies (render-phase performance contract):
     // stable identity within a state epoch, fresh copies after the next adopted state.
     expect(f.service.worldProjection()).toBe(world);
     await f.service.dispatch({ type: "RenameProject", title: "Release renamed" });
     expect(f.service.worldProjection()).not.toBe(world);
+    expect(f.service.achievementsProjection()).not.toBe(achievements);
+    expect(f.service.achievementsProjection()).toEqual(achievements);
     expect(f.service.worldProjection().projects[1]!.project.title).toBe("Release renamed");
   });
 

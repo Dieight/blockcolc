@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
     [string]$SigningDirectory = (Join-Path $env:USERPROFILE '.blockcolc\signing'),
+    [string]$PrivateRelayDirectory,
     [switch]$QualityGateAlreadyPassed
 )
 
@@ -48,7 +49,13 @@ try {
 
         Push-Location (Join-Path $repositoryRoot 'apps\android\android')
         try {
-            & .\gradlew.bat --no-daemon --console=plain testDebugUnitTest lintRelease assembleRelease
+            # Explicit empty override keeps standard builds isolated from Gradle user properties.
+            $relayArgument = '-PblockcolcPrivateRelayDir='
+            if ($PrivateRelayDirectory) {
+                $privatePath = (Resolve-Path -LiteralPath $PrivateRelayDirectory -ErrorAction Stop).Path
+                $relayArgument += $privatePath
+            }
+            & .\gradlew.bat --no-daemon --console=plain $relayArgument testDebugUnitTest lintRelease assembleRelease
             if ($LASTEXITCODE -ne 0) { throw 'Android release build failed.' }
         }
         finally {

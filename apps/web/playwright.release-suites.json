@@ -17,7 +17,13 @@
       "name": "core",
       "workers": 2,
       "specs": [
+        "automatic-continuation.spec.ts",
+        "local-blueprint-builtins.spec.ts",
+        "focus-native-bundle.spec.ts",
         "focus-regressions.spec.ts",
+        "minimal-focus-continuity.spec.ts",
+        "minimal-achievement-entry.spec.ts",
+        "switch-contracts.spec.ts",
         "navigation-cache.spec.ts",
         "task-ime.spec.ts",
         "v10-habit-flow.spec.ts",
@@ -25,7 +31,8 @@
         "v21-marathon.spec.ts",
         "v22-integrity-ended.spec.ts",
         "v22-marathon-lane.spec.ts",
-        "v24-marathon-settle.spec.ts"
+        "v24-marathon-settle.spec.ts",
+        "statistics-repair.spec.ts"
       ]
     },
     {
@@ -34,7 +41,10 @@
       "specs": [
         "building-memory.spec.ts",
         "responsive-qa.spec.ts",
+        "ui-redesign.spec.ts",
         "settings-layout.spec.ts",
+        "daily-goal-sheet.spec.ts",
+        "focus-allocation.spec.ts",
         "v23-appearance.spec.ts",
         "v5-focus-flow.spec.ts"
       ]
@@ -54,7 +64,8 @@
         "v24-ocean.spec.ts",
         "v3-lightweight-shading.spec.ts",
         "visual-flow.spec.ts",
-        "world-coordinate-setting.spec.ts"
+        "world-coordinate-setting.spec.ts",
+        "world-followup-f05-f07.spec.ts"
       ]
     }
   ]

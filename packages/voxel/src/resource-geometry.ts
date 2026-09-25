@@ -12,9 +12,9 @@ import {
 import * as THREE from "three";
 import type { BlueprintVoxel } from "./blueprint";
 import {
-  combineTintAndOcclusionWord,
   createLocalOcclusionField,
   faceOcclusionLevelsFor,
+  packFaceOcclusionLevels,
   type LocalOcclusionField,
 } from "./local-occlusion";
 import { atlasShadowPolicy, disposeAtlasDepthMaterial, type AtlasShadowPolicy } from "./atlas-depth-material";
@@ -22,9 +22,11 @@ import {
   BLOCK_FACE_SLOTS,
   NO_FACE_TINT,
   faceTintKind,
+  isStateTintKind,
   packFaceTintKinds,
   patchAtlasAnimationFragmentShader,
   patchAtlasTintFragmentShader,
+  resolveBlockStateTint,
   type FaceTileIndices,
   type FaceTintKind,
   type FaceTintKinds,
@@ -40,6 +42,8 @@ export interface AtlasGeometryQuad {
   normal: readonly [number, number, number];
   bakedUvs: readonly [number, number, number, number, number, number, number, number];
   slot: number;
+  faceOcclusionSlot: number;
+  shadeFactor: number;
   shade: boolean;
   cullFace?: BlockFace;
 }
@@ -58,8 +62,10 @@ export interface GeometryVoxelPlan {
   topology: AtlasGeometryTopology;
   faceTiles: FaceTileIndices;
   faceTintWord: number;
-  /** Tint plus upper-bit local occlusion, populated only when batching a scene. */
-  faceVisualWord?: number;
+  /** State-dependent vanilla tint resolved per voxel and uniform batch. */
+  stateTintRgb?: number;
+  /** Local occlusion is separate from tint so extended tint classes remain exact in Float32. */
+  faceOcclusionWord?: number;
   alphaMode: TextureAlphaMode;
 }
 
@@ -71,12 +77,29 @@ export interface GeometryVoxelBatch {
   alphaMode: TextureAlphaMode;
   emissiveKind: string;
   emissiveLevel: number;
+  stateTintRgb?: number;
   entries: GeometryVoxelPlan[];
 }
 
 const alphaRank: Record<TextureAlphaMode, number> = { opaque: 0, cutout: 1, translucent: 2 };
-/** Keep imported-model draw calls bounded even when a pack has many unique shapes. */
+/** Soft draw-call target for imported geometry; crossing it is diagnostic, not a reason to cube valid models. */
 export const MAX_GEOMETRY_BATCHES = 64;
+
+export interface GeometryBatchBudget {
+  /** Recommended per-scene draw-call target. */
+  target: number;
+  /** Actual topology/material batches returned for this scene. */
+  actual: number;
+  /** Number of batches above the target; zero means the target was met. */
+  overTarget: number;
+}
+
+export interface GeometryBatchPlanningResult {
+  batches: GeometryVoxelBatch[];
+  fallbackVoxels: BlueprintVoxel[];
+  /** Exposes performance pressure while keeping every valid model on the geometry path. */
+  batchBudget: GeometryBatchBudget;
+}
 
 export function isP1GeometryBlock(
   sourceBlockId: string,
@@ -114,7 +137,7 @@ export function planGeometryVoxelPages(
   atlas: ResourcePackAtlas,
 ): GeometryVoxelPlan[] | undefined {
   if (!voxel.sourceBlockId || atlas.pages.length === 0) return undefined;
-  const resolved = resolveBlockGeometry(manifest, voxel.sourceBlockId, voxel.sourceBlockState);
+  const resolved = resolveBlockGeometry(manifest, voxel.sourceBlockId, voxel.sourceBlockState, voxel);
   const mapped = mapBlockGeometryToAtlas(resolved, atlas.source);
   if (mapped.status !== "resolved_geometry") return undefined;
   for (const element of mapped.elements) {
@@ -138,6 +161,7 @@ export function compileMappedGeometryVoxelPages(
   mapped: AtlasBlockGeometry,
 ): GeometryVoxelPlan[] | undefined {
   if (!voxel.sourceBlockId || mapped.elements.length === 0) return undefined;
+  const stateTint = resolveBlockStateTint(voxel.sourceBlockId, voxel.sourceBlockState);
   const references: Array<{ page: number; face: BlockFace; element: AtlasBlockGeometry["elements"][number]; reference: AtlasGeometryFaceReference; tintKind: FaceTintKind }> = [];
   for (const element of mapped.elements) {
     for (const face of BLOCK_FACE_SLOTS) {
@@ -150,6 +174,8 @@ export function compileMappedGeometryVoxelPages(
     }
   }
   if (references.length === 0) return undefined;
+  const hasStateTint = references.some((reference) => isStateTintKind(reference.tintKind));
+  if (hasStateTint && stateTint.status !== "resolved") return undefined;
   const pages = new Map<number, typeof references>();
   for (const item of references) {
     const pageReferences = pages.get(item.page) ?? [];
@@ -158,44 +184,75 @@ export function compileMappedGeometryVoxelPages(
   }
   const plans: GeometryVoxelPlan[] = [];
   for (const [page, pageReferences] of [...pages.entries()].sort(([left], [right]) => left - right)) {
-    const slots = new Map<string, number>();
-    const tileValues: number[] = [];
-    const tintValues: FaceTintKind[] = [];
-    const quads: AtlasGeometryQuad[] = [];
+    let slots = new Map<string, number>();
+    let tileValues: number[] = [];
+    let tintValues: FaceTintKind[] = [];
+    let quads: AtlasGeometryQuad[] = [];
+    let planElements = new Set<AtlasBlockGeometry["elements"][number]>();
     let alphaMode: TextureAlphaMode = "opaque";
+    const flushPlan = () => {
+      if (quads.length === 0) return;
+      while (tileValues.length < 6) tileValues.push(0);
+      while (tintValues.length < 6) tintValues.push(NO_FACE_TINT);
+      const canonicalPayload = geometryCanonicalPayload(quads);
+      plans.push({
+        voxel,
+        page,
+        topology: {
+          signature: geometrySignature(canonicalPayload),
+          canonicalPayload,
+          elementCount: planElements.size,
+          textureSlotCount: slots.size,
+          quads,
+        },
+        faceTiles: tileValues as unknown as FaceTileIndices,
+        faceTintWord: packFaceTintKinds(tintValues as unknown as FaceTintKinds),
+        ...(pageReferences.some(({ tintKind }) => isStateTintKind(tintKind)) && stateTint.status === "resolved"
+          ? { stateTintRgb: stateTint.rgb }
+          : {}),
+        alphaMode,
+      });
+      slots = new Map<string, number>();
+      tileValues = [];
+      tintValues = [];
+      quads = [];
+      planElements = new Set<AtlasBlockGeometry["elements"][number]>();
+      alphaMode = "opaque";
+    };
     for (const { face, element, reference, tintKind } of pageReferences) {
       const slotKey = `${reference.textureIndex}|${tintKind}`;
       let slot = slots.get(slotKey);
       if (slot === undefined) {
+        if (slots.size === 6) flushPlan();
         slot = slots.size;
-        if (slot >= 6) return undefined;
         slots.set(slotKey, slot);
         tileValues.push(reference.textureIndex);
         tintValues.push(tintKind);
       }
+      const positions = facePositions(face, element.from, element.to);
+      const preserveModelSpaceFace = element.rotation === undefined
+        && element.blockRotation !== undefined
+        && (element.blockRotation.x !== 0 || element.blockRotation.y !== 0);
+      const targetFace = preserveModelSpaceFace ? rotateGeometryFace(face, element.blockRotation!) : face;
+      const localShadeDirection = element.shadeDirectionOverride ?? (element.shade ? face : "up");
+      const shadeDirection = preserveModelSpaceFace && element.shade
+        ? rotateGeometryFace(localShadeDirection, element.blockRotation!)
+        : localShadeDirection;
       quads.push({
-        face,
-        positions: transformGeometryPositions(facePositions(face, element.from, element.to), element.rotation, element.blockRotation),
-        normal: transformGeometryNormal(faceNormal(face), element.rotation, element.blockRotation),
+        face: targetFace,
+        positions: transformGeometryPositions(positions, element.rotation, element.blockRotation),
+        normal: transformGeometryNormal(windingNormal(positions, face), element.rotation, element.blockRotation),
         bakedUvs: bakedFaceUvs(face, element.from, element.to, reference),
         slot,
+        faceOcclusionSlot: BLOCK_FACE_SLOTS.indexOf(targetFace),
+        shadeFactor: directionalShadeFactor(shadeDirection),
         shade: element.shade,
         ...(reference.cullFace === undefined ? {} : { cullFace: reference.cullFace }),
       });
+      planElements.add(element);
       if (alphaRank[reference.alphaMode] > alphaRank[alphaMode]) alphaMode = reference.alphaMode;
     }
-    while (tileValues.length < 6) tileValues.push(0);
-    while (tintValues.length < 6) tintValues.push(NO_FACE_TINT);
-    const canonicalPayload = geometryCanonicalPayload(quads);
-    const signature = geometrySignature(canonicalPayload);
-    plans.push({
-      voxel,
-      page,
-      topology: { signature, canonicalPayload, elementCount: mapped.elements.length, textureSlotCount: slots.size, quads },
-      faceTiles: tileValues as unknown as FaceTileIndices,
-      faceTintWord: packFaceTintKinds(tintValues as unknown as FaceTintKinds),
-      alphaMode,
-    });
+    flushPlan();
   }
   return plans;
 }
@@ -215,12 +272,23 @@ export function createGeometryBatches(
   manifest: ResourcePackManifest,
   atlas: ResourcePackAtlas,
   occlusionField: LocalOcclusionField = createLocalOcclusionField(voxels),
-): { batches: GeometryVoxelBatch[]; fallbackVoxels: BlueprintVoxel[] } {
-  const candidates: Array<{ voxel: BlueprintVoxel; plans: GeometryVoxelPlan[] }> = [];
+): GeometryBatchPlanningResult {
   const fallbackVoxels: BlueprintVoxel[] = [];
   const cache = new Map<string, GeometryVoxelPlan[] | null>();
+  // Position-weighted variants are resolved with the 26.3 block seed. Reusing
+  // a block/state template across coordinates would freeze every random shape
+  // to the first block; keep the fast shared cache for all single-choice IDs.
+  const positionVariantIds = new Set(manifest.blockStates
+    .filter((blockState) => blockState.variants.some((variant) => variant.choices.length > 1)
+      || blockState.multipart?.some((part) => part.apply.length > 1))
+    .map((blockState) => blockState.resourceId));
+  const groups = new Map<string, GeometryVoxelBatch>();
   for (const voxel of voxels) {
-    const cacheKey = geometryVoxelCacheKey(voxel);
+    const positionKey = positionVariantIds.has(voxel.sourceBlockId ?? "")
+      && [voxel.x, voxel.y, voxel.z].every((coordinate) => Number.isInteger(coordinate)
+        && coordinate >= -0x80000000 && coordinate <= 0x7fffffff)
+      ? `@${voxel.x}:${voxel.y}:${voxel.z}` : "";
+    const cacheKey = `${geometryVoxelCacheKey(voxel)}${positionKey}`;
     let template = cache.get(cacheKey);
     if (template === undefined) {
       template = planGeometryVoxelPages(voxel, manifest, atlas) ?? null;
@@ -231,68 +299,59 @@ export function createGeometryBatches(
       continue;
     }
     const levels = faceOcclusionLevelsFor(voxel, occlusionField);
-    candidates.push({ voxel, plans: template.map((plan) => ({
-      ...plan,
-      voxel,
-      faceVisualWord: combineTintAndOcclusionWord(plan.faceTintWord, levels),
-    })) });
-  }
-  const plans = candidates.flatMap((candidate) => candidate.plans);
-  const batches = batchGeometryPlans(plans);
-  if (batches.length <= MAX_GEOMETRY_BATCHES) return { batches, fallbackVoxels };
-
-  // A multi-page model must either render completely or use the ordinary
-  // fallback. Rank common shapes first, but never split a voxel across pages.
-  const popularity = new Map<string, number>();
-  for (const candidate of candidates) {
-    for (const key of new Set(candidate.plans.map(geometryBatchKey))) {
-      popularity.set(key, (popularity.get(key) ?? 0) + 1);
+    for (const plan of template) {
+      appendGeometryPlan(groups, {
+        ...plan,
+        voxel,
+        faceOcclusionWord: packFaceOcclusionLevels(levels),
+      });
     }
   }
-  const allowedKeys = new Set([...popularity.entries()]
-    .sort(([leftKey, leftCount], [rightKey, rightCount]) => rightCount - leftCount || compareText(leftKey, rightKey))
-    .slice(0, MAX_GEOMETRY_BATCHES)
-    .map(([key]) => key));
-  const admittedPlans: GeometryVoxelPlan[] = [];
-  for (const candidate of candidates) {
-    if (candidate.plans.every((plan) => allowedKeys.has(geometryBatchKey(plan)))) {
-      admittedPlans.push(...candidate.plans);
-    } else {
-      fallbackVoxels.push(candidate.voxel);
-    }
-  }
-  return { batches: batchGeometryPlans(admittedPlans), fallbackVoxels };
+  const batches = [...groups.values()].sort((left, right) => compareText(left.key, right.key));
+  return {
+    batches,
+    fallbackVoxels,
+    batchBudget: {
+      target: MAX_GEOMETRY_BATCHES,
+      actual: batches.length,
+      overTarget: Math.max(0, batches.length - MAX_GEOMETRY_BATCHES),
+    },
+  };
 }
 
 export function batchGeometryPlans(plans: readonly GeometryVoxelPlan[]): GeometryVoxelBatch[] {
   const groups = new Map<string, GeometryVoxelBatch>();
-  for (const plan of plans) {
-    const emissiveKind = plan.voxel.emissiveKind ?? "";
-    const emissiveLevel = plan.voxel.emissiveLevel ?? 0;
-    const key = geometryBatchKey(plan);
-    let batch = groups.get(key);
-    if (!batch) {
-      batch = {
-        key,
-        page: plan.page,
-        signature: plan.topology.signature,
-        topology: plan.topology,
-        alphaMode: plan.alphaMode,
-        emissiveKind,
-        emissiveLevel,
-        entries: [],
-      };
-      groups.set(key, batch);
-    }
-    batch.entries.push(plan);
-  }
+  for (const plan of plans) appendGeometryPlan(groups, plan);
   return [...groups.values()].sort((left, right) => compareText(left.key, right.key));
+}
+
+function appendGeometryPlan(groups: Map<string, GeometryVoxelBatch>, plan: GeometryVoxelPlan): void {
+  const emissiveKind = plan.voxel.emissiveKind ?? "";
+  const emissiveLevel = plan.voxel.emissiveLevel ?? 0;
+  const key = geometryBatchKey(plan);
+  let batch = groups.get(key);
+  if (!batch) {
+    batch = {
+      key,
+      page: plan.page,
+      signature: plan.topology.signature,
+      topology: plan.topology,
+      alphaMode: plan.alphaMode,
+      emissiveKind,
+      emissiveLevel,
+      ...(plan.stateTintRgb === undefined ? {} : { stateTintRgb: plan.stateTintRgb }),
+      entries: [],
+    };
+    groups.set(key, batch);
+  }
+  batch.entries.push(plan);
 }
 
 function geometryBatchKey(plan: GeometryVoxelPlan): string {
   const emissiveKind = plan.voxel.emissiveKind ?? "";
   const emissiveLevel = plan.voxel.emissiveLevel ?? 0;
-  return `${plan.page}|${plan.topology.signature}|${plan.topology.canonicalPayload}|${plan.alphaMode}|${emissiveKind}|${emissiveLevel}`;
+  const tintKey = plan.stateTintRgb === undefined ? "" : plan.stateTintRgb.toString(16).padStart(6, "0");
+  return `${plan.page}|${plan.topology.signature}|${plan.topology.canonicalPayload}|${plan.alphaMode}|${emissiveKind}|${emissiveLevel}|${tintKey}`;
 }
 
 export function createAtlasGeometry(batch: GeometryVoxelBatch): THREE.BufferGeometry {
@@ -300,6 +359,8 @@ export function createAtlasGeometry(batch: GeometryVoxelBatch): THREE.BufferGeom
   const normals: number[] = [];
   const uvs: number[] = [];
   const faceSlots: number[] = [];
+  const faceOcclusionSlots: number[] = [];
+  const shadeFactors: number[] = [];
   const indices: number[] = [];
   for (const quad of batch.topology.quads) {
     const base = positions.length / 3;
@@ -308,6 +369,8 @@ export function createAtlasGeometry(batch: GeometryVoxelBatch): THREE.BufferGeom
     for (let vertex = 0; vertex < 4; vertex += 1) {
       normals.push(...normal);
       faceSlots.push(quad.slot);
+      faceOcclusionSlots.push(quad.faceOcclusionSlot);
+      shadeFactors.push(quad.shadeFactor);
     }
     uvs.push(...quad.bakedUvs);
     indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
@@ -318,21 +381,26 @@ export function createAtlasGeometry(batch: GeometryVoxelBatch): THREE.BufferGeom
   geometry.setAttribute("normal", new THREE.Float32BufferAttribute(normals, 3));
   geometry.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
   geometry.setAttribute("faceSlot", new THREE.Float32BufferAttribute(faceSlots, 1));
+  geometry.setAttribute("faceOcclusionSlot", new THREE.Float32BufferAttribute(faceOcclusionSlots, 1));
+  geometry.setAttribute("faceShadeFactor", new THREE.Float32BufferAttribute(shadeFactors, 1));
   geometry.setIndex(indices);
 
   const tileA = new Float32Array(batch.entries.length * 3);
   const tileB = new Float32Array(batch.entries.length * 3);
   const tintKinds = new Float32Array(batch.entries.length);
+  const faceOcclusion = new Float32Array(batch.entries.length);
   const materialResponses = new Float32Array(batch.entries.length);
   batch.entries.forEach((entry, index) => {
     tileA.set(entry.faceTiles.slice(0, 3), index * 3);
     tileB.set(entry.faceTiles.slice(3, 6), index * 3);
-    tintKinds[index] = entry.faceVisualWord ?? entry.faceTintWord;
+    tintKinds[index] = entry.faceTintWord;
+    faceOcclusion[index] = entry.faceOcclusionWord ?? 0;
     materialResponses[index] = materialResponseCode(materialResponseForVoxel(entry.voxel));
   });
   geometry.setAttribute("instanceFaceTilesA", new THREE.InstancedBufferAttribute(tileA, 3));
   geometry.setAttribute("instanceFaceTilesB", new THREE.InstancedBufferAttribute(tileB, 3));
   geometry.setAttribute("instanceFaceTintKinds", new THREE.InstancedBufferAttribute(tintKinds, 1));
+  geometry.setAttribute("instanceFaceOcclusion", new THREE.InstancedBufferAttribute(faceOcclusion, 1));
   geometry.setAttribute("instanceMaterialResponse", new THREE.InstancedBufferAttribute(materialResponses, 1));
   geometry.computeBoundingBox();
   geometry.computeBoundingSphere();
@@ -344,6 +412,7 @@ export function createAtlasGeometryMaterial(
   page: ResourcePackAtlasPage,
   alphaMode: TextureAlphaMode,
   responseKind: MaterialResponseKind = alphaMode === "translucent" ? "glass" : "default",
+  stateTintRgb?: number,
 ): THREE.MeshStandardMaterial {
   const response = materialResponse(responseKind);
   const material = new THREE.MeshStandardMaterial({
@@ -357,9 +426,9 @@ export function createAtlasGeometryMaterial(
     alphaTest: alphaMode === "cutout" ? 0.5 : 0,
   });
   material.name = `blockcolc-atlas-geometry-${alphaMode}-${responseKind}`;
-  material.customProgramCacheKey = () => `blockcolc-atlas-geometry-v2-${alphaMode}-${page.animationLookup ? "animated" : "static"}`;
+  material.customProgramCacheKey = () => `blockcolc-atlas-geometry-v3-${alphaMode}-${page.animationLookup ? "animated" : "static"}`;
   material.onBeforeCompile = (shader) => {
-    installGeometryAtlasUniforms(shader, page);
+    installGeometryAtlasUniforms(shader, page, stateTintRgb);
     shader.vertexShader = patchAtlasGeometryVertexShader(shader.vertexShader, page.animationLookup !== undefined);
     shader.fragmentShader = patchAtlasTintFragmentShader(shader.fragmentShader);
     shader.fragmentShader = patchAtlasAnimationFragmentShader(shader.fragmentShader, page.animationLookup !== undefined);
@@ -384,7 +453,7 @@ export function applyGeometryMeshRenderPolicy(
 export function createAtlasGeometryCutoutDepthMaterial(page: ResourcePackAtlasPage, alphaTest = 0.5): THREE.MeshDepthMaterial {
   const material = new THREE.MeshDepthMaterial({ map: page.texture, alphaTest });
   material.name = "blockcolc-atlas-geometry-cutout-depth";
-  material.customProgramCacheKey = () => `blockcolc-atlas-geometry-depth-v2-${page.animationLookup ? "animated" : "static"}`;
+  material.customProgramCacheKey = () => `blockcolc-atlas-geometry-depth-v3-${page.animationLookup ? "animated" : "static"}`;
   material.onBeforeCompile = (shader) => {
     installGeometryAtlasUniforms(shader, page);
     shader.vertexShader = patchAtlasGeometryVertexShader(shader.vertexShader, page.animationLookup !== undefined);
@@ -413,20 +482,26 @@ export function patchAtlasGeometryVertexShader(vertexShader: string, animated = 
   return vertexShader
     .replace(
       "#include <common>",
-      `#include <common>\nattribute float faceSlot;\nattribute vec3 instanceFaceTilesA;\nattribute vec3 instanceFaceTilesB;\nattribute float instanceFaceTintKinds;\nuniform vec2 blockcolcAtlasSize;\nuniform float blockcolcAtlasColumns;\nuniform float blockcolcAtlasCellSize;\nuniform float blockcolcAtlasPadding;\nuniform vec3 blockcolcFoliageTint;\nuniform vec3 blockcolcGrassTint;\nuniform vec3 blockcolcWaterTint;\nvarying vec3 vBlockcolcTint;\nvarying float vBlockcolcLocalOcclusion;${animationDeclarations}`,
+      `#include <common>\nattribute float faceSlot;\nattribute float faceOcclusionSlot;\nattribute float faceShadeFactor;\nattribute vec3 instanceFaceTilesA;\nattribute vec3 instanceFaceTilesB;\nattribute float instanceFaceTintKinds;\nattribute float instanceFaceOcclusion;\nuniform vec2 blockcolcAtlasSize;\nuniform float blockcolcAtlasColumns;\nuniform float blockcolcAtlasCellSize;\nuniform float blockcolcAtlasPadding;\nuniform vec3 blockcolcFoliageTint;\nuniform vec3 blockcolcGrassTint;\nuniform vec3 blockcolcWaterTint;\nuniform vec3 blockcolcDryFoliageTint;\nuniform vec3 blockcolcSpruceLeavesTint;\nuniform vec3 blockcolcBirchLeavesTint;\nuniform vec3 blockcolcLilyPadTint;\nvarying vec3 vBlockcolcTint;\nvarying float vBlockcolcLocalOcclusion;\nvarying float vBlockcolcDirectionalShade;${animationDeclarations}`,
     )
     .replace(
       "#include <uv_vertex>",
-      `#include <uv_vertex>\nfloat blockcolcTile = faceSlot < 0.5 ? instanceFaceTilesA.x : faceSlot < 1.5 ? instanceFaceTilesA.y : faceSlot < 2.5 ? instanceFaceTilesA.z : faceSlot < 3.5 ? instanceFaceTilesB.x : faceSlot < 4.5 ? instanceFaceTilesB.y : instanceFaceTilesB.z;${animationSampling}\nfloat blockcolcTintDivisor = faceSlot < 0.5 ? 1.0 : faceSlot < 1.5 ? 4.0 : faceSlot < 2.5 ? 16.0 : faceSlot < 3.5 ? 64.0 : faceSlot < 4.5 ? 256.0 : 1024.0;\nfloat blockcolcTintKind = mod(floor(instanceFaceTintKinds / blockcolcTintDivisor), 4.0);\nvBlockcolcTint = blockcolcTintKind > 2.5 ? blockcolcWaterTint : blockcolcTintKind > 1.5 ? blockcolcGrassTint : blockcolcTintKind > 0.5 ? blockcolcFoliageTint : vec3(1.0);\nvBlockcolcLocalOcclusion = mod(floor(instanceFaceTintKinds / (4096.0 * blockcolcTintDivisor)), 4.0) / 3.0;\nfloat blockcolcColumn = mod(blockcolcTile, blockcolcAtlasColumns);\nfloat blockcolcRow = floor(blockcolcTile / blockcolcAtlasColumns);\nfloat blockcolcNextColumn = mod(blockcolcNextTile, blockcolcAtlasColumns);\nfloat blockcolcNextRow = floor(blockcolcNextTile / blockcolcAtlasColumns);\nvec2 blockcolcPixelUv = vMapUv * 16.0;\nvMapUv = (vec2(blockcolcColumn, blockcolcRow) * blockcolcAtlasCellSize + vec2(blockcolcAtlasPadding) + blockcolcPixelUv) / blockcolcAtlasSize;\n${animated ? "vBlockcolcNextMapUv = (vec2(blockcolcNextColumn, blockcolcNextRow) * blockcolcAtlasCellSize + vec2(blockcolcAtlasPadding) + blockcolcPixelUv) / blockcolcAtlasSize;" : ""}`,
+      `#include <uv_vertex>\nfloat blockcolcTile = faceSlot < 0.5 ? instanceFaceTilesA.x : faceSlot < 1.5 ? instanceFaceTilesA.y : faceSlot < 2.5 ? instanceFaceTilesA.z : faceSlot < 3.5 ? instanceFaceTilesB.x : faceSlot < 4.5 ? instanceFaceTilesB.y : instanceFaceTilesB.z;${animationSampling}\nfloat blockcolcTintDivisor = faceSlot < 0.5 ? 1.0 : faceSlot < 1.5 ? 16.0 : faceSlot < 2.5 ? 256.0 : faceSlot < 3.5 ? 4096.0 : faceSlot < 4.5 ? 65536.0 : 1048576.0;\nfloat blockcolcTintKind = mod(floor(instanceFaceTintKinds / blockcolcTintDivisor), 16.0);\nvBlockcolcTint = blockcolcTintKind < 0.5 ? vec3(1.0) : blockcolcTintKind < 1.5 ? blockcolcFoliageTint : blockcolcTintKind < 2.5 ? blockcolcGrassTint : blockcolcTintKind < 3.5 ? blockcolcWaterTint : blockcolcTintKind < 4.5 ? blockcolcDryFoliageTint : blockcolcTintKind < 5.5 ? blockcolcSpruceLeavesTint : blockcolcTintKind < 6.5 ? blockcolcBirchLeavesTint : blockcolcTintKind < 7.5 ? blockcolcLilyPadTint : vec3(1.0);\nfloat blockcolcOcclusionDivisor = faceOcclusionSlot < 0.5 ? 1.0 : faceOcclusionSlot < 1.5 ? 4.0 : faceOcclusionSlot < 2.5 ? 16.0 : faceOcclusionSlot < 3.5 ? 64.0 : faceOcclusionSlot < 4.5 ? 256.0 : 1024.0;\nvBlockcolcLocalOcclusion = mod(floor(instanceFaceOcclusion / blockcolcOcclusionDivisor), 4.0) / 3.0;\nvBlockcolcDirectionalShade = faceShadeFactor;\nfloat blockcolcColumn = mod(blockcolcTile, blockcolcAtlasColumns);\nfloat blockcolcRow = floor(blockcolcTile / blockcolcAtlasColumns);\nfloat blockcolcNextColumn = mod(blockcolcNextTile, blockcolcAtlasColumns);\nfloat blockcolcNextRow = floor(blockcolcNextTile / blockcolcAtlasColumns);\nvec2 blockcolcPixelUv = vMapUv * (blockcolcAtlasCellSize - 2.0 * blockcolcAtlasPadding);\nvMapUv = (vec2(blockcolcColumn, blockcolcRow) * blockcolcAtlasCellSize + vec2(blockcolcAtlasPadding) + blockcolcPixelUv) / blockcolcAtlasSize;\n${animated ? "vBlockcolcNextMapUv = (vec2(blockcolcNextColumn, blockcolcNextRow) * blockcolcAtlasCellSize + vec2(blockcolcAtlasPadding) + blockcolcPixelUv) / blockcolcAtlasSize;" : ""}`,
     )
-    .replace("attribute float instanceFaceTintKinds;", "attribute float instanceFaceTintKinds;\nattribute float instanceMaterialResponse;")
-    .replace("varying float vBlockcolcLocalOcclusion;", "varying float vBlockcolcLocalOcclusion;\nvarying float vBlockcolcMaterialResponse;")
-    .replace("#include <uv_vertex>\n", "#include <uv_vertex>\nvBlockcolcMaterialResponse = instanceMaterialResponse;\n");
+    .replace("attribute float instanceFaceOcclusion;", "attribute float instanceFaceOcclusion;\nattribute float instanceMaterialResponse;")
+    .replace("varying float vBlockcolcDirectionalShade;", "varying float vBlockcolcDirectionalShade;\nvarying float vBlockcolcMaterialResponse;")
+    .replace("#include <uv_vertex>\n", "#include <uv_vertex>\nvBlockcolcMaterialResponse = instanceMaterialResponse;\n")
+    .replace("uniform vec3 blockcolcLilyPadTint;", "uniform vec3 blockcolcLilyPadTint;\nuniform vec3 blockcolcStateTint;")
+    .replace(
+      ": blockcolcTintKind < 7.5 ? blockcolcLilyPadTint : vec3(1.0);",
+      ": blockcolcTintKind < 7.5 ? blockcolcLilyPadTint : blockcolcTintKind < 10.5 ? blockcolcStateTint : vec3(1.0);",
+    );
 }
 
 function installGeometryAtlasUniforms(
   shader: THREE.WebGLProgramParametersWithUniforms,
   page: ResourcePackAtlasPage,
+  stateTintRgb?: number,
 ): void {
   shader.uniforms.blockcolcAtlasSize = { value: new THREE.Vector2(page.width, page.height) };
   shader.uniforms.blockcolcAtlasColumns = { value: page.columns };
@@ -436,6 +511,11 @@ function installGeometryAtlasUniforms(
   shader.uniforms.blockcolcFoliageTint = { value: new THREE.Color(visualBiomePalette.foliage) };
   shader.uniforms.blockcolcGrassTint = { value: new THREE.Color(visualBiomePalette.grass) };
   shader.uniforms.blockcolcWaterTint = { value: new THREE.Color(visualBiomePalette.water) };
+  shader.uniforms.blockcolcDryFoliageTint = { value: new THREE.Color(visualBiomePalette.dryFoliage) };
+  shader.uniforms.blockcolcSpruceLeavesTint = { value: new THREE.Color(visualBiomePalette.spruceLeaves) };
+  shader.uniforms.blockcolcBirchLeavesTint = { value: new THREE.Color(visualBiomePalette.birchLeaves) };
+  shader.uniforms.blockcolcLilyPadTint = { value: new THREE.Color(visualBiomePalette.lilyPad) };
+  shader.uniforms.blockcolcStateTint = { value: new THREE.Color(stateTintRgb ?? 0xffffff) };
   if (page.animationLookup) {
     shader.uniforms.blockcolcAnimationLookup = { value: page.animationLookup.texture };
     shader.uniforms.blockcolcAnimationBlendLookup = { value: page.animationLookup.blendTexture };
@@ -450,6 +530,8 @@ function geometryCanonicalPayload(quads: readonly AtlasGeometryQuad[]): string {
     normal: quad.normal.map(canonicalNumber),
     bakedUvs: quad.bakedUvs.map(canonicalNumber),
     slot: quad.slot,
+    faceOcclusionSlot: quad.faceOcclusionSlot,
+    shadeFactor: canonicalNumber(quad.shadeFactor),
     shade: quad.shade,
     cullFace: quad.cullFace ?? "",
   }));
@@ -657,6 +739,45 @@ function faceNormal(face: BlockFace): readonly [number, number, number] {
     case "west": return [-1, 0, 0];
     case "east": return [1, 0, 0];
   }
+}
+
+function windingNormal(positions: AtlasGeometryQuad["positions"], face: BlockFace): readonly [number, number, number] {
+  const first = [positions[3]! - positions[0]!, positions[4]! - positions[1]!, positions[5]! - positions[2]!] as const;
+  const second = [positions[6]! - positions[0]!, positions[7]! - positions[1]!, positions[8]! - positions[2]!] as const;
+  const cross: [number, number, number] = [
+    first[1] * second[2] - first[2] * second[1],
+    first[2] * second[0] - first[0] * second[2],
+    first[0] * second[1] - first[1] * second[0],
+  ];
+  const length = Math.hypot(...cross);
+  return length === 0 ? faceNormal(face) : [cross[0] / length, cross[1] / length, cross[2] / length];
+}
+
+function directionalShadeFactor(face: BlockFace): number {
+  if (face === "down") return 0.5;
+  if (face === "up") return 1;
+  if (face === "north" || face === "south") return 0.8;
+  return 0.6;
+}
+
+function rotateGeometryFace(
+  face: BlockFace,
+  rotation: NonNullable<AtlasBlockGeometry["elements"][number]["blockRotation"]>,
+): BlockFace {
+  const vector: [number, number, number] = face === "down" ? [0, -1, 0]
+    : face === "up" ? [0, 1, 0]
+      : face === "north" ? [0, 0, -1]
+        : face === "south" ? [0, 0, 1]
+          : face === "west" ? [-1, 0, 0]
+            : [1, 0, 0];
+  let [x, y, z] = vector;
+  for (let turn = 0; turn < rotation.x / 90; turn += 1) [x, y, z] = [x, -z, y];
+  for (let turn = 0; turn < rotation.y / 90; turn += 1) [x, y, z] = [z, y, -x];
+  if (y < 0) return "down";
+  if (y > 0) return "up";
+  if (z < 0) return "north";
+  if (z > 0) return "south";
+  return x < 0 ? "west" : "east";
 }
 
 function ratio(value: number, minimum: number, maximum: number): number {

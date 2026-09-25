@@ -26,7 +26,7 @@ describe('native local file picker adapter', () => {
   });
 
   it('provides a generic resource-pack ZIP contract while Web remains a no-op', async () => {
-    expect(DEFAULT_NATIVE_RESOURCE_PACK_MAX_BYTES).toBe(32 * 1024 * 1024);
+    expect(DEFAULT_NATIVE_RESOURCE_PACK_MAX_BYTES).toBe(64 * 1024 * 1024);
     const plugin: NativeFilePickerPlugin = {
       pickFile: vi.fn(async () => ({ cancelled: true })),
       pickResourcePack: vi.fn(async () => ({ cancelled: false, name: 'Faithful 16x.zip', mimeType: 'application/zip', base64Data: 'UEsDBA==' })),

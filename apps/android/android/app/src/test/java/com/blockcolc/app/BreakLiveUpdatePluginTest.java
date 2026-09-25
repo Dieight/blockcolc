@@ -34,4 +34,45 @@ public class BreakLiveUpdatePluginTest {
         assertFalse(BreakLiveUpdatePlugin.timerTag("focus\u0000session-a")
             .equals(BreakLiveUpdatePlugin.timerTag("focus\u0000session-b")));
     }
+
+    @Test
+    public void deadlineIsOnlyOwnedByReturnToFocusBreaks() {
+        assertTrue(BreakLiveUpdatePlugin.shouldScheduleDeadline("break", true));
+        assertFalse(BreakLiveUpdatePlugin.shouldScheduleDeadline("break", false));
+        assertFalse(BreakLiveUpdatePlugin.shouldScheduleDeadline("focus", true));
+    }
+
+    @Test
+    public void deadlineRequestIdentityIsStableAndReachabilityIsAbsolute() {
+        assertTrue(BreakLiveUpdatePlugin.deadlineRequestCode("break\u0000session-a")
+            == BreakLiveUpdatePlugin.deadlineRequestCode("break\u0000session-a"));
+        assertFalse(BreakLiveUpdatePlugin.deadlineRequestCode("break\u0000session-a")
+            == BreakLiveUpdatePlugin.deadlineRequestCode("break\u0000session-b"));
+        assertTrue(BreakLiveUpdatePlugin.deadlineReached(1000L, 1000L));
+        assertFalse(BreakLiveUpdatePlugin.deadlineReached(1000L, 999L));
+    }
+
+    @Test
+    public void automaticContinuationEventsRequireStableOpaqueIdentityAndAbsoluteTime() {
+        assertTrue(BreakLiveUpdatePlugin.validAutomaticContinuationEvent(
+            "authorization-a:round:3", "authorization-a", 1000L
+        ));
+        assertFalse(BreakLiveUpdatePlugin.validAutomaticContinuationEvent(
+            "authorization-a/round/3", "authorization-a", 1000L
+        ));
+        assertFalse(BreakLiveUpdatePlugin.validAutomaticContinuationEvent(
+            "authorization-a:round:3", "", 1000L
+        ));
+        assertFalse(BreakLiveUpdatePlugin.validAutomaticContinuationEvent(
+            "authorization-a:round:3", "authorization-a", 0L
+        ));
+    }
+
+    @Test
+    public void automaticContinuationAlarmIdentityIsRepeatable() {
+        assertTrue(BreakLiveUpdatePlugin.automaticContinuationRequestCode("authorization-a:round:3")
+            == BreakLiveUpdatePlugin.automaticContinuationRequestCode("authorization-a:round:3"));
+        assertFalse(BreakLiveUpdatePlugin.automaticContinuationRequestCode("authorization-a:round:3")
+            == BreakLiveUpdatePlugin.automaticContinuationRequestCode("authorization-a:round:4"));
+    }
 }

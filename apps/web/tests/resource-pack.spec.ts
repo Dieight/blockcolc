@@ -2,10 +2,14 @@ import { expect, test } from '@playwright/test';
 import { strToU8, zipSync } from 'fflate';
 import { existsSync } from 'node:fs';
 import { deflateSync } from 'node:zlib';
-import { resolve } from 'node:path';
+import { basename, resolve } from 'node:path';
 
 test('imports, persists, switches and safely deletes a local Java resource pack', async ({page}) => {
   const archive=Buffer.from(makePack());
+  // F17: resource-pack settings are an existing-user surface.  An empty
+  // workspace after the first setup is still allowed to visit settings; do
+  // not accidentally exercise the first-project navigation gate here.
+  await page.addInitScript(() => localStorage.setItem('blockcolc-first-project-setup-v1', '1'));
   await page.goto('/');
   await page.getByRole('button',{name:'设置'}).click();
   await page.getByLabel('导入 Java 资源包 ZIP').setInputFiles({
@@ -14,7 +18,7 @@ test('imports, persists, switches and safely deletes a local Java resource pack'
     buffer:archive,
   });
 
-  await expect(page.getByRole('status')).toContainText('已导入并启用');
+  await expect(page.locator('.resource-pack-panel .backup-notice')).toContainText('已导入并启用');
   const pack=page.locator('.resource-pack-list li').filter({hasText:'local-stone'});
   await expect(pack).toContainText('1 张纹理');
   await expect(pack.getByRole('button',{name:'使用中'})).toBeDisabled();
@@ -24,7 +28,7 @@ test('imports, persists, switches and safely deletes a local Java resource pack'
     mimeType:'application/zip',
     buffer:archive,
   });
-  await expect(page.getByRole('status')).toContainText('已导入并启用');
+  await expect(page.locator('.resource-pack-panel .backup-notice')).toContainText('已导入并启用');
   await expect(page.locator('.resource-pack-list li')).toHaveCount(1);
 
   await page.reload();
@@ -50,13 +54,64 @@ test('imports, persists, switches and safely deletes a local Java resource pack'
   await expect(page.locator('.resource-pack-list li')).toHaveCount(0);
 });
 
+test('a selected base completes a separate active appearance pack across the renderer boundary', async ({page}) => {
+  test.setTimeout(60_000);
+  const shaderErrors: string[] = [];
+  page.on('console', (message) => {
+    if (message.type() === 'error' && /THREE\.WebGLProgram|shader (?:error|compilation)|gl_invalid_operation/i.test(message.text())) {
+      shaderErrors.push(message.text());
+    }
+  });
+  await page.goto('/');
+  await page.getByRole('button', {name:'开始建造'}).click();
+  const canvas = page.getByLabel('项目建筑世界');
+  await expect(canvas).toBeVisible();
+
+  await page.getByRole('button', {name:'设置'}).click();
+  await page.getByLabel('导入 Java 资源包 ZIP').setInputFiles({
+    name:'base.zip', mimeType:'application/zip', buffer:Buffer.from(makePack()),
+  });
+  await expect(page.locator('.resource-pack-panel .backup-notice')).toContainText('已导入并启用');
+  await page.locator('.resource-pack-original').getByRole('button', {name:'使用'}).click();
+  const base = page.locator('.resource-pack-list li').filter({hasText:'base'});
+  await base.getByRole('button', {name:'设为基础'}).click();
+  await expect(base).toContainText('基础层');
+  await page.getByRole('button', {name:'计时'}).click();
+  await expect(canvas).toHaveAttribute('data-active-resource-pack-id', /^sha256:/);
+
+  await page.getByRole('button', {name:'设置'}).click();
+  await page.getByLabel('导入 Java 资源包 ZIP').setInputFiles({
+    name:'overlay.zip', mimeType:'application/zip', buffer:Buffer.from(makeVisualPack()),
+  });
+  await expect(page.locator('.resource-pack-panel .backup-notice')).toContainText('已导入并启用');
+  await expect(base).toContainText('基础层');
+  await expect(page.locator('.resource-pack-list li').filter({hasText:'overlay'})).toContainText('外观层');
+  await page.getByRole('button', {name:'计时'}).click();
+  await expect(canvas).toHaveAttribute('data-active-resource-pack-id', /^layer:sha256:[a-f0-9]{64}:sha256:[a-f0-9]{64}$/);
+  const layeredId = await canvas.getAttribute('data-active-resource-pack-id');
+  const appearancePackId = layeredId?.match(/^layer:sha256:[a-f0-9]{64}:(sha256:[a-f0-9]{64})$/)?.[1];
+  expect(appearancePackId).toBeDefined();
+  await expect.poll(async () => Number(await canvas.getAttribute('data-textured-voxel-count')), {timeout:20_000}).toBeGreaterThan(0);
+
+  await page.getByRole('button', {name:'设置'}).click();
+  await base.getByRole('button', {name:'取消基础'}).click();
+  await page.getByRole('button', {name:'计时'}).click();
+  await expect(canvas).toHaveAttribute('data-active-resource-pack-id', appearancePackId!);
+  await expect.poll(async () => Number(await canvas.getAttribute('data-textured-voxel-count')), {timeout:20_000}).toBe(0);
+  await expect.poll(async () => Number(await canvas.getAttribute('data-fallback-voxel-count')), {timeout:20_000}).toBeGreaterThan(0);
+  await canvas.screenshot();
+  expect(shaderErrors).toEqual([]);
+});
+
 test('applies an atlas to a real imported building and restores original rendering', async ({page},testInfo) => {
   test.setTimeout(60_000);
   const sample=resolve(process.cwd(),'../../litematic/bd29cade-7000-42b7-adc1-0631ce512c30.litematic');
   test.skip(!existsSync(sample), 'The real Litematic compatibility fixture stays local.');
   await page.clock.install({time:new Date('2026-07-26T05:00:00.000Z')});
-  await page.goto('/?__atlasPageSize=128');
-  await page.getByLabel('导入 .litematic').setInputFiles(sample);
+  // The model-rich fixture needs multiple pages without exceeding the four-page
+  // production safety cap; 128px pages became too small as coverage grew.
+  await page.goto('/?__atlasPageSize=256');
+  await page.getByRole('group', {name:'选择建筑蓝图'}).getByLabel('导入 .litematic').setInputFiles(sample);
   await page.getByLabel('大型任务').fill('资源包视觉验证');
   await page.getByRole('button', { name: '清空小任务' }).click();
   await page.getByLabel('新增小任务').fill('验证纹理渲染');
@@ -70,7 +125,7 @@ test('applies an atlas to a real imported building and restores original renderi
 
   await page.getByRole('button',{name:'设置'}).click();
   await page.getByLabel('导入 Java 资源包 ZIP').setInputFiles({name:'visual-test.zip',mimeType:'application/zip',buffer:Buffer.from(makeVisualPack())});
-  await expect(page.getByRole('status')).toContainText('已导入并启用');
+  await expect(page.locator('.resource-pack-panel .backup-notice')).toContainText('已导入并启用');
   await page.getByRole('button',{name:'计时'}).click();
   await expect(canvas).toHaveAttribute('data-active-resource-pack-id',/sha256:/);
   await expect.poll(async()=>Number(await canvas.getAttribute('data-atlas-page-count')),{timeout:30_000}).toBeGreaterThan(1);
@@ -108,14 +163,14 @@ test('applies an atlas to a real imported building and restores original renderi
   const restored=await canvas.screenshot({path:testInfo.outputPath('restored-original.png')});
   const restoration=await pixelDifference(page,original,restored);
   // V20 ambient cloud drift makes two screenshots taken at different instants
-  // differ by ~1% even with identical geometry; 0.02 still proves the atlas was
-  // fully removed (the atlas-applied diff is far larger).
-  expect(restoration.changedPixelRatio).toBeLessThan(0.02);
+  // differ by a few percent after the animation clock advances; 0.03 still
+  // proves the atlas was fully removed (the atlas-applied diff is far larger).
+  expect(restoration.changedPixelRatio).toBeLessThan(0.03);
 });
 
 test('retextures built-in buildings through vanilla stand-in blocks', async ({ page }, testInfo) => {
   test.setTimeout(60_000);
-  await page.goto('/?__atlasPageSize=128');
+  await page.goto('/?__atlasPageSize=256');
   await page.getByRole('button', { name: '开始建造' }).click();
   await setActiveProjectProgress(page, 9900);
   await page.reload();
@@ -127,8 +182,20 @@ test('retextures built-in buildings through vanilla stand-in blocks', async ({ p
   await page.getByLabel('导入 Java 资源包 ZIP').setInputFiles({
     name: 'builtin-visual.zip', mimeType: 'application/zip', buffer: Buffer.from(makeBuiltinVisualPack()),
   });
-  await expect(page.getByRole('status')).toContainText('已导入并启用');
+  await expect(page.locator('.resource-pack-panel .backup-notice')).toContainText('已导入并启用');
+  await expect(page.locator('.boot-page-hint')).toHaveCount(0);
+  await page.evaluate(() => {
+    (window as typeof window & { __resourcePackLoadingSeen?: boolean }).__resourcePackLoadingSeen = false;
+    const observer = new MutationObserver(() => {
+      if (document.body.textContent?.includes('正在更新世界材质…')) {
+        (window as typeof window & { __resourcePackLoadingSeen?: boolean }).__resourcePackLoadingSeen = true;
+        observer.disconnect();
+      }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+  });
   await page.getByRole('button', { name: '计时' }).click();
+  await expect.poll(() => page.evaluate(() => (window as typeof window & { __resourcePackLoadingSeen?: boolean }).__resourcePackLoadingSeen)).toBe(true);
   await expect(canvas).toHaveAttribute('data-active-resource-pack-id', /sha256:/);
   await expect.poll(async () => Number(await canvas.getAttribute('data-textured-voxel-count')), { timeout: 30_000 }).toBeGreaterThan(100);
   // MT-01 phase 2: the terrain surface retextures through pack tiles too (water stays procedural).
@@ -155,7 +222,7 @@ test('renders translucent multipart panes and zero-thickness iron bars from a re
   const sample=resolve(process.cwd(),'../../litematic/a94f3c5d-b4ad-42e1-ba26-f474b204b0ea.litematic');
   test.skip(!existsSync(sample), 'The real Litematic compatibility fixture stays local.');
   await page.clock.install({time:new Date('2026-07-26T05:00:00.000Z')});
-  await page.goto('/?__atlasPageSize=128');
+  await page.goto('/?__atlasPageSize=256');
   await page.getByLabel('导入 .litematic').setInputFiles(sample);
   await page.getByLabel('大型任务').fill('P2 透明连接验证');
   await page.getByRole('button', { name: '清空小任务' }).click();
@@ -166,7 +233,7 @@ test('renders translucent multipart panes and zero-thickness iron bars from a re
   await page.getByRole('button',{name:'开始建造'}).click();
   await page.getByRole('button',{name:'设置'}).click();
   await page.getByLabel('导入 Java 资源包 ZIP').setInputFiles({name:'p2-visual-test.zip',mimeType:'application/zip',buffer:Buffer.from(makeVisualPack())});
-  await expect(page.getByRole('status')).toContainText('已导入并启用');
+  await expect(page.locator('.resource-pack-panel .backup-notice')).toContainText('已导入并启用');
   await setActiveProjectProgress(page,9900);
   await page.reload();
   const canvas=page.getByLabel('项目建筑世界');
@@ -183,6 +250,58 @@ test('renders translucent multipart panes and zero-thickness iron bars from a re
   expect(Number(await canvas.getAttribute('data-render-triangles'))).toBeLessThanOrEqual(350_000); // V23 refined far-fine tier adds terrain triangles on purpose
   await expect(canvas).toHaveAttribute('data-continuous-rendering','false');
   await canvas.screenshot({path:testInfo.outputPath('p2-multipart-pane-bars.png')});
+});
+
+test('a user-owned 26.3 client JAR supplies models beneath all four provided appearance packs', async ({page}) => {
+  test.setTimeout(360_000);
+  const shaderErrors: string[] = [];
+  page.on('console', (message) => {
+    if (message.type() === 'error' && /THREE\.WebGLProgram|shader (?:error|compilation)|gl_invalid_operation/i.test(message.text())) {
+      shaderErrors.push(message.text());
+    }
+  });
+  const clientJar = process.env.BLOCKCOLC_MC263_CLIENT_JAR;
+  const samplePacks = [
+    'Bare Bones 1.21.11.zip', 'Ashen_16x.zip', 'Plastic Texture Pack.zip', 'Stay True 1.21.5.zip',
+  ].map(name => resolve(process.cwd(), '../../artifacts/resourcepacks_test', name));
+  test.skip(!clientJar || !existsSync(clientJar) || samplePacks.some(pack => !existsSync(pack)),
+    'Optional local licensed client JAR and all four sample ZIPs are required.');
+  await page.goto('/');
+  await page.locator('label.blueprint-option').filter({hasText:'Dieight的高级火柴盒plus'}).click();
+  await expect(page.getByLabel('大型任务')).toBeVisible();
+  await page.getByLabel('大型任务').fill('26.3 材质与含水模型验证');
+  await page.getByRole('button', {name:'开始建造'}).click();
+  await setActiveProjectProgress(page, 9900);
+  await page.reload();
+  const canvas = page.getByLabel('项目建筑世界');
+  await expect(canvas).toBeVisible();
+
+  await page.getByRole('button', {name:'设置'}).click();
+  await page.getByLabel('导入 Java 资源包 ZIP').setInputFiles(clientJar!);
+  await expect(page.locator('.resource-pack-panel .backup-notice')).toContainText('已导入并启用', {timeout:120_000});
+  const base = page.locator('.resource-pack-list li').filter({hasText:basename(clientJar!, '.jar')});
+  await base.getByRole('button', {name:'设为基础'}).click();
+  await expect(base).toContainText('基础层');
+
+  const selectedIds = new Set<string>();
+  for (const [index, samplePack] of samplePacks.entries()) {
+    const previousId = await canvas.getAttribute('data-active-resource-pack-id');
+    await page.getByLabel('导入 Java 资源包 ZIP').setInputFiles(samplePack);
+  await expect(page.locator('.resource-pack-panel .backup-notice')).toContainText('已导入并启用', {timeout:90_000});
+    await page.getByRole('button', {name:'计时'}).click();
+    await expect(canvas).toHaveAttribute('data-active-resource-pack-id', /^layer:sha256:/, {timeout:90_000});
+    await expect.poll(async () => canvas.getAttribute('data-active-resource-pack-id'), {timeout:90_000}).not.toBe(previousId);
+    await expect.poll(async () => Number(await canvas.getAttribute('data-atlas-page-count')), {timeout:90_000}).toBeGreaterThan(0);
+    await expect.poll(async () => Number(await canvas.getAttribute('data-textured-voxel-count')), {timeout:90_000}).toBeGreaterThan(100);
+    // This built-in contains six water cells and two waterlogged quartz stairs.
+    await expect.poll(async () => Number(await canvas.getAttribute('data-resource-fluid-voxel-count')), {timeout:90_000}).toBeGreaterThanOrEqual(8);
+    await expect.poll(async () => Number(await canvas.getAttribute('data-resource-fluid-animated-texture-count')), {timeout:90_000}).toBeGreaterThan(0);
+    await expect.poll(async () => Number(await canvas.getAttribute('data-resource-special-voxel-count')), {timeout:90_000}).toBeGreaterThan(0);
+    selectedIds.add((await canvas.getAttribute('data-active-resource-pack-id'))!);
+    if (index < samplePacks.length - 1) await page.getByRole('button', {name:'设置'}).click();
+  }
+  expect(selectedIds.size).toBe(samplePacks.length);
+  expect(shaderErrors).toEqual([]);
 });
 
 function makePack():Uint8Array{

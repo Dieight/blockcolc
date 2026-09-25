@@ -38,4 +38,13 @@ public class AttentionStateMachineTest {
         assertEquals(NONE, state.onResume());
         assertEquals(FOREGROUND, state.onWindowFocusChanged(true));
     }
+
+    @Test
+    public void duplicateWindowFocusDoesNotEmitAnotherForeground() {
+        AttentionStateMachine state = new AttentionStateMachine();
+        assertEquals(NONE, state.onResume());
+        assertEquals(BACKGROUND, state.onWindowFocusChanged(false));
+        assertEquals(FOREGROUND, state.onWindowFocusChanged(true));
+        assertEquals(NONE, state.onWindowFocusChanged(true));
+    }
 }

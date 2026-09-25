@@ -77,13 +77,17 @@ export function createSteppedTerrainData(
   const worldSeed = options.worldSeed ?? "world-default";
   const seedHash = stableHash(worldSeed);
   const terrainGenerationVersion = options.terrainGenerationVersion ?? 4;
+  const environmentStyle = options.environmentStyle ?? "classic-island";
+  const sharedGroundHeightAt = (x: number, z: number): number => (
+    settlementGroundHeightAt(x, z, environmentStyle, placements, additionalPads)
+  );
   if (options.environmentStyle === "ocean-island") {
     const profile = terrainGenerationProfile('ocean-island', radius, terrainGenerationVersion);
-    return createOceanIslandTerrainDataV1(placements, roads, additionalPads, radius, seedHash, profile as OceanIslandTerrainProfile);
+    return createOceanIslandTerrainDataV1(placements, roads, additionalPads, radius, seedHash, profile as OceanIslandTerrainProfile, sharedGroundHeightAt);
   }
   if (natural && (terrainGenerationVersion === 2 || terrainGenerationVersion === 3 || terrainGenerationVersion === 4)) {
     const profile = terrainGenerationProfile('natural-valley', radius, terrainGenerationVersion, options.refinedFar);
-    return createNaturalTerrainDataV2(placements, roads, additionalPads, radius, seedHash, terrainGenerationVersion, profile as NaturalValleyTerrainProfile);
+    return createNaturalTerrainDataV2(placements, roads, additionalPads, radius, seedHash, terrainGenerationVersion, profile as NaturalValleyTerrainProfile, sharedGroundHeightAt);
   }
   const cells = new Map<string, number>();
   // The outer ring must still cover the farthest supported phone framing. Keep
@@ -107,7 +111,7 @@ export function createSteppedTerrainData(
       const coreNormalized = (x / radius) ** 2 + (z / radius) ** 2;
       const key = `${x}:${z}`;
       if (!natural || coreNormalized <= 1) {
-        const height = heightForCell(x, z, placements, additionalPads);
+        const height = heightForCell(x, z, placements, additionalPads, sharedGroundHeightAt);
         cells.set(key, height);
         minHeight = Math.min(minHeight, height);
         maxHeight = Math.max(maxHeight, height);
@@ -276,6 +280,7 @@ function createNaturalTerrainDataV2(
   seedHash: number,
   terrainGenerationVersion: 2 | 3 | 4,
   profile: NaturalValleyTerrainProfile,
+  roadGroundHeightAt: (x: number, z: number) => number = terrainHeightAt,
 ): MergedGeometryData {
   const { nearExtent, middleExtent, farExtent, farFineExtent, refinedFar, farCellSize } = profile;
   // Every ring boundary must land exactly on the next ring's cell lattice or
@@ -302,7 +307,7 @@ function createNaturalTerrainDataV2(
   // share exact edges (2-unit cells sit on odd centers, edges on multiples of
   // 2, which includes multiples of 16). The refinement is v4-only: legacy
   // generators keep their single 16-unit far ring untouched.
-  const support = createV2SupportContext(placements, roads, additionalPads);
+  const support = createV2SupportContext(placements, roads, additionalPads, roadGroundHeightAt);
   const hydrologyExtent = Math.min(farExtent, 560);
   const hydrologyV2 = terrainGenerationVersion === 2 ? createV2Hydrology(hydrologyExtent, seedHash, support) : null;
   const hydrologyV3 = terrainGenerationVersion === 3 || terrainGenerationVersion === 4
@@ -482,12 +487,13 @@ function createOceanIslandTerrainDataV1(
   coreRadius: number,
   seedHash: number,
   profile: OceanIslandTerrainProfile,
+  roadGroundHeightAt: (x: number, z: number) => number = (x, z) => settlementGroundHeightAt(x, z, "ocean-island"),
 ): MergedGeometryData {
   const support = createV2SupportContext(
     placements,
     roads,
     additionalPads,
-    (x, z) => settlementGroundHeightAt(x, z, "ocean-island"),
+    roadGroundHeightAt,
   );
   const constructionReach = coreRadius * 0.92;
   const { mainRadius, beach, nearExtent, middleExtent, farExtent, farCellSize, strait } = profile;
@@ -1931,10 +1937,19 @@ function heightForCell(
   additionalPads: readonly TerrainPad[],
   groundHeightAt: (x: number, z: number) => number = terrainHeightAt,
 ): number {
+  let height = groundHeightAt(x, z);
   for (const pad of additionalPads) {
-    if (Math.abs(x - pad.x) <= pad.width / 2 + 1 && Math.abs(z - pad.z) <= pad.depth / 2 + 1) return pad.groundLevel;
+    if (Math.abs(x - pad.x) <= pad.width / 2 + 1 && Math.abs(z - pad.z) <= pad.depth / 2 + 1) {
+      height = Math.max(height, pad.groundLevel);
+    }
   }
-  return groundHeightAt(x, z);
+  for (const placement of placements) {
+    if (Math.abs(x - placement.worldPosition.x) <= placement.footprint.width / 2 + 1
+      && Math.abs(z - placement.worldPosition.z) <= placement.footprint.depth / 2 + 1) {
+      height = Math.max(height, placement.worldPosition.y);
+    }
+  }
+  return height;
 }
 
 /**
@@ -1943,9 +1958,66 @@ function heightForCell(
  * four-block terrace; sampling the legacy valley height here used to carve the
  * road and its lamps back down by several layers.
  */
-export function settlementGroundHeightAt(x: number, z: number, environmentStyle: TerrainEnvironmentStyle): number {
+export function settlementGroundHeightAt(
+  x: number,
+  z: number,
+  environmentStyle: TerrainEnvironmentStyle,
+  placements: readonly VillagePlacement[] = [],
+  additionalPads: readonly TerrainPad[] = [],
+): number {
   const legacyHeight = terrainHeightAt(x, z);
-  return environmentStyle === "ocean-island" ? Math.max(4, legacyHeight) : legacyHeight;
+  let height = environmentStyle === "ocean-island" ? Math.max(4, legacyHeight) : legacyHeight;
+  for (const pad of additionalPads) {
+    if (Math.abs(x - pad.x) <= pad.width / 2 + 1 && Math.abs(z - pad.z) <= pad.depth / 2 + 1) {
+      height = Math.max(height, pad.groundLevel);
+    }
+  }
+  for (const placement of placements) {
+    if (Math.abs(x - placement.worldPosition.x) <= placement.footprint.width / 2 + 1
+      && Math.abs(z - placement.worldPosition.z) <= placement.footprint.depth / 2 + 1) {
+      height = Math.max(height, placement.worldPosition.y);
+    }
+  }
+  return height;
+}
+
+/**
+ * Computes a conservative support datum for a building footprint. Layout keeps
+ * settlement identities and x/z slots stable; only the derived y support is
+ * raised when another part of the footprint sits higher than its centre.
+ */
+export function settlementSupportHeightForPlacement(
+  placement: VillagePlacement,
+  environmentStyle: TerrainEnvironmentStyle,
+): number {
+  const minX = Math.floor(placement.worldPosition.x - placement.footprint.width / 2);
+  const maxX = Math.ceil(placement.worldPosition.x + placement.footprint.width / 2);
+  const minZ = Math.floor(placement.worldPosition.z - placement.footprint.depth / 2);
+  const maxZ = Math.ceil(placement.worldPosition.z + placement.footprint.depth / 2);
+  let support = environmentStyle === "ocean-island" ? 4 : placement.worldPosition.y;
+  // Sample every terrain cell, not every other cell. A one-cell ridge at a
+  // footprint corner is enough to pierce a building when only the centre is
+  // used as its datum, and coarse sampling can miss exactly that ridge.
+  for (let x = minX; x <= maxX; x += 1) {
+    for (let z = minZ; z <= maxZ; z += 1) {
+      support = Math.max(support, settlementGroundHeightAt(x, z, environmentStyle));
+    }
+  }
+  // Always inspect the exact corners, including odd-width/odd-depth footprints.
+  for (const x of [minX, maxX]) {
+    for (const z of [minZ, maxZ]) support = Math.max(support, settlementGroundHeightAt(x, z, environmentStyle));
+  }
+  return Math.max(placement.worldPosition.y, support);
+}
+
+export function supportGroundHeightAt(
+  x: number,
+  z: number,
+  placements: readonly VillagePlacement[],
+  additionalPads: readonly TerrainPad[],
+  environmentStyle: TerrainEnvironmentStyle,
+): number {
+  return settlementGroundHeightAt(x, z, environmentStyle, placements, additionalPads);
 }
 
 function addExposedSide(

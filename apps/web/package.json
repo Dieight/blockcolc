@@ -1,11 +1,13 @@
 {
   "name": "@tomato-clock/web",
-  "version": "1.11.0",
+  "version": "2.0.0",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
+    "prebuild": "npm run package:local-builtins -w @tomato-clock/litematic",
     "build": "tsc --noEmit && vite build",
+    "prebuild:assets": "npm run package:local-builtins -w @tomato-clock/litematic",
     "build:assets": "vite build",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests --exclude \"tests/**\"",

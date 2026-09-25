@@ -19,10 +19,15 @@ export interface LocalOcclusionField {
 }
 
 export function createLocalOcclusionField(voxels: readonly BlueprintVoxel[]): LocalOcclusionField {
-  const occluders = voxels.filter(isFullOccluder);
+  let minimumY = 0;
+  const occupied = new Set<string>();
+  for (const [index, voxel] of voxels.entries()) {
+    if (index === 0 || voxel.y < minimumY) minimumY = voxel.y;
+    if (isFullOccluder(voxel)) occupied.add(voxelKey(voxel));
+  }
   return {
-    minimumY: voxels.length > 0 ? Math.min(...voxels.map((voxel) => voxel.y)) : 0,
-    occupied: new Set(occluders.map(voxelKey)),
+    minimumY,
+    occupied,
   };
 }
 

@@ -1,6 +1,7 @@
 import {
   buildJava16xTextureAtlas,
   decodeResourcePackColormap,
+  estimatePngRgbaDecodeMemory,
   mapBlockTexturesToAtlas,
   resolveBlockTextures,
   type BlockFace,
@@ -11,9 +12,9 @@ import {
 import * as THREE from "three";
 import type { BlueprintVoxel } from "./blueprint";
 import {
-  combineTintAndOcclusionWord,
   createLocalOcclusionField,
   faceOcclusionLevelsFor,
+  packFaceOcclusionLevels,
   type LocalOcclusionField,
 } from "./local-occlusion";
 import { createVisualBiomePalette, type VisualBiomePalette } from "./visual-biome";
@@ -25,7 +26,7 @@ export type FaceTileIndices = readonly [number, number, number, number, number, 
 export type FaceUvWords = readonly [number, number, number, number, number, number];
 export type NormalizedFaceCropUv = readonly [number, number, number, number];
 export type FaceUvRotation = 0 | 90 | 180 | 270;
-export type FaceTintKind = 0 | 1 | 2 | 3;
+export type FaceTintKind = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10;
 export type FaceTintKinds = readonly [FaceTintKind, FaceTintKind, FaceTintKind, FaceTintKind, FaceTintKind, FaceTintKind];
 
 export const FULL_FACE_CROP_UV: NormalizedFaceCropUv = Object.freeze([0, 0, 1, 1]);
@@ -33,6 +34,19 @@ export const NO_FACE_TINT: FaceTintKind = 0;
 export const FOLIAGE_FACE_TINT: FaceTintKind = 1;
 export const GRASS_FACE_TINT: FaceTintKind = 2;
 export const WATER_FACE_TINT: FaceTintKind = 3;
+export const DRY_FOLIAGE_FACE_TINT: FaceTintKind = 4;
+export const SPRUCE_LEAVES_FACE_TINT: FaceTintKind = 5;
+export const BIRCH_LEAVES_FACE_TINT: FaceTintKind = 6;
+export const LILY_PAD_FACE_TINT: FaceTintKind = 7;
+export const ATTACHED_STEM_FACE_TINT: FaceTintKind = 8;
+export const REDSTONE_WIRE_FACE_TINT: FaceTintKind = 9;
+export const GROWING_STEM_FACE_TINT: FaceTintKind = 10;
+export const ATTACHED_STEM_TINT_RGB = 0xe0c71c;
+
+export type BlockStateTintResolution =
+  | { status: "none" }
+  | { status: "invalid" }
+  | { status: "resolved"; rgb: number };
 
 export interface AtlasAnimationFrame {
   textureIndex: number;
@@ -67,6 +81,8 @@ export interface AtlasTile {
 
 export interface ResourcePackAtlasPage {
   texture: THREE.DataTexture;
+  /** Native atlas tile size; legacy pages without this use the atlas default. */
+  textureSize?: number;
   width: number;
   height: number;
   columns: number;
@@ -91,9 +107,49 @@ export interface TexturedVoxelPlan {
   faceUvWordsA: FaceUvWords;
   faceUvWordsB: FaceUvWords;
   faceTintWord: number;
-  /** Tint plus upper-bit local occlusion, populated only when batching a scene. */
-  faceVisualWord?: number;
+  /** State-dependent vanilla tint resolved per voxel and uniform batch. */
+  stateTintRgb?: number;
+  /** Local occlusion is packed separately so six 4-bit tint kinds remain exact in Float32. */
+  faceOcclusionWord?: number;
+  /** Static fluid vertex heights and the Java fluid-flow UV direction. */
+  fluidSurface?: ResourceFluidSurface;
   alphaMode: TextureAlphaMode;
+}
+
+export interface ResourceFluidSurface {
+  /** NW, NE, SE, SW heights in world-block units. */
+  cornerHeights: readonly [number, number, number, number];
+  /** Java's theta value: atan2(flowZ, flowX) - pi/2. */
+  flowAngleRadians: number;
+  isWater: boolean;
+  flowing: boolean;
+}
+
+const FLUID_METADATA_BASE = 1_000_000;
+const FLUID_METADATA_WATER_BIT = 65_536;
+const FLUID_METADATA_FLOWING_BIT = 32_768;
+const FLUID_METADATA_ANGLE_STEPS = 4096;
+let liveResourcePackAtlasResidentBytes = 0;
+
+/** Four 6-bit corner heights fit exactly in a Float32 integer (24-bit mantissa). */
+export function encodeFluidCornerHeights(corners: ResourceFluidSurface["cornerHeights"]): number {
+  return corners.reduce((word, height, corner) => {
+    if (!Number.isFinite(height)) throw new RangeError("Fluid corner height must be finite");
+    const quantized = Math.round(Math.max(0, Math.min(1, height)) * 63);
+    return word + quantized * (64 ** corner);
+  }, 0);
+}
+
+/** Reuses existing per-instance attributes; no additional WebGL vertex slots are required. */
+export function encodeFluidSurfaceMetadata(surface: ResourceFluidSurface): number {
+  const angle = ((surface.flowAngleRadians % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+  const angleCode = surface.flowing
+    ? Math.round(angle / (Math.PI * 2) * FLUID_METADATA_ANGLE_STEPS) % FLUID_METADATA_ANGLE_STEPS
+    : 0;
+  return FLUID_METADATA_BASE
+    + (surface.isWater ? FLUID_METADATA_WATER_BIT : 0)
+    + (surface.flowing ? FLUID_METADATA_FLOWING_BIT : 0)
+    + angleCode;
 }
 
 export interface TexturedVoxelBatch {
@@ -103,22 +159,28 @@ export interface TexturedVoxelBatch {
   alphaMode: TextureAlphaMode;
   emissiveKind: string;
   emissiveLevel: number;
+  stateTintRgb?: number;
   entries: TexturedVoxelPlan[];
 }
 
 const alphaRank: Record<TextureAlphaMode, number> = { opaque: 0, cutout: 1, translucent: 2 };
 
 export function buildResourcePackAtlas(manifest: ResourcePackManifest, maximumSize = 2048): ResourcePackAtlas {
-  const source = buildJava16xTextureAtlas(manifest, { maxPageSize: maximumSize });
+  const source = buildJava16xTextureAtlas(manifest, {
+    maxPageSize: maximumSize,
+    reservedAtlasBytes: liveResourcePackAtlasResidentBytes,
+    additionalWorkingSetBytes: resourcePackColormapWorkingSetBytes(manifest),
+  });
+  if (source.pages.length === 0) return disposableAtlas(source, [], new Map(), 0);
   const visualBiomePalette = createVisualBiomePalette((manifest.colormaps ?? []).map((colormap) => ({
     kind: colormap.kind,
     width: colormap.width,
     height: colormap.height,
     rgba: decodeResourcePackColormap(colormap),
   })));
-  if (source.pages.length === 0) return disposableAtlas(source, [], new Map());
-  const cellSize = source.textureSize + source.gutter * 2;
   const pages = source.pages.map((page) => {
+    const textureSize = page.textureSize ?? source.textureSize;
+    const cellSize = textureSize + source.gutter * 2;
     const columns = page.columns ?? atlasColumnCount(source, page.index, page.width, cellSize);
     const texture = new THREE.DataTexture(page.rgba, page.width, page.height, THREE.RGBAFormat, THREE.UnsignedByteType);
     texture.name = `blockcolc-resource-pack-atlas-${page.index}`;
@@ -128,11 +190,15 @@ export function buildResourcePackAtlas(manifest: ResourcePackManifest, maximumSi
     texture.mipmaps = createSafeAtlasMipmaps(page.rgba, page.width, page.height, source.safeMipLevels);
     texture.anisotropy = 2;
     texture.generateMipmaps = false;
-    texture.flipY = true;
+    // `page.rgba` and the atlas UV contract both use the decoded PNG's
+    // top-row-first coordinates (`v=0` addresses atlas row 0). DataTexture's
+    // default upload flip would address the opposite atlas row and make every
+    // block sample a different, unrelated texture.
+    texture.flipY = false;
     texture.needsUpdate = true;
     const animationLookup = createAtlasAnimationLookup(source, page.index, maximumSize);
     return {
-      texture, width: page.width, height: page.height, columns, cellSize, padding: source.gutter,
+      texture, textureSize, width: page.width, height: page.height, columns, cellSize, padding: source.gutter,
       ...(animationLookup ? { animationLookup } : {}), visualBiomePalette,
     };
   });
@@ -143,7 +209,28 @@ export function buildResourcePackAtlas(manifest: ResourcePackManifest, maximumSi
     pageTextureIndex: entry.pageTextureIndex,
     alphaMode: entry.alphaMode,
   }]));
-  return disposableAtlas(source, pages, tiles);
+  return disposableAtlas(source, pages, tiles, resourcePackAtlasResidentBytes(source));
+}
+
+function resourcePackColormapWorkingSetBytes(manifest: ResourcePackManifest): number {
+  const colormaps = manifest.colormaps ?? [];
+  const retainedPngBytes = colormaps.reduce((sum, colormap) => sum + colormap.png.byteLength, 0);
+  const decodedOutputBytes = colormaps.reduce((sum, colormap) => sum + colormap.width * colormap.height * 4, 0);
+  const peakOneMapDecodeBytes = colormaps.reduce((maximum, colormap) => {
+    const estimate = estimatePngRgbaDecodeMemory(colormap.png);
+    return estimate ? Math.max(maximum, estimate.workingSetBytes) : Number.MAX_SAFE_INTEGER;
+  }, 0);
+  return retainedPngBytes + decodedOutputBytes + peakOneMapDecodeBytes;
+}
+
+function resourcePackAtlasResidentBytes(source: TextureAtlas): number {
+  const memory = source.memoryEstimate;
+  if (!memory) return source.pages.reduce((sum, page) => sum + page.rgba.byteLength, 0);
+  // Includes the source PNGs retained by the active pack, CPU page/mip/lookup
+  // arrays, and a second estimate for their live GPU copies. setResourcePack
+  // builds the next atlas before disposing this one, so its bytes are reserved.
+  return memory.sourcePngBytes + memory.pageRgbaBytes + memory.mipmapRgbaBytes
+    + memory.animationLookupRgbaBytes + memory.estimatedGpuBytes;
 }
 
 export function createSafeAtlasMipmaps(
@@ -215,6 +302,33 @@ export interface PackTileRect {
   v1: number;
 }
 
+/** Copies one padded atlas tile into an isolated texture before world-scale repeat sampling. */
+export function cropAtlasTilePixels(
+  source: Uint8Array,
+  sourceWidth: number,
+  sourceHeight: number,
+  rect: Pick<PackTileRect, "u0" | "v0" | "u1" | "v1">,
+): { pixels: Uint8Array; width: number; height: number } {
+  if (!Number.isSafeInteger(sourceWidth) || sourceWidth <= 0
+    || !Number.isSafeInteger(sourceHeight) || sourceHeight <= 0
+    || source.byteLength < sourceWidth * sourceHeight * 4) {
+    throw new RangeError("Atlas source must contain complete RGBA pixels.");
+  }
+  const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
+  const x0 = clamp(Math.round(rect.u0 * sourceWidth), 0, sourceWidth - 1);
+  const y0 = clamp(Math.round(rect.v0 * sourceHeight), 0, sourceHeight - 1);
+  const x1 = clamp(Math.round(rect.u1 * sourceWidth), x0 + 1, sourceWidth);
+  const y1 = clamp(Math.round(rect.v1 * sourceHeight), y0 + 1, sourceHeight);
+  const width = x1 - x0;
+  const height = y1 - y0;
+  const pixels = new Uint8Array(width * height * 4);
+  for (let row = 0; row < height; row += 1) {
+    const sourceStart = ((y0 + row) * sourceWidth + x0) * 4;
+    pixels.set(source.subarray(sourceStart, sourceStart + width * 4), row * width * 4);
+  }
+  return { pixels, width, height };
+}
+
 /**
  * Resolves the atlas rectangle of one face of a block for repeat-sampling
  * materials (terrain surfaces, natural trees). Undefined when the pack does
@@ -226,11 +340,17 @@ export function resolvePackTileRect(
   blockId: string,
   face: BlockFace,
 ): PackTileRect | undefined {
-  let resolution = resolveBlockTextures(manifest, blockId, {});
+  // Terrain and procedural trees share one repeating material, so they cannot
+  // vary their model choice per block. Use the same representative position as
+  // the built-in material path instead of the legacy state-only hash; this also
+  // keeps incomplete old packs from arbitrarily changing choice after their
+  // JSON order is preserved for vanilla position-seeded rendering.
+  const representativePosition = { x: 0, y: 0, z: 0 };
+  let resolution = resolveBlockTextures(manifest, blockId, {}, representativePosition);
   if (resolution.status === "fallback" && resolution.reason === "NO_MATCHING_VARIANT") {
     const entry = manifest.blockStates.find((candidate) => candidate.resourceId === blockId);
     const conditions = entry?.variants[0]?.conditions ?? {};
-    resolution = resolveBlockTextures(manifest, blockId, conditions);
+    resolution = resolveBlockTextures(manifest, blockId, conditions, representativePosition);
   }
   if (resolution.status !== "resolved") return undefined;
   const mapped = mapBlockTexturesToAtlas(resolution, atlas.source);
@@ -248,11 +368,12 @@ export function planTexturedVoxelPages(
   if (atlas.pages.length === 0) return undefined;
   const sourceBlockId = voxel.sourceBlockId ?? builtinMaterialBlockId(voxel.materialId);
   if (!sourceBlockId) return undefined;
-  let resolution = resolveBlockTextures(manifest, sourceBlockId, voxel.sourceBlockState);
+  const stateTint = resolveBlockStateTint(sourceBlockId, voxel.sourceBlockState);
+  let resolution = resolveBlockTextures(manifest, sourceBlockId, voxel.sourceBlockState, voxel);
   // Real packs often replace log/wood blocks with axis variants; built-in voxels carry
   // no block state, so retry the vertical-axis variant before falling back to procedural.
   if (resolution.status === "fallback" && voxel.sourceBlockId === undefined && resolution.reason === "NO_MATCHING_VARIANT") {
-    resolution = resolveBlockTextures(manifest, sourceBlockId, { axis: "y" });
+    resolution = resolveBlockTextures(manifest, sourceBlockId, { axis: "y" }, voxel);
   }
   const mapped = mapBlockTexturesToAtlas(resolution, atlas.source);
   if (mapped.status !== "resolved") return undefined;
@@ -274,6 +395,8 @@ export function planTexturedVoxelPages(
   });
   if (resolvedFaces.some((face) => face === undefined)) return undefined;
   type ResolvedFace = NonNullable<(typeof resolvedFaces)[number]>;
+  const hasStateTint = (resolvedFaces as ResolvedFace[]).some((face) => isStateTintKind(face.tintKind));
+  if (hasStateTint && stateTint.status !== "resolved") return undefined;
   const byPage = new Map<number, ResolvedFace[]>();
   for (const face of resolvedFaces as ResolvedFace[]) {
     const list = byPage.get(face.reference.page) ?? [];
@@ -302,6 +425,7 @@ export function planTexturedVoxelPages(
       faceUvWordsA: faceUvWordsA as unknown as FaceUvWords,
       faceUvWordsB: faceUvWordsB as unknown as FaceUvWords,
       faceTintWord: packFaceTintKinds(faceTintKinds as unknown as FaceTintKinds),
+      ...(hasStateTint && stateTint.status === "resolved" ? { stateTintRgb: stateTint.rgb } : {}),
       alphaMode,
     };
   });
@@ -324,16 +448,19 @@ export function createTextureBatches(
     for (const sourcePlan of plans) {
       const planned = {
         ...sourcePlan,
-        faceVisualWord: combineTintAndOcclusionWord(sourcePlan.faceTintWord, faceOcclusionLevelsFor(voxel, occlusionField)),
+        faceOcclusionWord: packFaceOcclusionLevels(faceOcclusionLevelsFor(voxel, occlusionField)),
       };
       const emissiveKind = voxel.emissiveKind ?? "";
       const emissiveLevel = voxel.emissiveLevel ?? 0;
-      const key = `${planned.page}|${planned.faceMask}|${planned.alphaMode}|${emissiveKind}|${emissiveLevel}`;
+      const tintKey = planned.stateTintRgb === undefined ? "" : planned.stateTintRgb.toString(16).padStart(6, "0");
+      const key = `${planned.page}|${planned.faceMask}|${planned.alphaMode}|${emissiveKind}|${emissiveLevel}|${tintKey}`;
       let batch = groups.get(key);
       if (!batch) {
         batch = {
           key, page: planned.page, faceMask: planned.faceMask,
-          alphaMode: planned.alphaMode, emissiveKind, emissiveLevel, entries: [],
+          alphaMode: planned.alphaMode, emissiveKind, emissiveLevel,
+          ...(planned.stateTintRgb === undefined ? {} : { stateTintRgb: planned.stateTintRgb }),
+          entries: [],
         };
         groups.set(key, batch);
       }
@@ -353,7 +480,6 @@ export function createTexturedBoxGeometry(entries: readonly TexturedVoxelPlan[])
   for (let index = 0; index < normals.count; index += 1) {
     slots[index] = faceSlotForNormal(normals.getX(index), normals.getY(index), normals.getZ(index));
   }
-  geometry.setAttribute("faceSlot", new THREE.Float32BufferAttribute(slots, 1));
   const first = new Float32Array(entries.length * 3);
   const second = new Float32Array(entries.length * 3);
   const uvWordAFirst = new Float32Array(entries.length * 3);
@@ -361,6 +487,7 @@ export function createTexturedBoxGeometry(entries: readonly TexturedVoxelPlan[])
   const uvWordBFirst = new Float32Array(entries.length * 3);
   const uvWordBSecond = new Float32Array(entries.length * 3);
   const tintKinds = new Float32Array(entries.length);
+  const faceOcclusion = new Float32Array(entries.length);
   const materialResponses = new Float32Array(entries.length);
   entries.forEach((entry, index) => {
     first.set(entry.faceTiles.slice(0, 3), index * 3);
@@ -369,8 +496,13 @@ export function createTexturedBoxGeometry(entries: readonly TexturedVoxelPlan[])
     uvWordASecond.set(entry.faceUvWordsA.slice(3, 6), index * 3);
     uvWordBFirst.set(entry.faceUvWordsB.slice(0, 3), index * 3);
     uvWordBSecond.set(entry.faceUvWordsB.slice(3, 6), index * 3);
-    tintKinds[index] = entry.faceVisualWord ?? entry.faceTintWord;
-    materialResponses[index] = materialResponseCode(materialResponseForVoxel(entry.voxel));
+    tintKinds[index] = entry.faceTintWord;
+    faceOcclusion[index] = entry.fluidSurface
+      ? encodeFluidSurfaceMetadata(entry.fluidSurface)
+      : entry.faceOcclusionWord ?? 0;
+    materialResponses[index] = entry.fluidSurface
+      ? encodeFluidCornerHeights(entry.fluidSurface.cornerHeights)
+      : materialResponseCode(materialResponseForVoxel(entry.voxel));
   });
   geometry.setAttribute("instanceFaceTilesA", new THREE.InstancedBufferAttribute(first, 3));
   geometry.setAttribute("instanceFaceTilesB", new THREE.InstancedBufferAttribute(second, 3));
@@ -379,6 +511,7 @@ export function createTexturedBoxGeometry(entries: readonly TexturedVoxelPlan[])
   geometry.setAttribute("instanceFaceUvWordB0", new THREE.InstancedBufferAttribute(uvWordBFirst, 3));
   geometry.setAttribute("instanceFaceUvWordB1", new THREE.InstancedBufferAttribute(uvWordBSecond, 3));
   geometry.setAttribute("instanceFaceTintKinds", new THREE.InstancedBufferAttribute(tintKinds, 1));
+  geometry.setAttribute("instanceFaceOcclusion", new THREE.InstancedBufferAttribute(faceOcclusion, 1));
   geometry.setAttribute("instanceMaterialResponse", new THREE.InstancedBufferAttribute(materialResponses, 1));
   const originalIndex = geometry.getIndex();
   if (originalIndex && faceMask !== 0b11_1111) {
@@ -400,6 +533,7 @@ export function createAtlasMaterial(
   page: ResourcePackAtlasPage,
   alphaMode: TextureAlphaMode,
   responseKind: MaterialResponseKind = alphaMode === "translucent" ? "glass" : "default",
+  stateTintRgb?: number,
 ): THREE.MeshStandardMaterial {
   const response = materialResponse(responseKind);
   const material = new THREE.MeshStandardMaterial({
@@ -413,22 +547,30 @@ export function createAtlasMaterial(
     alphaTest: alphaMode === "cutout" ? 0.5 : 0,
   });
   material.name = `blockcolc-atlas-${alphaMode}-${responseKind}`;
-  material.customProgramCacheKey = () => `blockcolc-atlas-v4-${alphaMode}-${page.animationLookup ? "animated" : "static"}`;
+  material.customProgramCacheKey = () => `blockcolc-atlas-v6-fluid-${alphaMode}-${page.animationLookup ? "animated" : "static"}`;
   material.onBeforeCompile = (shader) => {
     shader.uniforms.blockcolcAtlasSize = { value: new THREE.Vector2(page.width, page.height) };
     shader.uniforms.blockcolcAtlasColumns = { value: page.columns };
     shader.uniforms.blockcolcAtlasCellSize = { value: page.cellSize };
     shader.uniforms.blockcolcAtlasPadding = { value: page.padding };
-    const visualBiomePalette = page.visualBiomePalette ?? createVisualBiomePalette([]);
+  const visualBiomePalette = page.visualBiomePalette ?? createVisualBiomePalette([]);
     shader.uniforms.blockcolcFoliageTint = { value: new THREE.Color(visualBiomePalette.foliage) };
     shader.uniforms.blockcolcGrassTint = { value: new THREE.Color(visualBiomePalette.grass) };
     shader.uniforms.blockcolcWaterTint = { value: new THREE.Color(visualBiomePalette.water) };
+    shader.uniforms.blockcolcDryFoliageTint = { value: new THREE.Color(visualBiomePalette.dryFoliage) };
+    shader.uniforms.blockcolcSpruceLeavesTint = { value: new THREE.Color(visualBiomePalette.spruceLeaves) };
+    shader.uniforms.blockcolcBirchLeavesTint = { value: new THREE.Color(visualBiomePalette.birchLeaves) };
+    shader.uniforms.blockcolcLilyPadTint = { value: new THREE.Color(visualBiomePalette.lilyPad) };
+    shader.uniforms.blockcolcStateTint = { value: new THREE.Color(stateTintRgb ?? 0xffffff) };
     if (page.animationLookup) {
       shader.uniforms.blockcolcAnimationLookup = { value: page.animationLookup.texture };
       shader.uniforms.blockcolcAnimationBlendLookup = { value: page.animationLookup.blendTexture };
       shader.uniforms.blockcolcAnimationLookupSize = { value: new THREE.Vector2(page.animationLookup.width, page.animationLookup.height) };
     }
-    shader.vertexShader = patchAtlasUvVertexShader(shader.vertexShader, page.animationLookup !== undefined);
+    shader.vertexShader = patchFluidSurfaceVertexShader(
+      patchAtlasUvVertexShader(shader.vertexShader, page.animationLookup !== undefined),
+      true,
+    );
     shader.fragmentShader = patchAtlasTintFragmentShader(shader.fragmentShader);
     shader.fragmentShader = patchAtlasAnimationFragmentShader(shader.fragmentShader, page.animationLookup !== undefined);
   };
@@ -437,27 +579,94 @@ export function createAtlasMaterial(
 
 export function packFaceTintKinds(kinds: FaceTintKinds): number {
   return kinds.reduce<number>((word, kind, face) => {
-    if (!Number.isInteger(kind) || kind < 0 || kind > 3) throw new RangeError("Face tint kind must be within 0..3");
-    return word + kind * (4 ** face);
+    if (!Number.isInteger(kind) || kind < 0 || kind > 15) throw new RangeError("Face tint kind must be within 0..15");
+    return word + kind * (16 ** face);
   }, 0);
 }
 
 export function unpackFaceTintKinds(word: number): FaceTintKinds {
   if (!Number.isSafeInteger(word) || word < 0 || word >= 16_777_216) throw new RangeError("Invalid packed face tint kinds");
-  const tintWord = word % 4096;
-  return BLOCK_FACE_SLOTS.map((_, face) => Math.floor(tintWord / (4 ** face)) % 4) as unknown as FaceTintKinds;
+  return BLOCK_FACE_SLOTS.map((_, face) => Math.floor(word / (16 ** face)) % 16) as unknown as FaceTintKinds;
 }
 
 export function faceTintKind(blockId: string, tintIndex: number | undefined): FaceTintKind | undefined {
   if (tintIndex === undefined) return NO_FACE_TINT;
-  if (tintIndex !== 0 || !blockId.startsWith("minecraft:")) return undefined;
+  if (!blockId.startsWith("minecraft:")) return undefined;
   const path = blockId.slice("minecraft:".length);
-  if (path.endsWith("_leaves") || path === "vine") return FOLIAGE_FACE_TINT;
-  if (["grass_block", "short_grass", "tall_grass", "fern", "large_fern", "sugar_cane", "lily_pad"].includes(path)) {
+  if (tintIndex === 1 && (path === "pink_petals" || path === "wildflowers")) return GRASS_FACE_TINT;
+  if (tintIndex !== 0) return NO_FACE_TINT;
+  if (["oak_leaves", "jungle_leaves", "acacia_leaves", "dark_oak_leaves", "mangrove_leaves", "vine"].includes(path)) {
+    return FOLIAGE_FACE_TINT;
+  }
+  if (["grass_block", "short_grass", "tall_grass", "fern", "large_fern", "potted_fern", "bush", "sugar_cane"].includes(path)) {
     return GRASS_FACE_TINT;
   }
-  if (path === "water" || path === "bubble_column") return WATER_FACE_TINT;
-  return undefined;
+  if (path === "water" || path === "bubble_column" || path === "water_cauldron") return WATER_FACE_TINT;
+  if (path === "leaf_litter") return DRY_FOLIAGE_FACE_TINT;
+  if (path === "spruce_leaves") return SPRUCE_LEAVES_FACE_TINT;
+  if (path === "birch_leaves") return BIRCH_LEAVES_FACE_TINT;
+  if (path === "lily_pad") return LILY_PAD_FACE_TINT;
+  if (path === "attached_melon_stem" || path === "attached_pumpkin_stem") return ATTACHED_STEM_FACE_TINT;
+  if (path === "redstone_wire") return REDSTONE_WIRE_FACE_TINT;
+  if (path === "melon_stem" || path === "pumpkin_stem") return GROWING_STEM_FACE_TINT;
+  // Unknown vanilla tint sources resolve to white in BlockColors; unknown mod
+  // namespaces remain unresolved above because their tint provider is pack code.
+  return NO_FACE_TINT;
+}
+
+export function isStateTintKind(kind: FaceTintKind): boolean {
+  return kind === ATTACHED_STEM_FACE_TINT || kind === REDSTONE_WIRE_FACE_TINT || kind === GROWING_STEM_FACE_TINT;
+}
+
+/** Resolves the state-driven vanilla BlockTintSources used by Java 26.3.
+ * Missing properties use their vanilla default state; malformed/out-of-range
+ * values are rejected so they cannot silently receive a wrong color. */
+export function resolveBlockStateTint(
+  blockId: string,
+  state: Readonly<Record<string, string>> = {},
+): BlockStateTintResolution {
+  if (!blockId.startsWith("minecraft:")) return { status: "none" };
+  const path = blockId.slice("minecraft:".length);
+  if (path === "attached_melon_stem" || path === "attached_pumpkin_stem") {
+    return { status: "resolved", rgb: ATTACHED_STEM_TINT_RGB };
+  }
+  if (path === "redstone_wire") {
+    const power = parseVanillaStateInteger(state.power ?? "0", 0, 15);
+    return power === undefined ? { status: "invalid" } : { status: "resolved", rgb: redstoneWireTintRgb(power) };
+  }
+  if (path === "melon_stem" || path === "pumpkin_stem") {
+    const age = parseVanillaStateInteger(state.age ?? "0", 0, 7);
+    return age === undefined ? { status: "invalid" } : { status: "resolved", rgb: stemTintRgb(age) };
+  }
+  return { status: "none" };
+}
+
+function parseVanillaStateInteger(value: string, minimum: number, maximum: number): number | undefined {
+  if (!/^(?:0|[1-9]\d*)$/.test(value)) return undefined;
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed >= minimum && parsed <= maximum ? parsed : undefined;
+}
+
+function redstoneWireTintRgb(power: number): number {
+  // Mirrors BlockTintSources$10 -> RedstoneWireBlock.getColorForPower in the
+  // pinned 26.3 client: Java float math and ARGB.as8BitChannel both floor.
+  const f32 = Math.fround;
+  const normalizedPower = f32(f32(power) / f32(15));
+  const red = f32(f32(normalizedPower * f32(0.6)) + f32(power > 0 ? 0.4 : 0.3));
+  const normalizedSquared = f32(normalizedPower * normalizedPower);
+  const green = clampUnit(f32(f32(normalizedSquared * f32(0.7)) - f32(0.5)));
+  const blue = clampUnit(f32(f32(normalizedSquared * f32(0.6)) - f32(0.7)));
+  const channel = (value: number) => Math.floor(f32(f32(value) * f32(255)));
+  return (channel(red) << 16) | (channel(green) << 8) | channel(blue);
+}
+
+function stemTintRgb(age: number): number {
+  // BlockTintSources$11 passes these exact channels to ARGB.color(int,int,int).
+  return ((age * 32) << 16) | ((255 - age * 8) << 8) | (age * 4);
+}
+
+function clampUnit(value: number): number {
+  return Math.max(0, Math.min(1, value));
 }
 
 /**
@@ -496,6 +705,72 @@ export function unpackFaceUvTransform(wordA: number, wordB: number): { cropUv: N
   };
 }
 
+/** Adds the packed static-fluid displacement and top-UV mapping to a standard mesh shader. */
+export function patchFluidSurfaceVertexShader(vertexShader: string, atlasMode = false): string {
+  const declarations = atlasMode
+    ? ""
+    : "attribute float instanceFaceOcclusion;\nattribute float instanceMaterialResponse;\n";
+  const positionPatch = `
+float blockcolcPositionFluidMeta = instanceFaceOcclusion - 1000000.0;
+if (blockcolcPositionFluidMeta > 0.5 && position.y > 0.0) {
+  float blockcolcPackedCorners = instanceMaterialResponse;
+  float blockcolcCornerNorthWest = mod(blockcolcPackedCorners, 64.0) / 63.0;
+  float blockcolcCornerNorthEast = mod(floor(blockcolcPackedCorners / 64.0), 64.0) / 63.0;
+  float blockcolcCornerSouthEast = mod(floor(blockcolcPackedCorners / 4096.0), 64.0) / 63.0;
+  float blockcolcCornerSouthWest = mod(floor(blockcolcPackedCorners / 262144.0), 64.0) / 63.0;
+  float blockcolcVertexCorner = position.z < 0.0
+    ? (position.x < 0.0 ? blockcolcCornerNorthWest : blockcolcCornerNorthEast)
+    : (position.x < 0.0 ? blockcolcCornerSouthWest : blockcolcCornerSouthEast);
+  transformed.y = blockcolcVertexCorner - 0.5;
+}`;
+  const fluidMetadata = `
+float blockcolcUvFluidMeta = instanceFaceOcclusion - 1000000.0;
+float blockcolcUvFluidActive = step(0.5, blockcolcUvFluidMeta);
+float blockcolcUvFluidWater = blockcolcUvFluidActive > 0.5 ? mod(floor(blockcolcUvFluidMeta / 65536.0), 2.0) : 0.0;
+float blockcolcUvFluidFlowing = blockcolcUvFluidActive > 0.5 ? mod(floor(blockcolcUvFluidMeta / 32768.0), 2.0) : 0.0;
+float blockcolcUvFluidAngle = blockcolcUvFluidActive > 0.5 ? mod(blockcolcUvFluidMeta, 32768.0) * 6.283185307179586 / 4096.0 : 0.0;`;
+  const flowUv = `
+if (blockcolcUvFluidActive > 0.5 && blockcolcUvFluidFlowing > 0.5 && normal.y > 0.5) {
+  float blockcolcFlowS = 0.25 * sin(blockcolcUvFluidAngle);
+  float blockcolcFlowC = 0.25 * cos(blockcolcUvFluidAngle);
+  vec2 blockcolcFlowUv = position.z < 0.0
+    ? (position.x < 0.0
+      ? vec2(0.5 - blockcolcFlowC - blockcolcFlowS, 0.5 - blockcolcFlowC + blockcolcFlowS)
+      : vec2(0.5 + blockcolcFlowC - blockcolcFlowS, 0.5 - blockcolcFlowC - blockcolcFlowS))
+    : (position.x < 0.0
+      ? vec2(0.5 - blockcolcFlowC + blockcolcFlowS, 0.5 + blockcolcFlowC + blockcolcFlowS)
+      : vec2(0.5 + blockcolcFlowC + blockcolcFlowS, 0.5 + blockcolcFlowC - blockcolcFlowS));
+  vMapUv = blockcolcFlowUv;
+}`;
+  const atlasFlowUv = `
+${fluidMetadata}
+vBlockcolcFluid = blockcolcUvFluidActive;
+vBlockcolcFluidWater = blockcolcUvFluidWater;
+vBlockcolcFluidFlowing = blockcolcUvFluidFlowing;
+vBlockcolcFluidAngle = blockcolcUvFluidAngle;
+vBlockcolcMaterialResponse = blockcolcUvFluidActive > 0.5 ? 4.0 : instanceMaterialResponse;
+if (blockcolcUvFluidActive > 0.5 && blockcolcUvFluidFlowing > 0.5 && blockcolcFaceSlot > 0.5 && blockcolcFaceSlot < 1.5) {
+  float blockcolcFlowS = 0.25 * sin(blockcolcUvFluidAngle);
+  float blockcolcFlowC = 0.25 * cos(blockcolcUvFluidAngle);
+  blockcolcLocalUv = position.z < 0.0
+    ? (position.x < 0.0
+      ? vec2(0.5 - blockcolcFlowC - blockcolcFlowS, 0.5 - blockcolcFlowC + blockcolcFlowS)
+      : vec2(0.5 + blockcolcFlowC - blockcolcFlowS, 0.5 - blockcolcFlowC - blockcolcFlowS))
+    : (position.x < 0.0
+      ? vec2(0.5 - blockcolcFlowC + blockcolcFlowS, 0.5 + blockcolcFlowC + blockcolcFlowS)
+      : vec2(0.5 + blockcolcFlowC + blockcolcFlowS, 0.5 + blockcolcFlowC - blockcolcFlowS));
+}`;
+  let patched = declarations === ""
+    ? vertexShader
+    : vertexShader.replace("#include <common>", `#include <common>\n${declarations}`);
+  patched = patched.replace("#include <begin_vertex>", `#include <begin_vertex>\n${positionPatch}`);
+  if (atlasMode) {
+    return patched.replace("vec2 blockcolcLocalUv = vMapUv;", `vec2 blockcolcLocalUv = vMapUv;\n${atlasFlowUv}`);
+  }
+  patched = patched.replace("#include <uv_vertex>", `#include <uv_vertex>\n${fluidMetadata}\n${flowUv}`);
+  return patched;
+}
+
 export function patchAtlasUvVertexShader(vertexShader: string, animated = false): string {
   const animationDeclarations = animated
     ? "\nuniform sampler2D blockcolcAnimationLookup;\nuniform sampler2D blockcolcAnimationBlendLookup;\nuniform vec2 blockcolcAnimationLookupSize;\nvarying vec2 vBlockcolcNextMapUv;\nvarying float vBlockcolcAnimationMix;"
@@ -506,11 +781,11 @@ export function patchAtlasUvVertexShader(vertexShader: string, animated = false)
   return vertexShader
     .replace(
       "#include <common>",
-      `#include <common>\nattribute float faceSlot;\nattribute vec3 instanceFaceTilesA;\nattribute vec3 instanceFaceTilesB;\nattribute vec3 instanceFaceUvWordA0;\nattribute vec3 instanceFaceUvWordA1;\nattribute vec3 instanceFaceUvWordB0;\nattribute vec3 instanceFaceUvWordB1;\nattribute float instanceFaceTintKinds;\nuniform vec2 blockcolcAtlasSize;\nuniform float blockcolcAtlasColumns;\nuniform float blockcolcAtlasCellSize;\nuniform float blockcolcAtlasPadding;\nuniform vec3 blockcolcFoliageTint;\nuniform vec3 blockcolcGrassTint;\nuniform vec3 blockcolcWaterTint;\nvarying vec3 vBlockcolcTint;\nvarying float vBlockcolcLocalOcclusion;${animationDeclarations}`,
+      `#include <common>\nattribute vec3 instanceFaceTilesA;\nattribute vec3 instanceFaceTilesB;\nattribute vec3 instanceFaceUvWordA0;\nattribute vec3 instanceFaceUvWordA1;\nattribute vec3 instanceFaceUvWordB0;\nattribute vec3 instanceFaceUvWordB1;\nattribute float instanceFaceTintKinds;\nattribute float instanceFaceOcclusion;\nuniform vec2 blockcolcAtlasSize;\nuniform float blockcolcAtlasColumns;\nuniform float blockcolcAtlasCellSize;\nuniform float blockcolcAtlasPadding;\nuniform vec3 blockcolcFoliageTint;\nuniform vec3 blockcolcGrassTint;\nuniform vec3 blockcolcWaterTint;\nuniform vec3 blockcolcDryFoliageTint;\nuniform vec3 blockcolcSpruceLeavesTint;\nuniform vec3 blockcolcBirchLeavesTint;\nuniform vec3 blockcolcLilyPadTint;\nvarying vec3 vBlockcolcTint;\nvarying float vBlockcolcLocalOcclusion;\nvarying float vBlockcolcDirectionalShade;${animationDeclarations}`,
     )
     .replace(
       "#include <uv_vertex>",
-      `#include <uv_vertex>\nfloat blockcolcTile = faceSlot < 0.5 ? instanceFaceTilesA.x : faceSlot < 1.5 ? instanceFaceTilesA.y : faceSlot < 2.5 ? instanceFaceTilesA.z : faceSlot < 3.5 ? instanceFaceTilesB.x : faceSlot < 4.5 ? instanceFaceTilesB.y : instanceFaceTilesB.z;\nfloat blockcolcUvWordA = faceSlot < 0.5 ? instanceFaceUvWordA0.x : faceSlot < 1.5 ? instanceFaceUvWordA0.y : faceSlot < 2.5 ? instanceFaceUvWordA0.z : faceSlot < 3.5 ? instanceFaceUvWordA1.x : faceSlot < 4.5 ? instanceFaceUvWordA1.y : instanceFaceUvWordA1.z;\nfloat blockcolcUvWordB = faceSlot < 0.5 ? instanceFaceUvWordB0.x : faceSlot < 1.5 ? instanceFaceUvWordB0.y : faceSlot < 2.5 ? instanceFaceUvWordB0.z : faceSlot < 3.5 ? instanceFaceUvWordB1.x : faceSlot < 4.5 ? instanceFaceUvWordB1.y : instanceFaceUvWordB1.z;\nfloat blockcolcU0 = mod(blockcolcUvWordA, 2048.0) / 2047.0;\nfloat blockcolcV0 = mod(floor(blockcolcUvWordA / 2048.0), 2048.0) / 2047.0;\nfloat blockcolcU1 = mod(blockcolcUvWordB, 2048.0) / 2047.0;\nfloat blockcolcV1 = mod(floor(blockcolcUvWordB / 2048.0), 2048.0) / 2047.0;\nfloat blockcolcRotation = mod(floor(blockcolcUvWordA / 4194304.0), 4.0);\nvec2 blockcolcLocalUv = vMapUv;\nif (blockcolcRotation > 2.5) blockcolcLocalUv = vec2(1.0 - vMapUv.y, vMapUv.x);\nelse if (blockcolcRotation > 1.5) blockcolcLocalUv = vec2(1.0 - vMapUv.x, 1.0 - vMapUv.y);\nelse if (blockcolcRotation > 0.5) blockcolcLocalUv = vec2(vMapUv.y, 1.0 - vMapUv.x);\nvec2 blockcolcCropStart = vec2(blockcolcU0, blockcolcV0) * 16.0;\nvec2 blockcolcCropDelta = (vec2(blockcolcU1, blockcolcV1) - vec2(blockcolcU0, blockcolcV0)) * 16.0;\nvec2 blockcolcCropAbs = abs(blockcolcCropDelta);\nvec2 blockcolcCropDirection = mix(vec2(-1.0), vec2(1.0), step(vec2(0.0), blockcolcCropDelta));\nvec2 blockcolcCropInset = min(vec2(0.5), blockcolcCropAbs * 0.5);\nvec2 blockcolcCropSpan = max(blockcolcCropAbs - vec2(1.0), vec2(0.0));\nvec2 blockcolcPixelUv = blockcolcCropStart + blockcolcCropDirection * (blockcolcCropInset + blockcolcLocalUv * blockcolcCropSpan);\nfloat blockcolcColumn = mod(blockcolcTile, blockcolcAtlasColumns);\nfloat blockcolcRow = floor(blockcolcTile / blockcolcAtlasColumns);\nfloat blockcolcNextColumn = mod(blockcolcNextTile, blockcolcAtlasColumns);\nfloat blockcolcNextRow = floor(blockcolcNextTile / blockcolcAtlasColumns);\nvMapUv = (vec2(blockcolcColumn, blockcolcRow) * blockcolcAtlasCellSize + vec2(blockcolcAtlasPadding) + blockcolcPixelUv) / blockcolcAtlasSize;\n${animated ? "vBlockcolcNextMapUv = (vec2(blockcolcNextColumn, blockcolcNextRow) * blockcolcAtlasCellSize + vec2(blockcolcAtlasPadding) + blockcolcPixelUv) / blockcolcAtlasSize;" : ""}`,
+      `#include <uv_vertex>\nfloat blockcolcFaceSlot = abs(normal.x) > 0.5 ? (normal.x < 0.0 ? 4.0 : 5.0) : abs(normal.y) > 0.5 ? (normal.y < 0.0 ? 0.0 : 1.0) : (normal.z < 0.0 ? 2.0 : 3.0);\nfloat blockcolcTile = blockcolcFaceSlot < 0.5 ? instanceFaceTilesA.x : blockcolcFaceSlot < 1.5 ? instanceFaceTilesA.y : blockcolcFaceSlot < 2.5 ? instanceFaceTilesA.z : blockcolcFaceSlot < 3.5 ? instanceFaceTilesB.x : blockcolcFaceSlot < 4.5 ? instanceFaceTilesB.y : instanceFaceTilesB.z;\nfloat blockcolcUvWordA = blockcolcFaceSlot < 0.5 ? instanceFaceUvWordA0.x : blockcolcFaceSlot < 1.5 ? instanceFaceUvWordA0.y : blockcolcFaceSlot < 2.5 ? instanceFaceUvWordA0.z : blockcolcFaceSlot < 3.5 ? instanceFaceUvWordA1.x : blockcolcFaceUvWordA1.y;\nfloat blockcolcUvWordB = blockcolcFaceSlot < 0.5 ? instanceFaceUvWordB0.x : blockcolcFaceSlot < 1.5 ? instanceFaceUvWordB0.y : blockcolcFaceSlot < 2.5 ? instanceFaceUvWordB0.z : blockcolcFaceSlot < 3.5 ? instanceFaceUvWordB1.x : blockcolcFaceUvWordB1.y;\nfloat blockcolcU0 = mod(blockcolcUvWordA, 2048.0) / 2047.0;\nfloat blockcolcV0 = mod(floor(blockcolcUvWordA / 2048.0), 2048.0) / 2047.0;\nfloat blockcolcU1 = mod(blockcolcUvWordB, 2048.0) / 2047.0;\nfloat blockcolcV1 = mod(floor(blockcolcUvWordB / 2048.0), 2048.0) / 2047.0;\nfloat blockcolcRotation = mod(floor(blockcolcUvWordA / 4194304.0), 4.0);\nvec2 blockcolcLocalUv = vMapUv;\nif (blockcolcRotation > 2.5) blockcolcLocalUv = vec2(1.0 - vMapUv.y, vMapUv.x);\nelse if (blockcolcRotation > 1.5) blockcolcLocalUv = vec2(1.0 - vMapUv.x, 1.0 - vMapUv.y);\nelse if (blockcolcRotation > 0.5) blockcolcLocalUv = vec2(vMapUv.y, 1.0 - vMapUv.x);\nvec2 blockcolcCropStart = vec2(blockcolcU0, blockcolcV0) * (blockcolcAtlasCellSize - 2.0 * blockcolcAtlasPadding);\nvec2 blockcolcCropDelta = (vec2(blockcolcU1, blockcolcV1) - vec2(blockcolcU0, blockcolcV0)) * (blockcolcAtlasCellSize - 2.0 * blockcolcAtlasPadding);\nvec2 blockcolcCropAbs = abs(blockcolcCropDelta);\nvec2 blockcolcCropDirection = mix(vec2(-1.0), vec2(1.0), step(vec2(0.0), blockcolcCropDelta));\nvec2 blockcolcCropInset = min(vec2(0.5), blockcolcCropAbs * 0.5);\nvec2 blockcolcCropSpan = max(blockcolcCropAbs - vec2(1.0), vec2(0.0));\nvec2 blockcolcPixelUv = blockcolcCropStart + blockcolcCropDirection * (blockcolcCropInset + blockcolcLocalUv * blockcolcCropSpan);\nfloat blockcolcColumn = mod(blockcolcTile, blockcolcAtlasColumns);\nfloat blockcolcRow = floor(blockcolcTile / blockcolcAtlasColumns);\nfloat blockcolcNextColumn = mod(blockcolcNextTile, blockcolcAtlasColumns);\nfloat blockcolcNextRow = floor(blockcolcNextTile / blockcolcAtlasColumns);\nvMapUv = (vec2(blockcolcColumn, blockcolcRow) * blockcolcAtlasCellSize + vec2(blockcolcAtlasPadding) + blockcolcPixelUv) / blockcolcAtlasSize;\n${animated ? "vBlockcolcNextMapUv = (vec2(blockcolcNextColumn, blockcolcNextRow) * blockcolcAtlasCellSize + vec2(blockcolcAtlasPadding) + blockcolcPixelUv) / blockcolcAtlasSize;" : ""}`,
     )
     .replace(
       "float blockcolcUvWordA =",
@@ -518,11 +793,23 @@ export function patchAtlasUvVertexShader(vertexShader: string, animated = false)
     )
     .replace(
       "float blockcolcU0 =",
-      "float blockcolcTintDivisor = faceSlot < 0.5 ? 1.0 : faceSlot < 1.5 ? 4.0 : faceSlot < 2.5 ? 16.0 : faceSlot < 3.5 ? 64.0 : faceSlot < 4.5 ? 256.0 : 1024.0;\nfloat blockcolcTintKind = mod(floor(instanceFaceTintKinds / blockcolcTintDivisor), 4.0);\nvBlockcolcTint = blockcolcTintKind > 2.5 ? blockcolcWaterTint : blockcolcTintKind > 1.5 ? blockcolcGrassTint : blockcolcTintKind > 0.5 ? blockcolcFoliageTint : vec3(1.0);\nvBlockcolcLocalOcclusion = mod(floor(instanceFaceTintKinds / (4096.0 * blockcolcTintDivisor)), 4.0) / 3.0;\nfloat blockcolcU0 =",
+      "float blockcolcTintDivisor = blockcolcFaceSlot < 0.5 ? 1.0 : blockcolcFaceSlot < 1.5 ? 16.0 : blockcolcFaceSlot < 2.5 ? 256.0 : blockcolcFaceSlot < 3.5 ? 4096.0 : blockcolcFaceSlot < 4.5 ? 65536.0 : 1048576.0;\nfloat blockcolcTintKind = mod(floor(instanceFaceTintKinds / blockcolcTintDivisor), 16.0);\nvBlockcolcTint = blockcolcTintKind < 0.5 ? vec3(1.0) : blockcolcTintKind < 1.5 ? blockcolcFoliageTint : blockcolcTintKind < 2.5 ? blockcolcGrassTint : blockcolcTintKind < 3.5 ? blockcolcWaterTint : blockcolcTintKind < 4.5 ? blockcolcDryFoliageTint : blockcolcTintKind < 5.5 ? blockcolcSpruceLeavesTint : blockcolcTintKind < 6.5 ? blockcolcBirchLeavesTint : blockcolcTintKind < 7.5 ? blockcolcLilyPadTint : vec3(1.0);\nfloat blockcolcOcclusionDivisor = blockcolcFaceSlot < 0.5 ? 1.0 : blockcolcFaceSlot < 1.5 ? 4.0 : blockcolcFaceSlot < 2.5 ? 16.0 : blockcolcFaceSlot < 3.5 ? 64.0 : blockcolcFaceSlot < 4.5 ? 256.0 : 1024.0;\nvBlockcolcLocalOcclusion = mod(floor(instanceFaceOcclusion / blockcolcOcclusionDivisor), 4.0) / 3.0;\nvBlockcolcDirectionalShade = blockcolcFaceSlot < 0.5 ? 0.5 : blockcolcFaceSlot < 1.5 ? 1.0 : blockcolcFaceSlot < 3.5 ? 0.8 : 0.6;\nfloat blockcolcU0 =",
     )
-    .replace("attribute float instanceFaceTintKinds;", "attribute float instanceFaceTintKinds;\nattribute float instanceMaterialResponse;")
-    .replace("varying float vBlockcolcLocalOcclusion;", "varying float vBlockcolcLocalOcclusion;\nvarying float vBlockcolcMaterialResponse;")
-    .replace("#include <uv_vertex>\n", "#include <uv_vertex>\nvBlockcolcMaterialResponse = instanceMaterialResponse;\n");
+    .replace("attribute float instanceFaceOcclusion;", "attribute float instanceFaceOcclusion;\nattribute float instanceMaterialResponse;")
+    .replace("varying float vBlockcolcDirectionalShade;", "varying float vBlockcolcDirectionalShade;\nvarying float vBlockcolcFluid;\nvarying float vBlockcolcFluidWater;\nvarying float vBlockcolcFluidFlowing;\nvarying float vBlockcolcFluidAngle;")
+    .replace("varying float vBlockcolcDirectionalShade;", "varying float vBlockcolcDirectionalShade;\nvarying float vBlockcolcMaterialResponse;")
+    .replace("#include <uv_vertex>\n", "#include <uv_vertex>\nvBlockcolcMaterialResponse = instanceMaterialResponse;\n")
+    .replace("blockcolcFaceUvWordA1.y;", "blockcolcFaceSlot < 4.5 ? instanceFaceUvWordA1.y : instanceFaceUvWordA1.z;")
+    .replace("blockcolcFaceUvWordB1.y;", "blockcolcFaceSlot < 4.5 ? instanceFaceUvWordB1.y : instanceFaceUvWordB1.z;")
+    .replace("uniform vec3 blockcolcLilyPadTint;", "uniform vec3 blockcolcLilyPadTint;\nuniform vec3 blockcolcStateTint;")
+    .replace(
+      "vBlockcolcLocalOcclusion = mod(floor(instanceFaceOcclusion / blockcolcOcclusionDivisor), 4.0) / 3.0;",
+      "float blockcolcFaceFluidMeta = instanceFaceOcclusion - 1000000.0;\nvBlockcolcLocalOcclusion = blockcolcFaceFluidMeta > 0.5 ? 0.0 : mod(floor(instanceFaceOcclusion / blockcolcOcclusionDivisor), 4.0) / 3.0;",
+    )
+    .replace(
+      ": blockcolcTintKind < 7.5 ? blockcolcLilyPadTint : vec3(1.0);",
+      ": blockcolcTintKind < 7.5 ? blockcolcLilyPadTint : blockcolcTintKind < 10.5 ? blockcolcStateTint : vec3(1.0);",
+    );
 }
 
 export function patchAtlasAnimationFragmentShader(fragmentShader: string, animated = false): string {
@@ -537,8 +824,8 @@ export function patchAtlasAnimationFragmentShader(fragmentShader: string, animat
 
 export function patchAtlasTintFragmentShader(fragmentShader: string): string {
   return fragmentShader
-    .replace("#include <common>", "#include <common>\nvarying vec3 vBlockcolcTint;\nvarying float vBlockcolcLocalOcclusion;\nvarying float vBlockcolcMaterialResponse;")
-    .replace("#include <map_fragment>", "#include <map_fragment>\ndiffuseColor.rgb *= vBlockcolcTint;\ndiffuseColor.rgb *= 1.0 - vBlockcolcLocalOcclusion * 0.28;")
+    .replace("#include <common>", "#include <common>\nvarying vec3 vBlockcolcTint;\nvarying float vBlockcolcLocalOcclusion;\nvarying float vBlockcolcDirectionalShade;\nvarying float vBlockcolcMaterialResponse;")
+    .replace("#include <map_fragment>", "#include <map_fragment>\ndiffuseColor.rgb *= vBlockcolcTint;\ndiffuseColor.rgb *= vBlockcolcDirectionalShade;\ndiffuseColor.rgb *= 1.0 - vBlockcolcLocalOcclusion * 0.28;")
     .replace("#include <roughnessmap_fragment>", "#include <roughnessmap_fragment>\nroughnessFactor = vBlockcolcMaterialResponse < 0.5 ? 0.9 : vBlockcolcMaterialResponse < 1.5 ? 0.96 : vBlockcolcMaterialResponse < 2.5 ? 0.82 : vBlockcolcMaterialResponse < 3.5 ? 0.5 : 0.16;")
     .replace("#include <metalnessmap_fragment>", "#include <metalnessmap_fragment>\nmetalnessFactor = vBlockcolcMaterialResponse > 2.5 && vBlockcolcMaterialResponse < 3.5 ? 0.32 : 0.0;");
 }
@@ -555,8 +842,10 @@ function disposableAtlas(
   source: TextureAtlas,
   pages: ResourcePackAtlas["pages"],
   tiles: ReadonlyMap<string, AtlasTile>,
+  residentBytes: number,
 ): ResourcePackAtlas {
   let disposed = false;
+  liveResourcePackAtlasResidentBytes += residentBytes;
   return {
     source,
     pages,
@@ -564,6 +853,7 @@ function disposableAtlas(
     dispose() {
       if (disposed) return;
       disposed = true;
+      liveResourcePackAtlasResidentBytes = Math.max(0, liveResourcePackAtlasResidentBytes - residentBytes);
       for (const page of pages) {
         page.texture.dispose();
         page.animationLookup?.texture.dispose();

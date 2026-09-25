@@ -22,6 +22,14 @@ test('main pages load together during cold start and remain mounted across warm 
   // pays this cost once instead of exposing three later loading phases.
   await expect(page.locator('[data-route-mounted="true"]')).toHaveCount(3);
 
+  const canvas = page.getByLabel('项目建筑世界');
+  await expect(canvas).toHaveAttribute('data-first-nonempty-frame-ms', /\d/);
+  await canvas.evaluate(element => { element.setAttribute('data-residency-probe', 'preserved'); });
+  const generation = await canvas.getAttribute('data-renderer-generation');
+  const rebuilds = await canvas.getAttribute('data-world-rebuild-count');
+  expect(generation).toBe('1');
+  expect(rebuilds).toBe('1');
+
   await page.getByRole('button', { name: '任务', exact: true }).click();
   const tasks = page.locator('[data-route="tasks"]');
   await expect(tasks).toBeVisible();
@@ -48,4 +56,7 @@ test('main pages load together during cold start and remain mounted across warm 
   }
   console.log(`TAB_SWITCH_INFO ${JSON.stringify({ durationsMs: durations.map((value) => Number(value.toFixed(1))), maximumMs: Number(Math.max(...durations).toFixed(1)) })}`);
   expect(Math.max(...durations)).toBeLessThan(250);
+  await expect(canvas).toHaveAttribute('data-residency-probe', 'preserved');
+  await expect(canvas).toHaveAttribute('data-renderer-generation', generation!);
+  await expect(canvas).toHaveAttribute('data-world-rebuild-count', rebuilds!);
 });

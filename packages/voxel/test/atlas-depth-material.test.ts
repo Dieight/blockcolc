@@ -29,7 +29,7 @@ describe("atlas cutout depth material", () => {
     page.texture.dispose();
   });
 
-  it("patches depth UVs with the same six-face instance attributes as the visible atlas material", () => {
+  it("derives depth face slots from normals and preserves the visible atlas UV mapping", () => {
     const page = atlasPage();
     const material = createAtlasCutoutDepthMaterial(page, 0.42);
     const shader = {
@@ -41,7 +41,7 @@ describe("atlas cutout depth material", () => {
     material.onBeforeCompile(shader as THREE.WebGLProgramParametersWithUniforms, {} as THREE.WebGLRenderer);
 
     expect(material.alphaTest).toBe(0.42);
-    expect(shader.vertexShader).toContain("attribute float faceSlot;");
+    expect(shader.vertexShader).toContain("float blockcolcFaceSlot = abs(normal.x) > 0.5");
     expect(shader.vertexShader).toContain("attribute vec3 instanceFaceTilesA;");
     expect(shader.vertexShader).toContain("attribute vec3 instanceFaceTilesB;");
     expect(shader.vertexShader).toContain("attribute vec3 instanceFaceUvWordA0;");
@@ -49,8 +49,8 @@ describe("atlas cutout depth material", () => {
     expect(shader.vertexShader).toContain("attribute vec3 instanceFaceUvWordB0;");
     expect(shader.vertexShader).toContain("attribute vec3 instanceFaceUvWordB1;");
     expect(shader.vertexShader).toContain("attribute float instanceFaceTintKinds;");
-    expect(shader.vertexShader).toContain("faceSlot < 0.5 ? instanceFaceTilesA.x");
-    expect(shader.vertexShader).toContain("faceSlot < 4.5 ? instanceFaceTilesB.y : instanceFaceTilesB.z");
+    expect(shader.vertexShader).toContain("blockcolcFaceSlot < 0.5 ? instanceFaceTilesA.x");
+    expect(shader.vertexShader).toContain("blockcolcFaceSlot < 4.5 ? instanceFaceTilesB.y : instanceFaceTilesB.z");
     expect(shader.vertexShader).toContain("/ 2047.0");
     expect(shader.vertexShader).toContain("/ 4194304.0");
     expect(shader.vertexShader).toContain("blockcolcRotation > 2.5");

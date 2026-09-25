@@ -43,7 +43,9 @@ test('building memory shows derived history and returns to the current task', as
     backdropFilter: getComputedStyle(element).backdropFilter,
     backgroundImage: getComputedStyle(element).backgroundImage,
   }));
-  expect(memoryMaterial.backdropFilter).toContain('blur(14px)');
+  // 液态玻璃统一后 blur 随外观滑杆缩放（默认 50% → 10.5px），断言材质结构而非固定像素。
+  expect(memoryMaterial.backdropFilter).toContain('blur(');
+  expect(memoryMaterial.backdropFilter).toContain('saturate(1.24) contrast(1.04)');
   expect(memoryMaterial.backgroundImage).toContain('linear-gradient');
   const continueButton = panel.getByRole('button', { name: '继续专注' });
   await expect(continueButton).toBeVisible();

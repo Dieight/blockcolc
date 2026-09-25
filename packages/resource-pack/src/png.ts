@@ -16,9 +16,22 @@ export interface DecodePngRgbaOptions {
 }
 
 const PNG_SIGNATURE = [137, 80, 78, 71, 13, 10, 26, 10] as const;
-const DEFAULT_MAX_DIMENSION = 4096;
-const DEFAULT_MAX_PIXELS = 1_048_576;
-const DEFAULT_MAX_DECODED_BYTES = DEFAULT_MAX_PIXELS * 4;
+export const DEFAULT_PNG_RGBA_LIMITS = Object.freeze({
+  maxDimension: 4096,
+  maxPixels: 1_048_576,
+  maxDecodedBytes: 1_048_576 * 4,
+});
+
+export interface PngRgbaDecodeMemoryEstimate {
+  width: number;
+  height: number;
+  pixelCount: number;
+  rgbaBytes: number;
+  scanlineBytes: number;
+  unfilteredBytes: number;
+  /** Conservative temporary allocation peak, including chunk copies and CRC scratch. */
+  workingSetBytes: number;
+}
 
 export function inspectPngDimensions(bytes: Uint8Array): { width: number; height: number } | undefined {
   if (bytes.byteLength < 57 || PNG_SIGNATURE.some((value, index) => bytes[index] !== value)) return undefined;
@@ -56,12 +69,33 @@ export function inspectPngDimensions(bytes: Uint8Array): { width: number; height
   return width !== undefined && height !== undefined && sawIdat && sawIend ? { width, height } : undefined;
 }
 
+/**
+ * Estimates a safe upper bound for the allocations made while decoding this
+ * PNG to RGBA. The estimate assumes the decoder's largest supported source
+ * format (32 bits per pixel), includes two IDAT copies, CRC scratch, scanlines,
+ * unfiltered rows, and the returned RGBA pixels. It does not allocate or
+ * inflate image data.
+ */
+export function estimatePngRgbaDecodeMemory(bytes: Uint8Array): PngRgbaDecodeMemoryEstimate | undefined {
+  const dimensions = inspectPngDimensions(bytes);
+  if (!dimensions) return undefined;
+  const { width, height } = dimensions;
+  const pixelCount = width * height;
+  const rgbaBytes = pixelCount * 4;
+  const rowBytes = width * 4;
+  const scanlineBytes = (rowBytes + 1) * height;
+  const unfilteredBytes = rowBytes * height;
+  const workingSetBytes = bytes.byteLength * 3 + scanlineBytes + unfilteredBytes + rgbaBytes;
+  if (![pixelCount, rgbaBytes, scanlineBytes, unfilteredBytes, workingSetBytes].every(Number.isSafeInteger)) return undefined;
+  return { width, height, pixelCount, rgbaBytes, scanlineBytes, unfilteredBytes, workingSetBytes };
+}
+
 /** Strict, bounded, browser-safe PNG decoder used by texture sheets and 256x256 colormaps. */
 export function decodePngRgba(bytes: Uint8Array, options: DecodePngRgbaOptions = {}): DecodedPngRgba {
-  const maxWidth = boundedOption(options.maxWidth, DEFAULT_MAX_DIMENSION, "maxWidth");
-  const maxHeight = boundedOption(options.maxHeight, DEFAULT_MAX_DIMENSION, "maxHeight");
-  const maxPixels = boundedOption(options.maxPixels, DEFAULT_MAX_PIXELS, "maxPixels");
-  const maxDecodedBytes = boundedOption(options.maxDecodedBytes, DEFAULT_MAX_DECODED_BYTES, "maxDecodedBytes");
+  const maxWidth = boundedOption(options.maxWidth, DEFAULT_PNG_RGBA_LIMITS.maxDimension, "maxWidth");
+  const maxHeight = boundedOption(options.maxHeight, DEFAULT_PNG_RGBA_LIMITS.maxDimension, "maxHeight");
+  const maxPixels = boundedOption(options.maxPixels, DEFAULT_PNG_RGBA_LIMITS.maxPixels, "maxPixels");
+  const maxDecodedBytes = boundedOption(options.maxDecodedBytes, DEFAULT_PNG_RGBA_LIMITS.maxDecodedBytes, "maxDecodedBytes");
   const expectedWidth = optionalDimension(options.expectedWidth, "expectedWidth");
   const expectedHeight = optionalDimension(options.expectedHeight, "expectedHeight");
   if (bytes.byteLength < 57 || PNG_SIGNATURE.some((value, index) => bytes[index] !== value)) throw new Error("Invalid PNG signature.");
@@ -136,7 +170,7 @@ function pngFormat(colorType: number, bitDepth: number, palette: Uint8Array | un
   if (colorType === 6 && bitDepth === 8) return { bitsPerPixel: 32 };
   if (colorType === 4 && bitDepth === 8) return { bitsPerPixel: 16 };
   if (colorType === 2 && bitDepth === 8) return { bitsPerPixel: 24 };
-  if (colorType === 0 && bitDepth === 8) return { bitsPerPixel: 8 };
+  if (colorType === 0 && [1, 2, 4, 8].includes(bitDepth)) return { bitsPerPixel: bitDepth };
   if (colorType === 3 && [1, 2, 4, 8].includes(bitDepth) && palette && palette.length > 0 && palette.length % 3 === 0 && palette.length <= 768) return { bitsPerPixel: bitDepth };
   throw new Error(`Unsupported PNG color type ${colorType} / bit depth ${bitDepth}.`);
 }
@@ -171,14 +205,26 @@ function expandRgba(rows: Uint8Array, rowBytes: number, width: number, height: n
       const pixel = source + x * 3; const red = rows[pixel] ?? 0; const green = rows[pixel + 1] ?? 0; const blue = rows[pixel + 2] ?? 0;
       const transparent = transparency?.length === 6 && red === transparency[1] && green === transparency[3] && blue === transparency[5];
       rgba.set([red, green, blue, transparent ? 0 : 255], target);
-    } else if (colorType === 0) { const gray = rows[source + x] ?? 0; rgba.set([gray, gray, gray, transparency?.length === 2 && gray === transparency[1] ? 0 : 255], target); }
+    } else if (colorType === 0) {
+      const sample = bitDepth === 8 ? (rows[source + x] ?? 0) : packedSample(rows, source, x, bitDepth);
+      const gray = bitDepth === 8 ? sample : Math.round(sample * 255 / ((1 << bitDepth) - 1));
+      const transparentSample = transparency?.length === 2 ? (transparency[0]! << 8) | transparency[1]! : -1;
+      rgba.set([gray, gray, gray, sample === transparentSample ? 0 : 255], target);
+    }
     else {
-      const bitOffset = x * bitDepth; const packed = rows[source + Math.floor(bitOffset / 8)] ?? 0; const shift = 8 - bitDepth - (bitOffset % 8); const index = (packed >>> shift) & ((1 << bitDepth) - 1); const paletteOffset = index * 3;
+      const index = packedSample(rows, source, x, bitDepth); const paletteOffset = index * 3;
       if (!palette || paletteOffset + 2 >= palette.length) throw new Error("PNG palette index is out of range.");
       rgba.set([palette[paletteOffset]!, palette[paletteOffset + 1]!, palette[paletteOffset + 2]!, transparency?.[index] ?? 255], target);
     }
   }
   return rgba;
+}
+
+function packedSample(rows: Uint8Array, rowOffset: number, x: number, bitDepth: number): number {
+  const bitOffset = x * bitDepth;
+  const packed = rows[rowOffset + Math.floor(bitOffset / 8)] ?? 0;
+  const shift = 8 - bitDepth - (bitOffset % 8);
+  return (packed >>> shift) & ((1 << bitDepth) - 1);
 }
 
 function paeth(left: number, up: number, upperLeft: number): number {

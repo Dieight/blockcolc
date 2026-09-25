@@ -176,6 +176,9 @@ export function staticFluidKind(voxel: Pick<BlueprintVoxel, "sourceBlockId">): S
 export function staticFluidHeight(voxel: Pick<BlueprintVoxel, "sourceBlockState">): number {
   const rawLevel = Number(voxel.sourceBlockState?.level ?? "0");
   const level = Number.isInteger(rawLevel) && rawLevel >= 0 && rawLevel <= 15 ? rawLevel : 0;
-  if (level >= 8) return 0.9;
-  return Math.max(0.2, 0.94 - level * 0.09);
+  // Java 26.3 LiquidBlock maps levels 0..7 to source/flow amounts 8..1 and
+  // levels 8..15 to falling fluid with amount 8; FlowingFluid own height is
+  // amount / 9. Adjacent same-fluid cells above are handled by the resource
+  // fluid planner, which promotes the lower cell to full height.
+  return (level >= 8 ? 8 : 8 - level) / 9;
 }

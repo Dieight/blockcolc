@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BREAK_COMPLETION_NOTIFICATION_ID, BREAK_NOTIFICATION_ID, FOCUS_NOTIFICATION_ID, breakLiveUpdateOptions, breakNotificationKey, focusLiveUpdateOptions, focusNotificationKey, getBreakLiveUpdateCapability, mapPermission, openBreakLiveUpdateSettings } from '../src/index';
+import { BREAK_COMPLETION_NOTIFICATION_ID, BREAK_NOTIFICATION_ID, FOCUS_NOTIFICATION_ID, acknowledgeAutomaticContinuation, addAutomaticContinuationListener, breakLiveUpdateOptions, breakNotificationKey, cancelAutomaticContinuation, cancelAutomaticContinuations, focusLiveUpdateOptions, focusNotificationKey, getBreakLiveUpdateCapability, getPendingAutomaticContinuations, mapPermission, openBreakLiveUpdateSettings, scheduleAutomaticContinuation } from '../src/index';
 
 describe('Capacitor notification contract', () => {
   it('uses one stable Android notification identifier', () => { expect(FOCUS_NOTIFICATION_ID).toBe(42001); });
@@ -11,6 +11,11 @@ describe('Capacitor notification contract', () => {
     const first = { endsAt: '2026-08-31T12:34:56.000Z', completedRounds: 2, totalRounds: 4, nextTaskTitle: '整理笔记' };
     expect(breakNotificationKey(first)).toBe(breakNotificationKey({ ...first }));
     expect(breakNotificationKey(first)).not.toBe(breakNotificationKey({ ...first, completedRounds: 3 }));
+    expect(breakNotificationKey({ ...first, returnToFocus: true })).not.toBe(breakNotificationKey(first));
+  });
+  it('passes the return-to-focus copy flag through the same live update record', () => {
+    expect(breakLiveUpdateOptions({ endsAt: '2026-08-31T12:34:56.000Z', returnToFocus: true })).toMatchObject({ kind: 'break', returnToFocus: true });
+    expect(breakLiveUpdateOptions({ endsAt: '2026-08-31T12:34:56.000Z', returnToFocus: true, deadlineReached: true })).toMatchObject({ kind: 'break', returnToFocus: true, deadlineReached: true });
   });
   it('converts absolute break context for the native system chronometer', () => {
     expect(breakLiveUpdateOptions({
@@ -52,5 +57,15 @@ describe('Capacitor notification contract', () => {
   it('reports promoted notifications as unavailable outside native Android', async () => {
     await expect(getBreakLiveUpdateCapability()).resolves.toEqual({ supported: false, allowed: false, settingsAvailable: false });
     await expect(openBreakLiveUpdateSettings()).resolves.toBe(false);
+  });
+  it('keeps automatic continuation native-only and makes web listener cleanup harmless', async () => {
+    const event = { eventId: 'authorization-a:round:2', authorizationId: 'authorization-a', scheduledAtEpochMs: 1000 };
+    await expect(scheduleAutomaticContinuation(event)).resolves.toEqual({ scheduled: false, exact: false, due: false });
+    await expect(getPendingAutomaticContinuations()).resolves.toEqual([]);
+    await expect(cancelAutomaticContinuation(event.eventId)).resolves.toBeUndefined();
+    await expect(cancelAutomaticContinuations(event.authorizationId)).resolves.toBeUndefined();
+    await expect(acknowledgeAutomaticContinuation(event.eventId)).resolves.toBeUndefined();
+    const listener = await addAutomaticContinuationListener(() => undefined);
+    await expect(listener.remove()).resolves.toBeUndefined();
   });
 });

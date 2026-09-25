@@ -1,6 +1,6 @@
 import { decodePngRgba } from "./png";
 
-export type ResourcePackColormapKind = "grass" | "foliage";
+export type ResourcePackColormapKind = "grass" | "foliage" | "dry_foliage";
 
 export interface ResourcePackColormap {
   kind: ResourcePackColormapKind;
@@ -23,9 +23,9 @@ export interface ParsedResourcePackColormaps {
   recognizedPaths: string[];
 }
 
-const COLORMAP_KINDS = ["grass", "foliage"] as const;
+const COLORMAP_KINDS = ["grass", "foliage", "dry_foliage"] as const;
 
-/** Parses only the two vanilla Java colormap override locations. */
+/** Parses the supported vanilla Java grass, foliage, and dry-foliage maps. */
 export function parseResourcePackColormaps(
   files: Readonly<Record<string, Uint8Array>>,
   archivePaths: readonly string[],

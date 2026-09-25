@@ -6,3 +6,5 @@ export * from './local-file-picker';
 export * from './native-input';
 export * from './settings-plugin';
 export * from './break-live-update';
+export * from './focus-export';
+export * from './qweather';

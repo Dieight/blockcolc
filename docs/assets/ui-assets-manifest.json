@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-09-05T18:56:48+08:00",
+  "algorithm": "SHA-256",
+  "note": "UI-ASSETS.md 的机器可读完整摘要；截断哈希仅用于人读显示",
+  "assets": [
+    {
+      "path": "apps/android/icon-source/blockcolc-icon-source.png",
+      "sha256": "F6FB34816E1040B9D148B4D75C4CCB8AFA49EAA2022E73D3C2A164D58BDFF75D",
+      "bytes": 1366835
+    },
+    {
+      "path": "apps/web/public/icons/blockcolc-192.png",
+      "sha256": "EFC56C947919C04A5213A500EEC47DB1C03A311A3EE61ED16D4633230797E83B",
+      "bytes": 32065
+    },
+    {
+      "path": "apps/web/public/icons/blockcolc-512.png",
+      "sha256": "7CD6192A55D5F94BAFD15FAFCB7AC76C34BC786F596B2D2EF561F8709683EFAD",
+      "bytes": 202053
+    },
+    {
+      "path": "apps/android/android/app/src/main/res/drawable/ic_stat_tomato_outline.xml",
+      "sha256": "AA1D5B2F5FC01A9466AA61E3FB656ECE271801D1770D36976641D3E97EDBA34A",
+      "bytes": 991
+    },
+    {
+      "path": "apps/android/android/app/src/main/res/drawable/ic_stat_blockcolc.xml",
+      "sha256": "22B6206D7E94840881F08A0336244F61C1610DFA90DBD524CC6E9964A3FAFE0C",
+      "bytes": 371
+    },
+    {
+      "path": "apps/android/android/app/src/main/res/drawable/splash.png",
+      "sha256": "5CF98B4451BD99B20DF26F9E608A46946118BE6B0AE90762F9CA1786A30C76FF",
+      "bytes": 4040
+    },
+    {
+      "path": "apps/android/android/app/src/main/res/drawable-v24/ic_launcher_foreground.xml",
+      "sha256": "FE3C9A470D9DFC34DFEFA1CBBAF67F16174CDD3D242A1D4F6BD09483EA38C29B",
+      "bytes": 1914
+    },
+    {
+      "path": "apps/android/android/app/src/main/res/drawable/ic_launcher_background.xml",
+      "sha256": "61ACABDEC7880108A9850FDC6CEA1A6FC974114BAE875BDCADC70078BF4E615F",
+      "bytes": 5776
+    },
+    {
+      "path": "apps/android/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_foreground.png",
+      "sha256": "4A35BBFFCB873B057313753155EA8A84E3C7DD55871E279B37A6716EF23DBC66",
+      "bytes": 83008
+    },
+    {
+      "path": "apps/android/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png",
+      "sha256": "EFC56C947919C04A5213A500EEC47DB1C03A311A3EE61ED16D4633230797E83B",
+      "bytes": 32065
+    },
+    {
+      "path": "apps/android/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_round.png",
+      "sha256": "E38EF656E536166AFC705A21535B73F339CF161E64CD41AB2347FE9343707A54",
+      "bytes": 39037
+    }
+  ]
+}

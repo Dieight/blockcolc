@@ -1,0 +1,12 @@
+import { chromium } from '@playwright/test';
+const browser = await chromium.launch();
+const page = await browser.newPage({ viewport: { width: 412, height: 915 }, colorScheme: 'light', timezoneId: 'Asia/Shanghai', hasTouch: true, isMobile: true, deviceScaleFactor: 2.625 });
+await page.clock.install({ time: new Date('2026-09-06T08:00:00Z') });
+await page.goto('http://127.0.0.1:42777/');
+await page.getByRole('button', { name: '开始建造' }).click();
+await page.getByRole('button', { name: '设置' }).click();
+await page.getByRole('checkbox', { name: '开启极简模式' }).click();
+await page.getByRole('button', { name: '计时', exact: true }).click();
+await page.waitForTimeout(300);
+console.log(JSON.stringify(await page.evaluate(() => ({ idle: Boolean(document.querySelector('.minimal-idle')), idleActions: Boolean(document.querySelector('.minimal-idle-actions')), timers: [...document.querySelectorAll('.timer')].map((t) => t.className), task: document.querySelector('.focus-task-context')?.textContent?.slice(0, 20) ?? null }))));
+await browser.close();

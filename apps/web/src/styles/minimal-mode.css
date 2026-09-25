@@ -1,0 +1,24 @@
+/* Gesture surfaces share FocusFace and FocusTimer; no alternate timer geometry. */
+.minimal-clock-gesture,.minimal-break-clock{position:relative;min-width:44px;min-height:64px;cursor:pointer;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-tap-highlight-color:transparent;border-radius:8px}
+.minimal-clock-gesture:focus-visible,.minimal-break-clock:focus-visible{outline:2px solid var(--focus);outline-offset:8px}
+.minimal-clock-gesture[aria-disabled="true"],.minimal-break-clock[aria-disabled="true"]{cursor:wait}
+.minimal-clock-selection{position:absolute;top:100%;left:50%;transform:translateX(-50%);margin-top:8px;white-space:nowrap;color:var(--muted);font-size:12px;font-weight:500;line-height:1.4}
+.minimal-clock-error{position:absolute;bottom:calc(100% + 12px);left:16px;right:16px;margin:0;padding:12px;border-radius:8px;background:var(--surface);color:var(--ink);font-size:13px;line-height:1.5}
+.minimal-exit{min-height:44px;padding:8px 12px;border:0;background:none;color:var(--focus);font-weight:700;font-size:13px;display:inline-flex;align-items:center;gap:6px;border-radius:8px;-webkit-tap-highlight-color:transparent}
+/* DF-UI-05: veiled by default — invisible and inert to touch, but it keeps its
+ * keyboard focus so AT users can still reach and reveal the exit. */
+.minimal-exit.is-veiled{opacity:0;pointer-events:none}
+.minimal-exit.is-veiled:focus-visible{opacity:1;pointer-events:auto}
+
+.minimal-sheet-backdrop{z-index:48;align-items:end;padding:12px 12px max(12px,var(--safe-bottom))}
+.minimal-end-sheet{position:relative;width:min(100%,420px);overflow:auto;padding:22px 18px 18px;border:1px solid var(--sheet-glass-border);border-radius:18px;max-height:min(82dvh,680px);background:var(--sheet-glass-background);box-shadow:var(--sheet-glass-shadow);backdrop-filter:var(--sheet-glass-filter);-webkit-backdrop-filter:var(--sheet-glass-filter);display:grid;gap:14px}
+.minimal-time-field{display:grid;gap:6px;color:var(--muted);font-size:0.8125rem}
+.minimal-time-inputs{display:flex;align-items:end;gap:8px}
+.minimal-time-inputs label{flex:1;display:grid;gap:4px;color:var(--muted);font-size:0.6875rem}
+.minimal-time-inputs input{width:100%;min-height:44px;padding:10px 12px;border:1px solid var(--control-border);border-radius:8px;background:var(--surface);color:var(--ink);font-size:1.25rem;font-variant-numeric:tabular-nums;text-align:center}
+.minimal-time-colon{padding-bottom:12px;color:var(--muted);font-size:1.25rem}
+.minimal-time-field input:focus-visible{outline:3px solid #c25844;outline-offset:2px}
+@media(prefers-reduced-transparency:reduce){
+  .minimal-end-sheet{background:var(--surface);backdrop-filter:none;-webkit-backdrop-filter:none}
+}
+[data-theme="dark"] .minimal-time-field input{background:#17211c;border-color:#38473d;color:#e6efe9}

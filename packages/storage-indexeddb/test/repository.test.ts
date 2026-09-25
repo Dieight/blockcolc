@@ -1,6 +1,7 @@
 import "fake-indexeddb/auto";
 import { createInitialState } from "@tomato-clock/domain";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import * as codec from "../src/codec.js";
 import { BackupValidationError, IndexedDbStateRepository, canonicalJson, sha256 } from "../src/index.js";
 import { projectState } from "./fixture.js";
 
@@ -19,6 +20,48 @@ beforeEach(() => {
 });
 
 describe("IndexedDbStateRepository", () => {
+  it("skips schema parsing only for the unchanged committed revision", async () => {
+    await repository.save(projectState(), 0);
+    const parse = vi.spyOn(codec, "cloneAndParseState");
+    try {
+      await repository.load();
+      expect(parse).toHaveBeenCalledTimes(1);
+      await repository.loadIfChanged(1);
+      await repository.loadIfChanged(1);
+      await repository.loadIfChanged(1);
+      expect(parse).toHaveBeenCalledTimes(1);
+      await repository.loadIfChanged(0);
+      expect(parse).toHaveBeenCalledTimes(2);
+    } finally {
+      parse.mockRestore();
+    }
+  });
+
+  it("conditionally reads fresh revisions without treating a cleared state as unchanged", async () => {
+    expect(await repository.loadIfChanged(0)).toBeNull();
+    await repository.save(projectState("Initial"), 0);
+    expect(await repository.loadIfChanged(1)).toBeNull();
+    const external = new IndexedDbStateRepository({ databaseName: `storage-test-${sequence}` });
+    await external.save(projectState("External writer"), 1);
+    expect(await repository.loadIfChanged(1)).toMatchObject({ revision: 2, state: { projects: [{ title: "External writer" }] } });
+    expect(await repository.loadIfChanged(2)).toBeNull();
+    await expect(repository.loadIfChanged(-1)).rejects.toThrow("expectedRevision");
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open(`storage-test-${sequence}`);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction("appState", "readwrite");
+      tx.objectStore("appState").clear();
+      tx.oncomplete = () => resolve();
+      tx.onabort = () => reject(tx.error);
+    });
+    expect(await repository.loadIfChanged(2)).toEqual({ state: null, revision: 0 });
+    db.close();
+    external.close();
+  });
+
   it("starts empty, saves, reloads, and prevents input/output aliases", async () => {
     expect(await repository.load()).toEqual({ state: null, revision: 0 });
     const state = projectState();

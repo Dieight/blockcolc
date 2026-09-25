@@ -10,7 +10,6 @@ export function LoadingPage({ status }: { status: string }) {
         <span className="boot-page-mark">方块钟<small>Blockcolc</small></span>
         <p className="boot-page-status">{status}</p>
         <div className="boot-page-blocks" aria-hidden="true"><i/><i/><i/></div>
-        <p className="boot-page-hint">稍等片刻，马上回到你的聚落</p>
       </div>
     </div>
   );

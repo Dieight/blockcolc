@@ -1,0 +1,14 @@
+import { chromium } from '@playwright/test';
+const browser = await chromium.launch();
+const page = await browser.newPage({ viewport: { width: 412, height: 915 } });
+await page.goto('http://127.0.0.1:42777/');
+await page.getByRole('button', { name: '开始建造' }).click();
+await page.getByRole('button', { name: '设置' }).click();
+const read = () => page.evaluate(() => ({ scale: document.documentElement.style.getPropertyValue('--glass-alpha-scale'), blur: document.documentElement.style.getPropertyValue('--glass-blur-scale') }));
+const before = await read();
+await page.getByRole('slider', { name: '液态玻璃通透程度' }).fill('100');
+await page.waitForTimeout(200);
+const after = await read();
+console.log('0%:', JSON.stringify(before), ' 100%:', JSON.stringify(after));
+console.log(after.scale === '0.29999999999999993' || after.scale.startsWith('0.3') ? 'PASS: alpha scale responds' : 'FAIL');
+await browser.close();

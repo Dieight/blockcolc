@@ -50,8 +50,8 @@ describe("runtime fallback visuals", () => {
     expect(staticFluidKind({ sourceBlockId: "minecraft:bubble_column" })).toBe("water");
     expect(staticFluidKind({ sourceBlockId: "minecraft:lava" })).toBe("lava");
     expect(staticFluidKind({ sourceBlockId: "minecraft:stone" })).toBeUndefined();
-    expect(staticFluidHeight({ sourceBlockState: { level: "0" } })).toBe(0.94);
-    expect(staticFluidHeight({ sourceBlockState: { level: "7" } })).toBeLessThan(0.4);
-    expect(staticFluidHeight({ sourceBlockState: { level: "8" } })).toBe(0.9);
+    expect(staticFluidHeight({ sourceBlockState: { level: "0" } })).toBe(8 / 9);
+    expect(staticFluidHeight({ sourceBlockState: { level: "7" } })).toBe(1 / 9);
+    expect(staticFluidHeight({ sourceBlockState: { level: "8" } })).toBe(8 / 9);
   });
 });

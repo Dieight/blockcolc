@@ -3,18 +3,20 @@ import { describe, expect, it } from "vitest";
 import { decodeResourcePackColormap, parseResourcePackColormaps } from "../src/colormap";
 import { parseJava16xResourcePack } from "../src";
 
-describe("Java grass and foliage colormaps", () => {
-  it("strictly accepts the two 256x256 vanilla override locations", () => {
+describe("Java grass, foliage, and dry-foliage colormaps", () => {
+  it("strictly accepts the three 256x256 vanilla override locations", () => {
     const grass = rgbaPng(256, 256, [12, 34, 56, 255]);
     const foliage = rgbaPng(256, 256, [78, 90, 123, 255]);
+    const dryFoliage = rgbaPng(256, 256, [89, 60, 50, 255]);
     const files = {
       "assets/minecraft/textures/colormap/grass.png": grass,
       "assets/minecraft/textures/colormap/foliage.png": foliage,
+      "assets/minecraft/textures/colormap/dry_foliage.png": dryFoliage,
     };
     const result = parseResourcePackColormaps(files, Object.keys(files));
 
     expect(result.issues).toEqual([]);
-    expect(result.colormaps.map((entry) => entry.kind)).toEqual(["grass", "foliage"]);
+    expect(result.colormaps.map((entry) => entry.kind)).toEqual(["grass", "foliage", "dry_foliage"]);
     expect([...decodeResourcePackColormap(result.colormaps[0]!).slice(0, 4)]).toEqual([12, 34, 56, 255]);
   });
 
@@ -36,11 +38,12 @@ describe("Java grass and foliage colormaps", () => {
       "pack.mcmeta": strToU8(JSON.stringify({ pack: { pack_format: 15, description: "colormap" } })),
       "assets/minecraft/textures/colormap/grass.png": rgbaPng(256, 256, [20, 40, 60, 255]),
       "assets/minecraft/textures/colormap/foliage.png": rgbaPng(256, 256, [70, 90, 110, 255]),
+      "assets/minecraft/textures/colormap/dry_foliage.png": rgbaPng(256, 256, [80, 50, 40, 255]),
     });
     const manifest = parseJava16xResourcePack(archive);
 
     expect(manifest.schemaVersion).toBe(1);
-    expect(manifest.colormaps?.map((entry) => entry.kind)).toEqual(["grass", "foliage"]);
+    expect(manifest.colormaps?.map((entry) => entry.kind)).toEqual(["grass", "foliage", "dry_foliage"]);
     expect(manifest.summary.ignoredFileCount).toBe(0);
     expect(manifest.summary.candidateTextureCount).toBe(0);
   });

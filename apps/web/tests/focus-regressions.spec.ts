@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { readPersistedDomainState } from './persisted-domain-state';
 
 // Temporary V23 reproduction/regression probes (remove before release).
 
@@ -107,7 +108,7 @@ test("an app-switch-limit exit keeps the marathon at the same round", async ({ p
   await page.clock.fastForward(61_000);
   await expect(page.getByRole("button", { name: "开始下一轮" })).toBeVisible();
   await page.getByRole("button", { name: "开始下一轮" }).click();
-  await expect(page.locator(".focus-task-context strong")).toContainText(/马拉松 第 2 \/ \d+ 轮/);
+  await expect(page.locator(".focus-task-context strong")).toContainText(/专注中 第2\/\d+轮/);
 
   // Three web-visibility excursions exceed the default max of three; each pair
   // must exceed the 3 s grace to count.
@@ -122,6 +123,9 @@ test("an app-switch-limit exit keeps the marathon at the same round", async ({ p
       document.dispatchEvent(new Event("visibilitychange"));
     });
     await page.clock.fastForward(400);
+    if (round < 3) {
+      await expect.poll(async () => (await readPersistedDomainState(page)).state.activeFocusSession?.integrity.effectiveExcursions).toBe(round);
+    }
     if (round === 1) {
       const integrityNotice = page.locator(".focus-integrity-warning.flash");
       await expect(integrityNotice).toContainText("有效离开 1 / 3 次");
@@ -132,10 +136,10 @@ test("an app-switch-limit exit keeps the marathon at the same round", async ({ p
   // The session ended with the integrity notice, but the schedule survives at
   // round 2 (not dropped to a fresh plan, not advanced to round 3).
   await expect(page.locator(".focus-integrity-ended")).toBeVisible();
-  await expect(page.locator(".session-kind")).toContainText(/准备第 2 \/ \d+ 轮/);
+  await expect(page.locator(".focus-task-context strong")).toContainText(/准备第 2 \/ \d+ 轮/);
   await expect(page.getByRole("button", { name: "开始下一轮" })).toBeVisible();
   await page.getByRole("button", { name: "开始下一轮" }).click();
-  await expect(page.locator(".focus-task-context strong")).toContainText(/马拉松 第 2 \/ \d+ 轮/);
+  await expect(page.locator(".focus-task-context strong")).toContainText(/专注中 第2\/\d+轮/);
 });
 
 // BUG 1: a long subtask name that wraps must stay clamped inside its own slot —

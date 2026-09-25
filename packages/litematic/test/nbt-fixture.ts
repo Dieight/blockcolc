@@ -9,7 +9,9 @@ interface TestNbtList {
 }
 
 export const testNbt = {
+  byte: (value: number): TestNbtTag => ({ type: 1, value }),
   int: (value: number): TestNbtTag => ({ type: 3, value }),
+  float: (value: number): TestNbtTag => ({ type: 5, value }),
   longArray: (value: readonly bigint[]): TestNbtTag => ({ type: 12, value }),
   string: (value: string): TestNbtTag => ({ type: 8, value }),
   list: (itemType: number, items: readonly TestNbtTag[]): TestNbtTag => ({ type: 9, value: { itemType, items } satisfies TestNbtList }),
@@ -32,8 +34,14 @@ class TestNbtWriter {
 
   payload(tag: TestNbtTag): void {
     switch (tag.type) {
+      case 1:
+        this.int8(number(tag.value));
+        return;
       case 3:
         this.int32(number(tag.value));
+        return;
+      case 5:
+        this.float32(tag.value);
         return;
       case 8:
         this.string(string(tag.value));
@@ -68,6 +76,18 @@ class TestNbtWriter {
   private int32(value: number): void {
     const bytes = new Uint8Array(4);
     new DataView(bytes.buffer).setInt32(0, value, false);
+    this.append(bytes);
+  }
+
+  private int8(value: number): void {
+    if (!Number.isInteger(value) || value < -128 || value > 127) throw new Error("Test byte payload is invalid");
+    this.append(Uint8Array.of(value & 0xff));
+  }
+
+  private float32(value: unknown): void {
+    if (typeof value !== "number") throw new Error("Test float payload is invalid");
+    const bytes = new Uint8Array(4);
+    new DataView(bytes.buffer).setFloat32(0, value, false);
     this.append(bytes);
   }
 

@@ -1,6 +1,11 @@
 apply plugin: 'com.android.application'
 
 import groovy.json.JsonSlurper
+import java.net.URI
+import java.text.SimpleDateFormat
+import java.util.Locale
+import java.util.Properties
+import java.util.TimeZone
 
 def releaseVersion = new JsonSlurper().parse(file("${rootProject.projectDir}/../../../version.json"))
 
@@ -18,6 +23,99 @@ def unsignedCiCandidateAllowed = System.getenv('GITHUB_ACTIONS') == 'true' &&
     System.getenv('BLOCKCOLC_ALLOW_UNSIGNED_RELEASE_CANDIDATE') == 'true'
 def releaseTaskRequested = gradle.startParameter.taskNames.any {
     it.toLowerCase().contains('release')
+}
+
+// An empty project property is deliberately the standard build.  The release
+// helper passes -PblockcolcPrivateRelayDir= explicitly so a stale value in a
+// user gradle.properties/environment cannot silently add the private module.
+def privateRelayRaw = project.findProperty('blockcolcPrivateRelayDir')
+def privateRelayPath = privateRelayRaw == null ? '' : privateRelayRaw.toString().trim()
+def privateRelayEnabled = !privateRelayPath.isEmpty()
+def privateRelayDir = privateRelayEnabled ? file(privateRelayPath) : null
+def privateRelayJavaDir = privateRelayEnabled ? new File(privateRelayDir, 'src/main/java') : null
+def privateRelayTestJavaDir = privateRelayEnabled ? new File(privateRelayDir, 'src/test/java') : null
+def privateRelayManifest = privateRelayEnabled ? new File(privateRelayDir, 'src/main/AndroidManifest.xml') : null
+def privateRelayProperties = null
+def privateRelayOrigin = null
+def privateRelayUploadToken = null
+def privateRelayEnrolledDate = null
+
+if (privateRelayEnabled) {
+    if (!privateRelayDir.isDirectory() || !privateRelayJavaDir.isDirectory() || !privateRelayManifest.isFile()) {
+        throw new GradleException('Private relay module directory is missing src/main/java or src/main/AndroidManifest.xml.')
+    }
+    def propertiesFile = new File(privateRelayDir, 'relay.properties')
+    if (!propertiesFile.isFile()) {
+        throw new GradleException('Private relay credentials/config are required in the private module directory.')
+    }
+    privateRelayProperties = new Properties()
+    propertiesFile.withInputStream { privateRelayProperties.load(it) }
+    privateRelayOrigin = privateRelayProperties.getProperty('relay.origin', '').trim()
+    privateRelayUploadToken = privateRelayProperties.getProperty('relay.uploadToken', '').trim()
+    privateRelayEnrolledDate = privateRelayProperties.getProperty('relay.enrolledDate', '').trim()
+    try {
+        def origin = new URI(privateRelayOrigin)
+        if (origin.scheme != 'https' || origin.userInfo != null || origin.query != null || origin.fragment != null
+            || (origin.path != '' && origin.path != '/')) {
+            throw new IllegalArgumentException()
+        }
+    } catch (Exception ignored) {
+        throw new GradleException('Private relay origin must be an HTTPS origin without credentials, path, query, or fragment.')
+    }
+    if (privateRelayUploadToken.length() < 32 || privateRelayUploadToken.matches('.*\\s.*')) {
+        throw new GradleException('Private relay upload token is missing or too short.')
+    }
+    if (!(privateRelayEnrolledDate ==~ /\d{4}-\d{2}-\d{2}/)) {
+        throw new GradleException('Private relay enrolled date must be YYYY-MM-DD.')
+    }
+    try {
+        def dateFormat = new SimpleDateFormat('yyyy-MM-dd', Locale.ROOT)
+        dateFormat.setLenient(false)
+        dateFormat.setTimeZone(TimeZone.getTimeZone('UTC'))
+        def parsedDate = dateFormat.parse(privateRelayEnrolledDate)
+        if (dateFormat.format(parsedDate) != privateRelayEnrolledDate) throw new IllegalArgumentException()
+    } catch (Exception ignored) {
+        throw new GradleException('Private relay enrolled date is not a real calendar date.')
+    }
+}
+
+// QWeather credentials are supplied only by the machine-local, ignored file.
+// The parsed values are never logged. The host is extracted from its labeled
+// line and then validated as a QWeather API hostname before entering BuildConfig.
+def qWeatherConfigFile = file("${rootProject.projectDir}/../../../weather_api.txt")
+def qWeatherHost = ''
+def qWeatherApiKey = ''
+def qWeatherConfigured = false
+if (qWeatherConfigFile.isFile()) {
+    def qWeatherHostLines = []
+    def qWeatherKeyLines = []
+    qWeatherConfigFile.eachLine('UTF-8') { rawLine ->
+        if ((rawLine =~ /(?i)^\s*API\s+HOST\b/).find()) qWeatherHostLines.add(rawLine)
+        if ((rawLine =~ /(?i)^\s*API\s+KEY\b/).find()) qWeatherKeyLines.add(rawLine)
+    }
+
+    def qWeatherHostCandidates = []
+    def qWeatherKeyCandidates = []
+    if (qWeatherHostLines.size() == 1) {
+        def hostMatcher = qWeatherHostLines[0] =~ /(?i)((?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+qweatherapi\.com)/
+        while (hostMatcher.find()) qWeatherHostCandidates.add(hostMatcher.group(1))
+    }
+    if (qWeatherKeyLines.size() == 1) {
+        def keyMatcher = qWeatherKeyLines[0] =~ /(?i)(?<![0-9a-f])[0-9a-f]{32}(?![0-9a-f])/
+        while (keyMatcher.find()) qWeatherKeyCandidates.add(keyMatcher.group())
+    }
+
+    if (qWeatherHostLines.size() != 1 || qWeatherKeyLines.size() != 1
+        || qWeatherHostCandidates.size() != 1 || qWeatherKeyCandidates.size() != 1) {
+        throw new GradleException('The local QWeather configuration is missing or invalid.')
+    }
+    qWeatherHost = qWeatherHostCandidates[0].toLowerCase(Locale.ROOT)
+    qWeatherApiKey = qWeatherKeyCandidates[0]
+    if (!(qWeatherHost ==~ /(?i)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+qweatherapi\.com/)
+        || !(qWeatherApiKey ==~ /(?i)[0-9a-f]{32}/)) {
+        throw new GradleException('The local QWeather configuration is missing or invalid.')
+    }
+    qWeatherConfigured = true
 }
 
 if (releaseTaskRequested && !releaseSigningConfigured && !unsignedCiCandidateAllowed) {
@@ -38,11 +136,58 @@ android {
         versionCode releaseVersion.versionCode as int
         versionName releaseVersion.versionName as String
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        manifestPlaceholders = [blockcolcPrivateRelayEnabled: privateRelayEnabled.toString()]
+        buildConfigField 'boolean', 'BLOCKCOLC_QWEATHER_CONFIGURED', qWeatherConfigured.toString()
+        buildConfigField 'String', 'BLOCKCOLC_QWEATHER_HOST', groovy.json.JsonOutput.toJson(qWeatherHost)
+        buildConfigField 'String', 'BLOCKCOLC_QWEATHER_API_KEY', groovy.json.JsonOutput.toJson(qWeatherApiKey)
+        if (privateRelayEnabled) {
+            buildConfigField 'boolean', 'BLOCKCOLC_PRIVATE_RELAY', 'true'
+            buildConfigField 'String', 'BLOCKCOLC_RELAY_ORIGIN', groovy.json.JsonOutput.toJson(privateRelayOrigin)
+            buildConfigField 'String', 'BLOCKCOLC_RELAY_UPLOAD_TOKEN', groovy.json.JsonOutput.toJson(privateRelayUploadToken)
+            buildConfigField 'String', 'BLOCKCOLC_RELAY_ENROLLED_DATE', groovy.json.JsonOutput.toJson(privateRelayEnrolledDate)
+        }
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
              // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
             ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
+    }
+    buildFeatures { buildConfig true }
+    sourceSets {
+        main {
+            // These names belong only to the optional private overlay. Keep
+            // inert historical placeholders out of the standard APK too;
+            // the common app has no manifest reference to either component.
+            java.exclude '**/publicstub/PrivateRelayJobService.java'
+            java.exclude '**/publicstub/PrivateRelayBootReceiver.java'
+            if (privateRelayEnabled) {
+                // Replace, rather than augment, the public inert plugin.  The
+                // package/class name stays stable for Capacitor registration.
+                java.exclude '**/publicstub/FocusExportPlugin.java'
+                java.srcDir privateRelayJavaDir
+            }
+        }
+        test {
+            if (privateRelayEnabled) {
+                java.srcDir privateRelayTestJavaDir
+            }
+        }
+    }
+    // AGP's JavaCompile source snapshot does not always notice an external
+    // source directory being toggled by a project property after a standard
+    // build. Make the public/private mode an explicit task input so switching
+    // modes in the same checkout recompiles the correct FocusExport class and
+    // never reuses a standard output for the private APK (or vice versa).
+    tasks.withType(org.gradle.api.tasks.compile.JavaCompile).configureEach {
+        inputs.property('blockcolcPrivateRelayEnabled', privateRelayEnabled)
+        if (privateRelayEnabled) {
+            inputs.dir(privateRelayJavaDir)
+            inputs.dir(privateRelayTestJavaDir)
+        }
+    }
+    tasks.withType(org.gradle.api.tasks.testing.Test).configureEach {
+        inputs.property('blockcolcPrivateRelayEnabled', privateRelayEnabled)
+        if (privateRelayEnabled) inputs.dir(privateRelayTestJavaDir)
     }
     signingConfigs {
         if (releaseSigningConfigured) {
@@ -65,6 +210,16 @@ android {
     }
 }
 
+if (privateRelayEnabled) {
+    // Use the stable AGP variant source API so the common manifest remains the
+    // main source and this file is a private-only manifest overlay.
+    androidComponents {
+        onVariants(selector().all()) { variant ->
+            variant.sources.manifests.addStaticManifestFile(project.relativePath(privateRelayManifest))
+        }
+    }
+}
+
 repositories {
     flatDir{
         dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs'
@@ -78,6 +233,7 @@ dependencies {
     implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
     implementation project(':capacitor-android')
     testImplementation "junit:junit:$junitVersion"
+    testImplementation 'org.json:json:20240303'
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
     implementation project(':capacitor-cordova-android-plugins')

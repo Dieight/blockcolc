@@ -3,6 +3,13 @@ export type FaceRotation = 0 | 90 | 180 | 270;
 export type FaceUv = readonly [number, number, number, number];
 export type BlockElementVector = readonly [number, number, number];
 
+/** Integer source-block coordinates used to reproduce Java 26.3 model randomness. */
+export interface BlockModelPosition {
+  x: number;
+  y: number;
+  z: number;
+}
+
 interface BlockElementRotationBase {
   origin: BlockElementVector;
   rescale: boolean;
@@ -44,6 +51,8 @@ export interface NormalizedBlockElement {
   from: BlockElementVector;
   to: BlockElementVector;
   shade: boolean;
+  /** Java 26.3 cardinal direction used for directional model shading. */
+  shadeDirectionOverride?: BlockFace;
   faces: Partial<Record<BlockFace, NormalizedModelFace>>;
   rotation?: BlockElementRotation;
 }
@@ -52,6 +61,7 @@ export interface ResolvedBlockElement {
   from: BlockElementVector;
   to: BlockElementVector;
   shade: boolean;
+  shadeDirectionOverride?: BlockFace;
   faces: Partial<Record<BlockFace, ResolvedBlockFace>>;
   /** Element-local rotation is retained for the geometry compiler. */
   rotation?: BlockElementRotation;
@@ -173,6 +183,7 @@ const stateKeyPattern = /^[a-z0-9_.-]+$/;
 const unsafeNames = new Set(["__proto__", "prototype", "constructor"]);
 const faces: readonly BlockFace[] = ["down", "up", "north", "south", "west", "east"];
 const MAX_VARIANTS = 512;
+const MAX_VARIANT_MODEL_CHOICES = 128;
 const MAX_CONDITIONS = 32;
 const MAX_MODEL_TEXTURES = 128;
 const MAX_MODEL_DEPTH = 32;
@@ -184,11 +195,13 @@ const MAX_MULTIPART_PARTS = 64;
 const MAX_MULTIPART_CLAUSES = 16;
 const MAX_MULTIPART_PROPERTIES = 16;
 const MAX_MULTIPART_VALUES = 16;
-const MAX_MULTIPART_APPLY_CHOICES = 8;
+const MAX_MULTIPART_APPLY_CHOICES = 32;
 const MAX_MULTIPART_MODEL_REFERENCES = 512;
 const MAX_MULTIPART_CONDITION_DEPTH = 8;
 const MIN_ELEMENT_COORDINATE = -16;
 const MAX_ELEMENT_COORDINATE = 32;
+const MIN_ROTATION_ORIGIN = -32;
+const MAX_ROTATION_ORIGIN = 48;
 const FULL_FACE_UV: FaceUv = Object.freeze([0, 0, 16, 16]);
 const FULL_CUBE_FROM: BlockElementVector = Object.freeze([0, 0, 0]);
 const FULL_CUBE_TO: BlockElementVector = Object.freeze([16, 16, 16]);
@@ -273,12 +286,13 @@ export function resolveBlockTextures(
   manifest: BlockTextureManifest,
   sourceBlockId: string,
   sourceBlockState: Readonly<Record<string, string>> = {},
+  position?: BlockModelPosition,
 ): ResolvedBlockTextures | BlockTextureFallback {
   const blockState = manifest.blockStates.find((entry) => entry.resourceId === sourceBlockId);
   if (!blockState) return { status: "fallback", reason: "UNKNOWN_BLOCKSTATE", resourceId: sourceBlockId };
   const variant = chooseVariant(blockState.variants, sourceBlockState);
   if (!variant) return { status: "fallback", reason: "NO_MATCHING_VARIANT", resourceId: sourceBlockId };
-  const choice = chooseModelReference(sourceBlockId, sourceBlockState, variant.choices);
+  const choice = chooseModelReference(sourceBlockId, sourceBlockState, variant.choices, position);
   if (!choice) return { status: "fallback", reason: "NO_MATCHING_VARIANT", resourceId: sourceBlockId };
 
   const modelMap = new Map(manifest.models.map((model) => [model.resourceId, model]));
@@ -315,6 +329,7 @@ export function resolveBlockGeometry(
   manifest: BlockTextureManifest,
   sourceBlockId: string,
   sourceBlockState: Readonly<Record<string, string>> = {},
+  position?: BlockModelPosition,
 ): ResolvedBlockGeometry | BlockTextureFallback {
   const blockState = manifest.blockStates.find((entry) => entry.resourceId === sourceBlockId);
   if (!blockState) return { status: "fallback", reason: "UNKNOWN_BLOCKSTATE", resourceId: sourceBlockId };
@@ -330,7 +345,7 @@ export function resolveBlockGeometry(
     for (let partIndex = 0; partIndex < blockState.multipart.length; partIndex += 1) {
       const part = blockState.multipart[partIndex]!;
       if (!multipartConditionMatches(part.when, sourceBlockState)) continue;
-      const choice = chooseModelReference(`${sourceBlockId}#multipart-${partIndex}`, sourceBlockState, part.apply);
+      const choice = chooseModelReference(`${sourceBlockId}#multipart-${partIndex}`, sourceBlockState, part.apply, position, true);
       if (!choice) return { status: "fallback", reason: "INVALID_MULTIPART", resourceId: sourceBlockId };
       choices.push(choice);
     }
@@ -339,7 +354,7 @@ export function resolveBlockGeometry(
   }
   const variant = chooseVariant(blockState.variants, sourceBlockState);
   if (!variant) return { status: "fallback", reason: "NO_MATCHING_VARIANT", resourceId: sourceBlockId };
-  const choice = chooseModelReference(sourceBlockId, sourceBlockState, variant.choices);
+  const choice = chooseModelReference(sourceBlockId, sourceBlockState, variant.choices, position);
   if (!choice) return { status: "fallback", reason: "NO_MATCHING_VARIANT", resourceId: sourceBlockId };
 
   return resolveGeometryChoices(manifest, [choice], choice.model);
@@ -366,17 +381,24 @@ function resolveGeometryChoices(
       if (quadCount > MAX_RESOLVED_QUADS) {
         return { status: "fallback", reason: "GEOMETRY_LIMIT_EXCEEDED", resourceId: outputModelId };
       }
-      const transformed = element.rotation === undefined ? rotateElementBounds(element.from, element.to, choice.x, choice.y) : undefined;
+      const preserveReversedWinding = element.rotation === undefined
+        && (choice.x !== 0 || choice.y !== 0)
+        && element.from.some((coordinate, axis) => coordinate > element.to[axis]!);
+      const transformed = element.rotation === undefined && !preserveReversedWinding && (choice.x !== 0 || choice.y !== 0)
+        ? rotateElementBounds(element.from, element.to, choice.x, choice.y)
+        : undefined;
       const resolvedFaces: Partial<Record<BlockFace, ResolvedBlockFace>> = {};
       for (const [face, metadata] of Object.entries(element.faces) as Array<[BlockFace, NormalizedModelFace]>) {
         const textureId = resolveTextureReference(metadata.texture, resolved.textures, resolved.forceTranslucentTextures, [], 0);
         if ("reason" in textureId) return { ...textureId, resourceId: choice.model };
         if (!textureIds.has(textureId.value)) return { status: "fallback", reason: "MISSING_TEXTURE", resourceId: textureId.value };
-        const targetFace = element.rotation === undefined ? rotateFace(face, choice.x, choice.y) : face;
+        const targetFace = element.rotation === undefined && !preserveReversedWinding ? rotateFace(face, choice.x, choice.y) : face;
         resolvedFaces[targetFace] = {
           texture: textureId.value,
           uv: metadata.uv,
-          rotation: resolveFaceTextureRotation(face, choice.x, choice.y, choice.uvlock, metadata.rotation),
+          rotation: preserveReversedWinding
+            ? resolveModelSpaceFaceTextureRotation(face, choice.x, choice.y, choice.uvlock, metadata.rotation)
+            : resolveFaceTextureRotation(face, choice.x, choice.y, choice.uvlock, metadata.rotation),
           ...(metadata.tintIndex === undefined ? {} : { tintIndex: metadata.tintIndex }),
           ...(textureId.forceTranslucent ? { forceTranslucent: true } : {}),
           ...(metadata.cullFace === undefined || element.rotation !== undefined ? {} : { cullFace: rotateFace(metadata.cullFace, choice.x, choice.y) }),
@@ -386,11 +408,13 @@ function resolveGeometryChoices(
         from: transformed?.from ?? element.from,
         to: transformed?.to ?? element.to,
         shade: element.shade,
+        ...(element.shadeDirectionOverride === undefined ? {} : { shadeDirectionOverride: element.shadeDirectionOverride }),
         faces: resolvedFaces,
         ...(element.rotation === undefined ? {} : {
           rotation: element.rotation,
           blockRotation: { x: choice.x, y: choice.y },
         }),
+        ...(preserveReversedWinding ? { blockRotation: { x: choice.x, y: choice.y } } : {}),
       });
     }
   }
@@ -538,7 +562,7 @@ function canonicalVariantKey(raw: string): string {
   return Object.entries(parseConditions(raw)).map(([key, value]) => `${key}=${value}`).join(",");
 }
 
-function parseModelChoices(raw: unknown, maximum = 64, name = "variant"): NormalizedModelReference[] {
+function parseModelChoices(raw: unknown, maximum = MAX_VARIANT_MODEL_CHOICES, name = "variant"): NormalizedModelReference[] {
   const choices = Array.isArray(raw) ? raw : [raw];
   if (choices.length === 0 || choices.length > maximum) throw new Error(`${name} must contain 1-${maximum} model choices.`);
   const normalized = choices.map((choice) => {
@@ -552,7 +576,6 @@ function parseModelChoices(raw: unknown, maximum = 64, name = "variant"): Normal
       weight: value.weight === undefined ? 1 : positiveInteger(value.weight, "weight"),
     };
   });
-  normalized.sort((left, right) => compareText(JSON.stringify(left), JSON.stringify(right)));
   return normalized;
 }
 
@@ -629,22 +652,23 @@ function parseElement(raw: unknown, index: number): NormalizedBlockElement {
   const to = blockElementVector(input.to, `elements[${index}].to`);
   const zeroAxes: number[] = [];
   for (let axis = 0; axis < 3; axis += 1) {
-    if (from[axis]! > to[axis]!) throw new Error(`elements[${index}] must have from <= to on every axis.`);
     if (from[axis] === to[axis]) zeroAxes.push(axis);
   }
   if (zeroAxes.length > 1) throw new Error(`elements[${index}] may be zero-thickness on at most one axis.`);
   const shade = input.shade === undefined ? true : booleanValue(input.shade, `elements[${index}].shade`);
+  const shadeDirectionOverride = input.shade_direction_override === undefined
+    ? (shade ? undefined : "up")
+    : blockFace(input.shade_direction_override, `elements[${index}].shade_direction_override`);
   const rotation = input.rotation === undefined ? undefined : parseElementRotation(input.rotation, `elements[${index}].rotation`);
   const elementFaces = parseElementFaces(input.faces, from, to);
-  if (zeroAxes.length === 1 && rotation === undefined) {
-    const allowed = zeroAxes[0] === 0 ? new Set<BlockFace>(["west", "east"])
-      : zeroAxes[0] === 1 ? new Set<BlockFace>(["down", "up"])
-        : new Set<BlockFace>(["north", "south"]);
-    if (Object.keys(elementFaces).some((face) => !allowed.has(face as BlockFace))) {
-      throw new Error(`elements[${index}] plane faces must be perpendicular to its zero-thickness axis.`);
-    }
-  }
-  return { from, to, shade, faces: elementFaces, ...(rotation ? { rotation } : {}) };
+  return {
+    from,
+    to,
+    shade,
+    ...(shadeDirectionOverride === undefined ? {} : { shadeDirectionOverride }),
+    faces: elementFaces,
+    ...(rotation ? { rotation } : {}),
+  };
 }
 
 function parseElementRotation(raw: unknown, name: string): BlockElementRotation {
@@ -659,7 +683,7 @@ function parseElementRotation(raw: unknown, name: string): BlockElementRotation 
   if (keys.some((key) => !allowed.has(key))) {
     throw new Error(`${name} contains unsupported properties.`);
   }
-  const origin = blockElementVector(input.origin, `${name}.origin`);
+  const origin = rotationOriginVector(input.origin, `${name}.origin`);
   if (eulerFormat) {
     const euler = [input.x, input.y, input.z];
     if (euler.some((angle) => typeof angle !== "number" || !Number.isFinite(angle) || angle < -180 || angle > 180)) {
@@ -952,6 +976,18 @@ export function resolveFaceTextureRotation(
   return ((faceRotationValue + induced) % 360) as FaceRotation;
 }
 
+function resolveModelSpaceFaceTextureRotation(
+  face: BlockFace,
+  x: FaceRotation,
+  y: FaceRotation,
+  uvlock: boolean,
+  faceRotationValue: FaceRotation,
+): FaceRotation {
+  if (!uvlock) return faceRotationValue;
+  const induced = resolveFaceTextureRotation(face, x, y, false, 0);
+  return ((faceRotationValue - induced + 360) % 360) as FaceRotation;
+}
+
 function faceVector(face: BlockFace): { x: number; y: number; z: number } {
   switch (face) {
     case "down": return { x: 0, y: -1, z: 0 };
@@ -1011,18 +1047,90 @@ function chooseModelReference(
   blockId: string,
   state: Readonly<Record<string, string>>,
   choices: readonly NormalizedModelReference[],
+  position?: BlockModelPosition,
+  multipart = false,
 ): NormalizedModelReference | undefined {
   const totalWeight = choices.reduce((sum, choice) => sum + choice.weight, 0);
   if (totalWeight <= 0) return undefined;
+  if (isMinecraftBlockPosition(position)) {
+    const blockSeed = minecraftBlockModelSeed(position);
+    const selectionSeed = multipart ? legacyRandomNextLong(blockSeed) : blockSeed;
+    return weightedChoiceAt(choices, legacyRandomNextInt(selectionSeed, totalWeight));
+  }
+
   const input = `${blockId}[${Object.entries(state).sort(([left], [right]) => compareText(left, right)).map(([key, value]) => `${key}=${value}`).join(",")}]`;
   let hash = 0x811c9dc5;
   for (let index = 0; index < input.length; index += 1) hash = Math.imul(hash ^ input.charCodeAt(index), 0x01000193) >>> 0;
-  let selected = hash % totalWeight;
+  return weightedChoiceAt(choices, hash % totalWeight);
+}
+
+function weightedChoiceAt(
+  choices: readonly NormalizedModelReference[],
+  selectedIndex: number,
+): NormalizedModelReference | undefined {
+  let selected = selectedIndex;
   for (const choice of choices) {
     if (selected < choice.weight) return choice;
     selected -= choice.weight;
   }
   return choices.at(-1);
+}
+
+function isMinecraftBlockPosition(position: BlockModelPosition | undefined): position is BlockModelPosition {
+  return position !== undefined
+    && isMinecraftBlockCoordinate(position.x)
+    && isMinecraftBlockCoordinate(position.y)
+    && isMinecraftBlockCoordinate(position.z);
+}
+
+function isMinecraftBlockCoordinate(value: number): boolean {
+  return Number.isInteger(value) && value >= -0x80000000 && value <= 0x7fffffff;
+}
+
+/** Mirrors Mth.getSeed(int,int,int), BlockState.getSeed, and RandomSource.create in Java 26.3. */
+function minecraftBlockModelSeed(position: BlockModelPosition): bigint {
+  let seed = BigInt.asIntN(
+    64,
+    BigInt(Math.imul(position.x, 3_129_871))
+      ^ (BigInt(position.z) * 116_129_781n)
+      ^ BigInt(position.y),
+  );
+  seed = BigInt.asIntN(64, seed * seed * 42_317_861n + seed * 11n);
+  return seed >> 16n;
+}
+
+const LEGACY_RANDOM_MULTIPLIER = 0x5deece66dn;
+const LEGACY_RANDOM_INCREMENT = 0xbn;
+const LEGACY_RANDOM_MASK = (1n << 48n) - 1n;
+
+function legacyRandomState(seed: bigint): { value: bigint } {
+  return { value: (seed ^ LEGACY_RANDOM_MULTIPLIER) & LEGACY_RANDOM_MASK };
+}
+
+function legacyRandomNextBits(state: { value: bigint }, bits: 31 | 32): number {
+  state.value = (state.value * LEGACY_RANDOM_MULTIPLIER + LEGACY_RANDOM_INCREMENT) & LEGACY_RANDOM_MASK;
+  return Number(state.value >> BigInt(48 - bits));
+}
+
+/** Reproduces LegacyRandomSource.nextLong(), used once before multipart selectors are collected. */
+function legacyRandomNextLong(seed: bigint): bigint {
+  const state = legacyRandomState(seed);
+  const high = BigInt.asIntN(32, BigInt(legacyRandomNextBits(state, 32)));
+  const low = BigInt.asIntN(32, BigInt(legacyRandomNextBits(state, 32)));
+  return BigInt.asIntN(64, (high << 32n) + low);
+}
+
+/** Reproduces BitRandomSource.nextInt(bound), including Java's rejection step. */
+function legacyRandomNextInt(seed: bigint, bound: number): number {
+  const state = legacyRandomState(seed);
+  if ((bound & (bound - 1)) === 0) {
+    return Math.floor((bound * legacyRandomNextBits(state, 31)) / 0x80000000);
+  }
+  while (true) {
+    const bits = legacyRandomNextBits(state, 31);
+    const value = bits % bound;
+    if (((bits - value + (bound - 1)) | 0) >= 0) return value;
+  }
 }
 
 function resourceLocation(raw: unknown, defaultNamespace: string, model: boolean): string {
@@ -1073,6 +1181,18 @@ function blockElementVector(raw: unknown, name: string): BlockElementVector {
     if (typeof value !== "number" || !Number.isFinite(value)
       || value < MIN_ELEMENT_COORDINATE || value > MAX_ELEMENT_COORDINATE) {
       throw new Error(`${name} coordinates must be finite numbers from ${MIN_ELEMENT_COORDINATE} to ${MAX_ELEMENT_COORDINATE}.`);
+    }
+    return value;
+  });
+  return Object.freeze(values) as unknown as BlockElementVector;
+}
+
+function rotationOriginVector(raw: unknown, name: string): BlockElementVector {
+  if (!Array.isArray(raw) || raw.length !== 3) throw new Error(`${name} must contain exactly three numbers.`);
+  const values = raw.map((value) => {
+    if (typeof value !== "number" || !Number.isFinite(value)
+      || value < MIN_ROTATION_ORIGIN || value > MAX_ROTATION_ORIGIN) {
+      throw new Error(`${name} coordinates must be finite numbers from ${MIN_ROTATION_ORIGIN} to ${MAX_ROTATION_ORIGIN}.`);
     }
     return value;
   });

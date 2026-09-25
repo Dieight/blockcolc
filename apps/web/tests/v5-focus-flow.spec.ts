@@ -39,6 +39,9 @@ test('one-round early completion records the task and ends the plan without a br
   test.setTimeout(60_000);
   await createDefaultProject(page);
   await page.getByRole('button', { name: '开始 1 轮' }).click();
+  await expect(page.locator('.world-screen')).toHaveClass(/is-focusing/);
+  await expect(page.getByRole('navigation', { name: '主导航' })).toBeHidden();
+  await expect(page.locator('.focus-task-context strong')).toContainText('确定目标');
   await revealFocusControls(page);
   await page.getByRole('button', { name: '结束本次专注' }).click();
 
@@ -47,7 +50,7 @@ test('one-round early completion records the task and ends the plan without a br
   await page.screenshot({ path: testInfo.outputPath('end-focus-dialog.png'), fullPage: true });
   await dialog.getByRole('button', { name: /提前完成任务/ }).click();
 
-  await expect(page.getByText('任务已完成 · 休息时间')).toBeHidden();
+  await expect(page.getByText('任务已完成 · 休息中')).toBeHidden();
   // V21: the materials-delivered beat waits for a committed progress choice; an
   // early completion has none, so the toast stays quiet while the pulse still
   // fires for the round.
@@ -58,10 +61,13 @@ test('one-round early completion records the task and ends the plan without a br
   await expect(page.getByRole('button', { name: '开始 1 轮' })).toBeVisible();
   await expect(page.locator('.workbench-context small')).toContainText('今日 1 / 8 轮');
   await page.getByRole('button', { name: '统计' }).click();
-  await expect(page.locator('.stats-grid > div').filter({ hasText: '提前完成' })).toContainText('1');
-  await expect(page.locator('.stats-grid > div').filter({ hasText: '完整轮次' })).toContainText('0');
-  await expect(page.getByRole('heading', { name: '近 26 周' })).toBeVisible();
-  await expect(page.locator('.focus-heatmap-cell')).toHaveCount(26 * 7);
+  const firstUnlockDialog = page.getByRole('dialog', { name: '新的成就' });
+  await expect(firstUnlockDialog).toBeVisible();
+  await firstUnlockDialog.getByRole('button', { name: '全部关闭' }).click();
+  await expect(firstUnlockDialog).toHaveCount(0);
+  await expect(page.locator('.stats-key-facts > div').filter({ hasText: '有效完成轮次' })).toContainText('1');
+  await expect(page.getByRole('heading', { name: '过去 26 周的投入' })).toBeVisible();
+  await expect(page.locator('.focus-calendar-chart [data-date]')).toHaveCount(26 * 7);
   await expect(page.locator('.activity-chart')).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath('v8-statistics.png'), fullPage: true });
 });
@@ -81,19 +87,23 @@ test('one planned round ends directly after its natural progress report', async 
   await page.clock.fastForward(61_000);
   await expect(page.getByRole('heading', { name: '这次工作推进到哪里？' })).toBeVisible();
   await page.getByRole('button', { name: '推进至 25%' }).click();
-  await expect(page.getByText('休息时间')).toBeHidden();
+  await expect(page.getByText('休息中')).toBeHidden();
   await expect(page.getByRole('button', { name: '开始 1 轮' })).toBeVisible();
   await page.getByRole('button', { name: '统计' }).click();
-  await expect(page.locator('.focus-heatmap-cell.heat-level-1')).toHaveCount(1);
+  const reportUnlockDialog = page.getByRole('dialog', { name: '新的成就' });
+  await expect(reportUnlockDialog).toBeVisible();
+  await reportUnlockDialog.getByRole('button', { name: '全部关闭' }).click();
+  await expect(reportUnlockDialog).toHaveCount(0);
+  await expect(page.locator('.focus-calendar-chart .chart-dot:not(.is-empty)')).toHaveCount(1);
 });
 
 test('keeps compact heatmap month labels from overlapping', async ({ page }, testInfo) => {
   await page.clock.install({ time: new Date('2026-08-11T08:00:00+08:00') });
   await createDefaultProject(page);
   await page.getByRole('button', { name: '统计' }).click();
-  await expect(page.locator('.focus-heatmap-cell')).toHaveCount(26 * 7);
+  await expect(page.locator('.focus-calendar-chart [data-date]')).toHaveCount(26 * 7);
 
-  const labels = page.locator('.focus-heatmap-months span');
+  const labels = page.locator('.focus-calendar-chart .chart-month');
   const layout = await labels.evaluateAll(elements => elements.map(element => {
     const box = element.getBoundingClientRect();
     return { text: element.textContent ?? '', left: box.left, right: box.right, clientWidth: element.clientWidth, scrollWidth: element.scrollWidth };
@@ -124,7 +134,7 @@ test('keeps each multi-round progress report before its configured break', async
   await page.clock.fastForward(61_000);
   await expect(page.getByRole('heading', { name: '这次工作推进到哪里？' })).toBeVisible();
   await page.getByRole('button', { name: '推进至 25%' }).click();
-  await expect(page.getByText('休息时间')).toBeVisible();
+  await expect(page.locator('.focus-task-context strong').filter({ hasText: '休息中' })).toBeVisible();
   await page.clock.fastForward(61_000);
   await page.getByRole('button', { name: '开始下一轮' }).click();
   await page.clock.fastForward(61_000);
@@ -233,7 +243,8 @@ test('keeps work-page scroll-end clearance compact above mobile navigation', asy
     expect(layout.paddingBottom).toBe(14);
     if (layout.scrollable) {
       expect(layout.clearance).toBeGreaterThanOrEqual(8);
-      expect(layout.clearance).toBeLessThanOrEqual(36);
+      // scrollHeight is integer-rounded while DOM rectangles retain subpixels.
+      expect(layout.clearance).toBeLessThanOrEqual(36 + 1);
     }
   }
 });
@@ -298,9 +309,13 @@ test('categorized interruption appears in local statistics', async ({ page }) =>
   await expect(page.locator('.toast')).toHaveCount(0);
 
   await page.getByRole('button', { name: '统计' }).click();
-  const reasons = page.getByRole('heading', { name: '中断原因' }).locator('..');
-  await expect(reasons).toContainText('任务受阻');
-  await expect(reasons).toContainText('1');
+  await expect(page.locator('.stats-key-facts > div').filter({hasText:'有效完成轮次'})).toContainText('0');
+  const history = await page.evaluate(async () => {
+    const db = await new Promise<IDBDatabase>((resolve,reject) => { const request=indexedDB.open('blockcolc-v1'); request.onsuccess=()=>resolve(request.result); request.onerror=()=>reject(request.error); });
+    try { return await new Promise<string>((resolve,reject) => { const request=db.transaction('appState').objectStore('appState').get('current'); request.onsuccess=()=>resolve(JSON.stringify(request.result.state.focusHistory)); request.onerror=()=>reject(request.error); }); }
+    finally { db.close(); }
+  });
+  expect(history).toContain('task-blocked');
 });
 
 test('about page exposes local-first, repository and manual update information', async ({ page }, testInfo) => {
@@ -355,7 +370,7 @@ test('zero-minute break persists and early completion ends without a break', asy
   await revealFocusControls(page);
   await page.getByRole('button', { name: '结束本次专注' }).click();
   await page.getByRole('button', { name: /提前完成任务/ }).click();
-  await expect(page.getByText('任务已完成 · 休息时间')).toBeHidden();
+  await expect(page.getByText('任务已完成 · 休息中')).toBeHidden();
   await expect(page.getByRole('button', { name: '开始 1 轮' })).toBeVisible();
 });
 

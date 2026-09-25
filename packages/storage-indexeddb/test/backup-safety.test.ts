@@ -10,6 +10,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   BackupValidationError,
   IndexedDbStateRepository,
+  MAX_BACKUP_BYTES,
   sha256,
 } from "../src/index.js";
 import { projectState } from "./fixture.js";
@@ -30,6 +31,83 @@ beforeEach(() => {
 });
 
 describe("backup safety", () => {
+  it("rejects a backup beyond 100 MiB before replacement without altering data or rollbacks", async () => {
+    const repository = createRepository("oversized");
+    await repository.save(projectState("Keep existing data"), 0);
+    const before = await repository.load();
+    const rollbacks = await repository.listRollbackBackups();
+    const oversized = " ".repeat(MAX_BACKUP_BYTES + 1);
+    await expect(repository.previewImport(oversized)).rejects.toThrow("100 MiB");
+    await expect(repository.replaceFromImport(oversized, before.revision)).rejects.toThrow("100 MiB");
+    expect(await repository.load()).toEqual(before);
+    expect(await repository.listRollbackBackups()).toEqual(rollbacks);
+  });
+  it("previews, imports, and rolls back a valid backup larger than the old 10 MiB cap", async () => {
+    const source = createRepository("large-source");
+    const largeTitle = `Large backup ${"x".repeat(10 * 1024 * 1024 + 256_000)}`;
+    const importedState = projectState(largeTitle);
+    await source.save(importedState, 0);
+    const backup = await source.exportBackup();
+    const backupBytes = new TextEncoder().encode(backup).byteLength;
+    expect(backupBytes).toBeGreaterThan(10 * 1024 * 1024);
+    expect(backupBytes).toBeLessThanOrEqual(MAX_BACKUP_BYTES);
+
+    const destination = createRepository("large-destination");
+    await destination.save(projectState("Before large import"), 0);
+    const beforeImport = await destination.load();
+    const preview = await destination.previewImport(backup);
+    expect(preview.summary.activeProjectTitle).toBe(largeTitle);
+
+    const imported = await destination.replaceFromImport(backup, beforeImport.revision);
+    expect((await destination.load()).state?.projects[0]?.title).toBe(largeTitle);
+
+    await destination.restoreRollback(imported.rollbackBackupId, imported.revision);
+    const restored = await destination.load();
+    expect(restored.state?.projects[0]?.title).toBe("Before large import");
+    expect(restored.state?.projects[0]?.title).not.toBe(largeTitle);
+  });
+
+  it("migrates a checksummed schema 11 backup and round-trips the configured threshold", async () => {
+    const source = createRepository("threshold-source");
+    const initial = projectState();
+    await source.save(initial, 0);
+    const old = JSON.parse(await source.exportBackup());
+    old.payload.schemaVersion = 11;
+    delete old.payload.focusIntegrityPolicy.excursionThresholdSeconds;
+    const { checksum: _checksum, ...unsigned } = old;
+    old.checksum = await sha256(unsigned);
+    const destination = createRepository("threshold-destination");
+    await destination.replaceFromImport(JSON.stringify(old), 0);
+    const loaded = await destination.load();
+    expect(loaded.state).toEqual(initial);
+    const configured = execute(loaded.state!, { type: "ConfigureFocusIntegrity", enabled: true, maxEffectiveExcursions: 4, excursionThresholdSeconds: 20 }, new TestClock());
+    if (!configured.ok) throw new Error(configured.message);
+    await destination.save(configured.state, loaded.revision);
+    const third = createRepository("threshold-roundtrip");
+    await third.replaceFromImport(await destination.exportBackup(), 0);
+    expect((await third.load()).state?.focusIntegrityPolicy).toEqual({ enabled: true, maxEffectiveExcursions: 4, excursionThresholdSeconds: 20 });
+  });
+  it("preserves deferred settlement across save, export, import and pending-round recovery", async () => {
+    const clock = new TestClock(new Date("2026-07-23T09:00:00.000Z"));
+    const started = execute(projectState(), { type:"StartFocus", sessionId:"minimal", subtaskId:null, plannedDurationMs:60_000, marathon:true, deferredSettlement:true }, clock);
+    if (!started.ok) throw new Error(started.message);
+    const source = createRepository("minimal-source");
+    await source.save(started.state, 0);
+    const destination = createRepository("minimal-destination");
+    await destination.replaceFromImport(await source.exportBackup(), 0);
+    const restored = await destination.load();
+    expect(restored.state?.schemaVersion).toBe(12);
+    expect(restored.state?.activeFocusSession).toEqual(started.state.activeFocusSession);
+    clock.advance(60_000);
+    const completed = execute(restored.state!, {type:"CompleteFocus"}, clock);
+    if (!completed.ok) throw new Error(completed.message);
+    await destination.save(completed.state, restored.revision);
+    const third = createRepository("minimal-completed");
+    await third.replaceFromImport(await destination.exportBackup(), 0);
+    expect((await third.load()).state?.focusHistory[0]).toMatchObject({subtaskId:null, deferredSettlement:true, status:"completed"});
+    expect((await third.load()).state?.progressReports).toEqual([]);
+  });
+
   it("round-trips active focus integrity runtime in the v2 payload", async () => {
     const source = createRepository("focus-integrity-source");
     const clock = new TestClock(new Date("2026-07-23T08:00:00.000Z"));
@@ -73,6 +151,8 @@ describe("backup safety", () => {
     const state = projectState("中文项目 English 项目");
     await source.save(state, 0);
     const legacyEnvelope = JSON.parse(await source.exportBackup()) as any;
+    legacyEnvelope.payload.schemaVersion = 10;
+    delete legacyEnvelope.payload.focusIntegrityPolicy.excursionThresholdSeconds;
     legacyEnvelope.payload.todayNextSteps = {
       date: "2026-07-23",
       entries: [{ id: "today-1", projectId: "project-1", subtaskId: "subtask-1", estimatedRounds: 3, createdAt: "2026-07-23T08:00:00.000Z" }],
@@ -113,6 +193,12 @@ describe("backup safety", () => {
     expect(restored.decorationBlueprintResources[0]!.blueprint.voxels[0]).toMatchObject({
       sourceBlockId: "minecraft:lantern", emissiveKind: "lantern", emissiveLevel: 15,
     });
+    expect(restored.decorationBlueprintResources[0]!.blueprint.voxels[1]!.movingPistonMovedState).toEqual({
+      blockId: "minecraft:oak_log", properties: { axis: "x" },
+    });
+    expect(restored.decorationBlueprintResources[0]!.blueprint.voxels[1]!.movingPistonPose).toEqual({
+      facing: "west", progress: 0.375, extending: true, source: false,
+    });
   });
 
   it("accepts old checksummed v1 backups without importedBlueprint and normalizes future exports", async () => {
@@ -136,12 +222,12 @@ describe("backup safety", () => {
     const destination = createRepository("old-v1-destination");
     await expect(destination.previewImport(JSON.stringify(oldEnvelope))).resolves.toMatchObject({ schemaVersion: 1 });
     await destination.replaceFromImport(JSON.stringify(oldEnvelope), 0);
-    expect((await destination.load()).state?.schemaVersion).toBe(10);
-    expect((await destination.load()).state?.focusIntegrityPolicy).toEqual({ enabled: true, maxEffectiveExcursions: 3 });
+    expect((await destination.load()).state?.schemaVersion).toBe(12);
+    expect((await destination.load()).state?.focusIntegrityPolicy).toEqual({ enabled: true, maxEffectiveExcursions: 3, excursionThresholdSeconds: 3 });
     expect((await destination.load()).state?.projects[0]!.importedBlueprint).toBeNull();
     const normalized = JSON.parse(await destination.exportBackup()) as any;
     expect(normalized.schemaVersion).toBe(1);
-    expect(normalized.payload.schemaVersion).toBe(10);
+    expect(normalized.payload.schemaVersion).toBe(12);
     expect(normalized.payload.worldSettings).toEqual({ worldSeed: "legacy-project-1", terrainGenerationVersion: 4, environmentStyle: "natural-valley" });
     expect(normalized.payload.projects[0]).toHaveProperty("importedBlueprint", null);
   });
@@ -346,11 +432,23 @@ function sampleImportedBlueprint() {
     schemaVersion: 1 as const,
     id: "imported-blueprint",
     title: "Imported blueprint",
-    bounds: { minX: 0, maxX: 1, minY: 0, maxY: 0, minZ: 0, maxZ: 0 },
+    bounds: { minX: 0, maxX: 3, minY: 0, maxY: 0, minZ: 0, maxZ: 0 },
     voxels: [
       { x: 0, y: 0, z: 0, materialId: "stone" as const, stage: "foundation" as const, buildOrder: 0,
         sourceBlockId: "minecraft:lantern", sourceBlockState: { hanging: "true" }, emissiveKind: "lantern", emissiveLevel: 15 },
-      { x: 1, y: 0, z: 0, materialId: "wood" as const, stage: "frame" as const, buildOrder: 2_000 },
+      { x: 1, y: 0, z: 0, materialId: "wood" as const, stage: "frame" as const, buildOrder: 2_000,
+        sourceBlockId: "minecraft:moving_piston",
+        movingPistonMovedState: { blockId: "minecraft:oak_log", properties: { axis: "x" } },
+        movingPistonPose: { facing: "west" as const, progress: 0.375, extending: true, source: false } },
+      { x: 2, y: 0, z: 0, materialId: "plank" as const, stage: "details" as const, buildOrder: 6_000,
+        sourceBlockId: "minecraft:oak_sign",
+        sign: {
+          front: { lines: ["Synthetic front"], dyeColor: "red" as const, glowing: true },
+          back: { lines: ["Synthetic back"], dyeColor: "blue" as const, glowing: false },
+        } },
+      { x: 3, y: 0, z: 0, materialId: "accent" as const, stage: "details" as const, buildOrder: 10_000,
+        sourceBlockId: "minecraft:campfire",
+        campfire: { slots: [{ slot: 2 as const, itemId: "minecraft:stick", count: 1 }] } },
     ],
   };
 }

@@ -44,7 +44,7 @@ test('keeps the global task portfolio collapsed until requested', async ({ page 
   await page.getByRole('button', { name: '任务', exact: true }).click();
   const portfolio = page.getByRole('button', { name: /任务总览/ });
   await expect(portfolio).toHaveAttribute('aria-expanded', 'false');
-  await expect(page.locator('.task-project-title ~ .project-portfolio')).toHaveCount(1);
+  await expect(page.locator('.task-detail-panel ~ .project-portfolio')).toHaveCount(1);
   await portfolio.click();
   await expect(portfolio).toHaveAttribute('aria-expanded', 'true');
   await expect(page.locator('.project-portfolio-row')).toHaveCount(2);
@@ -68,19 +68,22 @@ test('explains interrupted time in recent rhythm, project allocation, building m
   await page.getByRole('button', { name: '外部打扰' }).click();
 
   await page.getByRole('button', { name: '统计' }).click();
+  const unlockDialog = page.getByRole('dialog', { name: '新的成就' });
+  await expect(unlockDialog).toBeVisible();
+  await unlockDialog.getByRole('button', { name: '全部关闭' }).click();
+  await expect(unlockDialog).toHaveCount(0);
   await page.clock.fastForward(5_100);
-  await expect(page.getByRole('heading', { name: '近期专注' })).toBeVisible();
-  await expect(page.locator('.rhythm-grid')).toContainText('近 7 天');
-  await expect(page.locator('.rhythm-grid')).toContainText('1 小时 15 分钟');
-  await expect(page.locator('.rhythm-grid')).not.toContainText('近 7 天分钟');
+  await page.getByRole('button', {name:'近 7 天',exact:true}).click();
+  await expect(page.locator('.stats-duration')).toContainText('近 7 天');
+  await expect(page.locator('.stats-duration')).toContainText('1 小时 15 分钟');
   await expect(page.locator('.project-allocation')).toContainText('我的第一座工坊');
-  await expect(page.locator('.project-allocation')).toContainText('1 小时 15 分钟');
+  await expect(page.locator('.project-allocation').getByRole('img')).toHaveAccessibleName(/1 小时 15 分钟/);
   await page.screenshot({ path: testInfo.outputPath('explanatory-stats-mobile.png'), fullPage: true });
 
   await page.getByRole('button', { name: '任务', exact: true }).click();
   await page.getByRole('button', { name: '查看建筑' }).click();
   const buildingMemory = page.locator('.building-memory-panel');
-  await expect(buildingMemory).toContainText('累计有效专注');
+  await expect(buildingMemory).toContainText('累计实际投入');
   await expect(buildingMemory).toContainText('75 分钟');
   await buildingMemory.getByRole('button', { name: '关闭建筑记忆' }).click();
   await page.getByRole('button', { name: '设置' }).click();

@@ -56,7 +56,7 @@ try {
 
     $authorized = @(Get-AuthorizedAndroidDevices)
     $targetSerials = @($evidence.installations | ForEach-Object { [string]$_.Serial } | Where-Object { $_ } | Sort-Object -Unique)
-    if ($targetSerials.Count -eq 0) { throw 'Accepted evidence has no verified device installation.' }
+    if (@($targetSerials).Count -eq 0) { throw 'Accepted evidence has no verified device installation.' }
     foreach ($serial in $targetSerials) {
         if ($authorized -notcontains $serial) { throw "Accepted Android device is not connected for final release verification: $serial" }
         $acceptedInstallation = @($evidence.installations | Where-Object { [string]$_.Serial -eq $serial } | Select-Object -First 1)

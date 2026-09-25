@@ -90,7 +90,7 @@ describe("safe texture animation metadata", () => {
     expect(animated.animation!.frames.map((frame) => frame.pageTextureIndex)).toEqual([0, 1]);
   });
 
-  it("accepts 32px Java animation frames and downsamples them with premultiplied-alpha box filtering", () => {
+  it("preserves native 32px Java animation frames without downsampling", () => {
     const manifest = parseJava16xResourcePack(zip({
       "pack.mcmeta": packMetadata,
       "assets/minecraft/textures/block/flow.png": rgbaPng(32, 64, (x, y) => {
@@ -109,9 +109,31 @@ describe("safe texture animation metadata", () => {
     });
     const atlas = buildJava16xTextureAtlas(manifest);
     const entry = atlas.entries[0]!;
+    expect(atlas.textureSize).toBe(32);
+    expect(entry.width).toBe(32);
     expect(entry.alphaMode).toBe("translucent");
-    expect(pixelAt(atlas.pages[0]!, entry.animation!.frames[0]!.uv)).toEqual([200, 20, 10, 128]);
+    expect(pixelAt(atlas.pages[0]!, entry.animation!.frames[0]!.uv)).toEqual([200, 20, 10, 255]);
     expect(pixelAt(atlas.pages[0]!, entry.animation!.frames[1]!.uv)).toEqual([90, 100, 110, 128]);
+  });
+
+  it("keeps static 16px and 32px textures in native-resolution pages", () => {
+    const manifest = parseJava16xResourcePack(zip({
+      "pack.mcmeta": packMetadata,
+      "assets/minecraft/textures/block/a_16.png": rgbaPng(16, 16, (x) => x === 0
+        ? [10, 20, 30, 255] : [40, 50, 60, 255]),
+      "assets/minecraft/textures/block/b_32.png": rgbaPng(32, 32, (x) => x === 1
+        ? [70, 80, 90, 255] : [100, 110, 120, 255]),
+    }));
+    expect(manifest.summary.rejectedTextureCount).toBe(0);
+    const atlas = buildJava16xTextureAtlas(manifest);
+    expect(atlas.textureSize).toBe(32);
+    expect(atlas.entries.map((entry) => entry.width)).toEqual([16, 32]);
+    const low = atlas.entries[0]!;
+    const high = atlas.entries[1]!;
+    expect(pixelAt(atlas.pages[low.page]!, low.uv, 0)).toEqual([10, 20, 30, 255]);
+    expect(atlas.pages[low.page]!.textureSize).toBe(16);
+    expect(pixelAt(atlas.pages[low.page]!, low.uv, 1)).toEqual([40, 50, 60, 255]);
+    expect(pixelAt(atlas.pages[high.page]!, high.uv, 1)).toEqual([70, 80, 90, 255]);
   });
 
   it("uses row-major Java frame indexes for horizontal and two-dimensional grids", () => {
@@ -122,7 +144,7 @@ describe("safe texture animation metadata", () => {
     files["assets/minecraft/textures/block/z_grid.png"] = rgbaPng(64, 64, (x, y) => [1 + Math.floor(x / 32) + Math.floor(y / 32) * 2, 0, 0, 255]);
     files["assets/minecraft/textures/block/z_grid.png.mcmeta"] = json({ animation: { width: 32, height: 32, frames: [3, 0, 2, 1] } });
 
-    const atlas = buildJava16xTextureAtlas(parseJava16xResourcePack(zip(files)), { maxPageSize: 64 });
+    const atlas = buildJava16xTextureAtlas(parseJava16xResourcePack(zip(files)), { maxPageSize: 128 });
     const horizontal = atlas.entries.find((entry) => entry.resourceId.endsWith("horizontal"))!;
     const grid = atlas.entries.find((entry) => entry.resourceId.endsWith("z_grid"))!;
     expect(horizontal.animation!.frames.map((frame) => pixelAt(atlas.pages[frame.page]!, frame.uv)[0])).toEqual([11, 22]);
@@ -131,14 +153,25 @@ describe("safe texture animation metadata", () => {
     expect(grid.animation!.frames.map((frame) => pixelAt(atlas.pages[frame.page]!, frame.uv)[0])).toEqual([4, 1, 3, 2]);
   });
 
-  it("rejects unsafe frame geometry and exposes a bounded reusable RGBA decoder", () => {
+  it("downgrades invalid square animation metadata but rejects unsafe frame geometry", () => {
     const invalid = parseJava16xResourcePack(zip({
       "pack.mcmeta": packMetadata,
       "assets/minecraft/textures/block/invalid.png": rgbaPng(64, 64, () => [1, 2, 3, 255]),
       "assets/minecraft/textures/block/invalid.png.mcmeta": json({ animation: { width: 32, height: 16 } }),
     }));
-    expect(invalid.textures).toEqual([]);
+    expect(invalid.textures).toHaveLength(1);
+    expect(invalid.textures[0]?.animation).toBeUndefined();
     expect(invalid.summary.issues).toEqual(expect.arrayContaining([expect.objectContaining({ code: "INVALID_TEXTURE_ANIMATION" })]));
+
+    const invalidNonSquare = parseJava16xResourcePack(zip({
+      "pack.mcmeta": packMetadata,
+      "assets/minecraft/textures/block/invalid_non_square.png": rgbaPng(64, 32, () => [1, 2, 3, 255]),
+      "assets/minecraft/textures/block/invalid_non_square.png.mcmeta": json({ animation: { width: 32, height: 16 } }),
+    }));
+    expect(invalidNonSquare.textures).toEqual([]);
+    expect(invalidNonSquare.summary.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "INVALID_TEXTURE_ANIMATION", path: "assets/minecraft/textures/block/invalid_non_square.png.mcmeta" }),
+    ]));
 
     const colormap = rgbaPng(256, 256, (x, y) => [x, y, 7, 255]);
     const decoded = decodePngRgba(colormap, {
@@ -295,8 +328,9 @@ function concat(...arrays: Uint8Array[]): Uint8Array {
 function pixelAt(
   page: { width: number; height: number; rgba: Uint8Array },
   uv: { u0: number; v0: number },
+  pixelOffsetX = 0,
 ): number[] {
-  const x = Math.round(uv.u0 * page.width);
+  const x = Math.round(uv.u0 * page.width) + pixelOffsetX;
   const y = Math.round(uv.v0 * page.height);
   const offset = (y * page.width + x) * 4;
   return [...page.rgba.subarray(offset, offset + 4)];

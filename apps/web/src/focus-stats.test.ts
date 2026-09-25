@@ -77,4 +77,28 @@ describe('effective focus statistics', () => {
     expect(distribution.filter((bucket) => bucket.minutes > 0)).toHaveLength(2);
     expect(settlementTotals(state)).toEqual({ totalMinutes: 60, completedRounds: 1, buildings: 2 });
   });
+
+  it('keeps explicit marathon ownership separate and puts legacy shared time in its own row', () => {
+    const state = createInitialState('UTC');
+    state.projects.push(
+      { id: 'project-a', title: '主线', kind: 'finite', settlementIndex: 0, blueprintId: 'builtin-small-workshop', importedBlueprint: null, createdAt: '2026-08-01T00:00:00.000Z', status: 'monument', subtaskStructureLocked: true, subtasks: [{ id: 'task-a', title: '正文', progressBasisPoints: 10000, order: 0 }], habit: null },
+      { id: 'project-b', title: '支线', kind: 'finite', settlementIndex: 1, blueprintId: 'builtin-small-workshop', importedBlueprint: null, createdAt: '2026-08-01T00:00:00.000Z', status: 'monument', subtaskStructureLocked: true, subtasks: [{ id: 'task-b', title: '另一项', progressBasisPoints: 10000, order: 0 }], habit: null },
+    );
+    state.focusHistory.push(
+      { id: 'explicit-a', projectId: 'project-a', subtaskId: 'task-a', marathon: true, startedAt: '2026-08-10T00:00:00.000Z', endsAt: '2026-08-10T00:25:00.000Z', plannedDurationMs: 1_500_000, timeZoneAtStart: 'UTC', status: 'completed', completedAt: '2026-08-10T00:25:00.000Z', completedLocalDate: '2026-08-10', actualDurationMs: 1_500_000 },
+      { id: 'explicit-b', projectId: 'project-a', subtaskId: 'task-a', marathon: true, startedAt: '2026-08-10T01:00:00.000Z', endsAt: '2026-08-10T01:15:00.000Z', plannedDurationMs: 900_000, timeZoneAtStart: 'UTC', status: 'completed', completedAt: '2026-08-10T01:15:00.000Z', completedLocalDate: '2026-08-10', actualDurationMs: 900_000 },
+      { id: 'legacy-shared', projectId: 'project-a', subtaskId: 'task-a', marathon: true, startedAt: '2026-08-10T02:00:00.000Z', endsAt: '2026-08-10T02:10:00.000Z', plannedDurationMs: 600_000, timeZoneAtStart: 'UTC', status: 'completed', completedAt: '2026-08-10T02:10:00.000Z', completedLocalDate: '2026-08-10', actualDurationMs: 600_000 },
+    );
+    state.progressReports = [
+      { id: 'explicit-a-report', projectId: 'project-a', subtaskId: 'task-a', focusSessionIds: ['explicit-a'], progressBasisPoints: 10000, reportedAt: '2026-08-10T03:00:00.000Z', allocation: 'explicit' },
+      { id: 'explicit-b-report', projectId: 'project-b', subtaskId: 'task-b', focusSessionIds: ['explicit-b'], progressBasisPoints: 10000, reportedAt: '2026-08-10T03:00:00.000Z', allocation: 'explicit' },
+      { id: 'legacy-a-report', projectId: 'project-a', subtaskId: 'task-a', focusSessionIds: ['legacy-shared'], progressBasisPoints: 10000, reportedAt: '2026-08-10T03:00:00.000Z', shared: true },
+      { id: 'legacy-b-report', projectId: 'project-b', subtaskId: 'task-b', focusSessionIds: ['legacy-shared'], progressBasisPoints: 10000, reportedAt: '2026-08-10T03:00:00.000Z', shared: true },
+    ];
+    expect(projectFocusAllocation(state, '2026-08-10', 1)).toEqual([
+      { projectId: 'project-a', title: '主线', minutes: 25, share: 50 },
+      { projectId: 'project-b', title: '支线', minutes: 15, share: 30 },
+      { projectId: 'unallocated', title: '未分配 / 不可追溯', minutes: 10, share: 20, unallocated: true },
+    ]);
+  });
 });

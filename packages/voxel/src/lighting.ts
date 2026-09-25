@@ -30,6 +30,25 @@ export interface EmissivePoint {
   intensity: number;
 }
 
+export type LightingVector = readonly [number, number, number];
+
+/**
+ * Returns the direction a directional shadow ray travels from the light source
+ * toward the world. Keeping this derived from the same source position used by
+ * the renderer makes time/lighting diagnostics prove a real direction change,
+ * rather than merely a color or intensity change.
+ */
+export function shadowDirectionFromPosition(position: LightingVector): LightingVector {
+  const length = Math.max(1e-6, Math.hypot(position[0], position[1], position[2]));
+  return [-position[0] / length, -position[1] / length, -position[2] / length];
+}
+
+export function lightingDirectionFingerprint(state: Pick<SunState, "position" | "sunPosition" | "moonPosition">): string {
+  return [...state.position, ...state.sunPosition, ...state.moonPosition]
+    .map((value) => value.toFixed(4))
+    .join(",");
+}
+
 export function sunStateForLocalTime(date: Date): SunState {
   const hour = date.getHours() + date.getMinutes() / 60 + date.getSeconds() / 3600;
   const solarProgress = (hour - 6) / 12;

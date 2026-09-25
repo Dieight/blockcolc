@@ -18,8 +18,12 @@ import java.io.InputStream;
 
 @CapacitorPlugin(name = "LitematicFilePicker")
 public class LitematicFilePickerPlugin extends Plugin {
-    private static final int LITEMATIC_MAX_BYTES = 10 * 1024 * 1024;
-    private static final int RESOURCE_PACK_MAX_BYTES = 32 * 1024 * 1024;
+    // Keep this aligned with the shared/browser parser and the Capacitor
+    // bridge default. The stream is still bounded before it is encoded for
+    // JavaScript, so a provider that omits or lies about its declared size
+    // cannot make the native side read an unbounded document.
+    static final int LITEMATIC_MAX_BYTES = 64 * 1024 * 1024;
+    private static final int RESOURCE_PACK_MAX_BYTES = 64 * 1024 * 1024;
     private static final int RESOURCE_PACK_CHUNK_BYTES = 256 * 1024;
     private static final String METHOD_RESOURCE_PACK = "pickResourcePack";
     private ChunkedDocumentTransferStore resourcePackTransfers;
@@ -174,7 +178,7 @@ public class LitematicFilePickerPlugin extends Plugin {
             "application/octet-stream", "application/gzip", "application/x-gzip"
         }),
         RESOURCE_PACK(RESOURCE_PACK_MAX_BYTES, "resource-pack.zip", new String[] {
-            "application/zip", "application/x-zip-compressed", "application/octet-stream"
+            "application/zip", "application/x-zip-compressed", "application/java-archive", "application/octet-stream"
         });
 
         final int hardMaximumBytes;

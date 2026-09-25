@@ -125,7 +125,7 @@
   .building-memory-close { width: 40px; height: 40px; flex-basis: 40px; }
   .building-memory-progress { margin-top: 6px; }
   .building-memory-progress strong { font-size: 23px; }
-  .building-memory-panel dl { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 8px; }
+  .building-memory-panel dl { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 8px; }
   .building-memory-panel dl > div { min-width: 0; min-height: 44px; display: grid; align-content: center; justify-content: start; gap: 2px; }
   .building-memory-panel dd { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .building-memory-next { margin-top: 8px; }

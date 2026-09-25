@@ -1,0 +1,8 @@
+/* The overlay is a direct, absolutely positioned child of the immersive glass
+   panel. It paints water on the pane while the carousel's text stays above it. */
+.focus-panel:has(> .minimal-panel-weather-overlay){isolation:isolate}
+.focus-panel:has(> .minimal-panel-weather-overlay)>.minimal-panel-weather-overlay{position:absolute;z-index:0;inset:0;overflow:hidden;pointer-events:none}
+.focus-panel:has(> .minimal-panel-weather-overlay)>.minimal-idle-carousel{position:relative;z-index:1}
+.minimal-panel-weather-overlay canvas{display:block;width:100%;height:100%;pointer-events:none}
+@media(prefers-reduced-transparency:reduce){.minimal-panel-weather-overlay{opacity:.58}}
+@media(prefers-reduced-motion:reduce){.minimal-panel-weather-overlay{transition:none;animation:none}}

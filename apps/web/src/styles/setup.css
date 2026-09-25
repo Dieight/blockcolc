@@ -4,6 +4,7 @@
 .setup-kind button[aria-pressed="true"]{color:#17211c;font-weight:750;text-decoration:underline;text-decoration-thickness:2px;text-decoration-color:#276749;text-underline-offset:7px}
 .setup-cancel{min-width:64px;border:0;background:none;color:#58635d;font-weight:700}
 .setup-actions>button:first-child:not(.primary){min-width:64px;border:0;background:none;color:#58635d;font-weight:700}
+.setup-error{margin:10px 0 0;color:#b4232c;font-size:13px}
 .setup-subtasks{display:grid;gap:7px;margin-bottom:15px}
 .setup-subtasks-head{display:flex;align-items:center;justify-content:space-between;min-height:28px;font-size:13px;font-weight:700}
 .setup-subtasks-head .settings-text-action{min-height:32px;font-size:13px}
@@ -40,14 +41,14 @@
 .boot-page-mark{font-weight:800;font-size:20px;color:#17211c}
 .boot-page-mark small{display:block;font-size:11px;font-weight:400;color:#8a938d;letter-spacing:.14em;text-transform:uppercase;margin-top:2px}
 .boot-page-status{margin:0;font-size:14px;color:#58635d}
-.boot-page-blocks{display:flex;gap:5px;align-items:flex-end;height:12px;padding-bottom:1px}
+.boot-page-blocks{display:flex;gap:6px;align-items:flex-end;height:10px}
 /* V27: blocks rise from below and settle in sequence — a small crew laying the
  * first bricks of the settlement while the world restores. */
-.boot-page-blocks i{width:10px;height:10px;background:#276749;animation:world-boot-block 1.2s ease-in-out infinite}
-.boot-page-blocks i:nth-child(2){animation-delay:.16s;background:#3e7d5c}
-.boot-page-blocks i:nth-child(3){animation-delay:.32s;background:#5b9275}
-.boot-page-hint{margin:0;font-size:12px;color:#8a938d}
+.boot-page-blocks i{width:10px;height:10px;background:#276749;animation:world-boot-block .9s ease-in-out infinite}
+.boot-page-blocks i:nth-child(2){animation-delay:.12s;background:#3e7d5c}
+.boot-page-blocks i:nth-child(3){animation-delay:.24s;background:#5b9275}
 @media(prefers-reduced-motion:reduce){.boot-page-blocks i{animation:none;opacity:1;transform:none}}
 @keyframes world-boot-in{from{opacity:0}to{opacity:1}}
-@keyframes world-boot-block{0%{transform:translateY(11px);opacity:0}25%{opacity:1}48%{transform:translateY(0)}60%{transform:translateY(-3px)}72%,92%{transform:translateY(0);opacity:1}100%{transform:translateY(0);opacity:.45}}
+/* DF-UI-09: cold-start animation restored to the v1.11.0 three-block rise; only the animation rules moved back, the V26 boot sequence itself is untouched. */
+@keyframes world-boot-block{0%,100%{transform:translateY(0);opacity:.55}35%{transform:translateY(-7px);opacity:1}70%{transform:translateY(0);opacity:.75}}
 .daily-goal-workbench{margin-bottom:26px}

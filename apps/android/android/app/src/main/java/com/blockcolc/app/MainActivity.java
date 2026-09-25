@@ -19,10 +19,14 @@ import com.getcapacitor.WebViewListener;
 import java.util.Locale;
 
 public class MainActivity extends BridgeActivity {
+    static final long MINI_WINDOW_POLL_INTERVAL_MS = 1000L;
     static final String ACTION_SKIP_BREAK = "com.blockcolc.app.action.SKIP_BREAK";
     private boolean pendingSkipBreak = false;
     private final long nativeCreatedAtMs = SystemClock.elapsedRealtime();
     private Insets latestSafeInsets = Insets.NONE;
+    private String lastSafeAreaScript = null;
+    private final SafeAreaUpdateGate safeAreaUpdateGate = new SafeAreaUpdateGate();
+    private boolean activityStarted = false;
     private boolean miniWindowActive = false;
     private final Runnable miniWindowCheck = this::checkMiniWindowFallback;
     private final AttentionStateMachine attentionState = new AttentionStateMachine();
@@ -43,7 +47,9 @@ public class MainActivity extends BridgeActivity {
         public void run() {
             if (isFinishing() || isDestroyed()) return;
             checkMiniWindowFallback();
-            if (!isFinishing() && !isDestroyed()) mainHandler.postDelayed(this, 1000);
+            if (shouldKeepMiniWindowPolling(activityStarted, isFinishing(), isDestroyed())) {
+                mainHandler.postDelayed(this, MINI_WINDOW_POLL_INTERVAL_MS);
+            }
         }
     };
 
@@ -61,12 +67,14 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(NativeInputPlugin.class);
         registerPlugin(SettingsPlugin.class);
         registerPlugin(BreakLiveUpdatePlugin.class);
+        registerPlugin(WeatherPlugin.class);
+        registerPlugin(FocusExportPlugin.class);
         bridgeBuilder.addWebViewListener(new WebViewListener() {
             @Override
             public void onPageLoaded(WebView webView) {
                 Log.i("BlockcolcStartup", "page-loaded durationMs=" + (SystemClock.elapsedRealtime() - nativeCreatedAtMs));
                 captureWebDiagnostics(webView, 20);
-                publishSafeAreaInsets(latestSafeInsets);
+                publishSafeAreaInsets(latestSafeInsets, true);
                 dispatchPendingBreakAction();
             }
         });
@@ -87,15 +95,26 @@ public class MainActivity extends BridgeActivity {
                 Math.max(bars.right, cutout.right),
                 Math.max(bars.bottom, cutout.bottom)
             );
-            view.setPadding(0, 0, 0, 0);
+            if (view.getPaddingLeft() != 0 || view.getPaddingTop() != 0
+                || view.getPaddingRight() != 0 || view.getPaddingBottom() != 0) {
+                view.setPadding(0, 0, 0, 0);
+            }
             publishSafeAreaInsets(latestSafeInsets);
             return windowInsets;
         });
         ViewCompat.requestApplyInsets(content);
         getWindow().getDecorView().addOnLayoutChangeListener((view, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> {
+            if (!activityStarted) return;
             view.removeCallbacks(miniWindowCheck);
             view.postDelayed(miniWindowCheck, 700);
         });
+    }
+
+    @Override
+    public void onStart() {
+        super.onStart();
+        activityStarted = true;
+        mainHandler.removeCallbacks(miniWindowPoll);
         mainHandler.postDelayed(miniWindowPoll, 500);
     }
 
@@ -164,6 +183,7 @@ public class MainActivity extends BridgeActivity {
     }
 
     private void checkMiniWindowFallback() {
+        if (!activityStarted) return;
         if (getBridge() == null || getBridge().getWebView() == null) return;
         View decor = getWindow().getDecorView();
         int width = decor.getWidth();
@@ -179,41 +199,96 @@ public class MainActivity extends BridgeActivity {
         applyAttentionTransition(attentionState.onMiniWindowChanged(mini), "window-area");
     }
 
+    static boolean shouldKeepMiniWindowPolling(boolean started, boolean finishing, boolean destroyed) {
+        return started && !finishing && !destroyed;
+    }
+
+    static boolean shouldPublishSafeAreaScript(String previousScript, String nextScript, boolean force) {
+        return nextScript != null && !nextScript.isEmpty() && (force || !nextScript.equals(previousScript));
+    }
+
     private void publishSafeAreaInsets(Insets insets) {
+        publishSafeAreaInsets(insets, false);
+    }
+
+    private void publishSafeAreaInsets(Insets insets, boolean force) {
         if (getBridge() == null || getBridge().getWebView() == null) return;
         WebView webView = getBridge().getWebView();
+        if (!safeAreaUpdateGate.offer(insets, force)) return;
         webView.post(() -> {
-            int[] location = new int[2];
-            webView.getLocationInWindow(location);
-            View content = findViewById(android.R.id.content);
-            int windowWidth = content.getWidth();
-            int windowHeight = content.getHeight();
-            int rightGap = Math.max(0, windowWidth - (location[0] + webView.getWidth()));
-            int bottomGap = Math.max(0, windowHeight - (location[1] + webView.getHeight()));
-            Insets remaining = Insets.of(
-                Math.max(0, insets.left - location[0]),
-                Math.max(0, insets.top - location[1]),
-                Math.max(0, insets.right - rightGap),
-                Math.max(0, insets.bottom - bottomGap)
-            );
-            float density = getResources().getDisplayMetrics().density;
-            String script = String.format(
-                Locale.US,
-                "document.documentElement.style.setProperty('--native-safe-area-inset-left','%.2fpx');" +
-                    "document.documentElement.style.setProperty('--native-safe-area-inset-top','%.2fpx');" +
-                    "document.documentElement.style.setProperty('--native-safe-area-inset-right','%.2fpx');" +
-                    "document.documentElement.style.setProperty('--native-safe-area-inset-bottom','%.2fpx');",
-                remaining.left / density,
-                remaining.top / density,
-                remaining.right / density,
-                remaining.bottom / density
-            );
-            webView.evaluateJavascript(script, null);
+            SafeAreaUpdateGate.Update update = safeAreaUpdateGate.consume();
+            publishSafeAreaInsets(webView, update.insets, update.force);
         });
+    }
+
+    private void publishSafeAreaInsets(WebView webView, Insets insets, boolean force) {
+        if (getBridge() == null || getBridge().getWebView() != webView) return;
+        int[] location = new int[2];
+        webView.getLocationInWindow(location);
+        View content = findViewById(android.R.id.content);
+        int windowWidth = content.getWidth();
+        int windowHeight = content.getHeight();
+        int rightGap = Math.max(0, windowWidth - (location[0] + webView.getWidth()));
+        int bottomGap = Math.max(0, windowHeight - (location[1] + webView.getHeight()));
+        Insets remaining = Insets.of(
+            Math.max(0, insets.left - location[0]),
+            Math.max(0, insets.top - location[1]),
+            Math.max(0, insets.right - rightGap),
+            Math.max(0, insets.bottom - bottomGap)
+        );
+        float density = getResources().getDisplayMetrics().density;
+        String script = String.format(
+            Locale.US,
+            "document.documentElement.style.setProperty('--native-safe-area-inset-left','%.2fpx');" +
+                "document.documentElement.style.setProperty('--native-safe-area-inset-top','%.2fpx');" +
+                "document.documentElement.style.setProperty('--native-safe-area-inset-right','%.2fpx');" +
+                "document.documentElement.style.setProperty('--native-safe-area-inset-bottom','%.2fpx');",
+            remaining.left / density,
+            remaining.top / density,
+            remaining.right / density,
+            remaining.bottom / density
+        );
+        if (!shouldPublishSafeAreaScript(lastSafeAreaScript, script, force)) return;
+        lastSafeAreaScript = script;
+        webView.evaluateJavascript(script, null);
+    }
+
+    static final class SafeAreaUpdateGate {
+        private Insets latestInsets = Insets.NONE;
+        private boolean force = false;
+        private boolean pending = false;
+
+        boolean offer(Insets insets, boolean force) {
+            latestInsets = insets;
+            this.force |= force;
+            if (pending) return false;
+            pending = true;
+            return true;
+        }
+
+        Update consume() {
+            Update update = new Update(latestInsets, force);
+            pending = false;
+            force = false;
+            return update;
+        }
+
+        static final class Update {
+            final Insets insets;
+            final boolean force;
+
+            Update(Insets insets, boolean force) {
+                this.insets = insets;
+                this.force = force;
+            }
+        }
     }
 
     @Override
     public void onStop() {
+        activityStarted = false;
+        mainHandler.removeCallbacks(miniWindowPoll);
+        getWindow().getDecorView().removeCallbacks(miniWindowCheck);
         super.onStop();
     }
 
@@ -247,10 +322,18 @@ public class MainActivity extends BridgeActivity {
         if (hasFocus) {
             // Returning focus settles a pending focus-leave; the domain grace
             // absorbs quick overlays (notification shade, edge panel).
-            applyAttentionTransition(attentionState.onWindowFocusChanged(true), "window-focus");
-            getBridge().getWebView().postDelayed(() -> getBridge().getWebView().evaluateJavascript(
-                "window.dispatchEvent(new Event('blockcolc-window-focus'));", null
-            ), 180);
+            AttentionStateMachine.Transition transition = attentionState.onWindowFocusChanged(true);
+            applyAttentionTransition(transition, "window-focus");
+            // The old delayed callback fired for every onWindowFocusChanged(true),
+            // including duplicate focus callbacks that did not cross the
+            // attention state boundary. Publish this UI sync only for the one
+            // foreground transition; the state machine is the de-duplication
+            // authority, not a timeout.
+            if (transition == AttentionStateMachine.Transition.FOREGROUND) {
+                getBridge().getWebView().post(() -> getBridge().getWebView().evaluateJavascript(
+                    "window.dispatchEvent(new Event('blockcolc-window-focus'));", null
+                ));
+            }
         } else {
             // Splitting attention to ANY other window (a floating window of
             // another app, the notification shade, the recents overview) loses

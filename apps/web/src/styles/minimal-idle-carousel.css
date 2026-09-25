@@ -1,0 +1,9 @@
+.minimal-idle-carousel{position:relative;width:100%;min-width:0;height:234px;min-height:0;overflow:hidden;touch-action:pan-y;user-select:none;-webkit-user-select:none}
+.minimal-idle-viewport{width:100%;height:100%;overflow:hidden}
+.minimal-idle-track{display:flex;width:200%;height:100%;transition:transform .25s cubic-bezier(.2,.8,.2,1);will-change:transform}
+.minimal-idle-page{flex:0 0 50%;box-sizing:border-box;width:50%;min-width:0;height:100%;display:grid;align-content:center;overflow:hidden}
+.minimal-idle-page .focus-face{height:100%}
+.minimal-idle-today-page{align-content:center;padding:4px 0;overflow-y:auto;touch-action:pan-y}
+.minimal-idle-carousel:focus-visible{outline:2px solid var(--focus);outline-offset:-4px}
+@media(min-width:700px),(max-height:620px) and (orientation:landscape){.minimal-idle-carousel{height:auto;flex:1 1 auto;align-self:stretch}}
+@media(prefers-reduced-motion:reduce){.minimal-idle-track{transition:none}}

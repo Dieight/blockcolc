@@ -9,6 +9,9 @@ export interface StateSnapshot {
 
 export interface StateRepository {
   load(): Promise<StateSnapshot>;
+  /** A fresh repository read; null means the committed revision is unchanged.
+   * Adapters may skip parsing an unchanged aggregate, never the revision check. */
+  loadIfChanged?(knownRevision: number): Promise<StateSnapshot | null>;
   /** Atomically replaces the aggregate only when expectedRevision is still current. */
   save(state: DomainState, expectedRevision: number): Promise<number>;
 }
@@ -82,6 +85,14 @@ export interface BreakCompletionNotification {
   completedRounds?: number;
   totalRounds?: number;
   nextTaskTitle?: string;
+  /** Optional copy for the same completion alarm; never persisted in domain state. */
+  returnToFocus?: boolean;
+  /**
+   * The break reached its absolute end while the app was not presenting the
+   * plan. Re-post the same return reminder immediately instead of rejecting an
+   * already-elapsed alarm; this is presentation state, never timer truth.
+   */
+  deadlineReached?: boolean;
 }
 
 export interface NotificationPort {

@@ -24,6 +24,11 @@ function Assert-Throws {
 }
 
 $hashA = ('a' * 64) -join ''
+Assert-True -Condition ((Get-ApkBuildChannel -ManifestTree 'E: application') -eq 'standard') -Message 'Legacy standard marker'
+$privateManifest = "E: application`n  E: meta-data`n    A: android:name(0x01010003)=`"com.blockcolc.PRIVATE_RELAY`"`n    A: android:value(0x01010024)=(type 0x12)0xffffffff`n  E: activity"
+Assert-True -Condition ((Get-ApkBuildChannel -ManifestTree $privateManifest) -eq 'private-relay') -Message 'Private relay marker'
+Assert-True -Condition ((Get-ApkBuildChannel -ManifestTree ($privateManifest.Replace('0xffffffff', '0x0'))) -eq 'standard') -Message 'Explicit standard marker'
+Assert-Throws -MessagePattern 'Unrecognized' -Action { Get-ApkBuildChannel -ManifestTree ($privateManifest.Replace('0xffffffff', '0x1')) }
 $hashB = ('b' * 64) -join ''
 $evidence = [pscustomobject]@{
     phase = 'accepted'

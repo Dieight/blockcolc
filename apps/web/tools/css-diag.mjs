@@ -1,0 +1,11 @@
+import { chromium } from '@playwright/test';
+const browser = await chromium.launch();
+const page = await browser.newPage({ viewport: { width: 412, height: 915 } });
+await page.goto('http://127.0.0.1:42777/');
+await page.getByRole('button', { name: '开始建造' }).click();
+await page.getByRole('button', { name: '设置' }).click();
+await page.getByRole('checkbox', { name: '开启极简模式' }).click();
+await page.getByRole('button', { name: '计时', exact: true }).click();
+await page.waitForTimeout(400);
+console.log(await page.evaluate(() => { const p = document.querySelector('.focus-workbench-panel'); return { gap: getComputedStyle(p).gap, matchesHas: p.matches('.focus-workbench-panel:has(.timer-minimal-idle)'), kids: [...p.children].map((el) => `${(el.className || el.tagName).toString().slice(0, 30)}:${Math.round(el.getBoundingClientRect().height)}`) }; }));
+await browser.close();

@@ -20,6 +20,7 @@
   --focus-glass-highlight-alpha: 0.115;
   --focus-glass-accent-alpha: 0.04;
   --focus-glass-shadow-alpha: 0.27;
+  /* Fixed functional glass. Never bind these tokens to the focus preference. */
   --world-glass-background: linear-gradient(145deg, rgba(255, 255, 255, 0.13), rgba(255, 255, 255, 0.025) 42%, rgba(111, 206, 150, 0.055)), rgba(20, 29, 25, 0.8);
   --world-glass-border: rgba(255, 255, 255, 0.22);
   --world-glass-filter: blur(14px) saturate(1.24) contrast(1.04);
@@ -33,6 +34,17 @@
   --settings-separator: rgba(23, 33, 28, 0.12);
   --settings-field: rgba(23, 33, 28, 0.06);
   --settings-track: rgba(23, 33, 28, 0.16);
+  /* V27 sheet glass: floating overlays above real content (plan sheets, option
+   * popovers). A1-05: single gradient over one tint layer — composite alpha
+   * stays below ~0.93 so the world stays visible behind text that keeps
+   * contrast; radius is defined on the component, not here. */
+  --reading-glass-background: linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(243, 245, 242, 0.72)), rgba(243, 245, 242, 0.6);
+  --reading-glass-border: rgba(23, 33, 28, 0.12);
+  --reading-glass-filter: blur(22px) saturate(1.3);
+  --sheet-glass-background: var(--reading-glass-background);
+  --sheet-glass-border: var(--reading-glass-border);
+  --sheet-glass-filter: var(--reading-glass-filter);
+  --sheet-glass-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7), 0 -16px 48px rgba(10, 18, 14, 0.22);
 }
 
 :root[data-theme="dark"] {
@@ -56,4 +68,22 @@
   --settings-separator: rgba(230, 239, 233, 0.14);
   --settings-field: rgba(230, 239, 233, 0.08);
   --settings-track: rgba(230, 239, 233, 0.26);
+  --reading-glass-background: linear-gradient(180deg, rgba(31, 51, 41, 0.72), rgba(19, 28, 23, 0.62)), rgba(19, 28, 23, 0.5);
+  --reading-glass-border: rgba(230, 239, 233, 0.16);
+  --sheet-glass-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 -16px 48px rgba(4, 8, 6, 0.45);
+}
+
+/* 用户确认方案：极简开始按钮——浅色淡绿玻璃/深绿字，深色深绿玻璃/浅白绿字。
+ * 旧展示组件保留固定可读材料，不再消费全局倍率。 */
+:root{
+  --minimal-start-ink:#276749;
+  --minimal-start-glass:linear-gradient(180deg, rgba(223,236,227, 0.86), rgba(210,228,216, 0.74)), rgba(223,236,227, 0.92);
+  --minimal-start-solid:#dfece3;
+  --minimal-start-border:rgba(39, 103, 73, 0.35);
+}
+:root[data-theme="dark"]{
+  --minimal-start-ink:#7fd6a1;
+  --minimal-start-glass:linear-gradient(180deg, rgba(31,51,41, 0.86), rgba(24,40,32, 0.74)), rgba(23,33,28, 0.92);
+  --minimal-start-solid:#1f3329;
+  --minimal-start-border:rgba(127, 214, 161, 0.4);
 }

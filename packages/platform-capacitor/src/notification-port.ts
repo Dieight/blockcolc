@@ -18,6 +18,9 @@ export function mapPermission(display: PermissionStatus['display']): Notificatio
 
 export class CapacitorNotificationPort implements NotificationPort {
   private scheduledBreakKey: string | null = null;
+  private scheduledBreakDeadlineReached = false;
+  /** Serialize native/local replacement so a stale schedule cannot win a cancel race. */
+  private breakNotificationTail: Promise<void> = Promise.resolve();
 
   async requestPermission(): Promise<NotificationCapability> {
     if (!isCapacitorNative()) return unavailable();
@@ -74,37 +77,78 @@ export class CapacitorNotificationPort implements NotificationPort {
   async scheduleBreakCompletion(notification: BreakCompletionNotification): Promise<void> {
     if (!isCapacitorNative()) return;
     const key = breakNotificationKey(notification);
-    if (key === this.scheduledBreakKey) return;
-    // Capacitor dismisses a visible notification before it schedules another
-    // notification with the same id. Keep the completion alarm separate from
-    // the visible Live Update so lifecycle refreshes never cause a flash.
-    await LocalNotifications.cancel({ notifications: [{ id: BREAK_COMPLETION_NOTIFICATION_ID }] });
-    await LocalNotifications.schedule({ notifications: [{
-      id: BREAK_COMPLETION_NOTIFICATION_ID,
-      title: '休息结束',
-      body: '回来开始下一轮专注。',
-      schedule: { at: new Date(notification.endsAt), allowWhileIdle: true },
-      extra: { kind: 'break-completed', endsAt: notification.endsAt },
-    }] });
-    try {
-      await showBreakLiveUpdate(notification);
-    } catch (error) {
-      // The at-time completion notification is still valid. Live Update is an
-      // OEM/system enhancement and must not make break recovery look failed.
-      console.warn('Android break Live Update is unavailable', error);
-    }
-    this.scheduledBreakKey = key;
+    const deadlineReached = notification.deadlineReached === true;
+    if (key === this.scheduledBreakKey && (!deadlineReached || this.scheduledBreakDeadlineReached)) return;
+    return this.enqueueBreakNotification(async () => {
+      // Re-check after an earlier native/local operation in this port has
+      // drained. The ready projection can be rendered more than once while a
+      // real deadline callback is racing the WebView.
+      if (key === this.scheduledBreakKey && (!deadlineReached || this.scheduledBreakDeadlineReached)) return;
+      // The native plugin owns the absolute deadline receiver for an opted-in
+      // return reminder. The regular Capacitor alarm remains the honest fallback
+      // when promotion/deadline delivery is unavailable; never schedule both
+      // paths for one break because that creates two drawer records.
+      await LocalNotifications.cancel({ notifications: [{ id: BREAK_COMPLETION_NOTIFICATION_ID }] });
+      let deadlineOwnedByNative = false;
+      try {
+        const capability = await showBreakLiveUpdate(notification);
+        deadlineOwnedByNative = notification.returnToFocus === true
+          && (capability.deadlineAlarmScheduled === true
+            || (deadlineReached && capability.deadlineReminderPosted === true));
+      } catch (error) {
+        // The standard Capacitor alarm below remains the cross-process fallback.
+        console.warn('Android break Live Update is unavailable', error);
+      }
+      if (!deadlineOwnedByNative) {
+        try {
+          await LocalNotifications.schedule({ notifications: [{
+            id: BREAK_COMPLETION_NOTIFICATION_ID,
+            title: notification.returnToFocus === true ? '返回专注' : '休息结束',
+            body: notification.returnToFocus === true ? '休息已结束，回来开始下一轮专注。' : '回来开始下一轮专注。',
+            // A due fallback must display now, not schedule an invalid date
+            // in the past. The original deadline remains in extra below.
+            ...(!deadlineReached ? { schedule: { at: new Date(notification.endsAt), allowWhileIdle: true } } : {}),
+            extra: { kind: 'break-completed', endsAt: notification.endsAt, deadlineReached },
+          }] });
+        } catch (error) {
+          // If native posted a countdown but local fallback failed, clean that
+          // visible record too; a failed replacement must not leave a stale
+          // timer with no owner.
+          try { await cancelBreakLiveUpdate(); } catch (cancelError) { console.warn('Android break Live Update could not be cleaned up', cancelError); }
+          throw error;
+        }
+      }
+      this.scheduledBreakKey = key;
+      this.scheduledBreakDeadlineReached = deadlineReached;
+    });
   }
 
   async cancelBreakCompletion(): Promise<void> {
     if (!isCapacitorNative()) return;
     this.scheduledBreakKey = null;
-    try {
-      await cancelBreakLiveUpdate();
-    } catch (error) {
-      console.warn('Android break Live Update could not be cancelled', error);
-    }
-    await LocalNotifications.cancel({ notifications: [{ id: BREAK_COMPLETION_NOTIFICATION_ID }] });
+    this.scheduledBreakDeadlineReached = false;
+    return this.enqueueBreakNotification(async () => {
+      try {
+        try {
+          await cancelBreakLiveUpdate();
+        } catch (error) {
+          console.warn('Android break Live Update could not be cancelled', error);
+        }
+        await LocalNotifications.cancel({ notifications: [{ id: BREAK_COMPLETION_NOTIFICATION_ID }] });
+      } finally {
+        // A queued due replacement may have completed after the caller
+        // cleared the visible state. Keep the in-memory key consistent with
+        // the final native/local cancellation, not with that stale operation.
+        this.scheduledBreakKey = null;
+        this.scheduledBreakDeadlineReached = false;
+      }
+    });
+  }
+
+  private enqueueBreakNotification(operation: () => Promise<void>): Promise<void> {
+    const next = this.breakNotificationTail.then(operation, operation);
+    this.breakNotificationTail = next.then(() => undefined, () => undefined);
+    return next;
   }
 
   private async capability(status: PermissionStatus): Promise<NotificationCapability> {

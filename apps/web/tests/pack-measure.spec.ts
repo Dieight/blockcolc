@@ -9,7 +9,7 @@ test('measures resource-pack panel button positions for device scaling', async (
   await page.goto('/');
   await page.getByRole('button', { name: '设置', exact: true }).click();
   await page.getByLabel('导入 Java 资源包 ZIP').setInputFiles(sample);
-  await expect(page.getByRole('status')).toContainText('已导入并启用');
+  await expect(page.locator('.resource-pack-panel .backup-notice')).toContainText('已导入并启用');
   await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
   await page.waitForTimeout(300);
   const original = page.locator('.resource-pack-original');

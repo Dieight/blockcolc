@@ -113,6 +113,9 @@ test("replaces the old visual experiments with persistent adaptive lighting pres
 
 test("migrates an enabled legacy visual experiment to the cinematic preset", async ({ page }) => {
   await page.addInitScript(() => {
+    // F17: this migration is a settings-surface contract for an existing
+    // installation, not the first-project setup flow.
+    localStorage.setItem("blockcolc-first-project-setup-v1", "1");
     localStorage.setItem("blockcolc-focus-preferences-v1", JSON.stringify({
       focusMinutes: 45,
       habitFocusMinutes: 45,

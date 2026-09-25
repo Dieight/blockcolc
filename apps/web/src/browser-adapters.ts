@@ -1,4 +1,5 @@
 import type { Clock, FocusLifecycleEvent, FocusLifecyclePort, IdGenerator, NotificationCapability, NotificationPort } from '@tomato-clock/application';
+import { MAX_BACKUP_BYTES } from '@tomato-clock/storage-indexeddb';
 
 export const LITEMATIC_MAX_COMPRESSED_BYTES = 64 * 1024 * 1024;
 
@@ -11,7 +12,7 @@ export class BrowserNotificationPort implements NotificationPort {
   async refreshCapability() { return 'Notification' in window ? capability(Notification.permission) : unavailable(); }
   async scheduleFocusCompletion({ sessionId, endsAt }: { sessionId: string; endsAt: string }) { if (!('Notification' in window) || Notification.permission !== 'granted') return; this.cancel(sessionId); const delay = Math.min(2_147_000_000, Math.max(0, Date.parse(endsAt) - Date.now())); this.timers.set(sessionId, window.setTimeout(() => { new Notification('专注完成', { body: '回来记录这次小任务的实际进度。', tag: sessionId }); this.timers.delete(sessionId); }, delay)); }
   async cancelFocusCompletion(sessionId: string) { this.cancel(sessionId); }
-  async scheduleBreakCompletion({ endsAt }: { endsAt: string }) { const id='break-completion'; if (!('Notification' in window) || Notification.permission !== 'granted') return; this.cancel(id); const delay=Math.min(2_147_000_000,Math.max(0,Date.parse(endsAt)-Date.now()));this.timers.set(id,window.setTimeout(()=>{new Notification('休息结束',{body:'回来开始下一轮专注。',tag:id});this.timers.delete(id);},delay)); }
+  async scheduleBreakCompletion({ endsAt, returnToFocus }: { endsAt: string; returnToFocus?: boolean; deadlineReached?: boolean }) { const id='break-completion'; if (!('Notification' in window) || Notification.permission !== 'granted') return; this.cancel(id); const delay=Math.min(2_147_000_000,Math.max(0,Date.parse(endsAt)-Date.now()));this.timers.set(id,window.setTimeout(()=>{new Notification(returnToFocus===true?'返回专注':'休息结束',{body:returnToFocus===true?'休息已结束，回来开始下一轮专注。':'回来开始下一轮专注。',tag:id});this.timers.delete(id);},delay)); }
   async cancelBreakCompletion() { this.cancel('break-completion'); }
   private cancel(id: string) { const timer = this.timers.get(id); if (timer !== undefined) window.clearTimeout(timer); this.timers.delete(id); }
 }
@@ -48,6 +49,16 @@ export async function saveBackupFile(json: string, filename: string): Promise<vo
   }
 }
 
+/** Read a JSON backup only after its declared byte size has passed the cap. */
+export async function readBackupFileText(file: File, maxBytes = MAX_BACKUP_BYTES): Promise<string> {
+  if (file.size > maxBytes) throw backupFileTooLarge();
+  const text = await file.text();
+  // Providers normally report the authoritative byte size above, but checking
+  // the decoded text also protects WebView/File shims with an incorrect size.
+  if (text.length > maxBytes || new TextEncoder().encode(text).byteLength > maxBytes) throw backupFileTooLarge();
+  return text;
+}
+
 export async function readBrowserFileBytes(file: File, maxBytes = LITEMATIC_MAX_COMPRESSED_BYTES): Promise<Uint8Array> {
   if (file.size > maxBytes) throw fileTooLarge();
   if (typeof file.arrayBuffer === 'function') {
@@ -75,6 +86,10 @@ function checkedBytes(bytes: Uint8Array, maxBytes: number): Uint8Array {
 
 function fileTooLarge(): Error & { code: string } {
   return Object.assign(new Error('Selected file exceeds the import limit'), { code: 'INPUT_TOO_LARGE' });
+}
+
+function backupFileTooLarge(): Error & { code: string } {
+  return Object.assign(new Error('Backup file exceeds the import limit'), { code: 'BACKUP_TOO_LARGE' });
 }
 
 function unavailable(): NotificationCapability { return { permission: 'unavailable', precision: 'unavailable', canSchedule: false }; }

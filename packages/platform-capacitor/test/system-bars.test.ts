@@ -1,58 +1,48 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, expect, test, vi } from 'vitest';
+import { StatusBar } from '@capacitor/status-bar';
 
-const mocks = vi.hoisted(() => ({
-  native: true,
-  setOverlaysWebView: vi.fn(),
-  setStyle: vi.fn(),
-  setBackgroundColor: vi.fn(),
-  show: vi.fn(),
-  hide: vi.fn(),
+const mockStatusBar = vi.hoisted(() => ({
+  getInfo: vi.fn(),
+  setOverlaysWebView: vi.fn().mockResolvedValue(undefined),
+  setStyle: vi.fn().mockResolvedValue(undefined),
+  setBackgroundColor: vi.fn().mockResolvedValue(undefined),
+  hide: vi.fn().mockResolvedValue(undefined),
+  show: vi.fn().mockResolvedValue(undefined),
 }));
-
 vi.mock('@capacitor/status-bar', () => ({
-  StatusBar: {
-    setOverlaysWebView: mocks.setOverlaysWebView,
-    setStyle: mocks.setStyle,
-    setBackgroundColor: mocks.setBackgroundColor,
-    show: mocks.show,
-    hide: mocks.hide,
-  },
   Style: { Light: 'LIGHT' },
+  StatusBar: mockStatusBar,
 }));
+vi.mock('../src/notification-port', () => ({ isCapacitorNative: () => true }));
 
-vi.mock('../src/notification-port', () => ({
-  isCapacitorNative: () => mocks.native,
-}));
+beforeEach(() => {
+  vi.resetModules();
+  vi.clearAllMocks();
+});
 
-import { configureNativeSystemBars, setNativeFocusImmersive } from '../src/system-bars';
+test('shade return only mutates the Android window if the status bar actually reappeared', async () => {
+  const { setNativeFocusImmersive } = await import('../src/system-bars');
+  vi.mocked(StatusBar.getInfo).mockResolvedValue({ visible: false } as Awaited<ReturnType<typeof StatusBar.getInfo>>);
 
-describe('native system bar modes', () => {
-  beforeEach(() => {
-    mocks.native = true;
-    vi.clearAllMocks();
-  });
+  await setNativeFocusImmersive(true);
+  expect(StatusBar.hide).toHaveBeenCalledTimes(1);
+  await setNativeFocusImmersive(true, true);
+  expect(StatusBar.getInfo).toHaveBeenCalledTimes(1);
+  expect(StatusBar.setOverlaysWebView).toHaveBeenCalledTimes(1);
+  expect(StatusBar.hide).toHaveBeenCalledTimes(1);
 
-  it('shows dark icons over the ordinary app surface', async () => {
-    await configureNativeSystemBars();
-    expect(mocks.setOverlaysWebView).toHaveBeenCalledWith({ overlay: true });
-    expect(mocks.setStyle).toHaveBeenCalledWith({ style: 'LIGHT' });
-    expect(mocks.setBackgroundColor).toHaveBeenCalledWith({ color: '#F3F5F2' });
-    expect(mocks.show).toHaveBeenCalledOnce();
-    expect(mocks.hide).not.toHaveBeenCalled();
-  });
+  vi.mocked(StatusBar.getInfo).mockResolvedValue({ visible: true } as Awaited<ReturnType<typeof StatusBar.getInfo>>);
+  await setNativeFocusImmersive(true, true);
+  expect(StatusBar.setOverlaysWebView).toHaveBeenCalledTimes(2);
+  expect(StatusBar.hide).toHaveBeenCalledTimes(2);
+});
 
-  it('hides the status bar for active focus without changing web data', async () => {
-    await setNativeFocusImmersive(true);
-    expect(mocks.setOverlaysWebView).toHaveBeenCalledWith({ overlay: true });
-    expect(mocks.hide).toHaveBeenCalledOnce();
-    expect(mocks.show).not.toHaveBeenCalled();
-    expect(mocks.setStyle).not.toHaveBeenCalled();
-  });
-
-  it('does nothing outside a native Capacitor container', async () => {
-    mocks.native = false;
-    await setNativeFocusImmersive(true);
-    expect(mocks.setOverlaysWebView).not.toHaveBeenCalled();
-    expect(mocks.hide).not.toHaveBeenCalled();
-  });
+test('overlapping mode changes are serialized in request order', async () => {
+  const { setNativeFocusImmersive } = await import('../src/system-bars');
+  await Promise.all([setNativeFocusImmersive(false), setNativeFocusImmersive(true)]);
+  expect(StatusBar.show).toHaveBeenCalledTimes(1);
+  expect(StatusBar.hide).toHaveBeenCalledTimes(1);
+  expect(vi.mocked(StatusBar.show).mock.invocationCallOrder[0]).toBeLessThan(
+    vi.mocked(StatusBar.hide).mock.invocationCallOrder[0]!,
+  );
 });

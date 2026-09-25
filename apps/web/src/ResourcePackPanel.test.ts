@@ -1,15 +1,16 @@
 import { describe, expect, it, vi } from 'vitest';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { strToU8, zipSync } from 'fflate';
 import type { ResourcePackRepository } from '@tomato-clock/resource-pack-indexeddb';
-import { DEFAULT_RESOURCE_PACK_LIMITS } from '@tomato-clock/resource-pack';
-import { importResourcePackFromPicker } from './ResourcePackPanel';
+import { importResourcePackFromPicker, RESOURCE_PACK_PICKER_MAX_BYTES, ResourcePackPanel } from './ResourcePackPanel';
 
 describe('resource-pack picker import',()=>{
   it('treats native cancellation as a no-op',async()=>{
     const repository=mockRepository();
     const pick=vi.fn(async()=>null);
     await expect(importResourcePackFromPicker(repository,pick)).resolves.toBeNull();
-    expect(pick).toHaveBeenCalledWith(DEFAULT_RESOURCE_PACK_LIMITS.maxInputBytes);
+    expect(pick).toHaveBeenCalledWith(RESOURCE_PACK_PICKER_MAX_BYTES);
     expect(repository.save).not.toHaveBeenCalled();
     expect(repository.select).not.toHaveBeenCalled();
   });
@@ -26,11 +27,25 @@ describe('resource-pack picker import',()=>{
     expect(saved?.id).toMatch(/^sha256:[a-f0-9]{64}$/);
     expect(repository.select).toHaveBeenCalledWith(saved?.id);
   });
+
+  it('uses a readable display name for a JAR-named local archive',async()=>{
+    const repository=mockRepository();
+    await importResourcePackFromPicker(repository,async()=>({name:'26.3 Client.jar',bytes:makePack()}));
+    expect(repository.save).toHaveBeenCalledWith(expect.objectContaining({name:'26.3 Client'}));
+  });
+
+  it('keeps setup guidance concise while retaining local, backup, and fallback boundaries',()=>{
+    const html=renderToStaticMarkup(createElement(ResourcePackPanel,{repository:mockRepository()}));
+    expect(html).toContain('可导入资源包 ZIP 或 Java 26.3 客户端 JAR');
+    expect(html).toContain('外观优先，基础包补缺');
+    expect(html).toContain('方块钟不内置或上传，JSON 备份不含资源包');
+    expect(html).not.toContain('纹理与 Java 方块模型。可指定一个外观包');
+  });
 });
 
 function mockRepository():ResourcePackRepository{return{
   save:vi.fn(async input=>({id:input.id,name:input.name,importedAt:input.importedAt,archiveBytes:input.archive.byteLength,packFormat:input.manifest.pack.packFormat,textureCount:input.manifest.textures.length,namespaces:input.manifest.summary.namespaces,active:true})),
-  list:vi.fn(async()=>[]),get:vi.fn(async()=>undefined),select:vi.fn(async()=>undefined),getActive:vi.fn(async()=>undefined),delete:vi.fn(async()=>null),clear:vi.fn(async()=>undefined),close:vi.fn(),
+  list:vi.fn(async()=>[]),get:vi.fn(async()=>undefined),select:vi.fn(async()=>undefined),selectBase:vi.fn(async()=>undefined),getActive:vi.fn(async()=>undefined),getBase:vi.fn(async()=>undefined),delete:vi.fn(async()=>null),clear:vi.fn(async()=>undefined),close:vi.fn(),
 };}
 
 function makePack():Uint8Array{return zipSync({

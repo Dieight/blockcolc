@@ -11,6 +11,20 @@ import {
 } from "../src/local-occlusion";
 
 describe("local voxel occlusion", () => {
+  it("indexes a dense 60 x 60 x 60 blueprint without spreading its voxels as arguments", () => {
+    const voxels = Array.from({ length: 60 ** 3 }, (_, index) => voxel(
+      index % 60,
+      Math.floor(index / (60 * 60)) - 2,
+      Math.floor(index / 60) % 60,
+    ));
+
+    const field = createLocalOcclusionField(voxels);
+
+    expect(field.minimumY).toBe(-2);
+    expect(field.occupied.size).toBe(60 ** 3);
+    expect(field.occupied.has("59:57:59")).toBe(true);
+  });
+
   it("keeps isolated upper blocks bright but adds restrained ground contact", () => {
     const base = voxel(0, 0, 0);
     const upper = voxel(0, 1, 0);

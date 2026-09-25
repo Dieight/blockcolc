@@ -1,0 +1,23 @@
+import { chromium } from '@playwright/test';
+const browser = await chromium.launch();
+const page = await browser.newPage({ viewport: { width: 412, height: 915 }, hasTouch: true, isMobile: true, deviceScaleFactor: 2.625, timezoneId: 'Asia/Shanghai' });
+await page.clock.install({ time: new Date('2026-08-03T08:00:00Z') });
+await page.goto('http://127.0.0.1:42777/');
+await page.getByRole('button', { name: '开始建造', exact: true }).click();
+await page.getByRole('button', { name: '设置', exact: true }).click();
+await page.getByRole('spinbutton', { name: '普通任务专注分钟' }).fill('1');
+await page.getByRole('spinbutton', { name: '普通任务专注分钟' }).blur();
+await page.getByRole('checkbox', { name: '开启极简模式' }).click();
+await page.getByRole('button', { name: '计时', exact: true }).click();
+await page.waitForTimeout(300);
+await page.locator('.minimal-start').click();
+await page.waitForTimeout(300);
+for (let i = 0; i < 10; i++) await page.getByRole('button', { name: '增加结束分钟' }).click();
+await page.locator('.minimal-end-sheet .primary').click();
+await page.waitForTimeout(700);
+await page.clock.fastForward(75_000);
+await page.waitForTimeout(900);
+const report = page.locator('.marathon-progress-report');
+if (await report.isVisible().catch(() => false)) { await report.getByRole('button', { name: '提交本次推进' }).click(); await page.waitForTimeout(600); }
+console.log(await page.evaluate(() => ({ rest: [...document.querySelectorAll('.session-kind')].map((e) => e.textContent?.slice(0, 20)), task: document.querySelector('.focus-task-context')?.textContent?.slice(0, 24) ?? null, breakTimer: Boolean(document.querySelector('.timer-minimal-break')), idle: Boolean(document.querySelector('.minimal-idle-actions')) })));
+await browser.close();

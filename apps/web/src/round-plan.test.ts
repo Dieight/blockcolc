@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { DomainState } from '@tomato-clock/domain';
-import { MAX_MARATHON_ROUNDS, parseRoundPlan, planRoundsForDuration, plannedDurationMs, reconcileRoundPlan, type RoundPlan } from './round-plan';
+import { MAX_MARATHON_ROUNDS, parseRoundPlan, planRoundsForDuration, plannedDurationMs, reconcileRoundPlan, remainingPlanDurationMs, type RoundPlan } from './round-plan';
 
 const projectId = 'project-1';
 const subtaskId = 'task-1';
@@ -172,6 +172,10 @@ describe('round-plan recovery', () => {
     const afterRound = reconcileRoundPlan(marathon, state({ focusHistory }), projectId, Date.parse('2026-08-05T08:46:00.000Z'), 0, 300_000);
     expect(afterRound).toMatchObject({ mode: 'marathon', status: 'report', completedRounds: 1, reportedSessionIds: ['session-1'] });
     expect(reconcileRoundPlan(afterRound, state({ focusHistory }), projectId, Date.parse('2026-08-05T12:00:00.000Z'), 0, 300_000)).toBe(afterRound);
+  });
+  it('keeps ready time as remaining focus plus following inter-round breaks', () => {
+    expect(remainingPlanDurationMs({ totalRounds: 4, completedRounds: 1 }, 25, 5)).toBe(85 * 60_000);
+    expect(remainingPlanDurationMs({ totalRounds: 4, completedRounds: 3 }, 25, 5)).toBe(25 * 60_000);
   });
 
   it('settles the final habit end-time round without opening a finite-task report', () => {

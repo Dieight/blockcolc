@@ -9,6 +9,9 @@ export class BackupValidationError extends Error {
   }
 }
 
+/** Maximum UTF-8 size accepted by the backup import/preview path. */
+export const MAX_BACKUP_BYTES = 100 * 1024 * 1024;
+
 export function canonicalJson(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
@@ -37,6 +40,7 @@ export async function createBackupEnvelope(state: unknown, exportedAt: Date): Pr
 }
 
 export async function parseBackup(input: string): Promise<BackupEnvelopeV1> {
+  assertBackupSize(input);
   let raw: unknown;
   try {
     raw = JSON.parse(input);
@@ -60,6 +64,12 @@ export async function parseBackup(input: string): Promise<BackupEnvelopeV1> {
   }
   const normalized = { format: "tomato-clock-backup" as const, schemaVersion: 1 as const, exportedAt, payload };
   return { ...normalized, checksum: envelope.checksum };
+}
+
+function assertBackupSize(input: string): void {
+  if (input.length > MAX_BACKUP_BYTES || new TextEncoder().encode(input).byteLength > MAX_BACKUP_BYTES) {
+    throw new BackupValidationError("Backup exceeds the 100 MiB import limit");
+  }
 }
 
 export function previewOf(envelope: BackupEnvelopeV1): ImportPreview {

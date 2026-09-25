@@ -1,12 +1,18 @@
 import { Gunzip } from "fflate";
 import {
+  MOVING_PISTON_FACINGS,
+  SIGN_DYE_COLORS,
   validateBlueprint,
   type BlueprintBounds,
   type BlueprintV1,
   type BlueprintVoxel,
   type MaterialId,
 } from "@tomato-clock/voxel";
-import { parseJavaNbt } from "./nbt.js";
+import {
+  JAVA_NBT_TAG_TYPE,
+  parseJavaNbtWithPistonNumericTagTypes,
+  type PistonEntityNumericField,
+} from "./nbt.js";
 
 export interface LitematicLimits {
   maxCompressedBytes: number;
@@ -39,6 +45,7 @@ export type LitematicErrorCode =
   | "NBT_TOO_LARGE"
   | "INVALID_NBT"
   | "INVALID_LITEMATIC"
+  | "UNSUPPORTED_BLOCK_ENTITY_DATA"
   | "LIMIT_EXCEEDED";
 
 export class LitematicParseError extends Error {
@@ -67,6 +74,10 @@ export interface LitematicCompatibility {
   preservedBlockStateProperties: string[];
   ignoredEntities: number;
   ignoredTileEntities: number;
+  preservedMovingPistonMovedStates: number;
+  preservedMovingPistonPoses: number;
+  preservedSignBlockEntities: number;
+  preservedCampfireBlockEntities: number;
   ignoredPendingTicks: number;
 }
 
@@ -99,6 +110,10 @@ interface DecodedVoxel extends Position {
   state: PaletteEntry;
   materialId: MaterialId;
   placeholder: boolean;
+  movingPistonMovedState?: NonNullable<BlueprintVoxel["movingPistonMovedState"]>;
+  movingPistonPose?: NonNullable<BlueprintVoxel["movingPistonPose"]>;
+  sign?: NonNullable<BlueprintVoxel["sign"]>;
+  campfire?: NonNullable<BlueprintVoxel["campfire"]>;
 }
 
 interface ParsedRegion {
@@ -106,7 +121,7 @@ interface ParsedRegion {
   palette: PaletteEntry[];
   packedStates: unknown[];
   entities: number;
-  tileEntities: number;
+  tileEntities: unknown[];
   pendingTicks: number;
 }
 
@@ -131,13 +146,13 @@ export async function parseLitematic(
     throw new LitematicParseError(tooLarge ? "NBT_TOO_LARGE" : "INVALID_GZIP", message, { cause });
   }
 
-  let simplified: unknown;
+  let nbtDocument: ReturnType<typeof parseJavaNbtWithPistonNumericTagTypes>;
   try {
-    simplified = parseJavaNbt(uncompressed);
+    nbtDocument = parseJavaNbtWithPistonNumericTagTypes(uncompressed);
   } catch (cause) {
     throw new LitematicParseError("INVALID_NBT", "Could not parse Java big-endian NBT", { cause });
   }
-  const root = record(simplified, "root");
+  const root = record(nbtDocument.root, "root");
   const metadata = optionalRecord(root.Metadata, "Metadata") ?? {};
   const regionsRecord = record(root.Regions, "Regions");
   const regionNames = Object.keys(regionsRecord).sort(compareText);
@@ -165,13 +180,13 @@ export async function parseLitematic(
   let placeholderPaletteEntries = 0;
   let paletteEntries = 0;
   let ignoredEntities = 0;
-  let ignoredTileEntities = 0;
+  let tileEntityCount = 0;
   let ignoredPendingTicks = 0;
 
   for (const region of parsedRegions) {
     paletteEntries += region.palette.length;
     ignoredEntities += region.entities;
-    ignoredTileEntities += region.tileEntities;
+    tileEntityCount += region.tileEntities.length;
     ignoredPendingTicks += region.pendingTicks;
     const paletteMappings = region.palette.map((entry) => mapBlock(entry));
     paletteMappings.forEach((mapping, index) => {
@@ -212,10 +227,16 @@ export async function parseLitematic(
       blocks.set(key, { ...world, state, ...mapping });
       enforce(blocks.size <= limits.maxOutputVoxels, `Output block count exceeds ${limits.maxOutputVoxels}`);
     }
+    attachMovingPistonMovedStates(region, blocks, nbtDocument.getNumericTagType);
+    attachSignAndCampfireData(region, blocks);
   }
 
   if (blocks.size === 0) invalid("Litematic contains no non-air blocks");
   const decoded = [...blocks.values()];
+  const preservedMovingPistonMovedStates = decoded.filter((voxel) => voxel.movingPistonMovedState !== undefined).length;
+  const preservedMovingPistonPoses = decoded.filter((voxel) => voxel.movingPistonPose !== undefined).length;
+  const preservedSignBlockEntities = decoded.filter((voxel) => voxel.sign !== undefined).length;
+  const preservedCampfireBlockEntities = decoded.filter((voxel) => voxel.campfire !== undefined).length;
   const placeholderVoxelCount = decoded.filter((voxel) => voxel.placeholder).length;
   const worldBounds = boundsFor(decoded);
   const normalized = decoded.map((voxel) => ({
@@ -257,7 +278,11 @@ export async function parseLitematic(
         placeholderVoxelCount,
         preservedBlockStateProperties: [...simplifiedPropertyNames].sort(compareText),
         ignoredEntities,
-        ignoredTileEntities,
+        ignoredTileEntities: tileEntityCount - preservedMovingPistonMovedStates - preservedSignBlockEntities - preservedCampfireBlockEntities,
+        preservedMovingPistonMovedStates,
+        preservedMovingPistonPoses,
+        preservedSignBlockEntities,
+        preservedCampfireBlockEntities,
         ignoredPendingTicks,
       },
     },
@@ -286,7 +311,7 @@ function parseRegion(name: string, raw: unknown, limits: LitematicLimits): Parse
     palette,
     packedStates,
     entities: optionalArrayLength(region.Entities, `Regions.${name}.Entities`),
-    tileEntities: optionalArrayLength(region.TileEntities, `Regions.${name}.TileEntities`),
+    tileEntities: optionalArrayValue(region.TileEntities, `Regions.${name}.TileEntities`),
     pendingTicks: optionalArrayLength(region.PendingBlockTicks, `Regions.${name}.PendingBlockTicks`)
       + optionalArrayLength(region.PendingFluidTicks, `Regions.${name}.PendingFluidTicks`),
   };
@@ -362,7 +387,10 @@ function isAir(name: string): boolean {
 }
 
 function assignBuildOrder(voxels: readonly DecodedVoxel[]): BlueprintVoxel[] {
-  const minY = Math.min(...voxels.map((voxel) => voxel.y));
+  const first = voxels[0];
+  if (!first) invalid("Litematic contains no non-air blocks");
+  let minY = first.y;
+  for (let index = 1; index < voxels.length; index += 1) minY = Math.min(minY, voxels[index]!.y);
   const byCoordinate = new Map(voxels.map((voxel) => [coordinateKey(voxel.x, voxel.y, voxel.z), voxel]));
   const queued = new Set<string>();
   const built = new Set<string>();
@@ -415,6 +443,10 @@ function assignBuildOrder(voxels: readonly DecodedVoxel[]): BlueprintVoxel[] {
       buildOrder: ordered.length === 1 ? 10000 : Math.round((index / divisor) * 10000),
       sourceBlockId: voxel.state.name,
       ...(Object.keys(voxel.state.properties).length > 0 ? { sourceBlockState: voxel.state.properties } : {}),
+      ...(voxel.movingPistonMovedState === undefined ? {} : { movingPistonMovedState: voxel.movingPistonMovedState }),
+      ...(voxel.movingPistonPose === undefined ? {} : { movingPistonPose: voxel.movingPistonPose }),
+      ...(voxel.sign === undefined ? {} : { sign: voxel.sign }),
+      ...(voxel.campfire === undefined ? {} : { campfire: voxel.campfire }),
       ...emissive,
     };
   });
@@ -563,11 +595,311 @@ function stateKey(state: PaletteEntry): string {
 }
 
 function boundsFor(voxels: ReadonlyArray<Position>): BlueprintBounds {
-  return {
-    minX: Math.min(...voxels.map((voxel) => voxel.x)), maxX: Math.max(...voxels.map((voxel) => voxel.x)),
-    minY: Math.min(...voxels.map((voxel) => voxel.y)), maxY: Math.max(...voxels.map((voxel) => voxel.y)),
-    minZ: Math.min(...voxels.map((voxel) => voxel.z)), maxZ: Math.max(...voxels.map((voxel) => voxel.z)),
+  const first = voxels[0];
+  if (!first) invalid("Litematic contains no non-air blocks");
+  const bounds: BlueprintBounds = {
+    minX: first.x, maxX: first.x,
+    minY: first.y, maxY: first.y,
+    minZ: first.z, maxZ: first.z,
   };
+  for (let index = 1; index < voxels.length; index += 1) {
+    const voxel = voxels[index]!;
+    bounds.minX = Math.min(bounds.minX, voxel.x); bounds.maxX = Math.max(bounds.maxX, voxel.x);
+    bounds.minY = Math.min(bounds.minY, voxel.y); bounds.maxY = Math.max(bounds.maxY, voxel.y);
+    bounds.minZ = Math.min(bounds.minZ, voxel.z); bounds.maxZ = Math.max(bounds.maxZ, voxel.z);
+  }
+  return bounds;
+}
+
+/**
+ * Extract only the moved vanilla block state and bounded saved pose from
+ * piston block entities that align with a moving_piston voxel. Position and
+ * unrelated NBT are discarded.
+ */
+function attachMovingPistonMovedStates(
+  region: ParsedRegion,
+  blocks: Map<string, DecodedVoxel>,
+  getNumericTagType: (entity: RecordValue, field: PistonEntityNumericField) => number | undefined,
+): void {
+  const { position, signedSize, dimensions } = region.preview;
+  for (const raw of region.tileEntities) {
+    if (!isRecord(raw) || raw.id !== "minecraft:piston") continue;
+    const x = raw.x; const y = raw.y; const z = raw.z;
+    if (!integerValueOrNull(x) || !integerValueOrNull(y) || !integerValueOrNull(z)
+      || x < 0 || x >= dimensions.width || y < 0 || y >= dimensions.height || z < 0 || z >= dimensions.depth) continue;
+    const blockId = position.x + (signedSize.x < 0 ? -x : x);
+    const blockY = position.y + (signedSize.y < 0 ? -y : y);
+    const blockZ = position.z + (signedSize.z < 0 ? -z : z);
+    const voxel = blocks.get(coordinateKey(blockId, blockY, blockZ));
+    if (voxel?.state.name !== "minecraft:moving_piston") continue;
+    const movedState = parsePistonMovedState(raw);
+    if (movedState === null) continue;
+    voxel.movingPistonMovedState = movedState;
+    const pose = parsePistonPose(raw, getNumericTagType);
+    if (pose !== null) voxel.movingPistonPose = pose;
+  }
+}
+
+function parsePistonPose(
+  entity: RecordValue,
+  getNumericTagType: (entity: RecordValue, field: PistonEntityNumericField) => number | undefined,
+): NonNullable<BlueprintVoxel["movingPistonPose"]> | null {
+  const facingId = entity.facing;
+  const progress = entity.progress;
+  const extending = nbtBooleanOrNull(entity.extending);
+  const source = nbtBooleanOrNull(entity.source);
+  if (getNumericTagType(entity, "facing") !== JAVA_NBT_TAG_TYPE.INT
+    || getNumericTagType(entity, "progress") !== JAVA_NBT_TAG_TYPE.FLOAT
+    || getNumericTagType(entity, "extending") !== JAVA_NBT_TAG_TYPE.BYTE
+    || getNumericTagType(entity, "source") !== JAVA_NBT_TAG_TYPE.BYTE
+    || typeof facingId !== "number" || !Number.isSafeInteger(facingId)
+    || facingId < 0 || facingId >= MOVING_PISTON_FACINGS.length
+    || typeof progress !== "number" || !Number.isFinite(progress) || progress < 0 || progress > 1
+    || extending === null || source === null) return null;
+  const facing = MOVING_PISTON_FACINGS[facingId];
+  if (facing === undefined) return null;
+  return { facing, progress, extending, source };
+}
+
+function nbtBooleanOrNull(value: unknown): boolean | null {
+  if (value === 0) return false;
+  if (value === 1) return true;
+  return null;
+}
+
+function parsePistonMovedState(entity: RecordValue): NonNullable<BlueprintVoxel["movingPistonMovedState"]> | null {
+  const hasBlockState = Object.prototype.hasOwnProperty.call(entity, "blockState");
+  const hasMovedState = Object.prototype.hasOwnProperty.call(entity, "movedState");
+  if (hasBlockState === hasMovedState) return null;
+  const raw = entity[hasBlockState ? "blockState" : "movedState"];
+  if (!isRecord(raw)) return null;
+
+  const hasName = Object.prototype.hasOwnProperty.call(raw, "Name");
+  const hasId = Object.prototype.hasOwnProperty.call(raw, "id");
+  if (hasName === hasId) return null;
+  const blockId = raw[hasName ? "Name" : "id"];
+  if (typeof blockId !== "string" || blockId.length > 256 || !/^minecraft:[a-z0-9_.-]+(?:\/[a-z0-9_.-]+)*$/.test(blockId)
+    || blockId === "minecraft:air" || blockId === "minecraft:cave_air" || blockId === "minecraft:void_air"
+    || blockId === "minecraft:moving_piston") return null;
+
+  const hasProperties = Object.prototype.hasOwnProperty.call(raw, "Properties");
+  const hasLowercaseProperties = Object.prototype.hasOwnProperty.call(raw, "properties");
+  if (hasProperties && hasLowercaseProperties) return null;
+  const rawProperties = raw[hasProperties ? "Properties" : "properties"];
+  if (rawProperties === undefined) return { blockId };
+  if (!isRecord(rawProperties)) return null;
+  const keys = Reflect.ownKeys(rawProperties);
+  if (keys.length > 32) return null;
+  const properties: Record<string, string> = Object.create(null) as Record<string, string>;
+  for (const key of keys) {
+    if (typeof key !== "string" || key.length > 64 || !/^[a-z0-9_.-]+$/.test(key)
+      || key === "__proto__" || key === "prototype" || key === "constructor") return null;
+    const descriptor = Object.getOwnPropertyDescriptor(rawProperties, key);
+    if (descriptor === undefined || !descriptor.enumerable || descriptor.get !== undefined || descriptor.set !== undefined
+      || typeof descriptor.value !== "string" || descriptor.value.length === 0 || descriptor.value.length > 128
+      || !/^[a-z0-9_./-]+$/.test(descriptor.value)) return null;
+    properties[key] = descriptor.value;
+  }
+  const ordered = Object.fromEntries(Object.entries(properties).sort(([left], [right]) => compareText(left, right)));
+  return Object.keys(ordered).length === 0 ? { blockId } : { blockId, properties: ordered };
+}
+
+function attachSignAndCampfireData(region: ParsedRegion, blocks: Map<string, DecodedVoxel>): void {
+  const { position, signedSize, dimensions } = region.preview;
+  for (const raw of region.tileEntities) {
+    if (!isRecord(raw)) continue;
+    const entityId = raw.id;
+    const isSignEntity = entityId === "minecraft:sign" || entityId === "minecraft:hanging_sign";
+    const isCampfireEntity = entityId === "minecraft:campfire";
+    if (!isSignEntity && !isCampfireEntity) continue;
+
+    const x = raw.x; const y = raw.y; const z = raw.z;
+    if (!integerValueOrNull(x) || !integerValueOrNull(y) || !integerValueOrNull(z)
+      || x < 0 || x >= dimensions.width || y < 0 || y >= dimensions.height || z < 0 || z >= dimensions.depth) continue;
+    const world = {
+      x: position.x + (signedSize.x < 0 ? -x : x),
+      y: position.y + (signedSize.y < 0 ? -y : y),
+      z: position.z + (signedSize.z < 0 ? -z : z),
+    };
+    const key = coordinateKey(world);
+    const voxel = blocks.get(key);
+    if (!voxel) continue;
+
+    if (isSignEntity && isSignBlockId(voxel.state.name)) {
+      if (voxel.sign !== undefined) invalid("Duplicate sign block entity for one voxel");
+      voxel.sign = parseSignBlockEntity(raw);
+    } else if (isCampfireEntity && isCampfireBlockId(voxel.state.name)) {
+      if (voxel.campfire !== undefined) invalid("Duplicate campfire block entity for one voxel");
+      voxel.campfire = parseCampfireBlockEntity(raw);
+    }
+  }
+}
+
+function isSignBlockId(blockId: string): boolean {
+  return blockId.startsWith("minecraft:") && /sign$/.test(blockId);
+}
+
+function isCampfireBlockId(blockId: string): boolean {
+  return blockId === "minecraft:campfire" || blockId === "minecraft:soul_campfire";
+}
+
+function parseSignBlockEntity(entity: RecordValue): NonNullable<BlueprintVoxel["sign"]> {
+  if (entity.front_text !== undefined || entity.back_text !== undefined) {
+    return {
+      front: parseSignFace(entity.front_text, "TileEntities.sign.front_text"),
+      back: parseSignFace(entity.back_text, "TileEntities.sign.back_text"),
+    };
+  }
+  if (["Text1", "Text2", "Text3", "Text4"].some((key) => entity[key] !== undefined)) {
+    const lines = ["Text1", "Text2", "Text3", "Text4"]
+      .filter((key) => entity[key] !== undefined)
+      .map((key) => parseSignComponent(entity[key], `TileEntities.sign.${key}`));
+    const dyeColor = parseSignDyeColor(entity.Color, "TileEntities.sign.Color", "black");
+    const glowing = parseNbtBoolean(entity.GlowingText, "TileEntities.sign.GlowingText", false);
+    return {
+      front: { lines, dyeColor, glowing },
+      back: emptySignFace(),
+    };
+  }
+  return { front: emptySignFace(), back: emptySignFace() };
+}
+
+function parseSignFace(raw: unknown, path: string): NonNullable<BlueprintVoxel["sign"]>["front"] {
+  if (raw === undefined) return emptySignFace();
+  const face = record(raw, path);
+  const rawMessages = face.messages;
+  let lines: string[] = [];
+  if (rawMessages !== undefined) {
+    if (!Array.isArray(rawMessages) || rawMessages.length > 4) invalid(`${path}.messages must contain at most four lines`);
+    lines = rawMessages.map((message, index) => parseSignComponent(message, `${path}.messages[${index}]`));
+  }
+  const dyeColor = parseSignDyeColor(face.color, `${path}.color`, "black");
+  const glowing = parseNbtBoolean(face.has_glowing_text, `${path}.has_glowing_text`, false);
+  return { lines, dyeColor, glowing };
+}
+
+function emptySignFace(): NonNullable<BlueprintVoxel["sign"]>["front"] {
+  return { lines: [], dyeColor: "black", glowing: false };
+}
+
+function parseSignDyeColor(raw: unknown, path: string, fallback: string): NonNullable<BlueprintVoxel["sign"]>["front"]["dyeColor"] {
+  const color = raw === undefined ? fallback : raw;
+  if (typeof color !== "string" || !(SIGN_DYE_COLORS as readonly string[]).includes(color)) {
+    invalid(`${path} must be one of the 16 vanilla dye colors`);
+  }
+  return color as NonNullable<BlueprintVoxel["sign"]>["front"]["dyeColor"];
+}
+
+function parseNbtBoolean(raw: unknown, path: string, fallback: boolean): boolean {
+  if (raw === undefined) return fallback;
+  if (raw === 0 || raw === false) return false;
+  if (raw === 1 || raw === true) return true;
+  invalid(`${path} must be a boolean byte`);
+}
+
+const MAX_SIGN_COMPONENT_BYTES = 8192;
+const MAX_SIGN_COMPONENT_DEPTH = 8;
+const MAX_SIGN_COMPONENT_NODES = 64;
+const MAX_SIGN_LINE_LENGTH = 256;
+const SIGN_LINE_CONTROL = /[\u0000-\u001f\u007f]/;
+const DISCARDED_SIGN_COMPONENT_KEYS = new Set([
+  "bold", "italic", "underlined", "strikethrough", "obfuscated", "font", "color", "shadow_color", "insertion",
+  "clickEvent", "hoverEvent", "click_event", "hover_event",
+]);
+const DYNAMIC_SIGN_COMPONENT_KEYS = new Set(["translate", "with", "selector", "score", "nbt", "keybind", "separator"]);
+
+function parseSignComponent(raw: unknown, path: string): string {
+  if (typeof raw !== "string" || raw.length > MAX_SIGN_COMPONENT_BYTES) invalid(`${path} must be a bounded serialized text component`);
+  // Older Litematic exporters can store an untouched sign line as an empty
+  // NBT string, rather than as the JSON component `""`.
+  if (raw === "") return "";
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    invalid(`${path} must contain valid serialized text component JSON`);
+  }
+  const budget = { nodes: 0 };
+  const text = flattenSignComponent(parsed, path, 0, budget);
+  if (text.length > MAX_SIGN_LINE_LENGTH || SIGN_LINE_CONTROL.test(text)) {
+    invalid(`${path} exceeds the plain display text limit`);
+  }
+  return text;
+}
+
+function flattenSignComponent(raw: unknown, path: string, depth: number, budget: { nodes: number }): string {
+  budget.nodes += 1;
+  if (depth > MAX_SIGN_COMPONENT_DEPTH || budget.nodes > MAX_SIGN_COMPONENT_NODES) {
+    throw new LitematicParseError("LIMIT_EXCEEDED", "Sign text component structure exceeds its limit");
+  }
+  if (typeof raw === "string") return raw;
+  if (Array.isArray(raw)) {
+    return raw.map((entry, index) => flattenSignComponent(entry, `${path}[${index}]`, depth + 1, budget)).join("");
+  }
+  if (!isRecord(raw)) invalid(`${path} is not a plain display component`);
+  let text = "";
+  if (Object.hasOwn(raw, "text")) {
+    if (typeof raw.text !== "string") invalid(`${path}.text must be plain text`);
+    text = raw.text;
+  }
+  const extra = raw.extra;
+  if (extra !== undefined) {
+    if (!Array.isArray(extra)) invalid(`${path}.extra must be a component list`);
+    text += extra.map((entry, index) => flattenSignComponent(entry, `${path}.extra[${index}]`, depth + 1, budget)).join("");
+  }
+  for (const key of Object.keys(raw)) {
+    if (key === "text" || key === "extra" || DISCARDED_SIGN_COMPONENT_KEYS.has(key)) continue;
+    if (DYNAMIC_SIGN_COMPONENT_KEYS.has(key)) unsupportedBlockEntity("Dynamic sign text components are unsupported");
+    unsupportedBlockEntity("Sign component contains unsupported display data");
+  }
+  return text;
+}
+
+function parseCampfireBlockEntity(entity: RecordValue): NonNullable<BlueprintVoxel["campfire"]> {
+  const rawItems = entity.Items;
+  if (rawItems === undefined) return { slots: [] };
+  if (!Array.isArray(rawItems) || rawItems.length > 4) invalid("Campfire Items must contain at most four entries");
+  const seenSlots = new Set<number>();
+  const slots = rawItems.map((rawItem, index) => {
+    const path = `TileEntities.campfire.Items[${index}]`;
+    const item = record(rawItem, path);
+    const itemId = item.id;
+    if (typeof itemId !== "string" || itemId.length > 256 || !/^[a-z0-9_.-]+:[a-z0-9_./-]+$/.test(itemId)) {
+      invalid(`${path}.id must be a bounded namespaced item ID`);
+    }
+    const hasUpperCount = Object.hasOwn(item, "Count");
+    const hasLowerCount = Object.hasOwn(item, "count");
+    if (hasUpperCount === hasLowerCount) invalid(`${path} must contain exactly one count field`);
+    const count = item[hasUpperCount ? "Count" : "count"];
+    if (!integerValueOrNull(count) || count < 1 || count > 64) invalid(`${path}.count must be from 1 through 64`);
+    const slot = item.Slot;
+    if (!integerValueOrNull(slot) || slot < 0 || slot > 3) invalid(`${path}.Slot must be from 0 through 3`);
+    if (seenSlots.has(slot)) invalid("Campfire item slots must be unique");
+    seenSlots.add(slot);
+    assertNoUnsupportedItemPayload(item, path);
+    return { slot: slot as 0 | 1 | 2 | 3, itemId, count };
+  });
+  slots.sort((left, right) => left.slot - right.slot);
+  return { slots };
+}
+
+function assertNoUnsupportedItemPayload(item: RecordValue, path: string): void {
+  for (const componentKey of ["components", "tag"]) {
+    if (!Object.hasOwn(item, componentKey)) continue;
+    const components = record(item[componentKey], `${path}.${componentKey}`);
+    if (Object.keys(components).length > 0) {
+      unsupportedBlockEntity("Campfire item components can change item models and are unsupported");
+    }
+  }
+  for (const key of Object.keys(item)) {
+    if (!["id", "Count", "count", "Slot", "components", "tag"].includes(key)) {
+      unsupportedBlockEntity("Campfire item contains unsupported model data");
+    }
+  }
+}
+
+function unsupportedBlockEntity(message: string): never {
+  throw new LitematicParseError("UNSUPPORTED_BLOCK_ENTITY_DATA", message);
 }
 
 function dimensionsFor(bounds: BlueprintBounds): { width: number; height: number; depth: number } {
@@ -646,6 +978,10 @@ function record(raw: unknown, path: string): RecordValue {
   return raw as RecordValue;
 }
 
+function isRecord(raw: unknown): raw is RecordValue {
+  return typeof raw === "object" && raw !== null && !Array.isArray(raw);
+}
+
 function optionalRecord(raw: unknown, path: string): RecordValue | null {
   return raw === undefined ? null : record(raw, path);
 }
@@ -659,9 +995,17 @@ function optionalArrayLength(raw: unknown, path: string): number {
   return raw === undefined ? 0 : arrayValue(raw, path).length;
 }
 
+function optionalArrayValue(raw: unknown, path: string): unknown[] {
+  return raw === undefined ? [] : arrayValue(raw, path);
+}
+
 function integerValue(raw: unknown, path: string): number {
   if (typeof raw !== "number" || !Number.isSafeInteger(raw)) invalid(`${path} must be an integer`);
   return raw;
+}
+
+function integerValueOrNull(raw: unknown): raw is number {
+  return typeof raw === "number" && Number.isSafeInteger(raw);
 }
 
 function optionalIntegerValue(raw: unknown, path: string): number | null {

@@ -15,9 +15,9 @@ export type ApplicationCommand =
   | { type: "CreateHabitProject"; title: string; blueprintId: string; importedBlueprint?: Project["importedBlueprint"]; targetRounds: number }
   | { type: "SelectNextHabitBuilding"; blueprintId: string; importedBlueprint?: Project["importedBlueprint"]; targetRounds: number }
   | { type: "AddSubtask"; title: string }
-  | { type: "StartFocus"; subtaskId: string | null; plannedDurationMs: number; projectId?: string; marathon?: boolean }
+  | { type: "StartFocus"; subtaskId: string | null; plannedDurationMs: number; projectId?: string; marathon?: boolean; deferredSettlement?: true }
   | { type: "ReportSubtaskProgress"; subtaskId: string; focusSessionIds: string[]; progressBasisPoints: number }
-  | { type: "ReportMarathonFocus"; entries: Array<{ projectId: string; subtaskId: string; progressBasisPoints: number }>; habitAllocations: Array<{ projectId: string; rounds: number }>; focusSessionIds: string[] }
+  | { type: "ReportMarathonFocus"; entries: Array<{ projectId: string; subtaskId: string; progressBasisPoints: number; rounds?: number }>; habitAllocations: Array<{ projectId: string; rounds: number }>; focusSessionIds: string[] }
   | { type: "CompleteFocusEarly" }
   | Exclude<DomainCommand, { type: GeneratedCommandType }>;
 

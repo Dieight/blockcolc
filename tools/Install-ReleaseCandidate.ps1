@@ -23,7 +23,7 @@ try {
 
     $authorized = @(Get-AuthorizedAndroidDevices)
     $targets = if (@($Serial).Count -gt 0) { @($Serial) } else { $authorized }
-    if ($targets.Count -eq 0) { throw 'No connected authorized Android device is available for release-candidate installation.' }
+    if (@($targets).Count -eq 0) { throw 'No connected authorized Android device is available for release-candidate installation.' }
     foreach ($target in $targets) {
         if ($authorized -notcontains $target) { throw "Android device is not connected and authorized: $target" }
         # Check every target before mutating any of them so a busy device leaves
@@ -47,7 +47,7 @@ try {
     Set-EvidenceProperty -Evidence $evidence -Name installedAt -Value ((Get-Date).ToUniversalTime().ToString('o'))
     if ([string]$evidence.phase -ne 'accepted') { Set-EvidenceProperty -Evidence $evidence -Name phase -Value 'installed' }
     Write-ReleaseEvidence -Evidence $evidence -Path $evidencePath
-    Write-Host "Release candidate installed and verified on $($targets.Count) device(s): $evidencePath"
+    Write-Host "Release candidate installed and verified on $(@($targets).Count) device(s): $evidencePath"
     Write-Host 'After the user has tested this exact candidate, record acceptance with tools/Accept-ReleaseCandidate.ps1.'
 }
 finally {

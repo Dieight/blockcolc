@@ -1,5 +1,10 @@
 import {
+  DEFAULT_PNG_RGBA_LIMITS,
+  DEFAULT_RESOURCE_PACK_LIMITS,
+  decodePngRgba,
   inspectPngDimensions,
+  isAllowedSpecialTexturePath,
+  RESOURCE_PACK_SPECIAL_TEXTURE_LIMITS,
   type ResourcePackColormap,
   type ResourcePackManifest,
 } from "@tomato-clock/resource-pack";
@@ -8,6 +13,7 @@ const DB_VERSION = 1;
 const PACK_STORE = "resourcePacks";
 const METADATA_STORE = "metadata";
 const ACTIVE_KEY = "active-pack";
+const BASE_KEY = "base-pack";
 
 export interface StoredResourcePack {
   schemaVersion: 1;
@@ -41,6 +47,7 @@ export interface ResourcePackListItem {
   textureCount: number;
   namespaces: string[];
   active: boolean;
+  base?: boolean;
 }
 
 export interface ResourcePackRepository {
@@ -48,7 +55,9 @@ export interface ResourcePackRepository {
   list(): Promise<ResourcePackListItem[]>;
   get(id: string): Promise<StoredResourcePack | undefined>;
   select(id: string | null): Promise<StoredResourcePack | undefined>;
+  selectBase(id: string | null): Promise<StoredResourcePack | undefined>;
   getActive(): Promise<StoredResourcePack | undefined>;
+  getBase(): Promise<StoredResourcePack | undefined>;
   delete(id: string): Promise<string | null>;
   clear(): Promise<void>;
   close(): void;
@@ -61,6 +70,11 @@ export interface IndexedDbResourcePackRepositoryOptions {
 
 interface ActivePackRecord {
   key: typeof ACTIVE_KEY;
+  packId: string | null;
+}
+
+interface BasePackRecord {
+  key: typeof BASE_KEY;
   packId: string | null;
 }
 
@@ -85,6 +99,7 @@ export class IndexedDbResourcePackRepository implements ResourcePackRepository {
       const metadataStore = transaction.objectStore(METADATA_STORE);
       packStore.put(record);
       const current = await requestResult<unknown>(metadataStore.get(ACTIVE_KEY));
+      const currentBase = await requestResult<unknown>(metadataStore.get(BASE_KEY));
       const activeId = parseActiveId(current);
       const activeRecord = activeId === null
         ? undefined
@@ -98,7 +113,7 @@ export class IndexedDbResourcePackRepository implements ResourcePackRepository {
         metadataStore.put({ key: ACTIVE_KEY, packId: selectedId } satisfies ActivePackRecord);
       }
       await done;
-      return toListItem(record, selectedId);
+      return toListItem(record, selectedId, parseBaseId(currentBase));
     } catch (error) {
       abort(transaction, done);
       throw error;
@@ -106,8 +121,8 @@ export class IndexedDbResourcePackRepository implements ResourcePackRepository {
   }
 
   async list(): Promise<ResourcePackListItem[]> {
-    const { records, activeId } = await this.readAndRepairActive();
-    return records.map((record) => toListItem(record, activeId));
+    const { records, activeId, baseId } = await this.readAndRepairSelections();
+    return records.map((record) => toListItem(record, activeId, baseId));
   }
 
   async get(id: string): Promise<StoredResourcePack | undefined> {
@@ -142,9 +157,34 @@ export class IndexedDbResourcePackRepository implements ResourcePackRepository {
     }
   }
 
+  async selectBase(id: string | null): Promise<StoredResourcePack | undefined> {
+    if (id !== null) assertId(id);
+    const db = await this.database();
+    const transaction = db.transaction([PACK_STORE, METADATA_STORE], "readwrite");
+    const done = transactionDone(transaction);
+    try {
+      let selected: StoredResourcePack | undefined;
+      if (id !== null) {
+        selected = parseStoredResourcePackOrUndefined(
+          await requestResult<unknown>(transaction.objectStore(PACK_STORE).get(id)),
+        );
+        if (!selected) throw new Error(`Resource pack ${id} was not found or is invalid.`);
+      }
+      transaction.objectStore(METADATA_STORE).put({ key: BASE_KEY, packId: id } satisfies BasePackRecord);
+      await done;
+      return selected;
+    } catch (error) {
+      abort(transaction, done);
+      throw error;
+    }
+  }
+
   async getActive(): Promise<StoredResourcePack | undefined> {
-    const { records, activeId } = await this.readAndRepairActive();
-    return activeId === null ? undefined : records.find((record) => record.id === activeId);
+    return this.readSelected(ACTIVE_KEY);
+  }
+
+  async getBase(): Promise<StoredResourcePack | undefined> {
+    return this.readSelected(BASE_KEY);
   }
 
   async delete(id: string): Promise<string | null> {
@@ -162,7 +202,14 @@ export class IndexedDbResourcePackRepository implements ResourcePackRepository {
       const nextId = currentId !== id && records.some((record) => record.id === currentId)
         ? currentId
         : null;
-      transaction.objectStore(METADATA_STORE).put({ key: ACTIVE_KEY, packId: nextId } satisfies ActivePackRecord);
+      const metadataStore = transaction.objectStore(METADATA_STORE);
+      const currentBase = await requestResult<unknown>(metadataStore.get(BASE_KEY));
+      const currentBaseId = parseBaseId(currentBase);
+      const nextBaseId = currentBaseId !== id && records.some((record) => record.id === currentBaseId)
+        ? currentBaseId
+        : null;
+      metadataStore.put({ key: ACTIVE_KEY, packId: nextId } satisfies ActivePackRecord);
+      metadataStore.put({ key: BASE_KEY, packId: nextBaseId } satisfies BasePackRecord);
       await done;
       return nextId;
     } catch (error) {
@@ -185,21 +232,59 @@ export class IndexedDbResourcePackRepository implements ResourcePackRepository {
     this.databasePromise = undefined;
   }
 
-  private async readAndRepairActive(): Promise<{ records: StoredResourcePack[]; activeId: string | null }> {
+  /** Selection reads fetch only the selected record. A complete client JAR can
+   * be tens of MiB; getAll() here used to clone every imported archive twice
+   * whenever the resident world refreshed its pack layers. */
+  private async readSelected(key: typeof ACTIVE_KEY | typeof BASE_KEY): Promise<StoredResourcePack | undefined> {
     const db = await this.database();
     const transaction = db.transaction([PACK_STORE, METADATA_STORE], "readwrite");
     const done = transactionDone(transaction);
     try {
-      const rawRecords = await requestResult<unknown[]>(transaction.objectStore(PACK_STORE).getAll());
-      const records = validRecords(rawRecords);
-      const rawActive = await requestResult<unknown>(transaction.objectStore(METADATA_STORE).get(ACTIVE_KEY));
-      const requestedId = parseActiveId(rawActive);
-      const activeId = records.some((record) => record.id === requestedId) ? requestedId : null;
-      if (requestedId !== activeId || !isActiveRecord(rawActive)) {
-        transaction.objectStore(METADATA_STORE).put({ key: ACTIVE_KEY, packId: activeId } satisfies ActivePackRecord);
+      const metadataStore = transaction.objectStore(METADATA_STORE);
+      const rawSelection = await requestResult<unknown>(metadataStore.get(key));
+      const requestedId = key === ACTIVE_KEY ? parseActiveId(rawSelection) : parseBaseId(rawSelection);
+      const selected = requestedId === null ? undefined : parseStoredResourcePackOrUndefined(
+        await requestResult<unknown>(transaction.objectStore(PACK_STORE).get(requestedId)),
+      );
+      const validSelection = key === ACTIVE_KEY ? isActiveRecord(rawSelection) : isBaseRecord(rawSelection);
+      if (!validSelection || (requestedId !== null && !selected)) {
+        metadataStore.put({ key, packId: selected?.id ?? null });
       }
       await done;
-      return { records, activeId };
+      return selected;
+    } catch (error) {
+      abort(transaction, done);
+      throw error;
+    }
+  }
+
+  private async readAndRepairSelections(): Promise<{
+    records: StoredResourcePack[];
+    activeId: string | null;
+    baseId: string | null;
+  }> {
+    const db = await this.database();
+    const transaction = db.transaction([PACK_STORE, METADATA_STORE], "readwrite");
+    const done = transactionDone(transaction);
+    try {
+      const packStore = transaction.objectStore(PACK_STORE);
+      const metadataStore = transaction.objectStore(METADATA_STORE);
+      const rawRecords = await requestResult<unknown[]>(packStore.getAll());
+      const records = validRecords(rawRecords);
+      const rawActive = await requestResult<unknown>(metadataStore.get(ACTIVE_KEY));
+      const requestedActiveId = parseActiveId(rawActive);
+      const activeId = records.some((record) => record.id === requestedActiveId) ? requestedActiveId : null;
+      if (requestedActiveId !== activeId || !isActiveRecord(rawActive)) {
+        metadataStore.put({ key: ACTIVE_KEY, packId: activeId } satisfies ActivePackRecord);
+      }
+      const rawBase = await requestResult<unknown>(metadataStore.get(BASE_KEY));
+      const requestedBaseId = parseBaseId(rawBase);
+      const baseId = records.some((record) => record.id === requestedBaseId) ? requestedBaseId : null;
+      if (requestedBaseId !== baseId || !isBaseRecord(rawBase)) {
+        metadataStore.put({ key: BASE_KEY, packId: baseId } satisfies BasePackRecord);
+      }
+      await done;
+      return { records, activeId, baseId };
     } catch (error) {
       abort(transaction, done);
       throw error;
@@ -264,12 +349,15 @@ function parseManifest(value: unknown): StoredResourcePackManifest {
   if (!Number.isSafeInteger(value.pack.packFormat) || (value.pack.packFormat as number) <= 0) {
     throw new Error("Invalid manifest pack format.");
   }
+  validatePackFormatRange(value.pack);
   if (
     !isRecord(value.summary) || !Array.isArray(value.summary.namespaces) ||
     value.summary.namespaces.some((entry) => typeof entry !== "string")
   ) {
     throw new Error("Invalid manifest compatibility summary.");
   }
+  let totalTexturePngBytes = 0;
+  let totalTextureFrames = 0;
   for (const texture of value.textures) {
     if (
       !isRecord(texture) ||
@@ -279,20 +367,95 @@ function parseManifest(value: unknown): StoredResourcePackManifest {
       typeof texture.archivePath !== "string" ||
       !Number.isSafeInteger(texture.width) ||
       (texture.width as number) < 16 ||
-      (texture.width as number) > 8192 ||
+      (texture.width as number) > DEFAULT_PNG_RGBA_LIMITS.maxDimension ||
       !Number.isSafeInteger(texture.height) ||
       (texture.height as number) < 16 ||
-      (texture.height as number) > 8192 ||
-      !(texture.png instanceof Uint8Array)
+      (texture.height as number) > DEFAULT_PNG_RGBA_LIMITS.maxDimension ||
+      !(texture.png instanceof Uint8Array) || texture.png.byteLength < 1 ||
+      texture.png.byteLength > DEFAULT_RESOURCE_PACK_LIMITS.maxSingleFileBytes ||
+      (texture.width as number) * (texture.height as number) > DEFAULT_PNG_RGBA_LIMITS.maxPixels
     ) {
       throw new Error("Invalid texture in normalized resource-pack manifest.");
     }
-    validateTextureAnimation(texture.animation, texture.width as number, texture.height as number);
+    totalTexturePngBytes += texture.png.byteLength;
+    totalTextureFrames += validateTextureAnimation(texture.animation, texture.width as number, texture.height as number);
+    if (totalTexturePngBytes > DEFAULT_RESOURCE_PACK_LIMITS.maxTotalUncompressedBytes
+      || totalTextureFrames > 4096) {
+      throw new Error("Normalized resource-pack textures exceed their source-byte or physical-frame limit.");
+    }
   }
   validateColormaps(value.colormaps);
+  validateSpecialTextures(value.specialTextures);
   for (const blockState of value.blockStates) validateBlockState(blockState);
   for (const model of value.models) validateBlockModel(model);
   return structuredClone(value) as unknown as StoredResourcePackManifest;
+}
+
+const specialTextureNamespacePattern = /^[a-z0-9_.-]+$/;
+
+function validateSpecialTextures(value: unknown): void {
+  // Older schema-v1 packs predate special renderer assets.
+  if (value === undefined) return;
+  if (!Array.isArray(value) || value.length > RESOURCE_PACK_SPECIAL_TEXTURE_LIMITS.maxTextureCount) {
+    throw new Error("Invalid normalized resource-pack special textures.");
+  }
+  const ids = new Set<string>();
+  let totalPngBytes = 0;
+  let totalPixels = 0;
+  for (const texture of value) {
+    if (!isRecord(texture) || typeof texture.namespace !== "string" || texture.namespace.length > 128
+      || !specialTextureNamespacePattern.test(texture.namespace)
+      || typeof texture.texturePath !== "string" || !isAllowedSpecialTexturePath(texture.texturePath)
+      || typeof texture.resourceId !== "string" || texture.resourceId !== `${texture.namespace}:entity/${texture.texturePath}`
+      || typeof texture.archivePath !== "string"
+      || texture.archivePath !== `assets/${texture.namespace}/textures/entity/${texture.texturePath}.png`
+      || !Number.isSafeInteger(texture.width) || (texture.width as number) < 1
+      || (texture.width as number) > RESOURCE_PACK_SPECIAL_TEXTURE_LIMITS.maxDimension
+      || !Number.isSafeInteger(texture.height) || (texture.height as number) < 1
+      || (texture.height as number) > RESOURCE_PACK_SPECIAL_TEXTURE_LIMITS.maxDimension
+      || !(texture.png instanceof Uint8Array) || texture.png.byteLength < 1
+      || texture.png.byteLength > RESOURCE_PACK_SPECIAL_TEXTURE_LIMITS.maxPngBytes) {
+      throw new Error("Invalid special texture in normalized resource-pack manifest.");
+    }
+    if (ids.has(texture.resourceId)) throw new Error("Duplicate normalized special texture resource ID.");
+    ids.add(texture.resourceId);
+    totalPngBytes += texture.png.byteLength;
+    const pixels = (texture.width as number) * (texture.height as number);
+    totalPixels += pixels;
+    if (totalPngBytes > RESOURCE_PACK_SPECIAL_TEXTURE_LIMITS.maxTotalPngBytes
+      || pixels > RESOURCE_PACK_SPECIAL_TEXTURE_LIMITS.maxPixelsPerTexture
+      || totalPixels > RESOURCE_PACK_SPECIAL_TEXTURE_LIMITS.maxTotalPixels) {
+      throw new Error("Normalized special textures exceed their byte or decoded-pixel budget.");
+    }
+    try {
+      decodePngRgba(texture.png, {
+        expectedWidth: texture.width as number,
+        expectedHeight: texture.height as number,
+        maxWidth: RESOURCE_PACK_SPECIAL_TEXTURE_LIMITS.maxDimension,
+        maxHeight: RESOURCE_PACK_SPECIAL_TEXTURE_LIMITS.maxDimension,
+        maxPixels: RESOURCE_PACK_SPECIAL_TEXTURE_LIMITS.maxPixelsPerTexture,
+        maxDecodedBytes: RESOURCE_PACK_SPECIAL_TEXTURE_LIMITS.maxPixelsPerTexture * 4,
+      });
+    } catch {
+      throw new Error("Invalid special texture PNG in normalized resource-pack manifest.");
+    }
+  }
+}
+
+function validatePackFormatRange(pack: Record<string, unknown>): void {
+  const hasMin = pack.minFormat !== undefined;
+  const hasMax = pack.maxFormat !== undefined;
+  if (hasMin !== hasMax) throw new Error("Invalid manifest pack format range.");
+  if (!hasMin) return;
+  const validBound = (bound: unknown): bound is [number, number] =>
+    Array.isArray(bound) && bound.length === 2 &&
+    Number.isSafeInteger(bound[0]) && bound[0] > 0 &&
+    Number.isSafeInteger(bound[1]) && bound[1] >= 0 && bound[1] <= 0x7fffffff;
+  if (!validBound(pack.minFormat) || !validBound(pack.maxFormat) ||
+    pack.minFormat[0] > pack.maxFormat[0] ||
+    (pack.minFormat[0] === pack.maxFormat[0] && pack.minFormat[1] > pack.maxFormat[1])) {
+    throw new Error("Invalid manifest pack format range.");
+  }
 }
 
 const colormapContracts = Object.freeze({
@@ -304,17 +467,21 @@ const colormapContracts = Object.freeze({
     resourceId: "minecraft:colormap/foliage",
     archivePath: "assets/minecraft/textures/colormap/foliage.png",
   }),
+  dry_foliage: Object.freeze({
+    resourceId: "minecraft:colormap/dry_foliage",
+    archivePath: "assets/minecraft/textures/colormap/dry_foliage.png",
+  }),
 } as const);
 const MAX_COLORMAP_PNG_BYTES = 4 * 1024 * 1024;
 
 function validateColormaps(value: unknown): void {
   if (value === undefined) return;
-  if (!Array.isArray(value) || value.length < 1 || value.length > 2) {
+  if (!Array.isArray(value) || value.length < 1 || value.length > 3) {
     throw new Error("Invalid normalized resource-pack colormaps.");
   }
   const kinds = new Set<string>();
   for (const colormap of value) {
-    if (!isRecord(colormap) || (colormap.kind !== "grass" && colormap.kind !== "foliage")) {
+    if (!isRecord(colormap) || (colormap.kind !== "grass" && colormap.kind !== "foliage" && colormap.kind !== "dry_foliage")) {
       throw new Error("Invalid normalized resource-pack colormap.");
     }
     if (kinds.has(colormap.kind)) throw new Error("Duplicate normalized resource-pack colormap.");
@@ -347,7 +514,7 @@ function validateBlockState(value: unknown): void {
     if (
       !isRecord(variant) || typeof variant.key !== "string" || !stringRecord(variant.conditions) ||
       Object.keys(variant.conditions).length > 32 || !Array.isArray(variant.choices) ||
-      variant.choices.length < 1 || variant.choices.length > 64
+      variant.choices.length < 1 || variant.choices.length > 128
     ) {
       throw new Error("Invalid blockstate variant in normalized resource-pack manifest.");
     }
@@ -368,7 +535,7 @@ function validateMultipart(value: unknown): void {
     const clauses = part.when.clauses;
     if (clauses.length < 1 || clauses.length > 16) throw new Error("Invalid multipart condition clauses.");
     for (const clause of clauses) validateMultipartClause(clause, clauses.length === 1);
-    if (part.apply.length < 1 || part.apply.length > 8) throw new Error("Multipart apply must contain 1-8 models.");
+    if (part.apply.length < 1 || part.apply.length > 32) throw new Error("Multipart apply must contain 1-32 models.");
     for (const choice of part.apply) validateModelChoice(choice);
     modelReferenceCount += part.apply.length;
     if (modelReferenceCount > 512) throw new Error("Multipart has too many model references.");
@@ -442,31 +609,25 @@ function validateBlockModel(value: unknown): void {
       }
       const from = validateElementVector(element.from);
       const to = validateElementVector(element.to);
-      if (from.some((coordinate, axis) => coordinate > to[axis]!)) {
-        throw new Error("Invalid block model element bounds.");
-      }
+      // Vanilla models can intentionally reverse an axis to flip face orientation.
+      // Preserve the original endpoints; the renderer handles their signed span.
       const zeroAxes = from.flatMap((coordinate, axis) => coordinate === to[axis] ? [axis] : []);
       if (zeroAxes.length > 1) throw new Error("Invalid block model element bounds.");
+      if (element.shadeDirectionOverride !== undefined && !allowedModelFaces.has(element.shadeDirectionOverride as string)) {
+        throw new Error("Invalid block model shade direction override.");
+      }
       if (element.rotation !== undefined) validateElementRotation(element.rotation);
       if (!isRecord(element.faces)) throw new Error("Invalid block model element faces.");
       const entries = Object.entries(element.faces);
       if (entries.length < 1 || entries.length > 6) throw new Error("Invalid block model element faces.");
       for (const [face, metadata] of entries) {
         validateModelFace(face, metadata);
-        if (zeroAxes.length === 1 && element.rotation === undefined && !facesPerpendicularToAxis[zeroAxes[0]!]!.has(face)) {
-          throw new Error("Invalid block model plane face.");
-        }
       }
     }
   }
 }
 
 const allowedModelFaces = new Set(["down", "up", "north", "south", "west", "east"]);
-const facesPerpendicularToAxis: ReadonlyArray<ReadonlySet<string>> = [
-  new Set(["west", "east"]),
-  new Set(["down", "up"]),
-  new Set(["north", "south"]),
-];
 const safeStateNamePattern = /^[a-z0-9_.-]+$/;
 const resourceLocationPattern = /^[a-z0-9_.-]+:[a-z0-9._/-]+$/;
 const unsafeStateNames = new Set(["__proto__", "prototype", "constructor"]);
@@ -483,7 +644,7 @@ function validateElementVector(value: unknown): [number, number, number] {
 function validateElementRotation(value: unknown): void {
   if (!isRecord(value) || !Array.isArray(value.origin) || value.origin.length !== 3
     || value.origin.some((coordinate) => typeof coordinate !== "number" || !Number.isFinite(coordinate)
-      || coordinate < -16 || coordinate > 32)
+      || coordinate < -32 || coordinate > 48)
     || typeof value.rescale !== "boolean") {
     throw new Error("Invalid block model element rotation.");
   }
@@ -524,23 +685,26 @@ function validateModelFace(face: string, value: unknown): void {
   }
 }
 
-function validateTextureAnimation(value: unknown, textureWidth: number, textureHeight: number): void {
+function validateTextureAnimation(value: unknown, textureWidth: number, textureHeight: number): number {
   if (value === undefined) {
-    if (textureWidth !== 16 || textureHeight !== 16) throw new Error("Non-16x16 texture is missing normalized animation metadata.");
-    return;
+    if (![16, 32, 64, 128, 256].includes(textureWidth) || textureHeight !== textureWidth) {
+      throw new Error("Non-square or unsupported static texture is missing normalized animation metadata.");
+    }
+    return 1;
   }
   const frameWidth = isRecord(value) ? value.frameWidth : undefined;
   const frameHeight = isRecord(value) ? value.frameHeight : undefined;
   const sourceColumns = isRecord(value) ? (value.sourceColumns ?? textureWidth / (frameWidth as number)) : undefined;
   const sourceRows = isRecord(value) ? (value.sourceRows ?? textureHeight / (frameHeight as number)) : undefined;
   if (
-    !isRecord(value) || (frameWidth !== 16 && frameWidth !== 32) || frameHeight !== frameWidth ||
+    !isRecord(value) || (frameWidth !== 16 && frameWidth !== 32 && frameWidth !== 64 && frameWidth !== 128 && frameWidth !== 256) || frameHeight !== frameWidth ||
     !Number.isSafeInteger(sourceColumns) || (sourceColumns as number) < 1 ||
     !Number.isSafeInteger(sourceRows) || (sourceRows as number) < 1 ||
     (sourceColumns as number) * (frameWidth as number) !== textureWidth ||
     (sourceRows as number) * (frameHeight as number) !== textureHeight ||
     !Number.isSafeInteger(value.sourceFrameCount) || value.sourceFrameCount !== (sourceColumns as number) * (sourceRows as number) ||
     (value.sourceFrameCount as number) > 256 ||
+    textureWidth * textureHeight > DEFAULT_PNG_RGBA_LIMITS.maxPixels ||
     !Number.isSafeInteger(value.frametime) || (value.frametime as number) < 1 || (value.frametime as number) > 1_000_000 ||
     typeof value.interpolate !== "boolean" || !Array.isArray(value.frames) ||
     value.frames.length < 1 || value.frames.length > 4096
@@ -556,6 +720,7 @@ function validateTextureAnimation(value: unknown, textureWidth: number, textureH
       throw new Error("Invalid normalized texture animation frame.");
     }
   }
+  return value.sourceFrameCount as number;
 }
 
 function stringRecord(value: unknown): value is Record<string, string> {
@@ -574,16 +739,17 @@ function normalizedResourceLocation(value: unknown): value is string {
   return typeof value === "string" && value.length <= 512 && resourceLocationPattern.test(value);
 }
 
-function toListItem(record: StoredResourcePack, activeId: string | null): ResourcePackListItem {
+function toListItem(record: StoredResourcePack, activeId: string | null, baseId: string | null = null): ResourcePackListItem {
   return {
     id: record.id,
     name: record.name,
     importedAt: record.importedAt,
     archiveBytes: record.archive.byteLength,
     packFormat: record.manifest.pack.packFormat,
-    textureCount: record.manifest.textures.length,
+    textureCount: record.manifest.textures.length + (record.manifest.specialTextures?.length ?? 0),
     namespaces: [...record.manifest.summary.namespaces],
     active: record.id === activeId,
+    base: record.id === baseId,
   };
 }
 
@@ -603,10 +769,22 @@ function parseActiveId(value: unknown): string | null {
   return isActiveRecord(value) ? value.packId : null;
 }
 
+function parseBaseId(value: unknown): string | null {
+  return isBaseRecord(value) ? value.packId : null;
+}
+
 function isActiveRecord(value: unknown): value is ActivePackRecord {
   return (
     isRecord(value) &&
     value.key === ACTIVE_KEY &&
+    (value.packId === null || (typeof value.packId === "string" && /^[A-Za-z0-9._:-]{1,128}$/.test(value.packId)))
+  );
+}
+
+function isBaseRecord(value: unknown): value is BasePackRecord {
+  return (
+    isRecord(value) &&
+    value.key === BASE_KEY &&
     (value.packId === null || (typeof value.packId === "string" && /^[A-Za-z0-9._:-]{1,128}$/.test(value.packId)))
   );
 }

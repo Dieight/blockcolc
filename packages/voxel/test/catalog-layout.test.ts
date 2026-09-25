@@ -2,36 +2,72 @@ import { describe, expect, it } from "vitest";
 import {
   BUILTIN_BLUEPRINT_CATALOG,
   BUILTIN_BLUEPRINTS,
+  BUILTIN_DAILY_REWARD_BLUEPRINTS,
+  BUILTIN_LOCAL_BUILDING_BLUEPRINTS,
+  CORE_BUILTIN_BLUEPRINT_CATALOG,
   CONSTRUCTION_STAGES,
   SMALL_WORKSHOP_BLUEPRINT,
   TIMBER_HOUSE_BLUEPRINT,
   UNKNOWN_BLUEPRINT_PLACEHOLDER,
   VILLAGE_CHAPEL_BLUEPRINT,
+  composeBuiltinBlueprintCatalog,
   layoutWorlds,
+  localBuiltinBlueprintDescription,
   resolveBuiltinBlueprint,
   type BlueprintV1,
   type WorldSnapshot,
 } from "../src/index.js";
 
 describe("built-in blueprint catalog", () => {
-  it("publishes exactly three distinct, tightly bounded blueprints", () => {
-    expect(BUILTIN_BLUEPRINT_CATALOG).toHaveLength(3);
-    expect(BUILTIN_BLUEPRINTS.size).toBe(3);
-
-    const ids = BUILTIN_BLUEPRINT_CATALOG.map((entry) => entry.id);
-    const names = BUILTIN_BLUEPRINT_CATALOG.map((entry) => entry.displayName);
-    expect(new Set(ids).size).toBe(3);
-    expect(new Set(names).size).toBe(3);
-    expect(new Set(ids)).toEqual(new Set([
+  it("keeps the original catalog intact when optional local assets are absent", () => {
+    expect(composeBuiltinBlueprintCatalog(CORE_BUILTIN_BLUEPRINT_CATALOG, [])).toEqual(CORE_BUILTIN_BLUEPRINT_CATALOG);
+    expect(CORE_BUILTIN_BLUEPRINT_CATALOG.map((entry) => entry.id)).toEqual([
       "builtin-small-workshop",
       "builtin-timber-house",
       "builtin-village-chapel",
-    ]));
-    expect(new Set(BUILTIN_BLUEPRINT_CATALOG.map((entry) => entry.blueprint))).toEqual(new Set([
+    ]);
+  });
+
+  it("publishes distinct, tightly bounded catalog assets with stable local IDs", () => {
+    expect(BUILTIN_BLUEPRINT_CATALOG).toHaveLength(CORE_BUILTIN_BLUEPRINT_CATALOG.length + BUILTIN_LOCAL_BUILDING_BLUEPRINTS.length);
+    expect(BUILTIN_BLUEPRINTS.size).toBe(BUILTIN_BLUEPRINT_CATALOG.length);
+
+    const ids = BUILTIN_BLUEPRINT_CATALOG.map((entry) => entry.id);
+    const names = BUILTIN_BLUEPRINT_CATALOG.map((entry) => entry.displayName);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(new Set(names).size).toBe(names.length);
+    expect(BUILTIN_BLUEPRINT_CATALOG.slice(0, CORE_BUILTIN_BLUEPRINT_CATALOG.length)).toEqual(CORE_BUILTIN_BLUEPRINT_CATALOG);
+    expect(new Set(CORE_BUILTIN_BLUEPRINT_CATALOG.map((entry) => entry.blueprint))).toEqual(new Set([
       SMALL_WORKSHOP_BLUEPRINT,
       TIMBER_HOUSE_BLUEPRINT,
       VILLAGE_CHAPEL_BLUEPRINT,
     ]));
+    expect(BUILTIN_LOCAL_BUILDING_BLUEPRINTS.length === 0 || BUILTIN_LOCAL_BUILDING_BLUEPRINTS.length === 7).toBe(true);
+    expect(BUILTIN_DAILY_REWARD_BLUEPRINTS.length === 0 || BUILTIN_DAILY_REWARD_BLUEPRINTS.length === 3).toBe(true);
+    expect(BUILTIN_LOCAL_BUILDING_BLUEPRINTS.every((blueprint) => blueprint.id.startsWith("builtin-local-") && blueprint.title)).toBe(true);
+    expect(BUILTIN_DAILY_REWARD_BLUEPRINTS.every((blueprint) => blueprint.id.startsWith("builtin-local-") && blueprint.title)).toBe(true);
+    if (BUILTIN_LOCAL_BUILDING_BLUEPRINTS.length === 7) {
+      expect(BUILTIN_LOCAL_BUILDING_BLUEPRINTS.map((blueprint) => [blueprint.id, blueprint.title])).toEqual([
+        ["builtin-local-advanced-matchbox-plus", "Dieight的高级火柴盒plus"],
+        ["builtin-local-advanced-matchbox-pro", "Dieight的高级火柴盒pro"],
+        ["builtin-local-advanced-matchbox", "Dieight的高级火柴盒"],
+        ["builtin-local-gkr-mansion", "karry_steven的豪宅"],
+        ["builtin-local-gyp-mansion-first-floor", "GYPpro的豪宅（一层）"],
+        ["builtin-local-gyp-simple-warehouse", "GYPpro的简易小仓库"],
+        ["builtin-local-small-villa", "Dieight的小别墅"],
+      ]);
+    } else {
+      expect(BUILTIN_BLUEPRINT_CATALOG).toHaveLength(CORE_BUILTIN_BLUEPRINT_CATALOG.length);
+    }
+    if (BUILTIN_DAILY_REWARD_BLUEPRINTS.length === 3) {
+      expect(BUILTIN_DAILY_REWARD_BLUEPRINTS.map((blueprint) => [blueprint.id, blueprint.title])).toEqual([
+        ["builtin-local-mysterious-enchanting-table", "Dieight的神秘附魔台"],
+        ["builtin-local-small-water-tank", "Dieight的小水箱"],
+        ["builtin-local-wqh-yellow-duck", "m0m0kA_QWQ的小黄鸭"],
+      ]);
+    } else {
+      expect(BUILTIN_DAILY_REWARD_BLUEPRINTS).toEqual([]);
+    }
 
     for (const entry of BUILTIN_BLUEPRINT_CATALOG) {
       const blueprint = entry.blueprint;
@@ -48,8 +84,40 @@ describe("built-in blueprint catalog", () => {
     }
   });
 
-  it("gives every built-in building exterior torch light for the night scene", () => {
-    for (const { blueprint } of BUILTIN_BLUEPRINT_CATALOG) {
+  it("keeps daily rewards separate and within their smaller placement budget", () => {
+    expect(BUILTIN_BLUEPRINT_CATALOG.some(({ id }) => BUILTIN_DAILY_REWARD_BLUEPRINTS.some((reward) => reward.id === id))).toBe(false);
+    for (const blueprint of BUILTIN_DAILY_REWARD_BLUEPRINTS) {
+      expect(blueprint.bounds.maxX - blueprint.bounds.minX + 1).toBeLessThanOrEqual(12);
+      expect(blueprint.bounds.maxY - blueprint.bounds.minY + 1).toBeLessThanOrEqual(16);
+      expect(blueprint.bounds.maxZ - blueprint.bounds.minZ + 1).toBeLessThanOrEqual(12);
+      expect(blueprint.voxels.length).toBeLessThanOrEqual(2_000);
+    }
+  });
+
+  it("credits all supplemental blueprints with a one-sentence visual description", () => {
+    const sources = [
+      ["builtin-local-advanced-matchbox", "Dieight的高级火柴盒", "Dieight的高级火柴盒"],
+      ["builtin-local-advanced-matchbox-plus", "Dieight的高级火柴盒plus", "Dieight的高级火柴盒plus"],
+      ["builtin-local-advanced-matchbox-pro", "Dieight的高级火柴盒pro", "Dieight的高级火柴盒pro"],
+      ["builtin-local-gyp-simple-warehouse", "GYPpro的简易小仓库", "GYPpro的简易小仓库"],
+      ["builtin-local-mysterious-enchanting-table", "Dieight的神秘附魔台", "Dieight的神秘附魔台"],
+      ["builtin-local-small-villa", "Dieight的小别墅", "Dieight的小别墅"],
+      ["builtin-local-small-water-tank", "Dieight的小水箱", "Dieight的小水箱"],
+      ["builtin-local-gkr-mansion", "karry_steven的豪宅", "karry_steven的豪宅"],
+      ["builtin-local-gyp-mansion-first-floor", "GYPpro的豪宅（一层）", "GYPpro的豪宅（一层）"],
+      ["builtin-local-wqh-yellow-duck", "m0m0kA_QWQ的小黄鸭", "m0m0kA_QWQ的小黄鸭"],
+    ] as const;
+    for (const [id, title, credit] of sources) {
+      const description = localBuiltinBlueprintDescription(id, title);
+      expect(description).toMatch(new RegExp(`^${credit}：.+。$`));
+      expect(description.match(/。/g)).toHaveLength(1);
+      expect(description).not.toContain("本机打包");
+      expect(BUILTIN_BLUEPRINT_CATALOG.find((entry) => entry.id === id)?.description ?? description).toBe(description);
+    }
+  });
+
+  it("gives the checked-in buildings exterior torch light for the night scene", () => {
+    for (const { blueprint } of CORE_BUILTIN_BLUEPRINT_CATALOG) {
       const lights = blueprint.voxels.filter((voxel) => voxel.emissiveLevel && voxel.emissiveLevel > 0);
       expect(lights.length).toBeGreaterThanOrEqual(2);
       expect(lights.every((voxel) => voxel.sourceBlockId === "minecraft:torch")).toBe(true);
@@ -66,15 +134,12 @@ describe("built-in blueprint catalog", () => {
 
   it("gives every built-in a distinct voxel shape", () => {
     const fingerprints = BUILTIN_BLUEPRINT_CATALOG.map(({ blueprint }) => shapeFingerprint(blueprint));
-    expect(new Set(fingerprints).size).toBe(3);
+    expect(new Set(fingerprints).size).toBe(fingerprints.length);
 
     const profiles = BUILTIN_BLUEPRINT_CATALOG.map(({ blueprint }) => structuralProfile(blueprint));
-    expect(new Set(profiles).size).toBe(3);
+    expect(new Set(profiles).size).toBe(profiles.length);
     for (const { blueprint } of BUILTIN_BLUEPRINT_CATALOG) {
-      const materials = new Set(blueprint.voxels.map((voxel) => voxel.materialId));
-      for (const required of ["stone", "roof", "glass", "accent"] as const) {
-        expect(materials.has(required), `${blueprint.id} lacks ${required}`).toBe(true);
-      }
+      expectTightBoundsAndUniqueCoordinates(blueprint);
     }
     expect(new Set(SMALL_WORKSHOP_BLUEPRINT.voxels.map((voxel) => voxel.materialId)).has("wood")).toBe(true);
     expect(new Set(TIMBER_HOUSE_BLUEPRINT.voxels.map((voxel) => voxel.materialId)).has("wood")).toBe(true);
@@ -137,8 +202,8 @@ describe("settlement layout", () => {
 
   it("places all building footprints without AABB overlap", () => {
     const positioned = layoutWorlds(worlds);
-    expect(positioned).toHaveLength(3);
-    expect(new Set(positioned.map((world) => world.projectId)).size).toBe(3);
+    expect(positioned).toHaveLength(BUILTIN_BLUEPRINT_CATALOG.length);
+    expect(new Set(positioned.map((world) => world.projectId)).size).toBe(positioned.length);
 
     for (let leftIndex = 0; leftIndex < positioned.length; leftIndex += 1) {
       for (let rightIndex = leftIndex + 1; rightIndex < positioned.length; rightIndex += 1) {
@@ -202,9 +267,9 @@ function byProject(worlds: ReturnType<typeof layoutWorlds>): Record<string, { x:
 
 function worldAabb(world: ReturnType<typeof layoutWorlds>[number]) {
   return {
-    minX: world.worldPosition.x + world.blueprint.bounds.minX,
-    maxX: world.worldPosition.x + world.blueprint.bounds.maxX,
-    minZ: world.worldPosition.z + world.blueprint.bounds.minZ,
-    maxZ: world.worldPosition.z + world.blueprint.bounds.maxZ,
+    minX: world.worldPosition.x - world.footprint.width / 2,
+    maxX: world.worldPosition.x + world.footprint.width / 2,
+    minZ: world.worldPosition.z - world.footprint.depth / 2,
+    maxZ: world.worldPosition.z + world.footprint.depth / 2,
   };
 }

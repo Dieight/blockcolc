@@ -1,0 +1,10 @@
+import { chromium } from '@playwright/test';
+const browser = await chromium.launch();
+const page = await browser.newPage({ viewport: { width: 412, height: 915 }, hasTouch: true, isMobile: true, deviceScaleFactor: 2.625, timezoneId: 'Asia/Shanghai' });
+await page.goto('http://127.0.0.1:42777/');
+await page.getByRole('button', { name: '开始建造', exact: true }).click();
+await page.waitForTimeout(400);
+await page.getByRole('button', { name: '设置', exact: true }).click();
+await page.waitForTimeout(500);
+console.log(await page.evaluate(() => ({ url: location.pathname, checkboxes: [...document.querySelectorAll('input[type=checkbox]')].map((c) => c.getAttribute('aria-label') || c.closest('label')?.textContent?.slice(0, 20) || 'unlabeled'), heading: document.querySelector('h1')?.textContent })));
+await browser.close();

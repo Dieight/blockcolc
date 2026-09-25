@@ -26,6 +26,7 @@ describe("axis-aligned block geometry", () => {
         from: [0, 0, 0],
         to: [8, 4, 16],
         shade: false,
+        shadeDirectionOverride: "up",
         faces: { north: { cullFace: "north" }, up: { uv: [0, 0, 8, 16] } },
       }],
     });
@@ -37,6 +38,7 @@ describe("axis-aligned block geometry", () => {
         from: [0, 0, 8],
         to: [16, 4, 16],
         shade: false,
+        shadeDirectionOverride: "up",
         faces: {
           west: { texture: "test:block/stone", cullFace: "west" },
           up: { texture: "test:block/stone" },
@@ -135,6 +137,18 @@ describe("axis-aligned block geometry", () => {
       "assets/test/models/block/too_many.json": json({ textures: { all: "test:block/stone" }, elements: tooMany }),
       "assets/test/models/block/outside.json": json({ textures: { all: "test:block/stone" }, elements: [box([-1, 0, 0], [16, 16, 16], "#all")] }),
       "assets/test/models/block/too_far.json": json({ textures: { all: "test:block/stone" }, elements: [box([-17, 0, 0], [16, 16, 16], "#all")] }),
+      "assets/test/models/block/vanilla_external_rotation_origin.json": json({
+        textures: { all: "test:block/stone" },
+        elements: [{ ...box([3, 14.5, 3], [13, 14.5, 13], "#all"), rotation: { origin: [11, 35, 11], axis: "y", angle: 0 } }],
+      }),
+      "assets/test/models/block/too_far_origin.json": json({
+        textures: { all: "test:block/stone" },
+        elements: [{ ...box([0, 0, 0], [16, 16, 16], "#all"), rotation: { origin: [8, 49, 8], axis: "y", angle: 45 } }],
+      }),
+      "assets/test/models/block/non_finite_origin.json": json({
+        textures: { all: "test:block/stone" },
+        elements: [{ ...box([0, 0, 0], [16, 16, 16], "#all"), rotation: { origin: [8, null, 8], axis: "y", angle: 45 } }],
+      }),
       "assets/test/textures/block/stone.png": png16(),
     });
 
@@ -146,7 +160,110 @@ describe("axis-aligned block geometry", () => {
       elements: [{ from: [-1, 0, 0] }],
     });
     expect(manifest.models.some((model) => model.resourceId === "test:block/too_far")).toBe(false);
+    expect(manifest.models.find((model) => model.resourceId === "test:block/vanilla_external_rotation_origin")).toMatchObject({
+      elements: [{ rotation: { origin: [11, 35, 11] } }],
+    });
+    expect(manifest.models.some((model) => model.resourceId === "test:block/too_far_origin")).toBe(false);
+    expect(manifest.models.some((model) => model.resourceId === "test:block/non_finite_origin")).toBe(false);
+    expect(manifest.summary.issues.filter((issue) => issue.code === "INVALID_MODEL_JSON")).toHaveLength(4);
+  });
+
+  it("preserves reversed 26.3 inner-face bounds and explicit shade directions", () => {
+    const manifest = pack({
+      "assets/test/blockstates/inner.json": json({ variants: { "": { model: "test:block/inner" } } }),
+      "assets/test/models/block/inner.json": json({
+        textures: { all: "test:block/stone" },
+        elements: [{
+          from: [15.998, 0, 0],
+          to: [0.002, 16, 16],
+          shade_direction_override: "north",
+          faces: { north: { texture: "#all" } },
+        }],
+      }),
+      "assets/test/blockstates/invalid_direction.json": json({ variants: { "": { model: "test:block/invalid_direction" } } }),
+      "assets/test/models/block/invalid_direction.json": json({
+        textures: { all: "test:block/stone" },
+        elements: [{ ...box([0, 0, 0], [16, 16, 16], "#all"), shade_direction_override: "diagonal" }],
+      }),
+      "assets/test/models/block/non_finite.json": json({
+        textures: { all: "test:block/stone" },
+        elements: [{ ...box([0, 0, 0], [16, 16, 16], "#all"), from: [0, null, 0] }],
+      }),
+      "assets/test/blockstates/lichen_plane.json": json({ variants: { "": { model: "test:block/lichen_plane" } } }),
+      "assets/test/models/block/lichen_plane.json": json({
+        textures: { all: "test:block/stone" },
+        elements: [{
+          from: [0, 0, 0.1],
+          to: [16, 16, 0.1],
+          faces: {
+            north: { texture: "#all" },
+            south: { texture: "#all" },
+            west: { texture: "#all" },
+          },
+        }],
+      }),
+      "assets/test/textures/block/stone.png": png16(),
+    });
+    const inner = manifest.models.find((model) => model.resourceId === "test:block/inner");
+    expect(inner?.elements?.[0]).toMatchObject({
+      from: [15.998, 0, 0],
+      to: [0.002, 16, 16],
+      shadeDirectionOverride: "north",
+    });
+    expect(resolveBlockGeometry(manifest, "test:inner")).toMatchObject({
+      status: "resolved_geometry",
+      elements: [{ from: [15.998, 0, 0], to: [0.002, 16, 16], shadeDirectionOverride: "north" }],
+    });
+    expect(resolveBlockGeometry(manifest, "test:lichen_plane")).toMatchObject({
+      status: "resolved_geometry",
+      elements: [{ faces: { north: {}, south: {}, west: {} } }],
+    });
+    expect(manifest.models.some((model) => model.resourceId === "test:block/invalid_direction")).toBe(false);
+    expect(manifest.models.some((model) => model.resourceId === "test:block/non_finite")).toBe(false);
     expect(manifest.summary.issues.filter((issue) => issue.code === "INVALID_MODEL_JSON")).toHaveLength(2);
+  });
+
+  it("keeps the 26.3 vault's reversed inner cage in model space for every facing rotation", () => {
+    const manifest = pack({
+      "assets/minecraft/blockstates/vault.json": json({ variants: {
+        "facing=north": { model: "minecraft:block/vault" },
+        "facing=east": { model: "minecraft:block/vault", y: 90 },
+        "facing=south": { model: "minecraft:block/vault", y: 180 },
+        "facing=west": { model: "minecraft:block/vault", y: 270 },
+        "facing=up": { model: "minecraft:block/vault", y: 90, uvlock: true },
+      } }),
+      "assets/minecraft/models/block/vault.json": json({
+        parent: "minecraft:block/template_vault",
+        textures: { all: "minecraft:block/vault" },
+      }),
+      "assets/minecraft/models/block/template_vault.json": json({
+        textures: { all: "minecraft:block/vault" },
+        elements: [{
+          from: [15.998, 3.002, 0.002],
+          to: [0.002, 15.998, 15.998],
+          faces: Object.fromEntries(["north", "east", "south", "west", "up", "down"].map((face) => [face, {
+            texture: "#all", uv: [16, 0, 0, 13],
+          }])),
+        }],
+      }),
+      "assets/minecraft/textures/block/vault.png": png16(),
+    });
+    const bounds = { from: [15.998, 3.002, 0.002], to: [0.002, 15.998, 15.998] };
+
+    for (const [facing, y] of [["east", 90], ["south", 180], ["west", 270]] as const) {
+      const resolved = resolveBlockGeometry(manifest, "minecraft:vault", { facing });
+      expect(resolved.status).toBe("resolved_geometry");
+      if (resolved.status !== "resolved_geometry") continue;
+      expect(resolved.elements[0]).toMatchObject({
+        ...bounds,
+        blockRotation: { x: 0, y },
+        faces: { north: { texture: "minecraft:block/vault", uv: [16, 0, 0, 13] } },
+      });
+    }
+    expect(resolveBlockGeometry(manifest, "minecraft:vault", { facing: "up" })).toMatchObject({
+      status: "resolved_geometry",
+      elements: [{ blockRotation: { x: 0, y: 90 }, faces: { up: { rotation: 90 } } }],
+    });
   });
 
   it("falls back atomically when any geometry face cannot resolve its texture", () => {

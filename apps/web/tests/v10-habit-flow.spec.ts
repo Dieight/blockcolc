@@ -1,5 +1,17 @@
 import { expect, test } from '@playwright/test';
 
+async function expectWorldCanvasDoesNotCover(button: import('@playwright/test').Locator) {
+  const hitTest = await button.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+    return {
+      receivesPointer: hit === element || element.contains(hit),
+      target: hit ? `${hit.tagName.toLowerCase()}${hit.classList.length ? `.${[...hit.classList].join('.')}` : ''}` : 'none',
+    };
+  });
+  expect(hitTest.receivesPointer, `Expected the workbench button to receive pointer events, but hit ${hitTest.target}`).toBe(true);
+}
+
 async function revealFocusControls(page: import('@playwright/test').Page) {
   const endButton = page.getByRole('button', { name: '结束本次专注' });
   if (await endButton.isVisible().catch(() => false)) return;
@@ -54,7 +66,9 @@ test('runs a repeatable habit building cycle with frozen targets and stable comp
   await expect(page.getByRole('button', { name: '调整本次计划' })).toContainText('总计 1 分钟');
 
   for (let round = 1; round <= 10; round += 1) {
-    await page.getByRole('button', { name: '开始 1 轮' }).click();
+    const startRound = page.getByRole('button', { name: '开始 1 轮' });
+    await expectWorldCanvasDoesNotCover(startRound);
+    await startRound.click();
     await revealFocusControls(page);
   await page.getByRole('button', { name: '结束本次专注' }).click();
     const dialog = page.getByRole('dialog', { name: '如何结束这次专注？' });

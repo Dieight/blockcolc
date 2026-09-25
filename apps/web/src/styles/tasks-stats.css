@@ -1,30 +1,254 @@
-/* Tasks and statistics presentation. */
-.task-queue-label{display:block;margin-top:8px;color:#58635d;font-size:12px;font-weight:700}
-.project-view-action{min-height:44px;padding:0 8px;border:0;background:none;color:#276749;font-weight:700;display:inline-flex;align-items:center;justify-content:center;gap:6px}
-.project-view-action svg{width:18px}
-.project-switcher-actions button:last-child{border-color:#aeb8b1;color:#27342e}
-.stats-page>h1{margin-bottom:6px}
-.stats-intro{margin:0 0 18px;color:#58635d;font-size:13px}
-.focus-hour-card{margin-top:24px;padding:16px;border:1px solid #b7c8bb;border-radius:6px;background:#fff}
-.focus-hour-card .stats-section-heading{margin-bottom:14px}
-.focus-hour-chart{height:96px;display:flex;align-items:stretch;gap:2px}
-.focus-hour-chart>div{flex:1;min-width:2px;display:flex;flex-direction:column;justify-content:flex-end;background:transparent;border-radius:0}
-.focus-hour-chart>div i{display:block}
-.focus-hour-axis{display:flex;justify-content:space-between;margin-top:6px;color:#58635d;font-size:10px}
-.focus-hour-legend{display:flex;flex-wrap:wrap;gap:4px 14px;margin:10px 0 0;padding:0;list-style:none;color:#58635d;font-size:12px}
-.focus-hour-legend li{display:inline-flex;align-items:center;gap:5px;min-width:0;overflow-wrap:anywhere}
-.focus-hour-legend i{width:10px;height:10px;border-radius:2px;flex:0 0 auto}
-.stats-grid>div{display:grid;gap:4px;align-content:center;justify-items:center;text-align:center;min-height:80px}
-.stats-grid .stats-duration strong{white-space:normal;font-size:17px;line-height:1.3}
-.allocation-bar{display:flex;height:10px;border-radius:3px;overflow:hidden;margin-top:14px;background:#e1e7e2}
-.allocation-bar i{display:block;height:100%}
-.allocation-bar .allocation-other{background:#c9d2cc}
-.allocation-legend{display:grid;gap:8px;margin:14px 0 0;padding:0;list-style:none}
-.allocation-legend li{display:flex;align-items:center;gap:9px}
-.allocation-legend li>i{width:10px;height:10px;border-radius:2px;flex:0 0 auto}
-.allocation-legend li>i.allocation-other{background:#c9d2cc}
-.allocation-legend li>div{flex:1;display:flex;align-items:baseline;justify-content:space-between;gap:12px}
-.allocation-legend strong{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}
-.allocation-legend span{flex:0 0 auto;color:#58635d;font-size:12px}
-.project-allocation{margin-top:24px;padding:16px;border:1px solid #b7c8bb;border-radius:6px;background:#fff}
-.project-allocation .allocation-bar{margin-top:14px}
+/* Tasks: one surface, section-title and interaction vocabulary. */
+.tasks-page{--task-section-size:17px;--task-body-size:15px;--task-meta-size:13px}
+.tasks-page-heading h1{margin:0 0 20px;font-size:22px;font-weight:700}
+.tasks-page .task-surface{margin:0 0 16px;padding:16px;border:1px solid var(--line);border-radius:16px;background:var(--surface);color:var(--ink)}
+.tasks-page .task-queue-label{display:block;margin:0 0 14px;color:var(--ink);font-size:var(--task-section-size);font-weight:650;line-height:1.4}
+.task-planning-panel .project-switcher{margin:0;gap:12px;border:0;padding:0;grid-template-columns:minmax(0,1fr)}
+.project-switcher-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.project-switcher-actions :where(button){min-height:44px;padding:8px 10px;border:0;border-radius:8px;background:var(--surface-subtle);color:var(--focus);display:flex;align-items:center;justify-content:center;gap:6px;font-size:var(--task-body-size);font-weight:600}
+.project-switcher-actions svg{width:18px;height:18px;flex:0 0 auto}
+.project-switcher-actions :where(button:disabled){opacity:.5}
+.project-switcher-actions button:last-child{border:1px solid var(--control-border);color:var(--ink)}
+.tasks-page .choice-menu-label{font-size:var(--task-meta-size);color:var(--muted)}
+.tasks-page .choice-menu-trigger{padding:10px 12px;border-radius:10px;font-size:var(--task-body-size)}
+.tasks-page .choice-menu-trigger small{font-size:var(--task-meta-size)}
+.tasks-page .task-project-title{margin:0 0 18px;align-items:center;gap:12px}
+.tasks-page .task-project-title h2{margin:0;min-width:0;flex:1;font-size:var(--task-section-size);font-weight:650;line-height:1.4;overflow-wrap:anywhere}
+.tasks-page .task-project-title input{flex:1;min-width:0}
+.tasks-page .task-section-heading{margin-bottom:14px;align-items:center;display:flex;flex-wrap:wrap;gap:8px;justify-content:space-between}
+.tasks-page .task-section-heading h2{font-size:var(--task-body-size);font-weight:600;color:var(--muted)}
+.tasks-page .task-section-heading p{font-size:var(--task-meta-size);color:var(--muted)}
+.tasks-page .task-editor-row{border:1px solid var(--line);border-radius:10px;padding:12px;gap:10px;background:var(--surface-subtle);min-height:72px}
+.tasks-page .task-editor-row.task-current{border-left:3px solid var(--focus);padding-left:10px;background:var(--surface-active)}
+.tasks-page .task-copy strong{font-size:var(--task-body-size);line-height:1.45;overflow-wrap:anywhere;font-weight:600;color:var(--ink)}
+.tasks-page .task-copy>div{gap:12px;margin-top:7px}
+.tasks-page .task-copy progress{height:4px}
+.tasks-page .task-copy>div>span{font-size:var(--task-meta-size);color:var(--muted)}
+.tasks-page .task-order{background:transparent;border:0;color:var(--muted);font-size:var(--task-meta-size);font-variant-numeric:tabular-nums}
+.tasks-page .subtask-group{gap:8px}
+.tasks-page .subtask-group-label{color:var(--muted);font-size:var(--task-meta-size);font-weight:500}
+.tasks-page .subtask-group-toggle{min-height:48px;border:0;border-radius:10px;padding:8px 12px;background:var(--surface-subtle);color:var(--ink);font-size:var(--task-body-size);font-weight:600}
+.tasks-page .subtask-group-toggle small{font-size:var(--task-meta-size);font-weight:400;color:var(--muted)}
+.tasks-page .subtask-group-rows{gap:8px}
+.tasks-page .task-drag-handle{width:44px;min-width:44px;min-height:44px;border-radius:8px;background:var(--surface);color:var(--muted)}
+.tasks-page .task-editor-row.is-managing{grid-template-columns:44px minmax(0,1fr)}
+.tasks-page .task-row-actions{grid-column:2;display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px}
+.tasks-page .icon-action{border:0;border-radius:8px;background:var(--surface-subtle);color:var(--muted)}
+.tasks-page .task-management-disclosure{padding:0 16px}
+.task-management-disclosure>summary{display:flex;align-items:center;min-height:60px;cursor:pointer;list-style:none;font-size:var(--task-section-size);font-weight:650;color:var(--ink);gap:12px}
+.task-management-disclosure>summary::-webkit-details-marker{display:none}
+.task-management-disclosure>summary::after{content:"＋";margin-left:auto;font-size:18px;font-weight:400;color:var(--muted)}
+.task-management-disclosure[open]>summary::after{content:"−"}
+.task-management-disclosure .project-delete-zone{margin:0;padding:14px 0 16px;border-top:1px solid var(--line);gap:14px}
+.task-management-disclosure .project-delete-zone h2{font-size:var(--task-body-size);font-weight:600;color:var(--danger)}
+.task-management-disclosure .project-delete-zone p{font-size:var(--task-meta-size);line-height:1.6}
+.tasks-page .project-portfolio{padding:0 16px}
+.tasks-page .project-portfolio-toggle{padding:10px 0;min-height:60px;color:var(--ink)}
+.tasks-page .project-portfolio-toggle strong{font-size:var(--task-section-size);font-weight:650}
+.tasks-page .project-portfolio-toggle small{font-size:var(--task-meta-size);color:var(--muted)}
+.tasks-page .project-portfolio-groups{border-top:1px solid var(--line);padding:14px 0 16px}
+.tasks-page .project-portfolio-groups>section>h3{font-size:var(--task-meta-size);font-weight:500;color:var(--muted)}
+.tasks-page .project-portfolio-groups h3 span{background:var(--surface-subtle);color:var(--muted)}
+.tasks-page .project-portfolio-row{border-color:var(--line)}
+.tasks-page .project-portfolio-row strong{font-size:var(--task-body-size);font-weight:600;white-space:normal;overflow-wrap:anywhere}
+.tasks-page .project-portfolio-row small{font-size:var(--task-meta-size);color:var(--muted);white-space:normal}
+.tasks-page .project-portfolio-row>button{border:0;border-radius:8px;background:var(--surface-subtle);color:var(--focus);font-size:var(--task-body-size);font-weight:600}
+.tasks-page .daily-goal-workbench h2{font-size:var(--task-section-size);font-weight:650}
+.tasks-page .daily-goal-workbench p{font-size:var(--task-meta-size)}
+.tasks-page .daily-goal-adjust{min-width:44px;min-height:44px;padding:8px;border:0;background:var(--surface-subtle);border-radius:8px;color:var(--focus);font-size:var(--task-meta-size);font-weight:600}
+.daily-goal-tally{display:flex;align-items:baseline;gap:8px;margin:14px 0 12px}
+.daily-goal-tally>strong{font-size:28px;font-weight:700;line-height:1.2;font-variant-numeric:tabular-nums;color:var(--focus)}
+.daily-goal-tally>strong>span{font-size:18px;font-weight:500;color:var(--muted)}
+.daily-goal-tally>span{font-size:var(--task-meta-size);color:var(--muted)}
+.daily-goal-progress{display:block;width:100%;height:6px;border:0;border-radius:3px;overflow:hidden;appearance:none;background:var(--line)}
+.daily-goal-progress::-webkit-progress-bar{background:var(--line)}
+.daily-goal-progress::-webkit-progress-value{background:var(--focus);border-radius:3px}
+.daily-goal-progress::-moz-progress-bar{background:var(--focus);border-radius:3px}
+.tasks-page .daily-goal-reward{font-size:var(--task-meta-size);color:var(--focus)}
+.daily-goal-sheet-backdrop{z-index:48;align-items:end;padding:12px 12px max(12px,var(--safe-bottom))}
+.daily-goal-sheet{position:relative;width:min(100%,520px);max-height:min(82dvh,680px);overflow:auto;overscroll-behavior:contain;padding:22px 18px 18px;border:1px solid var(--sheet-glass-border);border-radius:18px;background:var(--sheet-glass-background);box-shadow:var(--sheet-glass-shadow);backdrop-filter:var(--sheet-glass-filter);-webkit-backdrop-filter:var(--sheet-glass-filter);color:var(--ink)}
+.daily-goal-sheet-heading{margin-bottom:12px}
+.daily-goal-sheet .dialog-close{position:static;flex:0 0 44px;min-width:44px;min-height:44px;border:0;border-radius:8px;background:var(--surface-subtle);color:var(--ink)}
+.daily-goal-sheet-summary{margin:0;color:var(--ink);font-size:var(--task-body-size);font-weight:600;line-height:1.5;overflow-wrap:anywhere}
+.daily-goal-sheet-note{margin:5px 0 0;color:var(--muted);font-size:var(--task-meta-size);line-height:1.55;overflow-wrap:anywhere}
+.daily-goal-controls{display:grid;gap:10px;margin-top:18px}
+.daily-goal-setting-row{display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:64px;padding:12px 0;border-top:1px solid var(--line)}
+.daily-goal-setting-copy{min-width:0;display:grid;gap:4px;flex:1 1 180px}
+.daily-goal-setting-copy>span,.daily-goal-setting-copy>label{font-size:var(--task-body-size);font-weight:650;line-height:1.35;overflow-wrap:anywhere}
+.daily-goal-setting-copy small{color:var(--muted);font-size:var(--task-meta-size);line-height:1.45;overflow-wrap:anywhere}
+.daily-goal-switch{flex:0 0 auto;min-height:44px;gap:8px;color:var(--muted);font-size:var(--task-meta-size);white-space:nowrap}
+.daily-goal-switch input{flex:0 0 auto}
+.daily-goal-switch span{overflow-wrap:anywhere}
+.daily-goal-target-row{align-items:center}
+.daily-goal-stepper{display:grid;grid-template-columns:44px minmax(64px,1fr) 44px;align-items:center;gap:6px;flex:0 1 220px;min-width:164px}
+.daily-goal-stepper button{width:44px;min-width:44px;min-height:44px;padding:0;border:1px solid var(--control-border);border-radius:8px;background:var(--surface);color:var(--ink)}
+.daily-goal-stepper button:disabled{opacity:.45}
+.daily-goal-stepper input[type=number]{width:100%;min-width:0;min-height:44px;padding:8px;border:1px solid var(--control-border);border-radius:8px;background:var(--surface);color:var(--ink);text-align:center;font-size:var(--task-body-size);font-variant-numeric:tabular-nums;appearance:textfield;-moz-appearance:textfield}
+.daily-goal-stepper input[type=number]::-webkit-inner-spin-button,.daily-goal-stepper input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
+.daily-goal-stepper svg{width:17px;height:17px;margin:auto}
+.daily-goal-error{margin:12px 0 0;padding:10px 12px;border:1px solid var(--danger);border-radius:10px;background:var(--surface-subtle);color:var(--danger);font-size:var(--task-meta-size);line-height:1.5;overflow-wrap:anywhere}
+.daily-goal-reward-panel{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:18px;padding-top:16px;border-top:1px solid var(--line)}
+.daily-goal-reward-panel>span{min-width:0;display:grid;grid-template-columns:18px minmax(0,1fr);column-gap:7px;align-items:center;color:var(--focus)}
+.daily-goal-reward-panel svg{width:17px;grid-row:1/3}
+.daily-goal-reward-panel b,.daily-goal-reward-panel small{min-width:0;overflow-wrap:anywhere}
+.daily-goal-reward-panel b{font-size:var(--task-body-size);line-height:1.4}
+.daily-goal-reward-panel small{grid-column:2;color:var(--muted);font-size:var(--task-meta-size);line-height:1.45}
+.daily-goal-reward-panel button{min-width:44px;min-height:44px;flex:0 0 auto;padding:0 11px;border:1px solid var(--focus);border-radius:8px;background:var(--surface);color:var(--focus);font-size:var(--task-meta-size);font-weight:650;white-space:nowrap}
+@media(prefers-reduced-transparency:reduce){.daily-goal-sheet{background:var(--surface);backdrop-filter:none;-webkit-backdrop-filter:none;box-shadow:none}}
+@media(max-width:699px){.daily-goal-sheet{width:100%;max-height:min(88dvh,680px)}.daily-goal-target-row{display:grid;grid-template-columns:minmax(0,1fr);gap:10px}.daily-goal-stepper{width:100%;max-width:none;flex-basis:auto}.daily-goal-reward-panel{align-items:stretch;flex-direction:column}.daily-goal-reward-panel button{width:100%}}
+@media(max-width:400px){.tasks-page .task-surface{padding:14px 12px}.tasks-page .task-management-disclosure,.tasks-page .project-portfolio{padding:0 12px}}
+/* F19-R06: ordinary and habit settlement use one compact, token-driven
+ * allocator. The report keeps every control at the 44px touch contract while
+ * making the shared round pool and actual-time preview easy to scan. */
+.marathon-progress-report .round-allocation-control{display:grid;grid-template-columns:auto 44px minmax(36px,52px) 44px minmax(0,1fr);align-items:center;justify-items:stretch;gap:6px;min-height:60px;margin:0;padding:7px 9px;border:1px solid var(--line);border-radius:10px;background:var(--surface-subtle);text-align:center}
+.marathon-progress-report .round-allocation-control .round-allocation-label{justify-self:start;color:var(--muted);font-size:12px;font-weight:650;white-space:nowrap}
+.marathon-progress-report .round-allocation-control button{width:44px;min-width:44px;min-height:44px;padding:0;border:1px solid var(--control-border);border-radius:8px;background:var(--surface);color:var(--focus);font-size:21px;font-weight:700;line-height:1}
+.marathon-progress-report .round-allocation-control button:disabled{opacity:.42}
+.marathon-progress-report .round-allocation-control strong{min-width:36px;padding:0;border:0;background:transparent;color:var(--ink);font-size:17px;font-weight:750;font-variant-numeric:tabular-nums}
+.marathon-progress-report .round-allocation-control .round-allocation-meta{justify-self:start;min-width:0;color:var(--muted);font-size:12px;line-height:1.4;overflow-wrap:anywhere;text-align:left}
+.marathon-progress-report .marathon-settlement-body>small{margin-top:-2px;line-height:1.5}
+@media(max-width:480px){.marathon-progress-report .round-allocation-control{grid-template-columns:minmax(0,1fr) 44px 42px 44px;gap:5px}.marathon-progress-report .round-allocation-control .round-allocation-label{grid-column:1/-1}.marathon-progress-report .round-allocation-control .round-allocation-meta{grid-column:1/-1;justify-self:start;padding-left:2px}}
+/* R08: the achievement section uses the same solid, rounded surface and
+ * spacing language as the other stats blocks. Badges stay solid; icon sizes
+ * are constrained here, not by the component. */
+.achievements-panel{margin-top:0}
+.achievements-panel h2{margin:0 0 2px}
+.achievements-intro{margin:0 0 12px;color:var(--muted);font-size:13px}
+.achievements-empty{margin:0;padding:16px;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:var(--muted);font-size:13px}
+.achievements-list{display:grid;gap:8px;margin:0;padding:0;list-style:none}
+.achievement{min-height:58px;padding:9px 12px;border:1px solid var(--line);border-radius:10px;background:var(--surface);display:flex;align-items:center;justify-content:space-between;gap:10px}
+.achievement.unlocked{border-color:var(--control-border);background:var(--surface-subtle)}
+.achievement-copy{min-width:0;display:grid;gap:3px}
+.achievement-copy strong,.achievement-copy small{overflow-wrap:anywhere}
+.achievement-copy small{color:var(--muted);font-size:11px;line-height:1.4}
+.achievement-unlocked{flex:0 0 auto;display:inline-flex;align-items:center;gap:5px;color:var(--focus);font-weight:700;font-size:13px;white-space:nowrap}
+.achievement-unlocked svg{width:16px;height:16px}
+.achievement-progress{flex:0 0 auto;display:grid;gap:4px;justify-items:end;min-width:96px}
+.achievement-meter{display:block;width:84px;height:6px;border-radius:999px;background:var(--line);overflow:hidden}
+.achievement-meter b{display:block;height:100%;border-radius:999px;background:var(--focus-strong)}
+.achievement-progress small{color:var(--muted);font-size:11px;font-variant-numeric:tabular-nums;white-space:nowrap}
+/* Existing app palette; custom semantic colors override the template's Mono skin. */
+.stats-page{--chart-paper:var(--surface);--chart-ink:var(--ink);--chart-muted:var(--muted);--chart-grid:var(--line);--chart-data:var(--focus);--chart-data-mid:color-mix(in srgb,var(--focus) 85%,var(--surface));--chart-data-soft:color-mix(in srgb,var(--focus) 70%,var(--surface));--chart-faint:color-mix(in srgb,var(--muted) 45%,var(--surface));max-width:800px}
+.stats-page-heading h1{margin:0 0 6px}
+.stats-intro{margin:0 0 24px;color:var(--muted);font-size:13px}
+.stats-period-section{margin:20px 0;border:1px solid var(--line);border-radius:16px;background:var(--surface);padding:20px 16px}
+.stats-overview{padding:0 0 22px}
+.stats-periods{display:flex;gap:4px;padding:4px;border-radius:12px;background:var(--surface-subtle);margin-bottom:24px}
+.stats-periods button{min-width:44px;min-height:44px;flex:1;padding:8px 4px;border:0;border-radius:8px;background:transparent;color:var(--muted);font-size:13px;font-weight:600}
+.stats-periods button[aria-pressed="true"]{background:var(--surface-active);color:var(--focus)}
+.stats-duration{display:grid;gap:10px}
+.stats-duration>span{font-size:13px;color:var(--muted)}
+.stats-duration>strong{font-size:32px;line-height:1.3;font-weight:750;overflow-wrap:anywhere;font-variant-numeric:tabular-nums;color:var(--ink)}
+.stats-key-facts{display:flex;gap:28px;margin-top:18px}
+.stats-key-facts>div{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.stats-key-facts strong{font-size:19px;font-weight:700;font-variant-numeric:tabular-nums}
+.stats-key-facts span{font-size:12px;color:var(--muted)}
+.focus-chart{margin:0 0 20px;padding:20px 16px 16px;border:1px solid var(--line);border-radius:16px;background:var(--chart-paper);color:var(--chart-ink);box-shadow:none;backdrop-filter:none;font-family:inherit}
+.stats-period-section .project-allocation{margin:0;padding:20px 0 0;border:0;border-top:1px solid var(--line);border-radius:0}
+.stats-section-heading{display:flex;align-items:start;justify-content:space-between;gap:12px;margin-bottom:18px}
+.stats-section-heading>div{min-width:0}
+.focus-chart h2{margin:0 0 5px;font-size:17px;font-weight:700;line-height:1.4;color:var(--chart-ink)}
+.focus-chart p{margin:0;font-size:12px;line-height:1.5;color:var(--chart-muted)}
+.chart-replay{flex:0 0 44px;min-width:44px;min-height:44px;padding:0;border:0;background:transparent;color:var(--chart-muted);font-size:24px;border-radius:8px}
+.focus-chart svg{display:block;width:100%;overflow:visible;font-family:inherit}
+.chart-axis{font-size:10px;font-weight:600;fill:var(--chart-muted)}
+.chart-dot.is-strong{fill:var(--chart-data)}
+.chart-dot.is-medium{fill:var(--chart-data-mid)}
+.chart-dot.is-soft{fill:var(--chart-data-soft)}
+.chart-dot.is-empty{fill:var(--chart-faint)}
+.chart-peak{fill:none;stroke:var(--chart-data);stroke-width:1;stroke-dasharray:2 3}
+.focus-calendar-chart{touch-action:manipulation;-webkit-tap-highlight-color:transparent;border-radius:8px}
+.calendar-day{cursor:pointer}
+.calendar-day circle,.calendar-selection{pointer-events:none}
+.calendar-selection{fill:none;stroke:var(--focus);stroke-width:1.2}
+.calendar-day-detail{display:flex;align-items:center;gap:4px;margin-top:12px;padding:6px 0;border-radius:10px;background:var(--surface-subtle);color:var(--ink)}
+.calendar-day-detail>div{flex:1;min-width:0;text-align:center;display:grid;gap:4px}
+.calendar-day-detail strong{font-size:13px;font-weight:600}
+.calendar-day-detail span{font-size:12px;line-height:1.5;color:var(--muted)}
+.calendar-day-detail button{flex:0 0 44px;min-width:44px;min-height:44px;padding:0;border:0;border-radius:8px;background:transparent;color:var(--focus);font-size:22px}
+.calendar-day-detail button:disabled{opacity:.4}
+.allocation-bars{display:grid;gap:20px;margin:0;padding:0;list-style:none}
+.allocation-row-heading{display:flex;align-items:baseline;justify-content:space-between;gap:6px 16px;flex-wrap:wrap;margin-bottom:8px}
+.allocation-row-heading>strong{min-width:0;flex:1 1 140px;font-size:0.9375rem;line-height:1.5;font-weight:600;overflow-wrap:anywhere}
+.allocation-row-heading>span{font-size:0.8125rem;line-height:1.5;font-variant-numeric:tabular-nums;color:var(--chart-muted)}
+/* G3 Chunky Bars adapted to offline React SVG: horizontal lengths keep the
+   zero origin visible and leave the label column free for long task names. */
+.focus-chart .allocation-bar{display:block;width:100%;height:16px;min-width:0;overflow:hidden}
+.allocation-track{fill:var(--surface-subtle)}
+.allocation-fill{fill:var(--chart-data)}
+.allocation-bars li.is-unallocated .allocation-fill{fill:var(--chart-faint)}
+.allocation-bars li.is-unallocated .allocation-row-heading>strong{color:var(--chart-muted)}
+.focus-chart .chart-empty{padding:22px 0 30px}
+.monument-statistics,.achievements-disclosure{margin:20px 0 0;padding:0 16px 16px;border:1px solid var(--line);border-radius:16px;background:var(--surface);color:var(--ink)}
+.monument-statistics>summary,.achievements-disclosure>summary{min-height:56px;padding:12px 0;display:flex;align-items:center;gap:12px;cursor:pointer;font-weight:650;list-style:none}
+.monument-statistics>summary::-webkit-details-marker,.achievements-disclosure>summary::-webkit-details-marker{display:none}
+.monument-statistics>summary::after,.achievements-disclosure>summary::after{content:"＋";margin-left:auto;color:var(--muted);font-size:18px}
+.monument-statistics[open]>summary::after,.achievements-disclosure[open]>summary::after{content:"−"}
+.monument-statistics>summary small,.achievements-disclosure>summary small{font-size:12px;color:var(--muted);font-weight:500}
+.monument-intro{margin:0 0 14px;color:var(--muted);font-size:12px;line-height:1.5}
+.monument-empty{margin:0;padding:16px 0;color:var(--muted);font-size:13px;line-height:1.6}
+.monument-list{display:grid;gap:8px}
+.monument-list details{border:1px solid var(--line);border-radius:10px;background:var(--surface-subtle);overflow:hidden}
+.monument-list details>summary{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:62px;padding:11px 12px;cursor:pointer;list-style:none}
+.monument-list details>summary::-webkit-details-marker{display:none}
+.monument-list details>summary>span{min-width:0;display:grid;gap:4px}
+.monument-list details>summary strong{min-width:0;color:var(--ink);font-size:14px;line-height:1.4;overflow-wrap:anywhere}
+.monument-list details>summary small{color:var(--muted);font-size:11px;line-height:1.4;overflow-wrap:anywhere}
+.monument-list details>summary>b{flex:0 0 auto;color:var(--focus);font-size:13px;font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}
+.monument-detail{padding:0 12px 12px;border-top:1px solid var(--line)}
+.monument-metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;padding:12px 0}
+.monument-metrics>div{min-width:0;display:grid;gap:4px}
+.monument-metrics span{color:var(--muted);font-size:11px;line-height:1.4}
+.monument-metrics strong{color:var(--ink);font-size:13px;line-height:1.4;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
+.monument-unknown,.monument-unallocated{margin:0 0 12px;padding:9px 10px;border-left:3px solid var(--muted);background:var(--surface);color:var(--muted);font-size:12px;line-height:1.6;overflow-wrap:anywhere}
+.monument-unallocated{margin-top:12px;border-color:var(--focus);color:var(--ink)}
+.monument-focus-chart{margin:0;padding:14px 0 0;border:0;border-top:1px solid var(--line);border-radius:0}
+.monument-focus-chart h3{margin:0 0 5px;font-size:14px;font-weight:700;line-height:1.4;color:var(--chart-ink)}
+.monument-task-bars{display:grid;gap:11px;margin:0;padding:0;list-style:none}
+.monument-task-heading{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:4px}
+.monument-task-heading strong{min-width:0;flex:1;font-size:12px;line-height:1.5;font-weight:600;overflow-wrap:anywhere}
+.monument-task-heading span{flex:0 0 auto;color:var(--chart-muted);font-size:11px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.monument-task-bars svg{height:16px}
+.monument-bar-track{fill:var(--surface-subtle)}
+.monument-bar-fill{fill:var(--chart-data)}
+.achievement-receipt-notice{margin:12px 0 0;padding:9px 10px;border-left:3px solid var(--danger);background:var(--surface-subtle);color:var(--muted);font-size:12px;line-height:1.6}
+.achievement-unlock-layer{position:fixed;inset:0;z-index:70;display:grid;place-items:center;padding:20px max(16px,var(--safe-left)) max(20px,var(--safe-right));background:color-mix(in srgb,var(--ink) 35%,transparent);overscroll-behavior:contain}
+.achievement-unlock-dialog{width:min(100%,520px);max-height:min(84dvh,720px);overflow:auto;padding:22px 18px 18px;border:1px solid var(--line);border-radius:16px;background:var(--surface);color:var(--ink);box-shadow:0 12px 40px color-mix(in srgb,var(--ink) 18%,transparent)}
+.achievement-unlock-dialog h2{margin:4px 0 6px;font-size:20px;line-height:1.35}
+.achievement-unlock-dialog>p{margin:0 0 14px;color:var(--muted);font-size:13px;line-height:1.6}
+.achievement-unlock-dialog>ul{display:grid;gap:8px;margin:0 0 16px;padding:0;list-style:none}
+.achievement-unlock-dialog>ul>li{display:grid;grid-template-columns:20px minmax(0,1fr);gap:8px;padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--surface-subtle)}
+.achievement-unlock-dialog>ul svg{width:18px;height:18px;margin-top:1px;color:var(--focus)}
+.achievement-unlock-dialog>ul div{min-width:0;display:grid;gap:3px}
+.achievement-unlock-dialog>ul strong{font-size:13px;line-height:1.4;overflow-wrap:anywhere}
+.achievement-unlock-dialog>ul small,.achievement-unlock-dialog>ul span{color:var(--muted);font-size:11px;line-height:1.5;overflow-wrap:anywhere}
+.achievement-unlock-dialog>.primary{width:100%;min-height:44px}
+.achievement-unlock-error{margin:0 0 12px!important;padding:9px 10px;border:1px solid var(--danger);border-radius:8px;color:var(--danger)!important;background:var(--surface-subtle)}
+.achievements-disclosure .achievements-panel{margin:4px 0 0}
+.achievements-disclosure .achievements-panel>h2{display:none}
+.stats-note{margin:20px 0 0;font-size:12px;line-height:1.7;color:var(--muted)}
+/* The dialog is mounted only for a pending unlock batch. Keep the one-time
+ * reveal scoped to that layer so ordinary statistics navigation and the
+ * collapsed achievement list never animate. Reduced-motion users get the
+ * settled state immediately. */
+@media(prefers-reduced-motion:no-preference){
+  .achievement-unlock-layer[data-entry-animation="unlock"]{animation:achievement-unlock-backdrop-in .16s ease-out both}
+  .achievement-unlock-layer[data-entry-animation="unlock"] .achievement-unlock-dialog{animation:achievement-unlock-dialog-in .22s cubic-bezier(.22,.9,.36,1) both}
+}
+@keyframes achievement-unlock-backdrop-in{from{opacity:0}to{opacity:1}}
+@keyframes achievement-unlock-dialog-in{from{opacity:0;transform:translateY(8px) scale(.985)}to{opacity:1;transform:translateY(0) scale(1)}}
+@media(prefers-reduced-motion:no-preference){
+  .is-revealed .chart-mark{animation:stats-chart-reveal .9s cubic-bezier(.25,1,.5,1) both}
+}
+@keyframes stats-chart-reveal{from{opacity:0}to{opacity:1}}
+@media(max-width:400px){
+  .focus-chart{padding:20px 14px 16px}
+  .stats-duration>strong{font-size:28px}
+  .stats-key-facts{gap:18px}
+  .achievement{align-items:flex-start;flex-wrap:wrap}
+}
+@media(max-width:520px){
+  .monument-metrics{grid-template-columns:1fr 1fr}
+  .monument-metrics>div:last-child{grid-column:1/-1}
+  .monument-list details>summary{align-items:flex-start}
+}

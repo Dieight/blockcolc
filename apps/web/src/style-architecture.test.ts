@@ -7,7 +7,7 @@ const sourceRoot = dirname(fileURLToPath(import.meta.url));
 const styleRoot = resolve(sourceRoot, 'styles');
 const expectedImports = [
   'tokens.css', 'base.css', 'foundation.css', 'settings.css', 'workbench.css',
-  'tasks-stats.css', 'setup.css', 'world.css', 'theme.css', 'building-memory.css', 'glass-overlays.css',
+  'tasks-stats.css', 'setup.css', 'world.css', 'minimal-mode.css', 'theme.css', 'building-memory.css', 'glass-overlays.css',
 ];
 
 describe('style architecture', () => {
@@ -30,5 +30,15 @@ describe('style architecture', () => {
     expect(readFileSync(resolve(styleRoot, 'building-memory.css'), 'utf8')).not.toContain('!important');
     expect(readFileSync(resolve(styleRoot, 'glass-overlays.css'), 'utf8')).not.toContain('!important');
     expect(readFileSync(resolve(styleRoot, 'tokens.css'), 'utf8')).not.toContain('!important');
+  });
+
+  it('keeps reading and functional glass independent of the immersive preference', () => {
+    const tokens=readFileSync(resolve(styleRoot,'tokens.css'),'utf8');
+    expect(tokens).not.toContain('--glass-alpha-scale');
+    expect(tokens).not.toContain('--glass-blur-scale');
+    expect(tokens).toContain('--sheet-glass-background: var(--reading-glass-background)');
+    const world=readFileSync(resolve(sourceRoot,'WorldScreenV7.tsx'),'utf8');
+    expect(world).not.toContain("root.style.setProperty('--focus-glass-");
+    expect(readFileSync(resolve(sourceRoot,'use-focus-preferences.ts'),'utf8')).toContain("root.style.setProperty('--focus-glass-");
   });
 });

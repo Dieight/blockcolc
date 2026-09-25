@@ -1,4 +1,5 @@
 import { assertISODate, assertValidTimeZone, localDateOf } from "./calendar.js";
+import { SIGN_DYE_COLORS } from "./model.js";
 import type {
   ActiveFocusSession,
   DailyGoal,
@@ -28,14 +29,14 @@ export class DomainStateValidationError extends Error {
 
 export function parseDomainState(raw: unknown): DomainState {
   const migrated = withoutWithdrawnTodayNextSteps(migrateV9State(migrateV8State(migrateV7State(migrateTerrainV4State(migrateV6State(migrateV5State(migrateV4State(withBuildingBlueprintDefaults(migrateV2State(withDecorationDefaults(migrateV1State(raw))))))))))));
-  const root = object(migrated, "$", [
+  const root = object(migrateV11State(migrateV10State(migrated)), "$", [
     "schemaVersion", "projects", "habitBuildings", "activeProjectId", "retiredSubtaskIds", "activeFocusSession",
     "focusHistory", "progressReports", "dailyGoals", "calendar", "decayPolicy", "projectConditions", "focusIntegrityPolicy",
     "decorationBlueprintResources", "decorationRewards", "buildingBlueprintResources", "worldSettings",
   ]);
-  if (root.schemaVersion !== 10) invalid("$.schemaVersion", "must equal 10");
+  if (root.schemaVersion !== 12) invalid("$.schemaVersion", "must equal 12");
   const state: DomainState = {
-    schemaVersion: 10,
+    schemaVersion: 12,
     projects: array(root.projects, "$.projects", parseProject),
     habitBuildings: array(root.habitBuildings, "$.habitBuildings", parseHabitBuilding),
     activeProjectId: nullableString(root.activeProjectId, "$.activeProjectId"),
@@ -143,6 +144,9 @@ const MAX_SOURCE_BLOCK_STATE_KEY_LENGTH = 64;
 const MAX_SOURCE_BLOCK_STATE_VALUE_LENGTH = 128;
 const SOURCE_BLOCK_STATE_KEY = /^[a-z0-9_.-]+$/;
 const PROTOTYPE_POLLUTION_KEYS = new Set(["__proto__", "prototype", "constructor"]);
+const MAX_SIGN_LINE_LENGTH = 256;
+const SIGN_LINE_CONTROL = /[\u0000-\u001f\u007f]/;
+const CAMPFIRE_ITEM_ID = /^[a-z0-9_.-]+:[a-z0-9_./-]+$/;
 
 export function parseImportedBlueprint(raw: unknown, path = "$"): ImportedBlueprintV1 {
   const x = object(raw, path, ["schemaVersion", "id", "title", "bounds", "voxels"]);
@@ -157,20 +161,20 @@ export function parseImportedBlueprint(raw: unknown, path = "$"): ImportedBluepr
     maxZ: safeInteger(boundsRaw.maxZ, path + ".bounds.maxZ"),
   };
   if (bounds.minX > bounds.maxX || bounds.minY > bounds.maxY || bounds.minZ > bounds.maxZ) invalid(path + ".bounds", "minimums must not exceed maximums");
-  if (bounds.maxX - bounds.minX + 1 > 48 || bounds.maxZ - bounds.minZ + 1 > 48) {
-    invalid(path + ".bounds", "X and Z footprints must each span at most 48 blocks");
+  if (bounds.maxX - bounds.minX + 1 > 96 || bounds.maxZ - bounds.minZ + 1 > 96) {
+    invalid(path + ".bounds", "X and Z footprints must each span at most 96 blocks");
   }
-  if (bounds.maxY - bounds.minY + 1 > 128) {
-    invalid(path + ".bounds", "Y height must span at most 128 blocks");
+  if (bounds.maxY - bounds.minY + 1 > 256) {
+    invalid(path + ".bounds", "Y height must span at most 256 blocks");
   }
   if (!Array.isArray(x.voxels)) invalid(path + ".voxels", "must be an array");
-  if (x.voxels.length === 0 || x.voxels.length > 100_000) invalid(path + ".voxels", "must contain from 1 through 100000 voxels");
+  if (x.voxels.length === 0 || x.voxels.length > 300_000) invalid(path + ".voxels", "must contain from 1 through 300000 voxels");
   const coordinates = new Set<string>();
   const voxels = x.voxels.map((rawVoxel, index) => {
     const at = `${path}.voxels[${index}]`;
     const voxel = objectWithOptional(rawVoxel, at,
-      ["x", "y", "z", "materialId", "stage", "buildOrder", "sourceBlockId", "sourceBlockState", "emissiveKind", "emissiveLevel"],
-      ["sourceBlockId", "sourceBlockState", "emissiveKind", "emissiveLevel"]);
+      ["x", "y", "z", "materialId", "stage", "buildOrder", "sourceBlockId", "sourceBlockState", "movingPistonMovedState", "movingPistonPose", "sign", "campfire", "emissiveKind", "emissiveLevel"],
+      ["sourceBlockId", "sourceBlockState", "movingPistonMovedState", "movingPistonPose", "sign", "campfire", "emissiveKind", "emissiveLevel"]);
     const parsed: ImportedBlueprintV1["voxels"][number] = {
       x: safeInteger(voxel.x, at + ".x"),
       y: safeInteger(voxel.y, at + ".y"),
@@ -183,6 +187,28 @@ export function parseImportedBlueprint(raw: unknown, path = "$"): ImportedBluepr
     if (voxel.sourceBlockState !== undefined) {
       const sourceBlockState = parseSourceBlockState(voxel.sourceBlockState, at + ".sourceBlockState");
       if (sourceBlockState !== undefined) parsed.sourceBlockState = sourceBlockState;
+    }
+    if (voxel.movingPistonMovedState !== undefined) {
+      if (parsed.sourceBlockId !== "minecraft:moving_piston") {
+        invalid(at + ".movingPistonMovedState", "requires sourceBlockId minecraft:moving_piston");
+      }
+      parsed.movingPistonMovedState = parseMovingPistonMovedState(voxel.movingPistonMovedState, at + ".movingPistonMovedState");
+    }
+    if (voxel.movingPistonPose !== undefined) {
+      if (parsed.sourceBlockId !== "minecraft:moving_piston") {
+        invalid(at + ".movingPistonPose", "requires sourceBlockId minecraft:moving_piston");
+      }
+      parsed.movingPistonPose = parseMovingPistonPose(voxel.movingPistonPose, at + ".movingPistonPose");
+    }
+    if (voxel.sign !== undefined) {
+      if (!isVanillaSignBlockId(parsed.sourceBlockId)) invalid(at + ".sign", "requires a vanilla sign sourceBlockId");
+      parsed.sign = parseImportedBlueprintSignData(voxel.sign, at + ".sign");
+    }
+    if (voxel.campfire !== undefined) {
+      if (parsed.sourceBlockId !== "minecraft:campfire" && parsed.sourceBlockId !== "minecraft:soul_campfire") {
+        invalid(at + ".campfire", "requires sourceBlockId minecraft:campfire or minecraft:soul_campfire");
+      }
+      parsed.campfire = parseImportedBlueprintCampfireData(voxel.campfire, at + ".campfire");
     }
     if (voxel.emissiveKind !== undefined) parsed.emissiveKind = nonBlankString(voxel.emissiveKind, at + ".emissiveKind");
     if (voxel.emissiveLevel !== undefined) parsed.emissiveLevel = integer(voxel.emissiveLevel, at + ".emissiveLevel", 0, 15);
@@ -291,8 +317,113 @@ function parseSubtask(raw: unknown, path: string): Subtask {
   };
 }
 
+function parseDeferredSettlement(x: Record<string, unknown>, path: string): { deferredSettlement?: true } {
+  if (x.deferredSettlement === undefined) return {};
+  if (x.deferredSettlement !== true || x.marathon !== true || x.subtaskId !== null) {
+    invalid(path + ".deferredSettlement", "requires true, marathon and a null subtask");
+  }
+  return { deferredSettlement: true };
+}
+
+function parseMovingPistonMovedState(
+  raw: unknown,
+  path: string,
+): NonNullable<ImportedBlueprintV1["voxels"][number]["movingPistonMovedState"]> {
+  const value = objectWithOptional(raw, path, ["blockId", "properties"], ["properties"]);
+  const blockId = value.blockId;
+  if (typeof blockId !== "string" || blockId.length > 256
+    || !/^minecraft:[a-z0-9_.-]+(?:\/[a-z0-9_.-]+)*$/.test(blockId)
+    || blockId === "minecraft:air" || blockId === "minecraft:cave_air" || blockId === "minecraft:void_air"
+    || blockId === "minecraft:moving_piston") {
+    invalid(path + ".blockId", "must be a safe vanilla block ID for a moved block");
+  }
+  const properties = value.properties === undefined ? undefined : parseSourceBlockState(value.properties, path + ".properties");
+  if (properties !== undefined && Object.values(properties).some((property) => !/^[a-z0-9_./-]+$/.test(property))) {
+    invalid(path + ".properties", "must contain only canonical lowercase block-state values");
+  }
+  return properties === undefined ? { blockId } : { blockId, properties };
+}
+
+function parseMovingPistonPose(
+  raw: unknown,
+  path: string,
+): NonNullable<ImportedBlueprintV1["voxels"][number]["movingPistonPose"]> {
+  const value = object(raw, path, ["facing", "progress", "extending", "source"]);
+  const facing = enumeration(value.facing, path + ".facing", ["down", "up", "north", "south", "west", "east"] as const);
+  if (typeof value.progress !== "number" || !Number.isFinite(value.progress) || value.progress < 0 || value.progress > 1) {
+    invalid(path + ".progress", "must be a finite number from 0 through 1");
+  }
+  if (typeof value.extending !== "boolean" || typeof value.source !== "boolean") {
+    invalid(path, "extending and source must be booleans");
+  }
+  return { facing, progress: value.progress, extending: value.extending, source: value.source };
+}
+
+function parseImportedBlueprintSignData(
+  raw: unknown,
+  path: string,
+): NonNullable<ImportedBlueprintV1["voxels"][number]["sign"]> {
+  const value = object(raw, path, ["front", "back"]);
+  return {
+    front: parseImportedBlueprintSignFace(value.front, path + ".front"),
+    back: parseImportedBlueprintSignFace(value.back, path + ".back"),
+  };
+}
+
+function parseImportedBlueprintSignFace(
+  raw: unknown,
+  path: string,
+): NonNullable<ImportedBlueprintV1["voxels"][number]["sign"]>["front"] {
+  const value = object(raw, path, ["lines", "dyeColor", "glowing"]);
+  if (!Array.isArray(value.lines) || value.lines.length > 4) {
+    invalid(path + ".lines", "must contain at most four display lines");
+  }
+  const lines = value.lines.map((line, index) => {
+    const linePath = `${path}.lines[${index}]`;
+    if (typeof line !== "string" || line.length > MAX_SIGN_LINE_LENGTH || SIGN_LINE_CONTROL.test(line)) {
+      invalid(linePath, "must be a plain display line of at most 256 characters");
+    }
+    return line;
+  });
+  return {
+    lines,
+    dyeColor: enumeration(value.dyeColor, path + ".dyeColor", SIGN_DYE_COLORS),
+    glowing: boolean(value.glowing, path + ".glowing"),
+  };
+}
+
+function parseImportedBlueprintCampfireData(
+  raw: unknown,
+  path: string,
+): NonNullable<ImportedBlueprintV1["voxels"][number]["campfire"]> {
+  const value = object(raw, path, ["slots"]);
+  if (!Array.isArray(value.slots) || value.slots.length > 4) {
+    invalid(path + ".slots", "must contain at most four items");
+  }
+  const slots = value.slots.map((entry, index) => {
+    const entryPath = `${path}.slots[${index}]`;
+    const slot = object(entry, entryPath, ["slot", "itemId", "count"]);
+    const slotIndex = integer(slot.slot, entryPath + ".slot", 0, 3);
+    if (typeof slot.itemId !== "string" || slot.itemId.length > 256 || !CAMPFIRE_ITEM_ID.test(slot.itemId)) {
+      invalid(entryPath + ".itemId", "must be a bounded namespaced item ID");
+    }
+    return {
+      slot: slotIndex as 0 | 1 | 2 | 3,
+      itemId: slot.itemId,
+      count: integer(slot.count, entryPath + ".count", 1, 64),
+    };
+  });
+  unique(slots.map((slot) => slot.slot), path + ".slots");
+  slots.sort((left, right) => left.slot - right.slot);
+  return { slots };
+}
+
+function isVanillaSignBlockId(raw: string | undefined): boolean {
+  return raw !== undefined && /^minecraft:[a-z0-9_]*sign$/.test(raw);
+}
+
 function parseActiveSession(raw: unknown, path: string): ActiveFocusSession {
-  const x = objectWithOptional(raw, path, ["id", "projectId", "subtaskId", "startedAt", "endsAt", "plannedDurationMs", "timeZoneAtStart", "integrity", "marathon", "settledAt"], ["marathon", "settledAt"]);
+  const x = objectWithOptional(raw, path, ["id", "projectId", "subtaskId", "startedAt", "endsAt", "plannedDurationMs", "timeZoneAtStart", "integrity", "marathon", "settledAt", "deferredSettlement"], ["marathon", "settledAt", "deferredSettlement"]);
   const session: ActiveFocusSession = {
     id: nonBlankString(x.id, path + ".id"),
     projectId: nonBlankString(x.projectId, path + ".projectId"),
@@ -303,6 +434,7 @@ function parseActiveSession(raw: unknown, path: string): ActiveFocusSession {
     timeZoneAtStart: timeZone(x.timeZoneAtStart, path + ".timeZoneAtStart"),
     ...(x.marathon === true ? { marathon: true } : {}),
     ...(x.settledAt === undefined ? {} : { settledAt: instant(x.settledAt, path + ".settledAt") }),
+    ...parseDeferredSettlement(x, path),
     integrity: parseActiveFocusIntegrity(x.integrity, path + ".integrity"),
   };
   validateScheduledTimes(session, path);
@@ -319,7 +451,7 @@ function parseFocusSession(raw: unknown, path: string): FocusSession {
   const keys = status === "interrupted"
     ? ["id", "projectId", "subtaskId", "startedAt", "endsAt", "plannedDurationMs", "timeZoneAtStart", "status", "interruptedAt", "interruptionReason", "interruptionCategory", "actualDurationMs", "marathon", "settledAt"]
     : ["id", "projectId", "subtaskId", "startedAt", "endsAt", "plannedDurationMs", "timeZoneAtStart", "status", "completedAt", "completedLocalDate", "actualDurationMs", "marathon", "settledAt"];
-  const x = objectWithOptional(raw, path, keys, ["marathon", "settledAt"]);
+  const x = objectWithOptional(raw, path, [...keys, "deferredSettlement"], ["marathon", "settledAt", "deferredSettlement"]);
   const active = parseActiveSessionFields(x, path);
   if (status === "completed" || status === "completed-early") {
     const completedAt = instant(x.completedAt, path + ".completedAt");
@@ -352,6 +484,7 @@ function parseActiveSessionFields(x: Record<string, unknown>, path: string): Foc
     endsAt: instant(x.endsAt, path + ".endsAt"), plannedDurationMs: integer(x.plannedDurationMs, path + ".plannedDurationMs", 1),
     timeZoneAtStart: timeZone(x.timeZoneAtStart, path + ".timeZoneAtStart"),
     ...(x.marathon === true ? { marathon: true } : {}),
+    ...parseDeferredSettlement(x, path),
     ...(x.settledAt === undefined ? {} : { settledAt: instant(x.settledAt, path + ".settledAt") }),
   };
   validateScheduledTimes(session, path);
@@ -359,7 +492,9 @@ function parseActiveSessionFields(x: Record<string, unknown>, path: string): Foc
 }
 
 function parseProgressReport(raw: unknown, path: string): ProgressReport {
-  const x = objectWithOptional(raw, path, ["id", "projectId", "subtaskId", "focusSessionIds", "progressBasisPoints", "reportedAt", "shared"], ["shared"]);
+  const x = objectWithOptional(raw, path, ["id", "projectId", "subtaskId", "focusSessionIds", "progressBasisPoints", "reportedAt", "shared", "allocation"], ["shared", "allocation"]);
+  const allocation = x.allocation === undefined ? undefined : enumeration(x.allocation, path + ".allocation", ["explicit"] as const);
+  if (allocation === "explicit" && x.shared === true) invalid(path, "explicit allocation cannot be shared");
   return {
     id: nonBlankString(x.id, path + ".id"), projectId: nonBlankString(x.projectId, path + ".projectId"),
     subtaskId: nonBlankString(x.subtaskId, path + ".subtaskId"),
@@ -367,6 +502,7 @@ function parseProgressReport(raw: unknown, path: string): ProgressReport {
     progressBasisPoints: integer(x.progressBasisPoints, path + ".progressBasisPoints", 0, 10_000),
     reportedAt: instant(x.reportedAt, path + ".reportedAt"),
     ...(x.shared === true ? { shared: true } : {}),
+    ...(allocation === "explicit" ? { allocation } : {}),
   };
 }
 
@@ -399,10 +535,11 @@ function parseProjectCondition(raw: unknown, path: string): ProjectCondition {
 }
 
 function parseFocusIntegrityPolicy(raw: unknown, path: string): DomainState["focusIntegrityPolicy"] {
-  const x = object(raw, path, ["enabled", "maxEffectiveExcursions"]);
+  const x = object(raw, path, ["enabled", "maxEffectiveExcursions", "excursionThresholdSeconds"]);
   return {
     enabled: boolean(x.enabled, path + ".enabled"),
     maxEffectiveExcursions: integer(x.maxEffectiveExcursions, path + ".maxEffectiveExcursions", 1, 5),
+    excursionThresholdSeconds: integer(x.excursionThresholdSeconds, path + ".excursionThresholdSeconds", 1, 60),
   };
 }
 
@@ -466,12 +603,12 @@ function validateReferences(state: DomainState): void {
   const sessions = new Map(state.focusHistory.map((item) => [item.id, item]));
   for (const [index, session] of state.focusHistory.entries()) {
     const path = `$.focusHistory[${index}]`;
-    validateOwnership(session.projectId, session.subtaskId, projects, subtasks, path);
+    validateOwnership(session.projectId, session.subtaskId, projects, subtasks, path, session.deferredSettlement === true);
     if (session.startedAt < projects.get(session.projectId)!.createdAt) invalid(path + ".startedAt", "precedes project creation");
   }
   if (state.activeFocusSession) {
     if (sessions.has(state.activeFocusSession.id)) invalid("$.activeFocusSession.id", "duplicates a history session");
-    validateOwnership(state.activeFocusSession.projectId, state.activeFocusSession.subtaskId, projects, subtasks, "$.activeFocusSession");
+    validateOwnership(state.activeFocusSession.projectId, state.activeFocusSession.subtaskId, projects, subtasks, "$.activeFocusSession", state.activeFocusSession.deferredSettlement === true);
     if (state.activeFocusSession.projectId !== state.activeProjectId && state.activeFocusSession.marathon !== true) invalid("$.activeFocusSession.projectId", "must belong to the active project");
     if (state.activeFocusSession.startedAt < projects.get(state.activeFocusSession.projectId)!.createdAt) invalid("$.activeFocusSession.startedAt", "precedes project creation");
   }
@@ -489,6 +626,7 @@ function validateReferences(state: DomainState): void {
     for (const id of report.focusSessionIds) {
       const session = sessions.get(id);
       if (!session || (session.status !== "completed" && session.status !== "completed-early")) invalid(path + ".focusSessionIds", `unknown or incomplete session ${id}`);
+      if (report.allocation === "explicit" && session.marathon !== true) invalid(path + ".focusSessionIds", `explicit allocation requires marathon session ${id}`);
       if (report.shared === true) {
         // Marathon settlement reports: one remainder block may support every
         // chosen subtask (also on other projects), so ownership is not required
@@ -496,7 +634,7 @@ function validateReferences(state: DomainState): void {
         if (usedSessions.has(id)) invalid(path + ".focusSessionIds", `session ${id} was already consumed by a regular report`);
         sharedSessions.add(id);
       } else {
-        if (session.projectId !== report.projectId || session.subtaskId !== report.subtaskId) invalid(path + ".focusSessionIds", `session ${id} has inconsistent ownership`);
+        if (report.allocation !== "explicit" && (session.projectId !== report.projectId || session.subtaskId !== report.subtaskId)) invalid(path + ".focusSessionIds", `session ${id} has inconsistent ownership`);
         if (sharedSessions.has(id) || usedSessions.has(id)) invalid(path + ".focusSessionIds", `session ${id} is reused`);
         usedSessions.add(id);
       }
@@ -551,7 +689,7 @@ function validateReferences(state: DomainState): void {
   }
   for (const session of state.focusHistory) {
     const project = projects.get(session.projectId)!;
-    if (project.kind === "habit" && (session.status === "completed" || session.status === "completed-early") && !habitSessionIds.has(session.id)) {
+    if (project.kind === "habit" && session.deferredSettlement !== true && (session.status === "completed" || session.status === "completed-early") && !habitSessionIds.has(session.id)) {
       invalid("$.focusHistory", `habit completion ${session.id} is not assigned to a building cycle`);
     }
   }
@@ -601,9 +739,10 @@ function effectiveFocusEnd(session: FocusSessionBase | FocusSession): string {
   return session.completedAt;
 }
 
-function validateOwnership(projectId: string, subtaskId: string | null, projects: Map<string, Project>, subtasks: Map<string, { projectId: string }>, path: string): void {
+function validateOwnership(projectId: string, subtaskId: string | null, projects: Map<string, Project>, subtasks: Map<string, { projectId: string }>, path: string, deferred = false): void {
   const project = projects.get(projectId);
   if (!project) invalid(path + ".projectId", `unknown project ${projectId}`);
+  if (deferred && subtaskId === null) return;
   if (project.kind === "habit") {
     if (subtaskId !== null) invalid(path + ".subtaskId", "must be null for a habit project");
     return;
@@ -815,6 +954,30 @@ function migrateTerrainV4State(raw: unknown): unknown {
   return {
     ...candidate,
     worldSettings: { ...worldSettings, terrainGenerationVersion: 4 },
+  };
+}
+
+/** Old records keep their original settlement semantics; never infer the new flag. */
+function migrateV10State(raw: unknown): unknown {
+  const candidate = record(raw, "$");
+  if (candidate.schemaVersion !== 10) return raw;
+  const sessions = [...(Array.isArray(candidate.focusHistory) ? candidate.focusHistory : []), candidate.activeFocusSession];
+  for (const session of sessions) {
+    if (session && typeof session === "object" && "deferredSettlement" in session) {
+      invalid("$.schemaVersion", "deferred settlement requires schema 11");
+    }
+  }
+  return { ...candidate, schemaVersion: 11 };
+}
+
+/** Validate the legacy policy before adding the default; never conceal unknown fields. */
+function migrateV11State(raw: unknown): unknown {
+  const candidate = record(raw, "$");
+  if (candidate.schemaVersion !== 11) return raw;
+  const policy = object(candidate.focusIntegrityPolicy, "$.focusIntegrityPolicy", ["enabled", "maxEffectiveExcursions"]);
+  return {
+    ...candidate, schemaVersion: 12,
+    focusIntegrityPolicy: { ...policy, excursionThresholdSeconds: 3 },
   };
 }
 

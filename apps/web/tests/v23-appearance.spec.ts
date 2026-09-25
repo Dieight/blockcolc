@@ -29,10 +29,22 @@ test("immersive glass transparency persists and keeps an adaptive dark material"
     backdropFilter: getComputedStyle(element).backdropFilter,
     backgroundImage: getComputedStyle(element).backgroundImage,
   }));
+  // Functional HUD glass is fixed; only the immersive clock consumes the slider.
   expect(worldHudMaterial.backdropFilter).toContain("blur(14px)");
   expect(worldHudMaterial.backgroundImage).toContain("linear-gradient");
   await page.getByRole("button", { name: "设置", exact: true }).click();
-  const transparency = page.getByLabel("沉浸计时毛玻璃通透程度");
+  const transparency = page.getByLabel("液态玻璃通透程度");
+  await transparency.fill("0");
+  await page.getByRole("button", { name: "计时", exact: true }).click();
+  const maxBlur = await page.locator(".world-hud span").first().evaluate((element) => getComputedStyle(element).backdropFilter);
+  expect(maxBlur).toContain("blur(14px)");
+  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await transparency.fill("100");
+  await page.getByRole("button", { name: "计时", exact: true }).click();
+  const minBlur = await page.locator(".world-hud span").first().evaluate((element) => getComputedStyle(element).backdropFilter);
+  expect(minBlur).toBe(maxBlur);
+  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await transparency.fill("50");
   await transparency.fill("0");
   const frosted = await page.locator("html").evaluate(() => {
     const root = getComputedStyle(document.documentElement);
@@ -86,7 +98,7 @@ test("immersive glass transparency persists and keeps an adaptive dark material"
 
   await page.reload();
   await page.getByRole("button", { name: "设置", exact: true }).click();
-  await expect(page.getByLabel("沉浸计时毛玻璃通透程度")).toHaveValue("80");
+  await expect(page.getByLabel("液态玻璃通透程度")).toHaveValue("80");
   await page.getByRole("button", { name: "计时", exact: true }).click();
   await page.getByRole("button", { name: "开始 1 轮" }).click();
 
@@ -146,7 +158,7 @@ test("immersive glass transparency persists and keeps an adaptive dark material"
   await page.screenshot({ path: testInfo.outputPath("immersive-liquid-glass-dark-100.png"), fullPage: true });
 });
 
-test("clicking a heatmap cell shows that day's focus detail", async ({ page }) => {
+test("clicking a calendar day shows that day's focus detail without a date picker", async ({ page }, testInfo) => {
   await page.clock.install({ time: new Date("2026-08-05T08:00:00Z") });
   await createDefaultProject(page);
   // 1-minute round, no break, so one round completes quickly.
@@ -164,15 +176,29 @@ test("clicking a heatmap cell shows that day's focus detail", async ({ page }) =
   await page.getByRole("button", { name: /完成/ }).click();
 
   await page.getByRole("button", { name: "统计", exact: true }).click();
-  const activeCell = page.locator('.focus-heatmap-cell[title^="2026年8月5日"]');
-  await activeCell.click();
-  const tip = page.locator(".focus-heatmap-tip");
+  const unlockDialog = page.getByRole('dialog', { name: '新的成就' });
+  await expect(unlockDialog).toBeVisible();
+  await unlockDialog.getByRole('button', { name: '全部关闭' }).click();
+  await expect(unlockDialog).toHaveCount(0);
+  await page.locator('.focus-calendar-chart [data-date="2026-08-05"]').click();
+  await expect(page.locator('.stats-page input[type="date"]')).toHaveCount(0);
+  const tip = page.locator(".calendar-day-detail");
   await expect(tip).toBeVisible();
-  await expect(tip).toContainText("2026年8月5日");
-  await expect(tip).toContainText("有效专注");
-  await expect(tip).toContainText("专注次数");
+  await expect(tip).toContainText("1 分钟");
   await expect(tip).toContainText("1 次");
-  // Re-click closes the tip.
-  await activeCell.click();
+  await page.screenshot({path:testInfo.outputPath('calendar-filled-selected-light.png'),fullPage:true,animations:'disabled'});
+  await page.getByRole('button',{name:'设置',exact:true}).click();
+  await page.getByRole('button',{name:'深色',exact:true}).click();
+  await page.getByRole('button',{name:'统计',exact:true}).click();
+  await page.screenshot({path:testInfo.outputPath('calendar-filled-selected-dark.png'),fullPage:true,animations:'disabled'});
+  await page.getByRole('button',{name:'查看前一天专注'}).click();
+  await expect(tip).toContainText('这一天还没有有效专注记录');
+  await page.getByRole('button',{name:'查看后一天专注'}).click();
+  await expect(tip).toContainText('1 分钟');
+  await page.getByRole('button',{name:'关闭日期详情'}).click();
+  await expect(tip).toHaveCount(0);
+  await page.locator('.focus-calendar-chart').press('End');
+  await expect(tip).toContainText('2026年8月5日');
+  await page.locator('.focus-calendar-chart').press('Escape');
   await expect(tip).toHaveCount(0);
 });

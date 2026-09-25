@@ -59,7 +59,7 @@ describe("IndexedDbResourcePackRepository", () => {
     expect((await reloaded.list()).map((entry) => entry.id)).toEqual(["legacy"]);
   });
 
-  it("round-trips optional grass and foliage colormaps without changing schema-v1", async () => {
+  it("round-trips all three vanilla colormaps without changing schema-v1", async () => {
     const repo = repository(databaseName());
     const valid = fixture("colormaps", "2026-07-27T01:00:00.000Z");
     valid.manifest.colormaps = [
@@ -79,6 +79,14 @@ describe("IndexedDbResourcePackRepository", () => {
         height: 256,
         png: colormapPng(2),
       },
+      {
+        kind: "dry_foliage",
+        resourceId: "minecraft:colormap/dry_foliage",
+        archivePath: "assets/minecraft/textures/colormap/dry_foliage.png",
+        width: 256,
+        height: 256,
+        png: colormapPng(3),
+      },
     ];
 
     await repo.save(valid);
@@ -86,6 +94,16 @@ describe("IndexedDbResourcePackRepository", () => {
     expect(stored?.schemaVersion).toBe(1);
     expect(stored?.manifest.schemaVersion).toBe(1);
     expect(stored?.manifest.colormaps).toEqual(valid.manifest.colormaps);
+  });
+
+  it("round-trips modern pack format ranges while retaining legacy schema-v1 records", async () => {
+    const repo = repository(databaseName());
+    const modern = fixture("modern-26-3", "2026-09-23T01:00:00.000Z");
+    modern.manifest.pack = {
+      packFormat: 97, minFormat: [97, 1], maxFormat: [97, 0x7fffffff], description: "26.3",
+    };
+    await repo.save(modern);
+    expect((await repo.get(modern.id))?.manifest.pack).toEqual(modern.manifest.pack);
   });
 
   it("round-trips a 32px two-dimensional animation grid", async () => {
@@ -101,6 +119,125 @@ describe("IndexedDbResourcePackRepository", () => {
     };
     await repo.save(value);
     expect((await repo.get("grid32"))?.manifest.textures[0]?.animation).toEqual(texture.animation);
+  });
+
+  it("round-trips a 64px vanilla-sized animation frame", async () => {
+    const repo = repository(databaseName());
+    const value = fixture("frame64", "2026-09-24T01:30:00.000Z");
+    const texture = value.manifest.textures[0]!;
+    texture.width = 64;
+    texture.height = 128;
+    texture.animation = {
+      frameWidth: 64, frameHeight: 64, sourceColumns: 1, sourceRows: 2,
+      sourceFrameCount: 2, frametime: 3, interpolate: false,
+      frames: [{ index: 0, time: 3 }, { index: 1, time: 3 }],
+    };
+    await repo.save(value);
+    expect((await repo.get(value.id))?.manifest.textures[0]?.animation).toEqual(texture.animation);
+  });
+
+  it("round-trips static 32px and 64px textures without animation metadata", async () => {
+    const repo = repository(databaseName());
+    for (const size of [32, 64]) {
+      const value = fixture(`static-${size}`, "2026-09-24T01:40:00.000Z");
+      value.manifest.textures[0]!.width = size;
+      value.manifest.textures[0]!.height = size;
+      delete value.manifest.textures[0]!.animation;
+      await repo.save(value);
+      expect((await repo.get(value.id))?.manifest.textures[0]).toMatchObject({width:size,height:size});
+    }
+    const invalid = fixture("static-nonsquare", "2026-09-24T01:40:00.000Z");
+    invalid.manifest.textures[0]!.width = 32;
+    invalid.manifest.textures[0]!.height = 64;
+    delete invalid.manifest.textures[0]!.animation;
+    await expect(repo.save(invalid)).rejects.toThrow(/static texture/i);
+  });
+
+  it("round-trips static 128px/256px textures and both high-resolution animation sizes", async () => {
+    const repo = repository(databaseName());
+    for (const size of [128, 256] as const) {
+      const value = fixture(`static-${size}`, "2026-09-24T02:10:00.000Z");
+      const texture = value.manifest.textures[0]!;
+      texture.width = size;
+      texture.height = size;
+      texture.png = colormapPng(size, size, size);
+      delete texture.animation;
+      await repo.save(value);
+      expect((await repo.get(value.id))?.manifest.textures[0]).toEqual(texture);
+    }
+
+    for (const size of [128, 256] as const) {
+      const value = fixture(`animated-${size}`, "2026-09-24T02:20:00.000Z");
+      const texture = value.manifest.textures[0]!;
+      texture.width = size;
+      texture.height = size * 2;
+      texture.png = colormapPng(size, size, size * 2);
+      texture.animation = {
+        frameWidth: size, frameHeight: size, sourceColumns: 1, sourceRows: 2,
+        sourceFrameCount: 2, frametime: 3, interpolate: true,
+        frames: [{ index: 1, time: 2 }, { index: 0, time: 4 }],
+      };
+      await repo.save(value);
+      expect((await repo.get(value.id))?.manifest.textures[0]).toEqual(texture);
+    }
+  });
+
+  it("round-trips special-renderer PNGs independently from block-atlas textures", async () => {
+    const repo = repository(databaseName());
+    const value = fixture("special-assets", "2026-09-24T02:00:00.000Z");
+    const png = colormapPng(37, 64, 64);
+    value.manifest.specialTextures = [{
+      resourceId: "minecraft:entity/chest/normal",
+      namespace: "minecraft",
+      texturePath: "chest/normal",
+      archivePath: "assets/minecraft/textures/entity/chest/normal.png",
+      width: 64,
+      height: 64,
+      png,
+    }];
+
+    await repo.save(value);
+
+    const stored = await repo.get(value.id);
+    expect(stored?.manifest.textures).toHaveLength(1);
+    expect(stored?.manifest.specialTextures).toEqual(value.manifest.specialTextures);
+    expect((await repo.list())[0]).toMatchObject({ textureCount: 2, namespaces: ["minecraft"] });
+  });
+
+  it("rejects invalid IDs, paths, duplicates, dimensions, and PNG payloads in special-texture manifests", async () => {
+    const repo = repository(databaseName());
+    const base = fixture("special-invalid", "2026-09-24T02:10:00.000Z");
+    base.manifest.specialTextures = [{
+      resourceId: "minecraft:entity/chest/normal",
+      namespace: "minecraft",
+      texturePath: "chest/normal",
+      archivePath: "assets/minecraft/textures/entity/chest/normal.png",
+      width: 16,
+      height: 16,
+      png: colormapPng(23, 16, 16),
+    }];
+    const invalid: SaveResourcePackInput[] = [];
+    const mismatchedResourceId = structuredClone(base);
+    mismatchedResourceId.manifest.specialTextures![0]!.resourceId = "minecraft:entity/chest/trapped";
+    invalid.push(mismatchedResourceId);
+    const unsafePath = structuredClone(base);
+    unsafePath.manifest.specialTextures![0]!.texturePath = "chest/../escape";
+    invalid.push(unsafePath);
+    const wrongArchivePath = structuredClone(base);
+    wrongArchivePath.manifest.specialTextures![0]!.archivePath = "assets/minecraft/textures/entity/shulker/x.png";
+    invalid.push(wrongArchivePath);
+    const wrongDimensions = structuredClone(base);
+    wrongDimensions.manifest.specialTextures![0]!.width = 32;
+    invalid.push(wrongDimensions);
+    const badPng = structuredClone(base);
+    badPng.manifest.specialTextures![0]!.png = new Uint8Array([137, 80, 78, 71]);
+    invalid.push(badPng);
+    const duplicate = structuredClone(base);
+    duplicate.manifest.specialTextures!.push(structuredClone(duplicate.manifest.specialTextures![0]!));
+    invalid.push(duplicate);
+
+    for (const value of invalid) await expect(repo.save(value)).rejects.toThrow(/special texture/i);
+    expect(await repo.list()).toEqual([]);
   });
 
   it("rejects corrupt, duplicate and oversized colormap payloads", async () => {
@@ -134,7 +271,14 @@ describe("IndexedDbResourcePackRepository", () => {
       height: 256 as const,
       png: colormapPng(4),
     };
-    tooMany.manifest.colormaps!.push(foliage, structuredClone(tooMany.manifest.colormaps![0]!));
+    tooMany.manifest.colormaps!.push(foliage, {
+      kind: "dry_foliage",
+      resourceId: "minecraft:colormap/dry_foliage",
+      archivePath: "assets/minecraft/textures/colormap/dry_foliage.png",
+      width: 256,
+      height: 256,
+      png: colormapPng(5),
+    }, structuredClone(tooMany.manifest.colormaps![0]!));
     corrupt.push(tooMany);
     const badKind = withGrass("bad-kind");
     (badKind.manifest.colormaps![0] as unknown as Record<string, unknown>).kind = "water";
@@ -173,11 +317,18 @@ describe("IndexedDbResourcePackRepository", () => {
       from: [0, 0, 0],
       to: [16, 8, 16],
       shade: true,
-      rotation: { origin: [8, 8, 8], axis: "y", angle: -67.5, rescale: false },
+      shadeDirectionOverride: "up",
+      rotation: { origin: [11, 35, 11], axis: "y", angle: -67.5, rescale: false },
       faces: {
         up: { texture: "#all", uv: [0, 0, 16, 16], rotation: 0, cullFace: "up" },
         north: { texture: "#all", uv: [0, 8, 16, 16], rotation: 0 },
       },
+    }, {
+      from: [16, 0, 0], to: [0, 8, 16], shade: true,
+      faces: { up: { texture: "#all", uv: [0, 0, 16, 16], rotation: 0 } },
+    }, {
+      from: [8, 0, 0], to: [8, 16, 16], shade: true,
+      faces: { north: { texture: "#all", uv: [0, 0, 16, 16], rotation: 0 } },
     }];
     await repo.save(valid);
     expect((await repo.get("slab"))?.manifest.models[0]?.elements).toEqual(valid.manifest.models[0]!.elements);
@@ -190,11 +341,12 @@ describe("IndexedDbResourcePackRepository", () => {
       ["bad-bounds", (model: Record<string, any>) => {
         model.elements[0].rotation = undefined;
         model.elements[0].from = [0, 8, 0];
-        model.elements[0].to = [16, 8, 16];
+        model.elements[0].to = [0, 8, 16];
       }],
       ["bad-face", (model: Record<string, any>) => { model.elements[0].faces.diagonal = model.elements[0].faces.up; }],
       ["bad-cull", (model: Record<string, any>) => { model.elements[0].faces.up.cullFace = "diagonal"; }],
       ["bad-rotation", (model: Record<string, any>) => { model.elements[0].rotation = { axis: "y", angle: 45 }; }],
+      ["bad-shade-direction", (model: Record<string, any>) => { model.elements[0].shadeDirectionOverride = "diagonal"; }],
       ["bad-mixed-state", (model: Record<string, any>) => { model.unsupportedReason = "COMPLEX_GEOMETRY"; }],
     ] as const) {
       const hostile = fixture(id, "2026-07-26T02:00:00.000Z");
@@ -247,7 +399,7 @@ describe("IndexedDbResourcePackRepository", () => {
     expect(stored?.manifest.models[0]?.elements).toEqual(valid.manifest.models[0]?.elements);
   });
 
-  it("rejects invalid multipart contracts and hostile planes while preserving legacy records", async () => {
+  it("rejects invalid multipart contracts and degenerate planes while preserving legacy records", async () => {
     const name = databaseName();
     const repo = repository(name);
     await repo.save(fixture("legacy", "2026-07-26T00:00:00.000Z"));
@@ -302,9 +454,6 @@ describe("IndexedDbResourcePackRepository", () => {
     const point = planeFixture("point");
     point.manifest.models[0]!.elements![0]!.to = [8, 0, 7];
     hostile.push(point);
-    const wrongFace = planeFixture("wrong-plane-face");
-    wrongFace.manifest.models[0]!.elements![0]!.faces = { north: { texture: "#all", uv: [0, 0, 16, 16], rotation: 0 } };
-    hostile.push(wrongFace);
 
     const database = await openRaw(name);
     const transaction = database.transaction("resourcePacks", "readwrite");
@@ -331,6 +480,32 @@ describe("IndexedDbResourcePackRepository", () => {
     expect(await repo.getActive()).toBeUndefined();
   });
 
+  it("persists an independent optional base-pack selection", async () => {
+    const name = databaseName();
+    const repo = repository(name);
+    await repo.save(fixture("active", "2026-07-26T01:00:00.000Z"));
+    await repo.save(fixture("base", "2026-07-26T02:00:00.000Z"));
+
+    expect(await repo.selectBase("base")).toMatchObject({ id: "base" });
+    expect((await repo.getActive())?.id).toBe("active");
+    expect((await repo.getBase())?.id).toBe("base");
+    expect(await repo.list()).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "active", active: true, base: false }),
+      expect.objectContaining({ id: "base", active: false, base: true }),
+    ]));
+    await expect(repo.selectBase("missing")).rejects.toThrow(/not found or is invalid/);
+    repo.close();
+
+    const reloaded = repository(name);
+    expect((await reloaded.getActive())?.id).toBe("active");
+    expect((await reloaded.getBase())?.id).toBe("base");
+    expect((await reloaded.select("base"))?.id).toBe("base");
+    expect((await reloaded.getBase())?.id).toBe("base");
+    await reloaded.selectBase(null);
+    expect(await reloaded.getBase()).toBeUndefined();
+    expect((await reloaded.getActive())?.id).toBe("base");
+  });
+
   it("falls back to original materials when the active pack is deleted", async () => {
     const repo = repository(databaseName());
     await repo.save(fixture("old", "2026-07-26T01:00:00.000Z"));
@@ -341,6 +516,74 @@ describe("IndexedDbResourcePackRepository", () => {
     expect(await repo.delete("old")).toBeNull();
     expect(await repo.getActive()).toBeUndefined();
     expect((await repo.list()).map((entry) => entry.id)).toEqual(["new", "middle"]);
+  });
+
+  it("clears a deleted base reference without changing the active pack", async () => {
+    const repo = repository(databaseName());
+    await repo.save(fixture("active", "2026-07-26T01:00:00.000Z"));
+    await repo.save(fixture("base", "2026-07-26T02:00:00.000Z"));
+    await repo.selectBase("base");
+
+    expect(await repo.delete("base")).toBe("active");
+    expect((await repo.getActive())?.id).toBe("active");
+    expect(await repo.getBase()).toBeUndefined();
+    expect((await repo.list()).find((entry) => entry.id === "active")).toMatchObject({ active: true, base: false });
+  });
+
+  it("repairs malformed and dangling base metadata while preserving active selection", async () => {
+    const name = databaseName();
+    const repo = repository(name);
+    await repo.save(fixture("valid", "2026-07-26T01:00:00.000Z"));
+    await repo.select("valid");
+    repo.close();
+
+    const database = await openRaw(name);
+    const transaction = database.transaction(["resourcePacks", "metadata"], "readwrite");
+    transaction.objectStore("resourcePacks").put({ id: "unsupported", schemaVersion: 99 });
+    transaction.objectStore("metadata").put({ key: "base-pack", packId: "unsupported" });
+    await transactionDone(transaction);
+    database.close();
+
+    const reloaded = repository(name);
+    expect(await reloaded.getBase()).toBeUndefined();
+    expect((await reloaded.getActive())?.id).toBe("valid");
+    reloaded.close();
+
+    const corruptMetadata = await openRaw(name);
+    const corruptTransaction = corruptMetadata.transaction("metadata", "readwrite");
+    corruptTransaction.objectStore("metadata").put({ key: "base-pack", packId: 17 });
+    await transactionDone(corruptTransaction);
+    corruptMetadata.close();
+
+    const repairedRepo = repository(name);
+    expect((await repairedRepo.list()).map((entry) => entry.base)).toEqual([false]);
+    expect((await repairedRepo.getActive())?.id).toBe("valid");
+    repairedRepo.close();
+
+    const repaired = await openRaw(name);
+    const read = repaired.transaction("metadata", "readonly");
+    const base = await requestResult<{ key: string; packId: string | null }>(read.objectStore("metadata").get("base-pack"));
+    await transactionDone(read);
+    expect(base).toEqual({ key: "base-pack", packId: null });
+    repaired.close();
+  });
+
+  it("keeps legacy version-1 storage valid when no base metadata exists", async () => {
+    const name = databaseName();
+    const legacy = repository(name);
+    await legacy.save(fixture("legacy", "2026-07-26T01:00:00.000Z"));
+    legacy.close();
+
+    const reloaded = repository(name);
+    expect(await reloaded.getBase()).toBeUndefined();
+    expect(await reloaded.list()).toEqual([
+      expect.objectContaining({ id: "legacy", active: true, base: false }),
+    ]);
+    reloaded.close();
+
+    const database = await openRaw(name);
+    expect(database.version).toBe(1);
+    database.close();
   });
 
   it("ignores unsupported or corrupt records and repairs a broken active pointer", async () => {
@@ -377,12 +620,14 @@ describe("IndexedDbResourcePackRepository", () => {
     repaired.close();
   });
 
-  it("clears both packs and active selection", async () => {
+  it("clears packs, active selection, and base selection", async () => {
     const repo = repository(databaseName());
     await repo.save(fixture("one", "2026-07-26T01:00:00.000Z"));
+    await repo.selectBase("one");
     await repo.clear();
     expect(await repo.list()).toEqual([]);
     expect(await repo.getActive()).toBeUndefined();
+    expect(await repo.getBase()).toBeUndefined();
   });
 });
 

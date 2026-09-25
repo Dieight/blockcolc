@@ -105,6 +105,17 @@ function Get-AdbPath {
     return $adb
 }
 
+function Get-ApkBuildChannel {
+    param([Parameter(Mandatory)][string]$ManifestTree)
+    foreach ($element in ($ManifestTree -split '(?m)^\s*E: ')) {
+        if ($element -notmatch '^meta-data\b' -or $element -notmatch '"com\.blockcolc\.PRIVATE_RELAY"') { continue }
+        if ($element -match 'android:value[^\r\n]*\(type 0x12\)0x0\b') { return 'standard' }
+        if ($element -match 'android:value[^\r\n]*\(type 0x12\)0xffffffff\b') { return 'private-relay' }
+        throw 'Unrecognized private relay build marker.'
+    }
+    return 'standard' # Older standard APKs predate the marker.
+}
+
 function Get-ApkMetadata {
     param([Parameter(Mandatory)][string]$Path)
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { throw "APK not found: $Path" }
@@ -113,6 +124,8 @@ function Get-ApkMetadata {
     $badging = (Invoke-External -FilePath $aapt -Arguments @('dump', 'badging', $Path) -Capture) -join "`n"
     $package = [regex]::Match($badging, "package: name='([^']+)' versionCode='([^']+)' versionName='([^']+)'")
     if (-not $package.Success) { throw "Unable to parse APK package metadata: $Path" }
+    $manifestTree = (Invoke-External -FilePath $aapt -Arguments @('dump', 'xmltree', $Path, 'AndroidManifest.xml') -Capture) -join "`n"
+    $buildChannel = Get-ApkBuildChannel -ManifestTree $manifestTree
 
     $apksigner = Get-AndroidBuildTool -Name 'apksigner.bat'
     $signature = (Invoke-External -FilePath $apksigner -Arguments @('verify', '--verbose', '--print-certs', $Path) -Capture) -join "`n"
@@ -126,15 +139,20 @@ function Get-ApkMetadata {
         SignerSha256 = $digest.Groups[1].Value.ToLowerInvariant()
         Sha256 = Get-Sha256 -Path $Path
         SizeBytes = (Get-Item -LiteralPath $Path).Length
+        BuildChannel = $buildChannel
     }
 }
 
 function Assert-ApkMetadata {
     param(
         [Parameter(Mandatory)][string]$Path,
-        [Parameter(Mandatory)]$Context
+        [Parameter(Mandatory)]$Context,
+        [switch]$AllowPrivateRelay
     )
     $metadata = Get-ApkMetadata -Path $Path
+    if ($metadata.BuildChannel -eq 'private-relay' -and -not $AllowPrivateRelay) {
+        throw 'Private relay APK cannot enter the standard verification or publication workflow.'
+    }
     if ($metadata.PackageId -ne $Context.PackageId) { throw "Unexpected package id: $($metadata.PackageId)" }
     if ($metadata.VersionName -ne $Context.VersionName) { throw "Unexpected versionName: $($metadata.VersionName)" }
     if ($metadata.VersionCode -ne $Context.VersionCode) { throw "Unexpected versionCode: $($metadata.VersionCode)" }

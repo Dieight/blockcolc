@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { clusterEmissivePoints, selectEmissiveVisualPoints, sunStateForLocalTime } from '../src/lighting';
+import {
+  clusterEmissivePoints,
+  lightingDirectionFingerprint,
+  selectEmissiveVisualPoints,
+  shadowDirectionFromPosition,
+  sunStateForLocalTime,
+} from '../src/lighting';
 
 describe('local sun path', () => {
   it('raises the light at noon and moves it from east to west', () => {
@@ -38,6 +44,19 @@ describe('local sun path', () => {
     expect(dawn.skyHorizonColor).not.toBe(noon.skyHorizonColor);
     expect(dawn.cloudColor).not.toBe(noon.cloudColor);
     expect(noon.skyZenithColor).not.toBe(noon.skyLowerColor);
+  });
+
+  it('keeps the applied shadow direction distinct through dawn, noon, dusk and night', () => {
+    const samples = [6, 12, 18, 2].map((hour) => sunStateForLocalTime(new Date(2026, 6, 24, hour)));
+    const fingerprints = samples.map((state) => lightingDirectionFingerprint(state));
+    const directions = samples.map((state) => shadowDirectionFromPosition(state.position));
+    expect(new Set(fingerprints).size).toBe(samples.length);
+    expect(new Set(directions.map((direction) => direction.join(','))).size).toBe(samples.length);
+    expect(directions.every((direction) => Math.abs(Math.hypot(...direction) - 1) < 1e-6)).toBe(true);
+    // A time sample changes the vector, not only the light's colour/intensity.
+    expect(directions[0]).not.toEqual(directions[1]);
+    expect(directions[1]).not.toEqual(directions[2]);
+    expect(directions[2]).not.toEqual(directions[3]);
   });
 });
 

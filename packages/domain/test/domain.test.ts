@@ -163,21 +163,37 @@ describe("imported daily reward decorations", () => {
     expect(f.run({ type: "ImportDecorationBlueprint", blueprint: tooDetailed })).toMatchObject({ ok: false, code: "INVALID_INPUT" });
   });
 
-  it("allows a same-ID decoration to enrich missing source state but rejects state conflicts", () => {
+  it("allows a same-ID decoration to enrich missing optional block data but rejects conflicts", () => {
     const f = fixture();
     f.create("p1", ["a"]);
     const enriched = importedBlueprint("state-enrichment");
+    enriched.voxels[0]!.sourceBlockId = "minecraft:oak_wall_sign";
+    enriched.voxels[0]!.sign = {
+      front: { lines: ["Synthetic front"], dyeColor: "red", glowing: true },
+      back: { lines: ["Synthetic back"], dyeColor: "blue", glowing: false },
+    };
+    enriched.voxels[1]!.sourceBlockId = "minecraft:campfire";
+    enriched.voxels[1]!.campfire = { slots: [{ slot: 1, itemId: "minecraft:stick", count: 1 }] };
     const legacy = structuredClone(enriched);
-    for (const voxel of legacy.voxels) delete voxel.sourceBlockState;
+    for (const voxel of legacy.voxels) {
+      delete voxel.sourceBlockState;
+      delete voxel.sign;
+      delete voxel.campfire;
+    }
     expect(f.run({ type: "ImportDecorationBlueprint", blueprint: legacy })).toMatchObject({ ok: true });
     expect(f.run({ type: "ImportDecorationBlueprint", blueprint: enriched })).toMatchObject({
       ok: true, events: [{ type: "DecorationBlueprintImported", resourceId: enriched.id }],
     });
     expect(f.state().decorationBlueprintResources[0]!.blueprint.voxels[0]!.sourceBlockState).toEqual({ facing: "north" });
+    expect(f.state().decorationBlueprintResources[0]!.blueprint.voxels[0]!.sign).toEqual(enriched.voxels[0]!.sign);
+    expect(f.state().decorationBlueprintResources[0]!.blueprint.voxels[1]!.campfire).toEqual(enriched.voxels[1]!.campfire);
 
     const conflicting = structuredClone(enriched);
     conflicting.voxels[0]!.sourceBlockState = { facing: "south" };
     expect(f.run({ type: "ImportDecorationBlueprint", blueprint: conflicting })).toMatchObject({ ok: false, code: "INVALID_INPUT" });
+    const conflictingSign = structuredClone(enriched);
+    conflictingSign.voxels[0]!.sign!.front.lines[0] = "Different";
+    expect(f.run({ type: "ImportDecorationBlueprint", blueprint: conflictingSign })).toMatchObject({ ok: false, code: "INVALID_INPUT" });
   });
 });
 
@@ -284,7 +300,7 @@ describe("project lifecycle and ownership", () => {
       { name: "mismatched ID", blueprintId: "different", blueprint: importedBlueprint() },
       { name: "duplicate coordinate", blueprintId: "imported-house", blueprint: { ...importedBlueprint(), voxels: [importedBlueprint().voxels[0]!, importedBlueprint().voxels[0]!] } },
       { name: "inexact bounds", blueprintId: "imported-house", blueprint: { ...importedBlueprint(), bounds: { ...importedBlueprint().bounds, maxX: 2 } } },
-      { name: "oversize footprint", blueprintId: "imported-house", blueprint: { ...importedBlueprint(), bounds: { minX: 0, maxX: 48, minY: 0, maxY: 0, minZ: 0, maxZ: 0 }, voxels: [importedBlueprint().voxels[0]!, { ...importedBlueprint().voxels[1]!, x: 48 }] } },
+      { name: "oversize footprint", blueprintId: "imported-house", blueprint: { ...importedBlueprint(), bounds: { minX: 0, maxX: 96, minY: 0, maxY: 0, minZ: 0, maxZ: 0 }, voxels: [importedBlueprint().voxels[0]!, { ...importedBlueprint().voxels[1]!, x: 96 }] } },
       { name: "invalid build order", blueprintId: "imported-house", blueprint: { ...importedBlueprint(), voxels: [importedBlueprint().voxels[0]!, { ...importedBlueprint().voxels[1]!, buildOrder: 10_001 }] } },
     ];
     for (const item of cases) {
@@ -297,22 +313,25 @@ describe("project lifecycle and ownership", () => {
     }
   });
 
-  it("accepts imported blueprints at the 48 by 48 footprint and 128 height limits", () => {
+  it("accepts imported blueprints at the 96 by 96 footprint and 256 height limits through backup recovery", () => {
     const f = fixture();
     const blueprint = {
       schemaVersion: 1 as const,
       id: "boundary-blueprint",
       title: "Boundary blueprint",
-      bounds: { minX: 0, maxX: 47, minY: 0, maxY: 127, minZ: 0, maxZ: 47 },
+      bounds: { minX: 0, maxX: 95, minY: 0, maxY: 255, minZ: 0, maxZ: 95 },
       voxels: [
         { x: 0, y: 0, z: 0, materialId: "stone" as const, stage: "foundation" as const, buildOrder: 0 },
-        { x: 47, y: 127, z: 47, materialId: "accent" as const, stage: "details" as const, buildOrder: 10_000 },
+        { x: 95, y: 255, z: 95, materialId: "accent" as const, stage: "details" as const, buildOrder: 10_000 },
       ],
     };
     expect(f.run({
       type: "CreateProject", projectId: "boundary", title: "Boundary", blueprintId: blueprint.id,
       importedBlueprint: blueprint, subtasks: [{ id: "step", title: "Step" }],
     })).toMatchObject({ ok: true });
+    const exportedBackup = JSON.stringify(f.state());
+    const recovered = parseDomainState(JSON.parse(exportedBackup));
+    expect(recovered.projects.find((project) => project.id === "boundary")?.importedBlueprint?.bounds).toEqual(blueprint.bounds);
   });
 
   it("pauses the current project when creating another and switches without losing ownership", () => {
@@ -664,7 +683,7 @@ describe("focus completion and goals", () => {
 describe("focus integrity", () => {
   it("defaults to enabled with failure on the third effective excursion", () => {
     const f = fixture(); f.create("p1", ["a"]);
-    expect(f.state().focusIntegrityPolicy).toEqual({ enabled: true, maxEffectiveExcursions: 3 });
+    expect(f.state().focusIntegrityPolicy).toEqual({ enabled: true, maxEffectiveExcursions: 3, excursionThresholdSeconds: 3 });
     f.run({ type: "StartFocus", sessionId: "focus", subtaskId: "a", plannedDurationMs: 60_000 });
 
     for (let count = 1; count <= 3; count += 1) {
@@ -742,7 +761,7 @@ describe("focus integrity", () => {
     const f = fixture(); f.create("p1", ["a"]);
     for (const maxEffectiveExcursions of [1, 2, 3, 4, 5]) {
       expect(f.run({ type: "ConfigureFocusIntegrity", enabled: false, maxEffectiveExcursions })).toMatchObject({ ok: true });
-      expect(f.state().focusIntegrityPolicy).toEqual({ enabled: false, maxEffectiveExcursions });
+      expect(f.state().focusIntegrityPolicy).toEqual({ enabled: false, maxEffectiveExcursions, excursionThresholdSeconds: 3 });
     }
     for (const maxEffectiveExcursions of [0, 6, 1.5]) {
       expect(f.run({ type: "ConfigureFocusIntegrity", enabled: true, maxEffectiveExcursions })).toMatchObject({ ok: false, code: "INVALID_INPUT" });
