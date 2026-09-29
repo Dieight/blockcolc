@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import type { ApplicationCommand, ApplicationResult, ApplicationService } from '@tomato-clock/application';
-import { completedPomodorosOn, dailyGoalForDate, localDateOf } from '@tomato-clock/domain';
-import type { ResourcePackRepository } from '@tomato-clock/resource-pack-indexeddb';
-import { localDateForDate, weatherForLocalDate, type WeatherState } from '@tomato-clock/voxel';
+import type { ApplicationCommand, ApplicationResult, ApplicationService } from '@blockcolc/application';
+import { completedPomodorosOn, dailyGoalForDate, localDateOf, type FocusInterruptionCategory } from '@blockcolc/domain';
+import type { ResourcePackRepository } from '@blockcolc/resource-pack-indexeddb';
+import { localDateForDate, weatherForLocalDate, type WeatherState } from '@blockcolc/voxel';
 import { Minimize2, ListTodo, AlertTriangle, Clock3, Square } from 'lucide-react';
 import type { FocusPreferences } from './app-types';
 import type { RecordedIntegrityNotice } from './application-lifecycle';
@@ -19,6 +19,7 @@ import { marathonEndInstant } from './marathon-end-time';
 import { WorldCanvasV7 } from './WorldCanvasV7';
 import { localWeatherConditionLabel, WorldWeatherAttribution } from './WorldWeatherStatus';
 import type { WorldWeatherView } from './use-world-weather';
+import type { WorldDebugProjection } from './world-debug';
 import { FocusFace } from './ui/FocusFace';
 import { MinimalClockGesture } from './ui/MinimalClockGesture';
 import { MinimalBreakClock } from './ui/MinimalBreakClock';
@@ -38,13 +39,14 @@ function breakPlanIdentity(plan: RoundPlan | null): string | null {
 }
 function immersiveBandTestOverride():{bottom:number;right:number}|undefined{if(!testBuildEnabled())return undefined;const read=(key:string)=>{const raw=new URLSearchParams(location.search).get(key);if(raw===null)return undefined;const value=Number(raw);return Number.isFinite(value)&&value>=0&&value<=0.75?value:undefined;};const bottom=read('__immersiveBand');const right=read('__immersiveRightBand');if(bottom===undefined&&right===undefined)return undefined;return{bottom:bottom??0,right:right??0};}
 
-export function WorldScreenV7({ service, resourcePacks, run, refresh, onReconcileFocus, preferences, worldWeather, minimalWanted, fullDeferredPresentation, onMinimalPresentationChange, onImmersiveLayoutChange, onExitMinimal, onEnterMinimal, recordedIntegrityNotice, focusedProjectId, memoryProjectId, onFocusWorldProject, onClearWorldFocus, onCloseWorldMemory, onOpenTasks, visible }: {
+export function WorldScreenV7({ service, resourcePacks, run, refresh, onReconcileFocus, preferences, worldWeather, worldDebug = null, minimalWanted, fullDeferredPresentation, onMinimalPresentationChange, onImmersiveLayoutChange, onExitMinimal, onEnterMinimal, recordedIntegrityNotice, focusedProjectId, memoryProjectId, onFocusWorldProject, onClearWorldFocus, onCloseWorldMemory, onOpenTasks, visible }: {
   service: ApplicationService;
   resourcePacks: ResourcePackRepository;
   run: (command: ApplicationCommand) => Promise<ApplicationResult>;
   refresh: () => void;
   preferences: FocusPreferences;
   worldWeather: WorldWeatherView;
+  worldDebug?: WorldDebugProjection | null;
   onReconcileFocus: () => Promise<void>;
   minimalWanted: boolean;
   fullDeferredPresentation: boolean;
@@ -156,8 +158,25 @@ export function WorldScreenV7({ service, resourcePacks, run, refresh, onReconcil
   // is also when the construction blocks land), not when a session merely ends.
   const fireConstructionFeedback = useCallback(() => {
     setConstructionFeedback((value) => value + 1);
-    window.setTimeout(() => setConstructionFeedback(0), 1800);
   }, []);
+  // Start its lifetime only after the submitted world has had a chance to
+  // paint. A large projection can otherwise consume the entire 1.8 s while
+  // React is still committing, leaving no visible acknowledgement.
+  useEffect(() => {
+    if (constructionFeedback === 0) return;
+    let secondFrame = 0;
+    let timeout = 0;
+    const firstFrame = window.requestAnimationFrame(() => {
+      secondFrame = window.requestAnimationFrame(() => {
+        timeout = window.setTimeout(() => setConstructionFeedback(0), 1800);
+      });
+    });
+    return () => {
+      window.cancelAnimationFrame(firstFrame);
+      if (secondFrame) window.cancelAnimationFrame(secondFrame);
+      if (timeout) window.clearTimeout(timeout);
+    };
+  }, [constructionFeedback]);
 
   const pending = active.unreportedCompletedSessions;
   const habitAwaiting = isHabit && habit?.awaitingNextBuilding === true;
@@ -167,6 +186,7 @@ export function WorldScreenV7({ service, resourcePacks, run, refresh, onReconcil
     minimalIdle, planHostProject, planHostIsHabit, marathonPlan, marathonReportPhase, activePendingBlocksWorkbench,
     activeHabitAwaitingBlocksWorkbench } = focusView;
   const [panelWeather, setPanelWeather] = useState<WeatherState | null>(null);
+  const effectiveWeatherOverride = worldDebug?.weather ?? worldWeather.override;
   const localWeather = weatherForLocalDate(localDateForDate(new Date()), state.worldSettings.environmentStyle === 'ocean-island');
   useEffect(() => {
     if (!visible || !minimalIdle) { setPanelWeather(null); return; }
@@ -174,16 +194,16 @@ export function WorldScreenV7({ service, resourcePacks, run, refresh, onReconcil
     const refresh = () => {
       void loadVoxelModule().then(({ localDateForDate, weatherForExternalOverride, weatherForLocalDate }) => {
         if (!activeEffect) return;
-        const localDate = localDateForDate(new Date());
-        setPanelWeather(worldWeather.override
-          ? weatherForExternalOverride(localDate, worldWeather.override)
+        const localDate = localDateForDate(new Date(worldDebug?.date ?? Date.now()));
+        setPanelWeather(effectiveWeatherOverride
+          ? weatherForExternalOverride(localDate, effectiveWeatherOverride)
           : weatherForLocalDate(localDate, state.worldSettings.environmentStyle === 'ocean-island'));
       }).catch(error => { if (activeEffect) console.warn('Minimal panel weather unavailable', error); });
     };
     refresh();
     const interval = window.setInterval(refresh, 60_000);
     return () => { activeEffect = false; window.clearInterval(interval); };
-  }, [visible, minimalIdle, worldWeather.override, state.worldSettings.environmentStyle]);
+  }, [visible, minimalIdle, effectiveWeatherOverride, worldDebug?.date, state.worldSettings.environmentStyle]);
   // A ready or break plan is already on the shared immersive face. Keep the
   // editable workbench heading/context for true idle only; otherwise a locked
   // marathon would render its host task and the old plan summary above the
@@ -210,9 +230,10 @@ export function WorldScreenV7({ service, resourcePacks, run, refresh, onReconcil
     clearBreakReminder();
     void startFocus();
   }, [clearBreakReminder, startFocus]);
-  const cancelPlanWithReminder = useCallback(() => {
-    clearBreakReminder();
-    return cancelPlan();
+  const cancelPlanWithReminder = useCallback(async (reason: FocusInterruptionCategory | null, note: string) => {
+    const cancelled = await cancelPlan(reason, note);
+    if (cancelled) clearBreakReminder();
+    return cancelled;
   }, [cancelPlan, clearBreakReminder]);
   const minimalFlow = useMinimalFocus({service,preferences,idleVisible:visible && minimalIdle,
     readPlan: () => reconcileRoundPlan(readPlan(), service.snapshot(), service.snapshot().activeProjectId ?? active.project.id, Date.now(), preferences.breakMinutes * 60_000, preferences.breakMinutes * 60_000),
@@ -464,13 +485,24 @@ export function WorldScreenV7({ service, resourcePacks, run, refresh, onReconcil
 
   return <div data-minimal-mode={minimal ? 'true' : 'false'} className={isImmersiveLayout ? 'world-screen is-focusing' : marathonReportPhase ? 'world-screen has-report' : activePendingBlocksWorkbench ? 'world-screen has-report' : activeHabitAwaitingBlocksWorkbench ? 'world-screen is-choosing-habit-building' : 'world-screen'}>
     <div className="world-stage">
-      <WorldCanvasV7 service={service} resourcePacks={resourcePacks} lightingQuality={preferences.lightingQuality} constructionOutlineVisibility={preferences.constructionOutlineVisibility} showWorldCoordinates={preferences.showWorldCoordinates} environmentStyle={state.worldSettings.environmentStyle} worldSeed={state.worldSettings.worldSeed} terrainGenerationVersion={state.worldSettings.terrainGenerationVersion} constructionFeedback={constructionFeedback} sessionActive={!!session} immersivePresentation={isImmersiveLayout} immersiveBand={immersiveBand} externalWeatherOverride={worldWeather.override} focusedProjectId={focusedProjectId} memoryProjectId={memoryProjectId} onSelectProject={onFocusWorldProject} onClearWorldFocus={onClearWorldFocus} onCloseMemory={onCloseWorldMemory} onContinueProject={async(projectId)=>{if(projectId!==active.project.id){const result=await run({type:'SwitchActiveProject',projectId});if(!result?.ok)return;}onCloseWorldMemory();}} switchBlockedReason={session?'结束本轮专注后才能切换任务。':pending.length>0?'先完成当前任务的进度汇报，再切换任务。':undefined} visible={visible} onPickTerrain={setPickedCell} pickedCell={pickedCell}/>
+      <WorldCanvasV7 service={service} resourcePacks={resourcePacks} lightingQuality={preferences.lightingQuality}
+        constructionOutlineVisibility={preferences.constructionOutlineVisibility} showWorldCoordinates={preferences.showWorldCoordinates}
+        environmentStyle={state.worldSettings.environmentStyle} worldSeed={state.worldSettings.worldSeed}
+        terrainGenerationVersion={state.worldSettings.terrainGenerationVersion} constructionFeedback={constructionFeedback}
+        sessionActive={!!session} immersivePresentation={isImmersiveLayout} immersiveBand={immersiveBand}
+        externalWeatherOverride={worldWeather.override} astronomyContext={worldWeather.astronomyContext ?? null} worldDebug={worldDebug}
+        openingProjectId={minimalWanted || marathonPlan || planMode === 'marathon' ? null : active.project.id}
+        focusedProjectId={focusedProjectId} memoryProjectId={memoryProjectId} onSelectProject={onFocusWorldProject}
+        onClearWorldFocus={onClearWorldFocus} onCloseMemory={onCloseWorldMemory}
+        onContinueProject={async(projectId)=>{if(projectId!==active.project.id){const result=await run({type:'SwitchActiveProject',projectId});if(!result?.ok)return;}onCloseWorldMemory();}}
+        switchBlockedReason={session?'结束本轮专注后才能切换任务。':pending.length>0?'先完成当前任务的进度汇报，再切换任务。':undefined}
+        visible={visible} onPickTerrain={setPickedCell} pickedCell={pickedCell}/>
       <WorldWeatherAttribution view={worldWeather} localConditionText={localWeatherConditionLabel(localWeather.kind)}/>
     </div>
     {visible && <section ref={focusPanelRef} className="focus-panel focus-workbench-panel" onPointerUp={(event) => handlePanelTap({ target: event.target, clientX: event.clientX, clientY: event.clientY })}>
       <MinimalPanelWeatherOverlay active={minimalIdle} weather={panelWeather ? { kind: panelWeather.kind,
-        precipitationIntensity: panelWeather.precipitationIntensity, seed: panelWeather.seed,
-        thunderstorm: worldWeather.thunderstorm === true } : null}/>
+        precipitationIntensity: panelWeather.precipitationIntensity, visualPrecipitationIntensity: panelWeather.visualPrecipitationIntensity, seed: panelWeather.seed,
+        thunderstorm: panelWeather.thunderstorm } : null}/>
       {showIdleWorkbench && <div className="workbench-heading">
         <h1>{marathonPlan ? '按结束时间排程' : active.project.title}</h1>
         <div className="workbench-heading-actions">
@@ -491,11 +523,11 @@ export function WorldScreenV7({ service, resourcePacks, run, refresh, onReconcil
            timer={<MinimalBreakClock phase={minimalBreak ? 'break' : 'ready'} busy={continuing} onContinue={() => void continueFromBreak()}><FocusTimer mode={minimalBreak ? 'break' : 'ready'} endsAt={minimalBreak ? timerEndsAt : undefined} fallbackMs={minimalBreak ? 0 : remainingTotalMs ?? 0} onElapsed={finishBreak}/></MinimalBreakClock>}
            controls={null}/>
          : minimalIdle ? <MinimalIdleCarousel state={state} date={today}
-          clock={<MinimalClockGesture clockText={minimalFlow.clockText} busy={minimalFlow.busy} onConfirm={endMs => void minimalFlow.startAt(endMs)}/>}
+          clock={<MinimalClockGesture clockText={minimalFlow.clockText} busy={minimalFlow.busy} focusMinutes={preferences.focusMinutes} breakMinutes={preferences.breakMinutes} onConfirm={endMs => void minimalFlow.startAt(endMs)}/>}
           exit={<button type="button" className={`minimal-exit${idleExitRevealed ? '' : ' is-veiled'}`} disabled={minimalFlow.busy} onClick={onExitMinimal}>返回完整模式</button>}/>
         : activeHabitAwaitingBlocksWorkbench ? <HabitBuildingSelection state={state} active={active} resourcePacks={resourcePacks} run={run} targetRounds={preferences.habitTargetRounds}/>
-        : marathonReportPhase ? <MarathonProgressReport state={state} hostProjectId={reconciledPlan!.projectId} run={run} onSubmitted={flow.afterMarathonReport}/>
-         : pending.length > 0 && !marathonPlan ? <ProgressReportV7 active={active} run={run} onSubmitted={afterReport}/> : <>
+        : marathonReportPhase ? <MarathonProgressReport variant="immersive" state={state} hostProjectId={reconciledPlan!.projectId} run={run} cancellationReason={reconciledPlan?.cancellationReason} cancellationNote={reconciledPlan?.cancellationNote} onSubmitted={flow.afterMarathonReport}/>
+         : pending.length > 0 && !marathonPlan ? <ProgressReportV7 variant="immersive" active={active} run={run} cancellationReason={reconciledPlan?.cancellationReason} cancellationNote={reconciledPlan?.cancellationNote} onSubmitted={afterReport}/> : <>
          {(session && state.focusIntegrityPolicy.enabled && integrityNotice?.sessionId === session.id) && <div className={`${integrityNotice.count > 0 ? 'focus-integrity-warning flash active' : 'focus-integrity-warning flash'}${integrityLeaving ? ' is-leaving' : ''}`} role="status"><AlertTriangle/>有效离开 {integrityNotice.count} / {integrityNotice.max} 次</div>}
          {integrityFailure && !integrityEndedHidden && <div className={`focus-integrity-ended${integrityEndedLeaving ? ' is-leaving' : ''}`} role="alert"><AlertTriangle/>本轮专注因达到离开应用次数上限而结束。下次可以从这里继续。</div>}
         {/* 用户指示：极简中因中断（达到离开次数上限）结束本轮后，提供退出极简模式
@@ -523,11 +555,11 @@ export function WorldScreenV7({ service, resourcePacks, run, refresh, onReconcil
     </section>}
     {ending && session && (
       <div className={endingLeaving ? 'dialog-leave' : undefined}>
-        <EndFocusDialog taskTitle={planHostIsHabit ? planHostProject?.title ?? active.project.title : marathonPlan ? `马拉松 第 ${(reconciledPlan?.completedRounds ?? 0) + 1} / ${reconciledPlan?.totalRounds ?? 1} 轮` : subtask!.title} habit={planHostIsHabit} marathon={reconciledPlan?.mode === 'marathon'} isLastMarathonRound={reconciledPlan?.mode === 'marathon' && (reconciledPlan?.completedRounds ?? 0) + 1 >= (reconciledPlan?.totalRounds ?? 1)} onClose={closeEnding} onInterrupt={interruptFocus} onCompleteEarly={completeEarly}/>
+        <EndFocusDialog taskTitle={planHostIsHabit ? planHostProject?.title ?? active.project.title : marathonPlan ? `马拉松 第 ${(reconciledPlan?.completedRounds ?? 0) + 1} / ${reconciledPlan?.totalRounds ?? 1} 轮` : subtask!.title} habit={planHostIsHabit} marathon={reconciledPlan?.mode === 'marathon'} isLastMarathonRound={reconciledPlan?.mode === 'marathon' && (reconciledPlan?.completedRounds ?? 0) + 1 >= (reconciledPlan?.totalRounds ?? 1)} multiRound={(reconciledPlan?.totalRounds ?? 1) > 1} cancellationReason={reconciledPlan?.cancellationReason} cancellationNote={reconciledPlan?.cancellationNote} onCancelPlan={cancelPlanWithReminder} onClose={closeEnding} onInterrupt={interruptFocus} onCompleteEarly={completeEarly}/>
       </div>
     )}
     {(planOpen || planLeaving) && !session && <div className={planLeaving ? 'dialog-leave' : undefined}>{planHostIsHabit
-      ? <HabitFocusPlanSheet rounds={rounds} focusMinutes={(reconciledPlan?.mode ?? planMode) === 'marathon' ? preferences.focusMinutes : preferences.habitFocusMinutes} breakMinutes={preferences.breakMinutes} locked={Boolean(reconciledPlan)} mode={reconciledPlan?.mode ?? planMode} endAtDraft={endAtDraft} onModeChange={setPlanMode} onEndAtDraftChange={setEndAtDraft} onRoundsChange={setRounds} onClose={closePlan} onConfirm={confirmPlan} onCancelPlan={cancelPlanWithReminder}/>
-      : <FocusPlanSheet subtasks={active.project.subtasks} selectedId={reconciledPlan?.subtaskId ?? selected!} rounds={rounds} focusMinutes={preferences.focusMinutes} breakMinutes={preferences.breakMinutes} locked={Boolean(reconciledPlan)} mode={reconciledPlan?.mode ?? planMode} endAtDraft={endAtDraft} onModeChange={setPlanMode} onEndAtDraftChange={setEndAtDraft} onSelect={setSelected} onRoundsChange={setRounds} onClose={closePlan} onConfirm={confirmPlan} onCancelPlan={cancelPlanWithReminder}/>}</div>}
+      ? <HabitFocusPlanSheet rounds={rounds} focusMinutes={(reconciledPlan?.mode ?? planMode) === 'marathon' ? preferences.focusMinutes : preferences.habitFocusMinutes} breakMinutes={preferences.breakMinutes} locked={Boolean(reconciledPlan)} mode={reconciledPlan?.mode ?? planMode} endAtDraft={endAtDraft} cancellationReason={reconciledPlan?.cancellationReason} cancellationNote={reconciledPlan?.cancellationNote} onModeChange={setPlanMode} onEndAtDraftChange={setEndAtDraft} onRoundsChange={setRounds} onClose={closePlan} onConfirm={confirmPlan} onCancelPlan={cancelPlanWithReminder}/>
+      : <FocusPlanSheet subtasks={active.project.subtasks} selectedId={reconciledPlan?.subtaskId ?? selected!} rounds={rounds} focusMinutes={preferences.focusMinutes} breakMinutes={preferences.breakMinutes} locked={Boolean(reconciledPlan)} mode={reconciledPlan?.mode ?? planMode} endAtDraft={endAtDraft} cancellationReason={reconciledPlan?.cancellationReason} cancellationNote={reconciledPlan?.cancellationNote} onModeChange={setPlanMode} onEndAtDraftChange={setEndAtDraft} onSelect={setSelected} onRoundsChange={setRounds} onClose={closePlan} onConfirm={confirmPlan} onCancelPlan={cancelPlanWithReminder}/>}</div>}
   </div>;
 }

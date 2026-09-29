@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import type { QWeatherFailureReason } from '@tomato-clock/platform-capacitor';
-import type { WeatherKind } from '@tomato-clock/voxel';
+import type { QWeatherFailureReason } from '@blockcolc/platform-capacitor';
+import type { WeatherKind } from '@blockcolc/voxel';
 import { isWorldWeatherFailureRetryable, type WorldWeatherView } from './use-world-weather';
 import './styles/world-weather.css';
 
@@ -81,6 +81,8 @@ function formatObservedAt(value: string | null): string | null {
 export function WorldWeatherSettingsStatus({ enabled, view }: { enabled: boolean; view: WorldWeatherView }) {
   const attributions = view.attributions.map(safeAttribution)
     .filter((value): value is NonNullable<typeof value> => value !== null);
+  const astronomyAttributions = (view.astronomyContext?.schedule?.attribution ?? []).map(safeAttribution)
+    .filter((value): value is NonNullable<typeof value> => value !== null);
   const observedAt = formatObservedAt(view.observedAt);
   const manualRetry = view.fallbackReason !== null && !isWorldWeatherFailureRetryable(view.fallbackReason);
   const status = !enabled
@@ -93,15 +95,33 @@ export function WorldWeatherSettingsStatus({ enabled, view }: { enabled: boolean
         ? '尚未同步 · 返回计时页后开始获取'
         : view.syncState === 'syncing'
           ? '正在同步现实天气 · 当前暂用本地天气'
-          : `${failureLabel(view.fallbackReason)} · 当前使用本地天气${manualRetry ? ' · 已暂停自动重试；处理后关闭并重新开启天气同步' : ''}`;
+      : `${failureLabel(view.fallbackReason)} · 当前使用本地天气${manualRetry ? ' · 已暂停自动重试；处理后关闭并重新开启天气同步' : ''}`;
+  const astronomyStatus = !enabled
+    ? '天文增强已关闭'
+    : view.astronomySyncState === 'calendar'
+      ? '天文日历已同步 · 日月方向按本地时间连续计算'
+      : view.astronomySyncState === 'ephemeris_only'
+        ? '日历暂不可用 · 按已授权位置本地历算'
+        : view.astronomySyncState === 'syncing'
+          ? '正在获取天文日历'
+          : view.astronomySyncState === 'unavailable'
+            ? '天文位置不可用 · 聚落继续使用本地光照'
+            : '天文日历尚未同步';
 
   return <div className="weather-setting-status" role="status" aria-live="polite">
     <small>{status}</small>
+    <small className="weather-astronomy-status">{astronomyStatus}</small>
     {enabled && view.source === 'real' && <div className="weather-setting-attribution">
       <span>来源：</span>
       <a href="https://www.qweather.com" target="_blank" rel="noopener noreferrer">和风天气</a>
       {attributions.map((item, index) => item.href
         ? <a key={`${item.text}-${index}`} href={item.href} target="_blank" rel="noopener noreferrer" aria-label={`查看天气数据归因 ${index + 1}`}>数据归因 ↗</a>
+        : <span key={`${item.text}-${index}`}>{item.text}</span>)}
+    </div>}
+    {enabled && view.astronomySyncState === 'calendar' && astronomyAttributions.length > 0 && <div className="weather-setting-attribution">
+      <span>天文数据：</span>
+      {astronomyAttributions.map((item, index) => item.href
+        ? <a key={`${item.text}-${index}`} href={item.href} target="_blank" rel="noopener noreferrer" aria-label={`查看天文数据归因 ${index + 1}`}>数据归因 ↗</a>
         : <span key={`${item.text}-${index}`}>{item.text}</span>)}
     </div>}
   </div>;

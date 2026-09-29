@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { parseJava16xResourcePack } from "@tomato-clock/resource-pack";
+import { parseJava16xResourcePack } from "@blockcolc/resource-pack";
 import { expect, it } from "vitest";
 import { builtinMaterialBlockId } from "../src/original-materials";
 import { buildResourcePackAtlas, planTexturedVoxel, resolvePackTileRect } from "../src/resource-textures";

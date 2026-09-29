@@ -1,14 +1,29 @@
 import { useMemo, useRef, useState } from 'react';
-import type { ApplicationCommand, ApplicationResult, ApplicationService } from '@tomato-clock/application';
+import type { ApplicationCommand, ApplicationResult, ApplicationService } from '@blockcolc/application';
+import type { FocusInterruptionCategory } from '@blockcolc/domain';
 import { Check } from 'lucide-react';
 import { unsettledMarathonSessions } from './marathon-settlement';
+import type { CommandRunnerOptions } from './command-runner';
+import { beginFocusSubmission } from './submission-performance';
 
-export function ProgressReportV7({active,run,onSubmitted}:{active:NonNullable<ReturnType<ApplicationService['activeProjectProjection']>>;run:(c:ApplicationCommand)=>Promise<ApplicationResult>;onSubmitted:(sessionId:string)=>void}) {
+export type FocusReportVariant = 'embedded' | 'immersive';
+export function focusReportSurfaceClass(variant: FocusReportVariant = 'embedded'): string {
+  return `focus-report-surface${variant === 'immersive' ? ' focus-report-surface--immersive' : ''}`;
+}
+
+export async function submitFocusProgressReport({command,run,onSubmitted}:{command:Extract<ApplicationCommand,{type:'ReportSubtaskProgress'}>;run:(command:ApplicationCommand,options?:CommandRunnerOptions)=>Promise<ApplicationResult>;onSubmitted:()=>void}):Promise<ApplicationResult>{
+  const submissionToken=beginFocusSubmission('progress');
+  const result=await run(command,{submissionToken});
+  if(result.ok)onSubmitted();
+  return result;
+}
+
+export function ProgressReportV7({active,run,onSubmitted,variant='embedded',cancellationReason,cancellationNote}:{active:NonNullable<ReturnType<ApplicationService['activeProjectProjection']>>;run:(c:ApplicationCommand,options?:CommandRunnerOptions)=>Promise<ApplicationResult>;onSubmitted:(sessionId:string)=>void;variant?:FocusReportVariant;cancellationReason?:FocusInterruptionCategory|null;cancellationNote?:string}) {
   const session=active.unreportedCompletedSessions[0]!;
   const task=active.project.subtasks.find((subtask)=>subtask.id===session.subtaskId)!;
   const options=[task.progressBasisPoints,2500,5000,7500,10000].filter((value,index,all)=>value>=task.progressBasisPoints&&all.indexOf(value)===index);
-  const submit=async(value:number)=>{const result=await run({type:'ReportSubtaskProgress',subtaskId:task.id,focusSessionIds:[session.id],progressBasisPoints:value});if(result?.ok)onSubmitted(session.id);};
-  return <div className="report progress-report-panel"><Check/><span className="eyebrow">本轮已记录</span><h2>这次工作推进到哪里？</h2><p><strong>{task.title}</strong><br/>当前总进度 {Math.round(task.progressBasisPoints/100)}%。提交后会更新建筑的永久施工阶段。</p><div className="report-options">{options.map((value)=><button key={value} onClick={()=>void submit(value)}>{value===task.progressBasisPoints?`保持 ${value/100}%`:value===10000?'完成小任务':`推进至 ${value/100}%`}</button>)}</div></div>;
+  const submit=async(value:number)=>{await submitFocusProgressReport({command:{type:'ReportSubtaskProgress',subtaskId:task.id,focusSessionIds:[session.id],progressBasisPoints:value},run,onSubmitted:()=>onSubmitted(session.id)});};
+  return <div className={`report progress-report-panel ${focusReportSurfaceClass(variant)}`} data-focus-report-variant={variant}><Check/><span className="eyebrow">本轮已记录</span><h2>这次工作推进到哪里？</h2><p><strong>{task.title}</strong><br/>当前总进度 {Math.round(task.progressBasisPoints/100)}%。提交后会更新建筑的永久施工阶段。</p>{cancellationReason && <p className="plan-sheet-note">本次结束原因：{focusInterruptionCategoryLabel(cancellationReason)}</p>}{cancellationNote && <p className="plan-sheet-note">补充说明：{cancellationNote}</p>}<div className="report-options">{options.map((value)=><button key={value} onClick={()=>void submit(value)}>{value===task.progressBasisPoints?`保持 ${value/100}%`:value===10000?'完成小任务':`推进至 ${value/100}%`}</button>)}</div></div>;
 }
 
 type MarathonReportCommand = Extract<ApplicationCommand, { type: 'ReportMarathonFocus' }>;
@@ -85,6 +100,21 @@ export async function submitMarathonReportOnce({
   }
 }
 
+export function submitFocusMarathonReport({busyRef,setBusy,canSubmit,run,command,onSubmitted}:{
+  busyRef:{current:boolean};
+  setBusy:(busy:boolean)=>void;
+  canSubmit:boolean;
+  run:(command:ApplicationCommand,options?:CommandRunnerOptions)=>Promise<ApplicationResult>;
+  command:MarathonReportCommand|null;
+  onSubmitted:()=>void;
+}):Promise<'submitted'|'failed'|'ignored'>{
+  const submissionToken=command===null||busyRef.current||!canSubmit?null:beginFocusSubmission('marathon');
+  return submitMarathonReportOnce({
+    busyRef,setBusy,canSubmit,command,onSubmitted,
+    run:nextCommand=>run(nextCommand,{submissionToken}),
+  });
+}
+
 // F19 marathon settlement report: after every scheduled round (or when the
 // locked plan is cancelled) the user attributes completed rounds across ALL
 // projects at once. Every stepper starts at zero. The command carries round
@@ -96,11 +126,14 @@ export async function submitMarathonReportOnce({
  * plan return straight to the classic lane even after earlier rounds were
  * allocated to habits (the old code re-surfaced them as if unreported).
  */
-export function MarathonProgressReport({ state, hostProjectId, run, onSubmitted }: {
+export function MarathonProgressReport({ state, hostProjectId, run, onSubmitted, variant = 'embedded', cancellationReason, cancellationNote }: {
   state: ReturnType<ApplicationService['snapshot']>;
   hostProjectId: string;
-  run: (command: ApplicationCommand) => Promise<ApplicationResult>;
+  run: (command: ApplicationCommand, options?: CommandRunnerOptions) => Promise<ApplicationResult>;
   onSubmitted: () => void;
+  variant?: FocusReportVariant;
+  cancellationReason?: import('@blockcolc/domain').FocusInterruptionCategory | null;
+  cancellationNote?: string;
 }) {
   // Every round of this plan that still awaits settlement — completed or
   // early-completed marathon rounds that neither a previous settlement nor an
@@ -219,7 +252,7 @@ export function MarathonProgressReport({ state, hostProjectId, run, onSubmitted 
     const habitAllocations = Object.entries(habitRounds)
       .map(([projectId, rounds]) => ({ projectId, rounds }))
       .filter((entry) => entry.rounds > 0);
-    await submitMarathonReportOnce({
+    await submitFocusMarathonReport({
       busyRef,
       setBusy,
       canSubmit,
@@ -233,10 +266,13 @@ export function MarathonProgressReport({ state, hostProjectId, run, onSubmitted 
       onSubmitted,
     });
   };
-  return <div className="report progress-report-panel marathon-progress-report">
+  const reasonLabel = cancellationReason ? focusInterruptionCategoryLabel(cancellationReason) : null;
+  return <div className={`report progress-report-panel marathon-progress-report ${focusReportSurfaceClass(variant)}`} data-focus-report-variant={variant}>
     <Check/>
     <span className="eyebrow">{totalRounds} 轮专注已结束</span>
     <h2>把这次推进汇报给哪些任务？</h2>
+    {reasonLabel && <p className="plan-sheet-note">本次结束原因：{reasonLabel}</p>}
+    {cancellationNote && <p className="plan-sheet-note">补充说明：{cancellationNote}</p>}
     <p>展开任务选择要推进的小任务，并为每个目标明确计入轮数；每轮只归属一个目标。习惯与普通任务共用同一轮次池，按最早完成顺序分配；没有分配的轮次会明确记为未分配。</p>
     {totalRounds === 0
       ? <p className="plan-sheet-note">这次没有需要汇报的轮次，直接结束计划即可。</p>
@@ -285,6 +321,10 @@ export function MarathonProgressReport({ state, hostProjectId, run, onSubmitted 
     {totalRounds > 0 && hasTargets && allocatedRounds < totalRounds && entries.length === 0 && <p className="plan-sheet-note">还有 {totalRounds - allocatedRounds} 轮未分配，可直接提交并明确记为未分配。</p>}
     <button type="button" className="primary marathon-report-submit" disabled={busy || (totalRounds > 0 && hasTargets && !canSubmit)} onClick={() => void submit()}>{totalRounds > 0 && hasTargets ? '一次提交本次推进' : '直接结束计划'}</button>
   </div>;
+}
+
+function focusInterruptionCategoryLabel(reason: FocusInterruptionCategory): string {
+  return ({ 'external-interruption': '外部打扰', 'task-blocked': '任务受阻', fatigue: '需要休息', 'priority-changed': '优先级变化', 'device-or-app': '设备或应用问题', other: '其他' } as const)[reason];
 }
 
 function formatMinutes(milliseconds:number):string {

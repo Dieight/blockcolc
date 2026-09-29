@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createInitialState, execute, type DomainCommand } from '@tomato-clock/domain';
+import { createInitialState, execute, type DomainCommand } from '@blockcolc/domain';
 import { parseRoundPlan, reconcileRoundPlan, roundPlansEqual, type RoundPlan } from './round-plan';
 
 describe('deferred marathon round-plan continuity', () => {

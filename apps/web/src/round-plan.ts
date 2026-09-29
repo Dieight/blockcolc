@@ -1,4 +1,4 @@
-import type { DomainState } from '@tomato-clock/domain';
+import type { DomainState, FocusInterruptionCategory } from '@blockcolc/domain';
 import { unsettledMarathonSessions } from './marathon-settlement';
 
 export interface RoundPlan {
@@ -24,6 +24,12 @@ export interface RoundPlan {
   deferredSettlement?: true;
   /** Chosen marathon end instant (ISO); informational, survives reloads. */
   endAt?: string;
+  /** User-supplied cancellation reason retained until any earned rounds are reported. */
+  cancellationReason?: FocusInterruptionCategory | null;
+  /** Short user-entered context; stays local to a canceled plan until its report commits. */
+  cancellationNote?: string;
+  /** Write-ahead cancellation intent; blocks auto-continuation until reconciliation succeeds. */
+  cancellationRequested?: true;
   /**
    * Durable, plan-scoped user authorization for automatic continuation.
    * Settings only grant this to a plan after explicit opt-in. It deliberately
@@ -134,6 +140,13 @@ export function parseRoundPlan(value: unknown, projectId: string): RoundPlan | n
     : [];
   const mode = candidate.mode === 'marathon' ? 'marathon' : candidate.mode === 'rounds' ? 'rounds' : undefined;
   const endAt = typeof candidate.endAt === 'string' && Number.isFinite(Date.parse(candidate.endAt)) ? candidate.endAt : undefined;
+  const cancellationReason = parseCancellationReason(candidate.cancellationReason);
+  if (candidate.cancellationReason !== undefined && cancellationReason === undefined) return null;
+  if (candidate.cancellationRequested !== undefined && candidate.cancellationRequested !== true) return null;
+  const cancellationNote = typeof candidate.cancellationNote === 'string' && candidate.cancellationNote.trim().length > 0
+    && candidate.cancellationNote.trim().length <= 200 ? candidate.cancellationNote.trim() : undefined;
+  if (candidate.cancellationNote !== undefined && cancellationNote === undefined) return null;
+  if (candidate.cancellationRequested === true && cancellationNote === undefined) return null;
   const automaticContinuation = parseAutomaticContinuation(candidate.automaticContinuation, completedRounds);
   if (candidate.automaticContinuation !== undefined && automaticContinuation === null) return null;
   return {
@@ -150,8 +163,17 @@ export function parseRoundPlan(value: unknown, projectId: string): RoundPlan | n
     ...(mode ? { mode } : {}),
     ...(candidate.deferredSettlement === true ? { deferredSettlement: true } : {}),
     ...(endAt ? { endAt } : {}),
+    ...(candidate.cancellationReason !== undefined ? { cancellationReason } : {}),
+    ...(cancellationNote ? { cancellationNote } : {}),
+    ...(candidate.cancellationRequested === true ? { cancellationRequested: true } : {}),
     ...(automaticContinuation ? { automaticContinuation } : {}),
   };
+}
+
+function parseCancellationReason(value: unknown): FocusInterruptionCategory | null | undefined {
+  if (value === null) return null;
+  return value === 'external-interruption' || value === 'task-blocked' || value === 'fatigue'
+    || value === 'priority-changed' || value === 'device-or-app' || value === 'other' ? value : undefined;
 }
 
 function parseAutomaticContinuation(value: unknown, completedRounds: number): AutomaticContinuationSchedule | null {
@@ -388,6 +410,20 @@ export function reconcileRoundPlan(
   }
   if (plan.projectId !== activeProjectId && plan.mode !== 'marathon') return null;
   const project = state.projects.find((candidate) => candidate.id === plan.projectId);
+  if (plan.cancellationRequested && !active) {
+    if (project?.kind === 'habit' && plan.deferredSettlement !== true) return null;
+    const hasReportableRounds = plan.mode === 'marathon'
+      ? unsettledMarathonSessions(state, plan.projectId).length > 0
+      : state.focusHistory.some(session => session.projectId === plan.projectId && session.status === 'completed'
+        && !state.progressReports.some(report => report.focusSessionIds.includes(session.id)));
+    if (plan.mode === 'marathon' && hasReportableRounds) {
+      return { ...plan, status: 'report', currentSessionId: undefined, breakStartedAt: undefined, breakEndsAt: undefined, endAfterBreak: undefined };
+    }
+    if (!hasReportableRounds) return null;
+    // Ordinary completed rounds still use their established per-round report;
+    // its saved plan marker makes the successful report the cancellation commit.
+    return { ...plan, status: 'ready', currentSessionId: undefined, breakStartedAt: undefined, breakEndsAt: undefined, endAfterBreak: undefined };
+  }
   // The final marathon report is a durable UI phase: once every round is done,
   // keep the plan alive until the user submits the combined progress report.
   // Habit rounds are already settled one by one and never enter that report.
@@ -597,6 +633,9 @@ export function roundPlansEqual(left: RoundPlan | null, right: RoundPlan | null)
     && (left.mode ?? 'rounds') === (right.mode ?? 'rounds')
     && left.deferredSettlement === right.deferredSettlement
     && left.endAt === right.endAt
+    && left.cancellationReason === right.cancellationReason
+    && left.cancellationNote === right.cancellationNote
+    && left.cancellationRequested === right.cancellationRequested
     && automaticContinuationEqual(left.automaticContinuation, right.automaticContinuation);
 }
 

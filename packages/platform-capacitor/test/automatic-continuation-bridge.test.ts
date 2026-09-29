@@ -27,7 +27,16 @@ describe('automatic continuation native bridge', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('registers an absolute deadline and returns its native scheduling result', async () => {
-    const event = { eventId: 'authorization-a:round:2', authorizationId: 'authorization-a', scheduledAtEpochMs: 1234 };
+    const event = {
+      eventId: 'authorization-a:round:2', authorizationId: 'authorization-a', scheduledAtEpochMs: 1234,
+      timeline: {
+        authorizationId: 'authorization-a', projectTitle: 'Work', taskTitle: 'Task',
+        phases: [
+          { kind: 'focus' as const, startsAtEpochMs: 1234, endsAtEpochMs: 2234, round: 2, eventId: 'authorization-a:round:2' },
+          { kind: 'break' as const, startsAtEpochMs: 2234, endsAtEpochMs: 3234, round: 2 },
+        ],
+      },
+    };
     nativePlugin.scheduleAutomaticContinuation.mockResolvedValue({ scheduled: true, exact: false, due: false });
     await expect(scheduleAutomaticContinuation(event)).resolves.toEqual({ scheduled: true, exact: false, due: false });
     expect(nativePlugin.scheduleAutomaticContinuation).toHaveBeenCalledWith(event);

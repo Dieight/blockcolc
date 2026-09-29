@@ -1,20 +1,32 @@
 import { describe, expect, it } from "vitest";
 import { SMALL_WORKSHOP_BLUEPRINT } from "../src/blueprint";
 import {
-  AMBIENT_DECORATION_BUDGETS,
-  ambientDecorationsForWorld,
+  ambientScaleForWeather,
   cloudBudgetForView,
+  cloudAdvectionSpeed,
   conditionVisualForVoxels,
   decorationsForProject,
+  effectiveWeatherOverride,
   fogRangeForView,
   localDateForDate,
   sunlightScaleForWeather,
   weatherForExternalOverride,
   weatherForLocalDate,
   weatherVisualForKind,
+  weatherVisualForWeather,
 } from "../src/environment";
+import { ambientEnvironmentDecorations } from "../src/natural-decorations";
 
 describe("deterministic local environment", () => {
+  it("keeps the external weather active when a debug projection has weather null", () => {
+    const external = { kind: "rain" as const, precipitationIntensity: 0.65 };
+    expect(effectiveWeatherOverride(null, external)).toBe(external);
+    expect(effectiveWeatherOverride(undefined, external)).toBe(external);
+    const debug = { kind: "snow" as const };
+    expect(effectiveWeatherOverride(debug, external)).toBe(debug);
+    expect(effectiveWeatherOverride(debug, null)).toBe(debug);
+  });
+
   it("derives a stable weather state from a local calendar date", () => {
     const first = weatherForLocalDate("2026-07-25");
     expect(weatherForLocalDate("2026-07-25")).toEqual(first);
@@ -23,13 +35,18 @@ describe("deterministic local environment", () => {
   });
 
   it("produces the supported weather range without persisted randomness", () => {
-    const kinds = new Set(
-      Array.from({ length: 120 }, (_, index) => {
+    const weather = Array.from({ length: 365 }, (_, index) => {
         const date = new Date(Date.UTC(2026, 0, index + 1)).toISOString().slice(0, 10);
         return weatherForLocalDate(date).kind;
-      }),
-    );
+      });
+    const kinds = new Set(weather);
     expect(kinds).toEqual(new Set(["clear", "cloudy", "rain", "mist"]));
+    const storms = Array.from({ length: 365 }, (_, index) => {
+      const date = new Date(Date.UTC(2026, 0, index + 1)).toISOString().slice(0, 10);
+      return weatherForLocalDate(date);
+    }).filter(state => state.thunderstorm);
+    expect(storms.length).toBeGreaterThan(0);
+    expect(storms.every(state => state.kind === "rain" && state.cloudIntensity === 1)).toBe(true);
   });
 
   it("rejects impossible dates and formats device-local dates", () => {
@@ -42,8 +59,8 @@ describe("deterministic local environment", () => {
     expect(weatherForLocalDate("2026-07-28").kind).toBe("mist");
     const mist = fogRangeForView("mist", 80, 24);
     const clear = fogRangeForView("clear", 80, 24);
-    expect(mist.near).toBeCloseTo(76.4);
-    expect(mist.far).toBeCloseTo(156.8);
+    expect(mist.near).toBeCloseTo(74.72);
+    expect(mist.far).toBeCloseTo(128);
     expect(mist.near).toBeLessThan(clear.near);
     expect(mist.far).toBeLessThan(clear.far);
     expect(mist.near).toBeGreaterThan(50);
@@ -84,16 +101,32 @@ describe("deterministic local environment", () => {
     expect(sunlightScaleForWeather(noClouds)).toBe(1);
 
     const rain = weatherForExternalOverride(date, { kind: "rain", cloudIntensity: 0.5, precipitationIntensity: 0.25 });
-    expect(rain.rainDropCount).toBe(18);
+    expect(rain.rainDropCount).toBe(40);
     expect(rain.snowFlakeCount).toBe(0);
 
     const snow = weatherForExternalOverride(date, { kind: "snow", cloudIntensity: 1.5, precipitationIntensity: 0.4 });
     expect(snow.cloudIntensity).toBe(1);
     expect(snow.precipitationIntensity).toBe(0.4);
     expect(snow.rainDropCount).toBe(0);
-    expect(snow.snowFlakeCount).toBe(38);
+    expect(snow.snowFlakeCount).toBe(64);
     expect(weatherVisualForKind(snow.kind).tint).not.toBeNull();
     expect(sunlightScaleForWeather(snow)).toBeLessThan(1);
+  });
+
+  it("keeps ordinary rain distinct from explicitly signalled thunder and dims the daytime nonlinearly", () => {
+    const rain = weatherForExternalOverride("2026-09-23", { kind: "rain", cloudIntensity: 0.7, precipitationIntensity: 0.6 });
+    const storm = weatherForExternalOverride("2026-09-23", { kind: "rain", cloudIntensity: 0.7,
+      precipitationIntensity: 0.6, thunderstorm: true });
+    expect(rain.thunderstorm).toBe(false);
+    expect(storm.thunderstorm).toBe(true);
+    expect(weatherVisualForWeather(storm).tint).not.toBe(weatherVisualForWeather(rain).tint);
+    expect(sunlightScaleForWeather(storm)).toBeLessThan(sunlightScaleForWeather(rain));
+    expect(ambientScaleForWeather(storm)).toBeLessThan(ambientScaleForWeather(rain));
+    expect(ambientScaleForWeather(storm, 1)).toBeGreaterThan(ambientScaleForWeather(storm, 0));
+    expect(weatherForExternalOverride("2026-09-23", { kind: "snow", thunderstorm: true }).thunderstorm).toBe(false);
+    expect(sunlightScaleForWeather({ ...rain, kind: "clear", cloudIntensity: 0 })).toBe(1);
+    expect(cloudAdvectionSpeed(storm)).toBeGreaterThan(cloudAdvectionSpeed(rain));
+    expect(cloudAdvectionSpeed(rain)).toBeGreaterThan(cloudAdvectionSpeed({ ...rain, kind: "mist" }));
   });
 });
 
@@ -214,6 +247,15 @@ describe("bounded world follow-up presentation", () => {
     expect(budget.maxInstances).toBe(900);
   });
 
+  it("keeps cloudy sky visibly denser than mist on expanded terrain", () => {
+    const input = { previewMode: false, weatherCloudCount: 9, weatherDensity: 1,
+      contentWidth: 30, contentDepth: 30, visibleWidth: 420, visibleDepth: 380 };
+    const cloudy = cloudBudgetForView({ ...input, weatherKind: "cloudy" });
+    const mist = cloudBudgetForView({ ...input, weatherKind: "mist" });
+    expect(cloudy.cloudCount).toBeGreaterThan(mist.cloudCount * 1.8);
+    expect(cloudy.cloudCount).toBeLessThan(85);
+  });
+
   it("does not create any main-world cloud coverage when clear weather reports zero clouds", () => {
     const budget = cloudBudgetForView({
       previewMode: false,
@@ -228,55 +270,15 @@ describe("bounded world follow-up presentation", () => {
     expect(budget.cloudCount).toBe(0);
   });
 
-  it("derives deterministic environment props without touching reward decorations", () => {
-    const natural = ambientDecorationsForWorld({
-      projectId: "ambient-a",
-      blueprint: SMALL_WORKSHOP_BLUEPRINT,
+  it("keeps earned decorations independent of a natural environment plan", () => {
+    const dates = ["2026-09-20", "2026-09-21", "2026-09-22"];
+    const earned = decorationsForProject("reward-owner", dates, SMALL_WORKSHOP_BLUEPRINT);
+    ambientEnvironmentDecorations({
+      worldSeed: "natural-field",
       environmentStyle: "natural-valley",
-      worldSeed: "seed-a",
+      candidates: [{ x: 12, z: 8, support: "ground" }, { x: -12, z: -8, support: "ground" }],
     });
-    const naturalAgain = ambientDecorationsForWorld({
-      projectId: "ambient-a",
-      blueprint: SMALL_WORKSHOP_BLUEPRINT,
-      environmentStyle: "natural-valley",
-      worldSeed: "seed-a",
-    });
-    const ocean = ambientDecorationsForWorld({
-      projectId: "ambient-a",
-      blueprint: SMALL_WORKSHOP_BLUEPRINT,
-      environmentStyle: "ocean-island",
-      worldSeed: "seed-a",
-    });
-    expect(natural).toEqual(naturalAgain);
-    expect(natural.length).toBeLessThanOrEqual(AMBIENT_DECORATION_BUDGETS["natural-valley"].maxInstances);
-    expect(ocean.length).toBeLessThanOrEqual(AMBIENT_DECORATION_BUDGETS["ocean-island"].maxInstances);
-    expect(natural.some((entry) => entry.kind === "flower" || entry.kind === "grass-tuft")).toBe(true);
-    expect(ocean.filter((entry) => entry.kind === "shipwreck")).toHaveLength(0);
-    expect(natural.filter((entry) => entry.castsShadow).length)
-      .toBeLessThanOrEqual(AMBIENT_DECORATION_BUDGETS["natural-valley"].maxShadowCasters);
-    for (const entry of natural) {
-      const insideX = entry.x >= SMALL_WORKSHOP_BLUEPRINT.bounds.minX && entry.x <= SMALL_WORKSHOP_BLUEPRINT.bounds.maxX;
-      const insideZ = entry.z >= SMALL_WORKSHOP_BLUEPRINT.bounds.minZ && entry.z <= SMALL_WORKSHOP_BLUEPRINT.bounds.maxZ;
-      expect(insideX && insideZ).toBe(false);
-    }
-  });
-
-  it("distributes ambient candidates around all four settlement sides", () => {
-    const candidates = ambientDecorationsForWorld({
-      projectId: "ambient-four-sides",
-      blueprint: SMALL_WORKSHOP_BLUEPRINT,
-      environmentStyle: "classic-island",
-      worldSeed: "visible-props",
-    });
-    const bounds = SMALL_WORKSHOP_BLUEPRINT.bounds;
-    const sides = {
-      east: candidates.some((entry) => entry.x > bounds.maxX),
-      south: candidates.some((entry) => entry.z > bounds.maxZ),
-      west: candidates.some((entry) => entry.x < bounds.minX),
-      north: candidates.some((entry) => entry.z < bounds.minZ),
-    };
-    expect(candidates.length).toBeGreaterThanOrEqual(8);
-    expect(sides).toEqual({ east: true, south: true, west: true, north: true });
+    expect(decorationsForProject("reward-owner", dates, SMALL_WORKSHOP_BLUEPRINT)).toEqual(earned);
   });
 });
 

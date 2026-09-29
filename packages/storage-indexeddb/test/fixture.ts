@@ -1,4 +1,4 @@
-import { createInitialState, execute, type DomainState } from "@tomato-clock/domain";
+import { createInitialState, execute, type DomainState } from "@blockcolc/domain";
 
 export function projectState(title = "Build a portfolio"): DomainState {
   const result = execute(createInitialState("Asia/Shanghai", [0, 6]), {

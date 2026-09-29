@@ -22,6 +22,14 @@ const STONE_BLOCK = /(?:^|:)(?:.*_)?(?:stone|cobblestone|deepslate|tuff|brick|co
 
 export function materialResponseForVoxel(voxel: Pick<BlueprintVoxel, "materialId" | "sourceBlockId">): MaterialResponseKind {
   const source = voxel.sourceBlockId?.toLowerCase() ?? "";
+  const namespace = source.includes(":") ? source.split(":", 1)[0] : "minecraft";
+  const path = source.split(":").pop() ?? "";
+  const componentResponse = path === "stone_button" || path === "stone_pressure_plate"
+    || path === "polished_blackstone_button" || path === "polished_blackstone_pressure_plate"
+    ? "stone"
+    : path === "light_weighted_pressure_plate" || path === "heavy_weighted_pressure_plate"
+      || path === "lantern" || path === "soul_lantern" ? "metal" : undefined;
+  if (componentResponse) return namespace === "minecraft" ? componentResponse : materialResponseForMaterialId(voxel.materialId);
   if (source && GLASS_BLOCK.test(source)) return "glass";
   if (source && METAL_BLOCK.test(source)) return "metal";
   if (source && WOOD_BLOCK.test(source)) return "wood";

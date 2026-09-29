@@ -1,4 +1,4 @@
-import { decodeResourcePackSpecialTexture, type ResourcePackSpecialTexture } from "@tomato-clock/resource-pack";
+import { decodeResourcePackSpecialTexture, type ResourcePackSpecialTexture } from "@blockcolc/resource-pack";
 import * as THREE from "three";
 import type { BlueprintVoxel } from "./blueprint";
 

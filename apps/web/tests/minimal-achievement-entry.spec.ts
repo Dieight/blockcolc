@@ -1,5 +1,5 @@
 import {expect,test,type Locator,type Page} from '@playwright/test';
-import type {DomainState} from '@tomato-clock/domain';
+import type {DomainState} from '@blockcolc/domain';
 
 // This capability test includes setup, two cold loads and a complete focus /
 // settlement loop over software WebGL; keep its budget separate from one-step tests.
@@ -58,7 +58,7 @@ test('settings launches minimal focus, persists it, settles once and shows real 
   if(round+1<total)await page.locator('.minimal-break-clock').press('Enter');
  }
  await expect(page.locator('.marathon-progress-report')).toBeVisible();
- await expect(page.getByRole('navigation',{name:'主导航'})).toBeVisible();
+ await expect(page.getByRole('navigation',{name:'主导航'})).toBeHidden();
  await page.locator('.marathon-progress-report').getByRole('button',{name:'提交本次推进'}).click();
  await expect(page.locator('.minimal-clock-gesture')).toBeVisible();
  expect((await snapshot(page)).focusHistory.every(session=>session.settledAt!==undefined)).toBe(true);
@@ -107,7 +107,7 @@ test('clock drag and double tap stay isolated from the blank-panel exit gesture'
  const box=(await clock.boundingBox())!;
  await page.mouse.move(box.x+box.width/2,box.y+box.height/2);
  await page.mouse.down();
- await page.mouse.move(box.x+box.width/2,box.y+box.height/2-24,{steps:4});
+ await page.mouse.move(box.x+box.width/2,box.y+box.height/2-36,{steps:6});
  await page.mouse.up();
  await expect(clock).toHaveAccessibleName(/专注到今天 16:10/);
  expect((await snapshot(page)).activeFocusSession).toBeNull();
@@ -207,7 +207,7 @@ test('dragging back to now clears the end-time draft and restores the live clock
  const x=box.x+box.width/2,y=box.y+box.height/2;
  await page.mouse.move(x,y);
  await page.mouse.down();
- await page.mouse.move(x,y-24,{steps:4});
+ await page.mouse.move(x,y-36,{steps:6});
  await expect(clock).toHaveAccessibleName(/16:10/);
  await page.mouse.move(x,y,{steps:4});
  await page.mouse.up();

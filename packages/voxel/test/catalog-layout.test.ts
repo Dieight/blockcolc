@@ -124,6 +124,17 @@ describe("built-in blueprint catalog", () => {
     }
   });
 
+  it("fills upper exterior windows on the three stable starter blueprint IDs", () => {
+    expect(SMALL_WORKSHOP_BLUEPRINT.id).toBe("builtin-small-workshop");
+    expect(TIMBER_HOUSE_BLUEPRINT.id).toBe("builtin-timber-house");
+    expect(VILLAGE_CHAPEL_BLUEPRINT.id).toBe("builtin-village-chapel");
+    for (const x of [-2, 2]) for (const z of [-4, 4]) expect(hasVoxel(SMALL_WORKSHOP_BLUEPRINT, x, 4, z, "glass")).toBe(true);
+    for (const x of [-6, 6]) for (const z of [-2, 0, 2]) expect(hasVoxel(TIMBER_HOUSE_BLUEPRINT, x, 7, z, "glass")).toBe(true);
+    for (const x of [-3, 3]) expect(hasVoxel(TIMBER_HOUSE_BLUEPRINT, x, 7, 4, "glass")).toBe(true);
+    for (const x of [-3, 3]) expect(hasVoxel(VILLAGE_CHAPEL_BLUEPRINT, x, 9, 6, "glass")).toBe(true);
+    for (const x of [-2, 2]) for (const z of [3, 10]) expect(hasVoxel(VILLAGE_CHAPEL_BLUEPRINT, x, 9, z, "glass")).toBe(true);
+  });
+
   it("resolves unknown and blank IDs to a non-catalog placeholder", () => {
     expect(resolveBuiltinBlueprint("missing-blueprint")).toBe(UNKNOWN_BLUEPRINT_PLACEHOLDER);
     expect(resolveBuiltinBlueprint("")).toBe(UNKNOWN_BLUEPRINT_PLACEHOLDER);
@@ -239,6 +250,10 @@ function expectTightBoundsAndUniqueCoordinates(blueprint: BlueprintV1): void {
   expect(Math.max(...blueprint.voxels.map((voxel) => voxel.y))).toBe(blueprint.bounds.maxY);
   expect(Math.min(...blueprint.voxels.map((voxel) => voxel.z))).toBe(blueprint.bounds.minZ);
   expect(Math.max(...blueprint.voxels.map((voxel) => voxel.z))).toBe(blueprint.bounds.maxZ);
+}
+
+function hasVoxel(blueprint: BlueprintV1, x: number, y: number, z: number, materialId: BlueprintV1["voxels"][number]["materialId"]): boolean {
+  return blueprint.voxels.some((voxel) => voxel.x === x && voxel.y === y && voxel.z === z && voxel.materialId === materialId);
 }
 
 function shapeFingerprint(blueprint: BlueprintV1): string {

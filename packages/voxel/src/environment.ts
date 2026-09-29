@@ -8,21 +8,36 @@ export type WeatherKind = "clear" | "cloudy" | "rain" | "mist" | "snow";
  */
 export interface ExternalWeatherVisualOverride {
   kind: WeatherKind;
+  /** An explicit provider/debug thunder signal, never inferred from rain alone. */
+  thunderstorm?: boolean;
   /** Cloud cover mapped by the caller from the provider's cloud percentage. */
   cloudIntensity?: number;
   /** Precipitation strength; used for either rain or snow particles. */
   precipitationIntensity?: number;
+  /** Perceptual strength projected once at the voxel boundary. */
+  visualPrecipitationIntensity?: number;
+}
+
+/** Null/omitted debug weather means keep the real upstream weather selection. */
+export function effectiveWeatherOverride(
+  debugWeather: ExternalWeatherVisualOverride | null | undefined,
+  externalWeather: ExternalWeatherVisualOverride | null,
+): ExternalWeatherVisualOverride | null {
+  return debugWeather ?? externalWeather;
 }
 
 export interface WeatherState {
   localDate: string;
   kind: WeatherKind;
+  thunderstorm: boolean;
   seed: number;
   cloudCount: number;
   cloudIntensity: number;
   rainDropCount: number;
   snowFlakeCount: number;
   precipitationIntensity: number;
+  /** Renderer-facing intensity; this never replaces the provider measurement. */
+  visualPrecipitationIntensity: number;
 }
 
 /** Weather probability may vary by environment; this visual response does not. */
@@ -40,6 +55,9 @@ const WEATHER_VISUALS: Readonly<Record<WeatherKind, WeatherVisual>> = Object.fre
   mist: Object.freeze({ tint: 0xaeb8b1, cloudBlend: 0.28, starVisibilityScale: 0.12, sunlightScale: 0.76 }),
   snow: Object.freeze({ tint: 0xb2c0c8, cloudBlend: 0.36, starVisibilityScale: 0.08, sunlightScale: 0.72 }),
 });
+const THUNDER_VISUAL: WeatherVisual = Object.freeze({
+  tint: 0x465365, cloudBlend: 0.78, starVisibilityScale: 0, sunlightScale: 0.26,
+});
 
 export interface FogRange {
   near: number;
@@ -48,38 +66,7 @@ export interface FogRange {
 
 export type DecorationKind = "tree" | "road" | "lamp" | "bench";
 
-/**
- * Decorations that belong to the derived environment presentation. These are
- * deliberately separate from `DecorationKind`: the latter is the persisted
- * daily-goal/reward projection and must never be re-ordered or counted as an
- * earned reward.
- */
-export type AmbientDecorationKind = "flower" | "grass-tuft" | "rock" | "reed" | "coral" | "shipwreck";
-
 export type EnvironmentStyle = "natural-valley" | "classic-island" | "ocean-island";
-
-export interface AmbientDecorationPlacement {
-  id: string;
-  kind: AmbientDecorationKind;
-  /** Blueprint-local coordinates before the placement's blueprint offset. */
-  x: number;
-  z: number;
-  variant: number;
-  scale: number;
-  castsShadow: boolean;
-}
-
-export interface AmbientDecorationBudget {
-  maxInstances: number;
-  maxDrawCalls: number;
-  maxShadowCasters: number;
-}
-
-export const AMBIENT_DECORATION_BUDGETS: Readonly<Record<EnvironmentStyle, AmbientDecorationBudget>> = Object.freeze({
-  "natural-valley": Object.freeze({ maxInstances: 24, maxDrawCalls: 4, maxShadowCasters: 2 }),
-  "classic-island": Object.freeze({ maxInstances: 20, maxDrawCalls: 3, maxShadowCasters: 2 }),
-  "ocean-island": Object.freeze({ maxInstances: 18, maxDrawCalls: 4, maxShadowCasters: 2 }),
-});
 
 export interface CloudBudgetInput {
   previewMode: boolean;
@@ -142,15 +129,22 @@ export function weatherForLocalDate(localDate: string, ocean = false): WeatherSt
   const kind: WeatherKind = ocean
     ? (roll < 34 ? "clear" : roll < 60 ? "cloudy" : roll < 72 ? "rain" : "mist")
     : (roll < 50 ? "clear" : roll < 75 ? "cloudy" : roll < 90 ? "rain" : "mist");
+  // A rain day can be a thunderstorm without altering the environment-specific
+  // probability of rain itself. The independent hash avoids clustering storms
+  // around the boundaries of the kind-selection roll.
+  const thunderstorm = kind === "rain" && hash32(`thunder:${localDate}`) % 5 === 0;
+  const cloudCount = thunderstorm ? 14 : kind === "clear" ? 2 : kind === "cloudy" ? 9 : kind === "rain" ? 12 : 6;
   return {
     localDate,
     kind,
+    thunderstorm,
     seed,
-    cloudCount: kind === "clear" ? 2 : kind === "cloudy" ? 9 : kind === "rain" ? 12 : 6,
-    cloudIntensity: (kind === "clear" ? 2 : kind === "cloudy" ? 9 : kind === "rain" ? 12 : 6) / 12,
+    cloudCount,
+    cloudIntensity: Math.min(1, cloudCount / 12),
     rainDropCount: kind === "rain" ? 72 : 0,
     snowFlakeCount: 0,
     precipitationIntensity: kind === "rain" ? 1 : 0,
+    visualPrecipitationIntensity: kind === "rain" ? 1 : 0,
   };
 }
 
@@ -167,26 +161,76 @@ export function weatherForExternalOverride(localDate: string, override: External
   const defaultPrecipitationIntensity = override.kind === "rain" ? 1 : override.kind === "snow" ? 0.55 : 0;
   const cloudIntensity = normalizedIntensity(override.cloudIntensity, defaultCloudIntensity[override.kind]);
   const precipitationIntensity = normalizedIntensity(override.precipitationIntensity, defaultPrecipitationIntensity);
+  const visualPrecipitationIntensity = override.visualPrecipitationIntensity === undefined
+    ? perceptualPrecipitationIntensity(override.kind, precipitationIntensity)
+    : normalizedIntensity(override.visualPrecipitationIntensity, 0);
   const cloudCount = Math.round(cloudIntensity * 12);
-  const rainDropCount = override.kind === "rain" ? Math.round(72 * precipitationIntensity) : 0;
-  const snowFlakeCount = override.kind === "snow" ? Math.round(96 * precipitationIntensity) : 0;
+  const rainDropCount = override.kind === "rain" ? Math.max(8, Math.round(72 * visualPrecipitationIntensity)) : 0;
+  const snowFlakeCount = override.kind === "snow" ? Math.max(10, Math.round(96 * visualPrecipitationIntensity)) : 0;
   return {
     localDate,
     kind: override.kind,
+    thunderstorm: override.kind === "rain" && override.thunderstorm === true,
     seed: hash32(`weather:external:${localDate}:${override.kind}:${cloudIntensity}:${precipitationIntensity}`),
     cloudCount,
     cloudIntensity,
     rainDropCount,
     snowFlakeCount,
     precipitationIntensity,
+    visualPrecipitationIntensity,
   };
 }
 
+/** Maps measured precipitation to perception once, where the renderer owns it. */
+export function perceptualPrecipitationIntensity(kind: WeatherKind, factualIntensity: number): number {
+  if (kind !== "rain" && kind !== "snow") return 0;
+  const factual = normalizedIntensity(factualIntensity, 0);
+  if (factual === 0) return kind === "rain" ? 0.16 : 0.14;
+  return clamp(0.1 + 0.9 * Math.sqrt(factual), kind === "rain" ? 0.16 : 0.14, 1);
+}
+
+/** Preserve a small precipitation budget after quality and view-area scaling. */
+export function precipitationParticleCount(
+  baseCount: number,
+  weatherDensity: number,
+  areaMultiplier: number,
+  maximumCount: number,
+  minimumVisibleCount: number,
+): number {
+  const base = Math.max(0, Math.round(Number.isFinite(baseCount) ? baseCount : 0));
+  const density = Math.max(0, Number.isFinite(weatherDensity) ? weatherDensity : 0);
+  const area = Math.max(0, Number.isFinite(areaMultiplier) ? areaMultiplier : 0);
+  const cap = Math.max(0, Math.round(Number.isFinite(maximumCount) ? maximumCount : 0));
+  if (base === 0 || density === 0 || area === 0 || cap === 0) return 0;
+  const minimum = Math.min(cap, Math.max(1, Number.isFinite(minimumVisibleCount) ? Math.round(minimumVisibleCount) : 1));
+  return Math.min(cap, Math.max(minimum, Math.round(base * density * area)));
+}
+
 /** Weather tint/cloud/star response is common across the environment layouts. */
-export function sunlightScaleForWeather(weather: Pick<WeatherState, "kind" | "cloudIntensity">): number {
-  const fullCloudScale = WEATHER_VISUALS[weather.kind].sunlightScale;
+export function sunlightScaleForWeather(weather: Pick<WeatherState, "kind" | "cloudIntensity"> & Partial<Pick<WeatherState, "thunderstorm">>): number {
+  const fullCloudScale = weatherVisualForWeather(weather).sunlightScale;
   const cloudIntensity = normalizedIntensity(weather.cloudIntensity, 1);
-  return 1 - (1 - fullCloudScale) * cloudIntensity;
+  // Dense middle cloud cover should look recognizably overcast rather than
+  // linearly interpolating almost all the way back to clear-day brightness.
+  return 1 - (1 - fullCloudScale) * Math.pow(cloudIntensity, 0.68);
+}
+
+export function ambientScaleForWeather(weather: Pick<WeatherState, "kind" | "cloudIntensity"> & Partial<Pick<WeatherState, "thunderstorm">>, nightFactor = 0): number {
+  const minimum: Record<WeatherKind, number> = { clear: 1, cloudy: 0.87, rain: 0.77, mist: 0.81, snow: 0.87 };
+  const fullCover = weather.thunderstorm === true && weather.kind === "rain" ? 0.58 : minimum[weather.kind];
+  const daytimeDimming = (1 - fullCover) * Math.pow(normalizedIntensity(weather.cloudIntensity, 1), 0.68);
+  return 1 - daytimeDimming * (1 - 0.45 * normalizedIntensity(nightFactor, 0));
+}
+
+export function weatherVisualForWeather(weather: Pick<WeatherState, "kind"> & Partial<Pick<WeatherState, "thunderstorm">>): WeatherVisual {
+  return weather.kind === "rain" && weather.thunderstorm === true ? THUNDER_VISUAL : WEATHER_VISUALS[weather.kind];
+}
+
+/** World units per second; cloud drift is continuous advection, not a short sine oscillation. */
+export function cloudAdvectionSpeed(weather: Pick<WeatherState, "kind" | "cloudIntensity"> & Partial<Pick<WeatherState, "thunderstorm">>): number {
+  const base: Record<WeatherKind, number> = { clear: 0.08, cloudy: 0.22, rain: 0.38, mist: 0.04, snow: 0.15 };
+  const storm = weather.kind === "rain" && weather.thunderstorm === true;
+  return (storm ? 0.72 : base[weather.kind]) * (0.72 + 0.28 * Math.sqrt(normalizedIntensity(weather.cloudIntensity, 0)));
 }
 
 export function weatherVisualForKind(kind: WeatherKind): WeatherVisual {
@@ -229,8 +273,15 @@ export function cloudBudgetForView(input: CloudBudgetInput): CloudBudget {
   const compact = visibleWidth < contentWidth * 2.2 && visibleDepth < contentDepth * 2.2;
   const contentArea = Math.max(1, contentWidth * contentDepth);
   const spreadRatio = Math.min(24, Math.max(1, (visibleWidth * visibleDepth) / contentArea));
+  // Linear area amplification made cloudy and mist both hit the same 85-cloud
+  // cap on expanded terrain, erasing their visual distinction. Fog owns mist;
+  // clouds own overcast. Keep coverage growth sublinear and weather-specific.
+  const kindDensity: Record<WeatherKind, number> = {
+    clear: 0.6, cloudy: 1, rain: 1.12, mist: 0.45, snow: 0.82,
+  };
   return {
-    cloudCount: weatherCloudCount === 0 ? 0 : Math.min(compact ? 40 : 85, Math.max(1, Math.round(weatherCloudCount * density * spreadRatio))),
+    cloudCount: weatherCloudCount === 0 ? 0 : Math.min(compact ? 40 : 85,
+      Math.max(1, Math.round(weatherCloudCount * density * Math.sqrt(spreadRatio) * kindDensity[input.weatherKind]))),
     maxInstances: 900,
     blockScale: 1,
     spanX: compact ? Math.max(32, visibleWidth * 1.05) : Math.max(32, visibleWidth + 24),
@@ -239,58 +290,12 @@ export function cloudBudgetForView(input: CloudBudgetInput): CloudBudget {
   };
 }
 
-/**
- * Generates only derived, environment-owned ambient props. The placement is
- * intentionally local to a building so settlement identities and persisted
- * reward positions never move when the environment is regenerated.
- */
-export function ambientDecorationsForWorld(input: {
-  projectId: string;
-  blueprint: BlueprintV1;
-  environmentStyle: EnvironmentStyle;
-  worldSeed?: string;
-}): AmbientDecorationPlacement[] {
-  const { minX, maxX, minZ, maxZ } = input.blueprint.bounds;
-  const width = Math.max(1, maxX - minX + 1);
-  const depth = Math.max(1, maxZ - minZ + 1);
-  const budget = AMBIENT_DECORATION_BUDGETS[input.environmentStyle];
-  // Four instances were too sparse for a framed island scene: even when all
-  // candidates survived road/building avoidance they were tiny in the default
-  // camera, and the old slot walk selected only the first two perimeter edges.
-  // Keep at least two candidates per side so every settlement has a visible
-  // foreground prop regardless of which way its entrance faces.
-  const count = Math.min(budget.maxInstances, Math.max(8, Math.ceil(Math.max(width, depth) / 2.8)));
-  const seedPrefix = `ambient:${input.worldSeed ?? "world-default"}:${input.environmentStyle}:${input.projectId}`;
-  const slots = ambientSlots(minX, maxX, minZ, maxZ, count);
-  const result: AmbientDecorationPlacement[] = [];
-  let shipwreckAdded = false;
-  let shadowCasters = 0;
-  for (let index = 0; index < slots.length && result.length < count; index += 1) {
-    const slot = slots[index]!;
-    const seed = hash32(`${seedPrefix}:${index}`);
-    const kind = ambientKindFor(seed, input.environmentStyle, shipwreckAdded);
-    if (kind === "shipwreck") shipwreckAdded = true;
-    const castsShadow = (kind === "rock" || kind === "shipwreck")
-      && shadowCasters < budget.maxShadowCasters;
-    if (castsShadow) shadowCasters += 1;
-    result.push({
-      id: `${seedPrefix}:${index}`,
-      kind,
-      x: slot.x,
-      z: slot.z,
-      variant: (seed >>> 16) % 4,
-      scale: 0.72 + ((seed >>> 24) % 40) / 100,
-      castsShadow,
-    });
-  }
-  return result;
-}
 
 export function fogRangeForView(kind: WeatherKind, cameraDistance: number, contentRadius: number, _ocean = false): FogRange {
   const distance = Math.max(1, Number.isFinite(cameraDistance) ? cameraDistance : 1);
   const radius = Math.max(6, Number.isFinite(contentRadius) ? contentRadius : 6);
   if (kind === "mist") {
-    return { near: Math.max(18, distance - radius * 0.15), far: distance + radius * 3.2 };
+    return { near: Math.max(18, distance - radius * 0.22), far: distance + radius * 2.0 };
   }
   if (kind === "rain") {
     return { near: Math.max(22, distance + radius * 0.05), far: distance + radius * 4.1 };
@@ -381,54 +386,6 @@ function decorationSlots(blueprint: BlueprintV1, minimumCount: number): Array<{ 
   return slots;
 }
 
-function ambientSlots(minX: number, maxX: number, minZ: number, maxZ: number, count: number): Array<{ x: number; z: number }> {
-  const offset = 3;
-  const range = (minimum: number, maximum: number): number[] => {
-    const values: number[] = [];
-    for (let value = minimum; value <= maximum; value += 2) values.push(value);
-    return values;
-  };
-  const centered = (values: number[], target: number): number[] => values.sort((left, right) =>
-    Math.abs(left - target) - Math.abs(right - target) || right - left,
-  );
-  const centerX = (minX + maxX) / 2;
-  const centerZ = (minZ + maxZ) / 2;
-  const zPositions = centered(range(minZ - offset + 2, maxZ + offset - 2), centerZ);
-  const xPositions = centered(range(minX - offset + 2, maxX + offset - 2), centerX);
-  // Interleave the four edges, starting on a likely camera-facing side. The old
-  // nested loop consumed its entire budget on the north/south edges near one
-  // corner, where buildings and their entrance roads commonly hid every prop.
-  const edges = [zPositions, xPositions, zPositions, xPositions];
-  const slots: Array<{ x: number; z: number }> = [];
-  for (let index = 0; slots.length < count && edges.some((edge) => index < edge.length); index += 1) {
-    if (index < edges[0]!.length) slots.push({ x: maxX + offset, z: edges[0]![index]! });
-    if (slots.length >= count) break;
-    if (index < edges[1]!.length) slots.push({ x: edges[1]![index]!, z: maxZ + offset });
-    if (slots.length >= count) break;
-    if (index < edges[2]!.length) slots.push({ x: minX - offset, z: edges[2]![index]! });
-    if (slots.length >= count) break;
-    if (index < edges[3]!.length) slots.push({ x: edges[3]![index]!, z: minZ - offset });
-  }
-  return slots;
-}
-
-function ambientKindFor(seed: number, environmentStyle: EnvironmentStyle, shipwreckAdded: boolean): AmbientDecorationKind {
-  const roll = seed % 100;
-  if (environmentStyle === "ocean-island") {
-    if (!shipwreckAdded && roll < 7) return "shipwreck";
-    if (roll < 30) return "coral";
-    if (roll < 48) return "reed";
-    if (roll < 70) return "rock";
-    return roll % 2 === 0 ? "grass-tuft" : "flower";
-  }
-  if (environmentStyle === "natural-valley") {
-    if (roll < 14) return "rock";
-    if (roll < 52) return "grass-tuft";
-    return "flower";
-  }
-  if (roll < 18) return "rock";
-  return roll % 2 === 0 ? "grass-tuft" : "flower";
-}
 
 function finitePositive(value: number, fallback: number): number {
   return Number.isFinite(value) && value > 0 ? value : fallback;

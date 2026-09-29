@@ -1,5 +1,5 @@
-import type { ApplicationCommand, ApplicationResult } from '@tomato-clock/application';
-import type { DomainState, FocusInterruptionCategory } from '@tomato-clock/domain';
+import type { ApplicationCommand, ApplicationResult } from '@blockcolc/application';
+import type { DomainState, FocusInterruptionCategory } from '@blockcolc/domain';
 import type { FocusPreferences } from './app-types';
 import { marathonEndInstant } from './marathon-end-time';
 import { unsettledMarathonSessions } from './marathon-settlement';
@@ -64,24 +64,51 @@ export function createFocusFlow(ports: FocusFlowPorts) {
         ...(automaticContinuation ? { automaticContinuation } : {}) });
     }
   };
-  const cancelPlan = async () => {
-    const { plan } = context();
-    if (plan?.mode !== 'marathon') {
-      ports.writePlan(null); ports.closePlan(); return;
+  const cancelPlan = async (reason: FocusInterruptionCategory | null = null, note = ''): Promise<boolean> => {
+    let { plan } = context();
+    if (!plan) {
+      if (ports.readPlan()?.cancellationRequested) ports.writePlan(null);
+      ports.closePlan();
+      ports.closeEnding();
+      return true;
     }
-    ports.resetDraftMode(); ports.closePlan();
+    const cancellationReason = plan.cancellationRequested && reason === null ? plan.cancellationReason ?? null : reason;
+    const cancellationNote = plan.cancellationRequested && !note.trim() ? plan.cancellationNote : note.trim();
+    if (!cancellationNote || cancellationNote.length > 200) return false;
+    if (!plan.cancellationRequested) {
+      const { automaticContinuation: _automaticContinuation, ...withoutAuthorization } = plan;
+      plan = { ...withoutAuthorization, cancellationRequested: true, cancellationReason, cancellationNote };
+      ports.writePlan(plan);
+    }
     const current = ports.snapshot().activeFocusSession;
     if (current) {
       if (Date.parse(current.endsAt) <= ports.nowMs()) await ports.resume();
-      else await ports.dispatch({ type: 'CancelFocus', interruptionCategory: null });
+      else {
+        const interrupted = await ports.dispatch({ type: 'CancelFocus', interruptionCategory: cancellationReason, interruptionNote: cancellationNote });
+        if (!interrupted.ok) return false;
+      }
     }
-    // Read after the command, never use a render-time snapshot to settle it.
+    // Read after the interruption/natural completion, never settle a stale UI snapshot.
     const latest = ports.snapshot();
     const host = latest.projects.find(project => project.id === plan.projectId);
-    if (host?.kind === 'habit' && plan.deferredSettlement !== true) { ports.writePlan(null); return; }
-    ports.writePlan(unsettledMarathonSessions(latest, plan.projectId).length > 0
-      ? { ...plan, status: 'report', currentSessionId: undefined, breakStartedAt: undefined, breakEndsAt: undefined, endAfterBreak: undefined }
-      : null);
+    const directHabitSettlement = host?.kind === 'habit' && plan.deferredSettlement !== true;
+    const hasCompletedRounds = directHabitSettlement ? false : plan.mode === 'marathon'
+      ? unsettledMarathonSessions(latest, plan.projectId).length > 0
+      : latest.focusHistory.some(session => session.projectId === plan.projectId
+        && session.status === 'completed'
+        && !latest.progressReports.some(report => report.focusSessionIds.includes(session.id)));
+    if (hasCompletedRounds) {
+      const { automaticContinuation: _automaticContinuation, ...withoutAuthorization } = plan;
+      const { cancellationRequested: _cancellationRequested, ...reportPlan } = withoutAuthorization;
+      ports.writePlan({ ...reportPlan, status: plan.mode === 'marathon' ? 'report' : 'ready', currentSessionId: undefined,
+        breakStartedAt: undefined, breakEndsAt: undefined, endAfterBreak: undefined, cancellationReason, cancellationNote });
+    } else {
+      ports.writePlan(null);
+    }
+    if (plan.mode === 'marathon') ports.resetDraftMode();
+    ports.closePlan();
+    ports.closeEnding();
+    return true;
   };
   const flow = {
     get busy() { return busy; },
@@ -101,7 +128,11 @@ export function createFocusFlow(ports: FocusFlowPorts) {
       // Keep the domain commit and the final plan write in one caller task.
       await flow.startFocus();
     },
-    cancelPlan: () => submit(cancelPlan),
+    cancelPlan: async (reason: FocusInterruptionCategory | null = null, note = ''): Promise<boolean> => {
+      if (busy) return false;
+      busy = true;
+      try { return await cancelPlan(reason, note); } finally { busy = false; }
+    },
     confirmPlan: () => submit(async () => {
       const { active, plan, draft, preferences, nowMs } = context();
       if (plan) { await cancelPlan(); return; }
@@ -238,6 +269,7 @@ export function createFocusFlow(ports: FocusFlowPorts) {
     afterReport: (plan: RoundPlan | null, sessionId: string) => {
       if (!plan) return;
       ports.constructionFeedback();
+      if (plan.cancellationRequested === true || plan.cancellationReason !== undefined || plan.cancellationNote !== undefined) { ports.writePlan(null); return; }
       const completedRounds = plan.completedRounds + 1;
       const reportedSessionIds = plan.reportedSessionIds.includes(sessionId) ? plan.reportedSessionIds : [...plan.reportedSessionIds, sessionId];
       if (completedRounds >= plan.totalRounds) { ports.writePlan(null); return; }

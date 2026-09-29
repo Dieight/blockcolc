@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { BlueprintV1 } from '@tomato-clock/voxel';
+import type { BlueprintV1 } from '@blockcolc/voxel';
 import { shouldPersistBlueprintSnapshot, toImportedBlueprint } from './blueprint-adapter';
 
 describe('blueprint persistence at project creation', () => {

@@ -1,5 +1,6 @@
-import type { ApplicationCommand, ApplicationResult, ApplicationService } from '@tomato-clock/application';
-import type { BlueprintV1 } from '@tomato-clock/voxel';
+import type { ApplicationCommand, ApplicationResult, ApplicationService } from '@blockcolc/application';
+import { parseDecorationBlueprint } from '@blockcolc/domain';
+import type { BlueprintV1 } from '@blockcolc/voxel';
 import { toImportedBlueprint } from './blueprint-adapter';
 
 const MAX_DECORATION_WIDTH = 12;
@@ -38,8 +39,15 @@ export async function registerBuiltinDailyRewardBlueprints(
       skipped += 1;
       continue;
     }
-    const imported = toImportedBlueprint(blueprint);
-    if (JSON.stringify(known.get(imported.id)) === JSON.stringify(imported)) {
+    let imported: ReturnType<typeof toImportedBlueprint>;
+    try {
+      imported = toImportedBlueprint(blueprint);
+    } catch {
+      skipped += 1;
+      continue;
+    }
+    const existing = known.get(imported.id);
+    if (existing !== undefined && sameCanonicalBlueprint(existing, imported)) {
       // ApplicationService persists even successful no-op user commands. Do
       // this read-only check before dispatch so a normal restart does not
       // create a needless revision or IndexedDB write for either reward.
@@ -52,19 +60,34 @@ export async function registerBuiltinDailyRewardBlueprints(
     } as DecorationImportCommand);
     if (result.ok) {
       accepted += 1;
-      known.set(imported.id, imported);
+      const persisted = result.state.decorationBlueprintResources?.find((resource) => resource.id === imported.id);
+      known.set(imported.id, persisted?.blueprint ?? imported);
     } else skipped += 1;
   }
   return { examined: blueprints.length, accepted, skipped };
 }
 
 function withinDecorationBudget(blueprint: BlueprintV1): boolean {
-  const width = blueprint.bounds.maxX - blueprint.bounds.minX + 1;
-  const depth = blueprint.bounds.maxZ - blueprint.bounds.minZ + 1;
-  const height = blueprint.bounds.maxY - blueprint.bounds.minY + 1;
+  if (typeof blueprint !== 'object' || blueprint === null || typeof blueprint.bounds !== 'object' || blueprint.bounds === null
+    || !Array.isArray(blueprint.voxels)) return false;
+  const { minX, maxX, minY, maxY, minZ, maxZ } = blueprint.bounds;
+  if (![minX, maxX, minY, maxY, minZ, maxZ].every(Number.isSafeInteger)) return false;
+  const width = maxX - minX + 1;
+  const depth = maxZ - minZ + 1;
+  const height = maxY - minY + 1;
   return width > 0 && width <= MAX_DECORATION_WIDTH
     && depth > 0 && depth <= MAX_DECORATION_DEPTH
     && height > 0 && height <= MAX_DECORATION_HEIGHT
     && blueprint.voxels.length > 0
     && blueprint.voxels.length <= MAX_DECORATION_VOXELS;
+}
+
+function sameCanonicalBlueprint(existing: unknown, candidate: unknown): boolean {
+  try {
+    return JSON.stringify(parseDecorationBlueprint(existing)) === JSON.stringify(parseDecorationBlueprint(candidate));
+  } catch {
+    // Invalid data must still reach ApplicationService/domain validation rather
+    // than being treated as an identical resource by this optional fast path.
+    return false;
+  }
 }

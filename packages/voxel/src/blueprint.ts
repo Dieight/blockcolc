@@ -435,12 +435,24 @@ function buildSmallWorkshop(): BlueprintV1 {
   for (let x = -4; x <= 4; x += 1) for (let z = -3; z <= 3; z += 1) builder.add(x, 1, z, "plank", "frame");
   for (let y = 2; y <= 5; y += 1) {
     for (let x = -5; x <= 5; x += 1) {
-      if (!(zOpening(x, y, 4))) builder.add(x, y, 4, cornerMaterial(x, 5), "walls");
-      if (!(-2 <= x && x <= 2 && y === 3)) builder.add(x, y, -4, cornerMaterial(x, 5), "walls");
+      const frontUpperWindow = y === 4 && Math.abs(x) === 2;
+      const rearUpperWindow = y === 4 && Math.abs(x) === 2;
+      if (!(zOpening(x, y, 4)) && !frontUpperWindow) builder.add(x, y, 4, cornerMaterial(x, 5), "walls");
+      if (!(-2 <= x && x <= 2 && y === 3) && !rearUpperWindow) builder.add(x, y, -4, cornerMaterial(x, 5), "walls");
     }
     for (let z = -3; z <= 3; z += 1) {
       if (!(y === 3 && z === 0)) builder.add(-5, y, z, cornerMaterial(z, 4), "walls");
       if (!(y === 3 && z === 0)) builder.add(5, y, z, cornerMaterial(z, 4), "walls");
+    }
+  }
+  for (const x of [-5, 5]) {
+    for (let z = -5; z <= 5; z += 1) {
+      const roofY = 11 - Math.abs(z);
+      for (let y = 6; y < roofY; y += 1) {
+        const smallGableWindow = z === 0 && (y === 8 || y === 9);
+        const timberFrame = Math.abs(z) === 5 || y === 6;
+        builder.add(x, y, z, smallGableWindow ? "glass" : timberFrame ? "wood" : "plank", "walls");
+      }
     }
   }
   for (let z = -5; z <= 5; z += 1) {
@@ -448,6 +460,10 @@ function buildSmallWorkshop(): BlueprintV1 {
     for (let x = -5; x <= 5; x += 1) builder.add(x, y, z, "roof", "roof");
   }
   for (let x = -2; x <= 2; x += 1) builder.add(x, 3, -4, "glass", "details");
+  for (const x of [-2, 2]) {
+    builder.add(x, 4, 4, "glass", "details");
+    builder.add(x, 4, -4, "glass", "details");
+  }
   builder.add(-5, 3, 0, "glass", "details"); builder.add(5, 3, 0, "glass", "details");
   builder.addLight(-3, 3, 5); builder.addLight(3, 3, 5);
   builder.addLight(-3, 3, 3); builder.addLight(3, 3, 3);
@@ -470,6 +486,16 @@ function buildTimberHouse(): BlueprintV1 {
   for (let y = 2; y <= 4; y += 1) addHousePerimeter(builder, -5, 5, -3, 3, y, false);
   for (let x = -6; x <= 6; x += 1) for (let z = -4; z <= 4; z += 1) builder.add(x, 5, z, "plank", "frame");
   for (let y = 6; y <= 8; y += 1) addHousePerimeter(builder, -6, 6, -4, 4, y, true);
+  for (const x of [-6, 6]) {
+    for (let z = -5; z <= 5; z += 1) {
+      const roofY = 14 - Math.abs(z);
+      for (let y = 9; y < roofY; y += 1) {
+        const smallGableWindow = z === 0 && (y === 11 || y === 12);
+        const timberFrame = Math.abs(z) === 5 || y === 9;
+        builder.add(x, y, z, smallGableWindow ? "glass" : timberFrame ? "wood" : "plank", "walls");
+      }
+    }
+  }
   for (let z = -5; z <= 5; z += 1) {
     const y = 14 - Math.abs(z);
     for (let x = -6; x <= 6; x += 1) builder.add(x, y, z, "roof", "roof");
@@ -477,7 +503,8 @@ function buildTimberHouse(): BlueprintV1 {
   for (const x of [-3, 3]) builder.add(x, 3, -3, "glass", "details");
   for (const x of [-3, 3]) builder.add(x, 7, -4, "glass", "details");
   for (const x of [-5, 5]) builder.add(x, 3, 0, "glass", "details");
-  builder.add(-6, 7, 0, "glass", "details"); builder.add(6, 7, 0, "glass", "details");
+  for (const x of [-6, 6]) for (const z of [-2, 0, 2]) builder.add(x, 7, z, "glass", "details");
+  for (const x of [-3, 3]) builder.add(x, 7, 4, "glass", "details");
   for (let y = 9; y <= 13; y += 1) builder.add(4, y, 0, "stone", "details");
   builder.addLight(-3, 3, 4); builder.addLight(3, 3, 4);
   builder.addLight(-3, 3, 2); builder.addLight(3, 3, 2);
@@ -497,12 +524,13 @@ function addHousePerimeter(
 ): void {
   for (let x = minX; x <= maxX; x += 1) {
     const frontOpening = !upper && x === 0 && y <= 3;
+    const upperFrontWindow = upper && y === 7 && (x === -3 || x === 3);
     const rearWindow = (x === -3 || x === 3) && y === (upper ? 7 : 3);
-    if (!frontOpening) builder.add(x, y, maxZ, Math.abs(x) === maxX ? "wood" : "plank", "walls");
+    if (!frontOpening && !upperFrontWindow) builder.add(x, y, maxZ, Math.abs(x) === maxX ? "wood" : "plank", "walls");
     if (!rearWindow) builder.add(x, y, minZ, Math.abs(x) === maxX ? "wood" : "plank", "walls");
   }
   for (let z = minZ + 1; z < maxZ; z += 1) {
-    const sideWindow = z === 0 && y === (upper ? 7 : 3);
+    const sideWindow = (upper ? [-2, 0, 2].includes(z) && y === 7 : z === 0 && y === 3);
     if (!sideWindow) builder.add(minX, y, z, "wood", "walls");
     if (!sideWindow) builder.add(maxX, y, z, "wood", "walls");
   }
@@ -516,6 +544,16 @@ function buildVillageChapel(): BlueprintV1 {
   for (const x of [-5, 5]) for (const z of [-6, -2, 2]) for (let y = 1; y <= 5; y += 1) builder.add(x, y, z, "stone", "frame");
   for (let y = 2; y <= 7; y += 1) addChapelNaveWalls(builder, y);
   for (let y = 2; y <= 13; y += 1) addTowerWalls(builder, y);
+  for (const z of [-8, 2]) {
+    for (let x = -5; x <= 5; x += 1) {
+      const roofY = 12 - Math.abs(x);
+      for (let y = 8; y < roofY; y += 1) {
+        const smallGableWindow = x === 0 && (y === 10 || y === 11);
+        const stoneFrame = Math.abs(x) === 5 || y === 8;
+        builder.add(x, y, z, smallGableWindow ? "glass" : stoneFrame ? "stone" : "plank", "walls");
+      }
+    }
+  }
   for (let x = -5; x <= 5; x += 1) {
     const y = 12 - Math.abs(x);
     for (let z = -8; z <= 2; z += 1) builder.add(x, y, z, "roof", "roof");
@@ -531,7 +569,11 @@ function buildVillageChapel(): BlueprintV1 {
     builder.add(-4, 4, z, "glass", "details"); builder.add(-4, 5, z, "glass", "details");
     builder.add(4, 4, z, "glass", "details"); builder.add(4, 5, z, "glass", "details");
   }
-  builder.add(-2, 9, 10, "glass", "details"); builder.add(2, 9, 10, "glass", "details");
+  for (const x of [-3, 3]) builder.add(x, 9, 6, "glass", "details");
+  for (const x of [-2, 2]) {
+    builder.add(x, 9, 3, "glass", "details");
+    builder.add(x, 9, 10, "glass", "details");
+  }
   builder.addLight(-2, 5, 11); builder.addLight(2, 5, 11);
   builder.addLight(-2, 2, 8); builder.addLight(2, 2, 8);
   builder.addLight(-3, 2, 0); builder.addLight(3, 2, 0);
@@ -559,14 +601,16 @@ function addChapelNaveWalls(builder: BlueprintBuilder, y: number): void {
 function addTowerWalls(builder: BlueprintBuilder, y: number): void {
   for (let x = -3; x <= 3; x += 1) {
     const navePassage = x === 0 && y <= 4;
-    if (!navePassage) builder.add(x, y, 3, "stone", "walls");
+    const frontBelfryWindow = (x === -2 || x === 2) && y === 9;
+    if (!navePassage && !frontBelfryWindow) builder.add(x, y, 3, "stone", "walls");
     const entrance = x === 0 && y <= 4;
     const belfryWindow = (x === -2 || x === 2) && y === 9;
     if (!entrance && !belfryWindow) builder.add(x, y, 10, "stone", "walls");
   }
   for (let z = 4; z <= 9; z += 1) {
-    builder.add(-3, y, z, "stone", "walls");
-    builder.add(3, y, z, "stone", "walls");
+    const towerSideWindow = y === 9 && z === 6;
+    if (!towerSideWindow) builder.add(-3, y, z, "stone", "walls");
+    if (!towerSideWindow) builder.add(3, y, z, "stone", "walls");
   }
 }
 

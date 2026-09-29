@@ -449,9 +449,9 @@ function parseFocusSession(raw: unknown, path: string): FocusSession {
   const base = record(raw, path);
   const status = enumeration(base.status, path + ".status", ["completed", "completed-early", "interrupted"] as const);
   const keys = status === "interrupted"
-    ? ["id", "projectId", "subtaskId", "startedAt", "endsAt", "plannedDurationMs", "timeZoneAtStart", "status", "interruptedAt", "interruptionReason", "interruptionCategory", "actualDurationMs", "marathon", "settledAt"]
+    ? ["id", "projectId", "subtaskId", "startedAt", "endsAt", "plannedDurationMs", "timeZoneAtStart", "status", "interruptedAt", "interruptionReason", "interruptionCategory", "interruptionNote", "actualDurationMs", "marathon", "settledAt"]
     : ["id", "projectId", "subtaskId", "startedAt", "endsAt", "plannedDurationMs", "timeZoneAtStart", "status", "completedAt", "completedLocalDate", "actualDurationMs", "marathon", "settledAt"];
-  const x = objectWithOptional(raw, path, [...keys, "deferredSettlement"], ["marathon", "settledAt", "deferredSettlement"]);
+  const x = objectWithOptional(raw, path, [...keys, "deferredSettlement"], ["marathon", "settledAt", "deferredSettlement", ...(status === "interrupted" ? ["interruptionNote"] : [])]);
   const active = parseActiveSessionFields(x, path);
   if (status === "completed" || status === "completed-early") {
     const completedAt = instant(x.completedAt, path + ".completedAt");
@@ -472,9 +472,11 @@ function parseFocusSession(raw: unknown, path: string): FocusSession {
     ["external-interruption", "task-blocked", "fatigue", "priority-changed", "device-or-app", "other"] as const,
   );
   if (interruptionReason === "app-switch-limit" && interruptionCategory !== null) invalid(path + ".interruptionCategory", "must be null for automatic integrity failures");
+  const interruptionNote = x.interruptionNote === undefined ? undefined : nonBlankString(x.interruptionNote, path + ".interruptionNote").trim();
+  if (interruptionNote !== undefined && interruptionNote.length > 200) invalid(path + ".interruptionNote", "must be at most 200 characters");
   const actualDurationMs = integer(x.actualDurationMs, path + ".actualDurationMs", 0, active.plannedDurationMs);
   if (actualDurationMs !== Date.parse(interruptedAt) - Date.parse(active.startedAt)) invalid(path + ".actualDurationMs", "does not match the actual focus interval");
-  return { ...active, status, interruptedAt, interruptionReason, interruptionCategory, actualDurationMs };
+  return { ...active, status, interruptedAt, interruptionReason, interruptionCategory, ...(interruptionNote === undefined ? {} : { interruptionNote }), actualDurationMs };
 }
 
 function parseActiveSessionFields(x: Record<string, unknown>, path: string): FocusSessionBase {

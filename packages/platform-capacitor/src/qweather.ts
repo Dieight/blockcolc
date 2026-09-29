@@ -53,12 +53,55 @@ export type QWeatherFailureReason =
 
 export type QWeatherLocationSource = 'fresh' | 'cached';
 
+export type QWeatherMoonPhase =
+  | 'new-moon' | 'waxing-crescent' | 'first-quarter' | 'waxing-gibbous'
+  | 'full-moon' | 'waning-gibbous' | 'last-quarter' | 'waning-crescent';
+
+export interface QWeatherAstronomyDay {
+  intervalStartMs: number;
+  intervalEndMs: number;
+  solar: {
+    astronomicalDawnMs: number | null;
+    nauticalDawnMs: number | null;
+    civilDawnMs: number | null;
+    sunriseMs: number | null;
+    solarNoonMs: number | null;
+    sunsetMs: number | null;
+    civilDuskMs: number | null;
+    nauticalDuskMs: number | null;
+    astronomicalDuskMs: number | null;
+    solarMidnightMs: number | null;
+  };
+  lunar: {
+    moonriseMs: number | null;
+    moonsetMs: number | null;
+    moonTransitMs: number | null;
+    moonUnderfootMs: number | null;
+    phase: QWeatherMoonPhase | null;
+  };
+}
+
+export interface QWeatherAstronomySchedule {
+  coordinate: { latitude: number; longitude: number };
+  locationSource: QWeatherLocationSource;
+  fetchedAtMs: number;
+  days: QWeatherAstronomyDay[];
+  attributions: string[];
+}
+
+export type QWeatherAstronomyResult =
+  | ({ status: 'ok' } & QWeatherAstronomySchedule)
+  | { status: 'ephemeris_only'; reason: QWeatherFailureReason; coordinate: { latitude: number; longitude: number }; locationSource: QWeatherLocationSource; fetchedAtMs: number }
+  | { status: 'unavailable' | 'error'; reason: QWeatherFailureReason };
+
 export type QWeatherResult =
   | { status: 'ok'; current: QWeatherCurrent; observedAt?: string; locationSource?: QWeatherLocationSource; attributions: string[] }
   | { status: 'unavailable' | 'permission_denied' | 'error'; reason: QWeatherFailureReason };
 
 interface QWeatherNativePlugin {
   getCurrentWeather(): Promise<unknown>;
+  getAstronomy(): Promise<unknown>;
+  cancelAstronomy(): Promise<unknown>;
   clearLocationCache(): Promise<unknown>;
 }
 
@@ -111,6 +154,27 @@ export async function getQWeatherCurrent(): Promise<QWeatherResult> {
   } catch {
     // A bridge failure does not prove that an HTTP request reached QWeather.
     return { status: 'error', reason: 'native_bridge_failed' };
+  }
+}
+
+/** Fetch the bounded event calendar independently from current weather. */
+export async function getQWeatherAstronomy(): Promise<QWeatherAstronomyResult> {
+  if (!isQWeatherAvailable()) return { status: 'unavailable', reason: 'unsupported_platform' };
+  try {
+    return normalizeQWeatherAstronomyResult(await QWeatherNative.getAstronomy());
+  } catch {
+    return { status: 'error', reason: 'native_bridge_failed' };
+  }
+}
+
+/** Cancel only the astronomy generation; current weather and shared location work remain valid. */
+export async function cancelQWeatherAstronomy(): Promise<boolean> {
+  if (!isQWeatherAvailable()) return true;
+  try {
+    const result = asRecord(await QWeatherNative.cancelAstronomy());
+    return result?.status === 'ok';
+  } catch {
+    return false;
   }
 }
 
@@ -182,6 +246,50 @@ export function normalizeQWeatherResult(value: unknown): QWeatherResult {
   };
 }
 
+/** Validate finite, bounded astronomy DTOs without retaining any raw provider fields. */
+export function normalizeQWeatherAstronomyResult(value: unknown): QWeatherAstronomyResult {
+  const result = asRecord(value);
+  if (!result) return { status: 'error', reason: 'native_result_invalid' };
+  if (result.status === 'unavailable' || result.status === 'error') {
+    const reason = typeof result.reason === 'string' && FAILURE_REASONS.has(result.reason as QWeatherFailureReason)
+      ? result.reason as QWeatherFailureReason : 'native_result_invalid';
+    return { status: result.status, reason };
+  }
+  const coordinate = normalizeCoordinate(result.coordinate);
+  const locationSource = result.locationSource;
+  const fetchedAtMs = result.fetchedAtMs;
+  if (!coordinate || (locationSource !== 'fresh' && locationSource !== 'cached')
+    || !isEpoch(fetchedAtMs)) {
+    return { status: 'error', reason: 'native_result_invalid' };
+  }
+  if (result.status === 'ephemeris_only') {
+    const reason = typeof result.reason === 'string' && FAILURE_REASONS.has(result.reason as QWeatherFailureReason)
+      ? result.reason as QWeatherFailureReason : 'native_result_invalid';
+    return { status: 'ephemeris_only', reason, coordinate, locationSource, fetchedAtMs };
+  }
+  if (result.status !== 'ok') return { status: 'error', reason: 'native_result_invalid' };
+  const rawDays = result.days;
+  const attributions = normalizeAttributions(result.attributions);
+  if (!Array.isArray(rawDays) || rawDays.length === 0 || rawDays.length > 7 || !attributions) {
+    return { status: 'error', reason: 'native_result_invalid' };
+  }
+  const days: QWeatherAstronomyDay[] = [];
+  for (const rawDay of rawDays) {
+    const day = normalizeAstronomyDay(rawDay);
+    if (!day) return { status: 'error', reason: 'native_result_invalid' };
+    days.push(day);
+  }
+  days.sort((left, right) => left.intervalStartMs - right.intervalStartMs);
+  for (let index = 1; index < days.length; index += 1) {
+    const previous = days[index - 1];
+    const current = days[index];
+    if (!previous || !current || previous.intervalEndMs > current.intervalStartMs) {
+      return { status: 'error', reason: 'native_result_invalid' };
+    }
+  }
+  return { status: 'ok', coordinate, locationSource, fetchedAtMs, days, attributions };
+}
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
     ? value as Record<string, unknown>
@@ -213,4 +321,52 @@ function normalizeAttributions(value: unknown): string[] | null {
     if (attribution) attributions.push(attribution);
   }
   return attributions.length > 0 ? attributions : null;
+}
+
+const SOLAR_FIELDS = [
+  'astronomicalDawnMs', 'nauticalDawnMs', 'civilDawnMs', 'sunriseMs', 'solarNoonMs',
+  'sunsetMs', 'civilDuskMs', 'nauticalDuskMs', 'astronomicalDuskMs', 'solarMidnightMs',
+] as const;
+const LUNAR_FIELDS = ['moonriseMs', 'moonsetMs', 'moonTransitMs', 'moonUnderfootMs'] as const;
+const MOON_PHASES = new Set<QWeatherMoonPhase>([
+  'new-moon', 'waxing-crescent', 'first-quarter', 'waxing-gibbous',
+  'full-moon', 'waning-gibbous', 'last-quarter', 'waning-crescent',
+]);
+
+function normalizeCoordinate(value: unknown): { latitude: number; longitude: number } | null {
+  const coordinate = asRecord(value);
+  if (!isFiniteNumber(coordinate?.latitude) || !isFiniteNumber(coordinate?.longitude)
+    || coordinate.latitude < -90 || coordinate.latitude > 90
+    || coordinate.longitude < -180 || coordinate.longitude > 180) return null;
+  return { latitude: coordinate.latitude, longitude: coordinate.longitude };
+}
+
+function normalizeAstronomyDay(value: unknown): QWeatherAstronomyDay | null {
+  const day = asRecord(value);
+  if (!day || !isEpoch(day.intervalStartMs) || !isEpoch(day.intervalEndMs)
+    || day.intervalStartMs < 0 || day.intervalEndMs <= day.intervalStartMs
+    || day.intervalEndMs - day.intervalStartMs > 48 * 60 * 60_000) return null;
+  const solarValue = asRecord(day.solar);
+  const lunarValue = asRecord(day.lunar);
+  if (!solarValue || !lunarValue) return null;
+  const solar: QWeatherAstronomyDay['solar'] = {} as QWeatherAstronomyDay['solar'];
+  for (const field of SOLAR_FIELDS) {
+    const event = solarValue[field];
+    if (event !== null && !isEpoch(event)) return null;
+    solar[field] = event as number | null;
+  }
+  const lunar: QWeatherAstronomyDay['lunar'] = {} as QWeatherAstronomyDay['lunar'];
+  for (const field of LUNAR_FIELDS) {
+    const event = lunarValue[field];
+    if (event !== null && !isEpoch(event)) return null;
+    lunar[field] = event as number | null;
+  }
+  const phase = lunarValue.phase;
+  if (phase !== null && (typeof phase !== 'string' || !MOON_PHASES.has(phase as QWeatherMoonPhase))) return null;
+  lunar.phase = phase as QWeatherMoonPhase | null;
+  return { intervalStartMs: day.intervalStartMs, intervalEndMs: day.intervalEndMs, solar, lunar };
+}
+
+function isEpoch(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 }

@@ -1,21 +1,77 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { ApplicationService } from '@tomato-clock/application';
-import type { WorldEnvironmentStyle } from '@tomato-clock/domain';
-import type { BlueprintV1, ConstructionOutlineVisibility, ExternalWeatherVisualOverride, VoxelLightingQuality, VoxelRenderer } from '@tomato-clock/voxel';
-import type { ResourcePackRepository } from '@tomato-clock/resource-pack-indexeddb';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import type { ApplicationService } from '@blockcolc/application';
+import type { WorldEnvironmentStyle } from '@blockcolc/domain';
+import type { AstronomyContext, BlueprintV1, ConstructionOutlineVisibility, ExternalWeatherVisualOverride, VoxelLightingQuality, VoxelRenderer } from '@blockcolc/voxel';
+import type { ResourcePackRepository, ResourcePackSelectionMetadata } from '@blockcolc/resource-pack-indexeddb';
 import { Map as MapIcon, RotateCcw, Hammer } from 'lucide-react';
 import { LoadingPage } from './LoadingPage';
 import { BuildingMemoryPanel, createBuildingMemory, conditionLabel } from './BuildingMemoryPanel';
 import { loadVoxelModule, useBlueprintCatalog, blueprintName, resourcePackAtlasMaximumSizeForTest } from './voxel-runtime';
 import { toVoxelWorlds, decorationDatesByProject } from './world-projection';
 import { startRendererGeneration, scheduleAfterPaint } from './renderer-generation';
+import { createRendererWorldSnapshotCoordinator, initializeRendererWorlds } from './renderer-bootstrap';
+import type { RendererWorldSnapshotOwner } from './renderer-bootstrap';
 import { markFocusPerformance } from './focus-performance';
-import { resolveSelectedResourcePack } from './resource-pack-selection';
+import { resolveSelectedResourcePackState } from './resource-pack-selection';
+import type { WorldDebugProjection } from './world-debug';
+import { closeFocusSubmissionObservation, commitFocusSubmissionProjection, isFocusSubmissionDiagnosticsEnabled, observeFocusSubmissionFrame, peekFocusSubmissionProjection } from './submission-performance';
+import { finishQualityLifecycleBoot, recordQualityLifecyclePhase } from './quality-lifecycle-performance';
 
-export const WorldCanvasV7 = memo(function WorldCanvasV7({service,resourcePacks,lightingQuality,constructionOutlineVisibility,showWorldCoordinates,environmentStyle,worldSeed,terrainGenerationVersion,constructionFeedback=0,sessionActive=false,immersivePresentation=sessionActive,immersiveBand={bottom:0,right:0},externalWeatherOverride=null,focusedProjectId,memoryProjectId,onSelectProject,onClearWorldFocus,onCloseMemory,onContinueProject,switchBlockedReason,visible,onPickTerrain,pickedCell}:{service:ApplicationService;resourcePacks:ResourcePackRepository;lightingQuality:VoxelLightingQuality;constructionOutlineVisibility:ConstructionOutlineVisibility;showWorldCoordinates:boolean;environmentStyle:WorldEnvironmentStyle;worldSeed:string;terrainGenerationVersion:4;constructionFeedback?:number;sessionActive?:boolean;immersivePresentation?:boolean;immersiveBand?:{bottom:number;right:number};externalWeatherOverride?:ExternalWeatherVisualOverride|null;focusedProjectId:string|null;memoryProjectId:string|null;onSelectProject:(projectId:string)=>void;onClearWorldFocus:()=>void;onCloseMemory:()=>void;onContinueProject:(projectId:string)=>Promise<void>;switchBlockedReason?:string;visible:boolean;onPickTerrain:(position:{x:number;y:number;z:number})=>void;pickedCell:{x:number;y:number;z:number}|null}) {
-  const ref=useRef<HTMLCanvasElement>(null); const renderer=useRef<VoxelRenderer|null>(null); const catalog=useBlueprintCatalog(); const world=service.worldProjection(); const state=service.snapshot(); const importedRef=useRef(new Map<string,BlueprintV1>()); const focusRef=useRef(focusedProjectId); const selectRef=useRef(onSelectProject); const visibleRef=useRef(visible); const appliedPackRef=useRef<string|null|undefined>(undefined); const sessionActiveRef=useRef(sessionActive); const pickEnabledRef=useRef(false); const pickTerrainRef=useRef(onPickTerrain); const [ready,setReady]=useState(false); const [resourcePackLoading,setResourcePackLoading]=useState(false);
+export const WorldCanvasV7 = memo(function WorldCanvasV7({service,resourcePacks,lightingQuality,constructionOutlineVisibility,showWorldCoordinates,environmentStyle,worldSeed,terrainGenerationVersion,constructionFeedback=0,sessionActive=false,immersivePresentation=sessionActive,immersiveBand={bottom:0,right:0},externalWeatherOverride=null,astronomyContext=null,worldDebug=null,openingProjectId=null,focusedProjectId,memoryProjectId,onSelectProject,onClearWorldFocus,onCloseMemory,onContinueProject,switchBlockedReason,visible,onPickTerrain,pickedCell}:{service:ApplicationService;resourcePacks:ResourcePackRepository;lightingQuality:VoxelLightingQuality;constructionOutlineVisibility:ConstructionOutlineVisibility;showWorldCoordinates:boolean;environmentStyle:WorldEnvironmentStyle;worldSeed:string;terrainGenerationVersion:4;constructionFeedback?:number;sessionActive?:boolean;immersivePresentation?:boolean;immersiveBand?:{bottom:number;right:number};externalWeatherOverride?:ExternalWeatherVisualOverride|null;astronomyContext?:AstronomyContext|null;worldDebug?:WorldDebugProjection|null;openingProjectId?:string|null;focusedProjectId:string|null;memoryProjectId:string|null;onSelectProject:(projectId:string)=>void;onClearWorldFocus:()=>void;onCloseMemory:()=>void;onContinueProject:(projectId:string)=>Promise<void>;switchBlockedReason?:string;visible:boolean;onPickTerrain:(position:{x:number;y:number;z:number})=>void;pickedCell:{x:number;y:number;z:number}|null}) {
+  const projectionToken=peekFocusSubmissionProjection();
+  const projectionStartedAt=projectionToken===null?0:performance.now();
+  const world=service.worldProjection();
+  const worldProjectionMs=projectionToken===null?0:performance.now()-projectionStartedAt;
+  const state=service.snapshot();
+  const ref=useRef<HTMLCanvasElement>(null); const renderer=useRef<VoxelRenderer|null>(null); const catalog=useBlueprintCatalog(); const importedRef=useRef(new Map<string,BlueprintV1>()); const focusRef=useRef(focusedProjectId); const selectRef=useRef(onSelectProject); const visibleRef=useRef(visible); const appliedPackRef=useRef<string|null|undefined>(undefined); const sessionActiveRef=useRef(sessionActive); const pickEnabledRef=useRef(false); const pickTerrainRef=useRef(onPickTerrain); const [ready,setReady]=useState(false); const [resourcePackLoading,setResourcePackLoading]=useState(false); const [resourcePackError,setResourcePackError]=useState(false); const [packRetryRevision,setPackRetryRevision]=useState(0);
+  const appliedPackMetadataRef=useRef<ResourcePackSelectionMetadata|null>(null);
+  const packRefreshOwnerRef=useRef(0);
+  const forceFullPackValidationRef=useRef(true);
+  const lastHandledPackRetryRef=useRef(0);
+  const latestQualityRef=useRef(lightingQuality); latestQualityRef.current=lightingQuality;
   const immersiveBandRef=useRef(immersiveBand); immersiveBandRef.current=immersiveBand;
   const externalWeatherRef=useRef(externalWeatherOverride); externalWeatherRef.current=externalWeatherOverride;
+  const astronomyRef=useRef(astronomyContext); astronomyRef.current=astronomyContext;
+  const debugRef=useRef(worldDebug); debugRef.current=worldDebug;
+  const openingProjectRef=useRef(openingProjectId); openingProjectRef.current=openingProjectId;
+  const preparedRendererRef=useRef<VoxelRenderer|null>(null);
+  const initialPackAttemptRef=useRef<{key:string|null;readFailed:boolean}|null>(null);
+  const snapshotOwnerRef=useRef<RendererWorldSnapshotOwner<Parameters<VoxelRenderer['setWorlds']>[0]>|null>(null);
+  const pendingWorldSubmissionRef=useRef<{token:number;key:string}|null>(null);
+  const worldSubmissionObservationRef=useRef<(()=>void)|null>(null);
+  const committedSnapshotKeyRef=useRef<string|null>(null);
+  const appliedDebugRef=useRef<WorldDebugProjection|null|undefined>(undefined);
+  const [environmentUpdating,setEnvironmentUpdating]=useState(false);
+  const initialRevealStartedRef=useRef(false);
+  const observeSubmittedWorldRebuild=(current:VoxelRenderer,key:string)=>{
+    const pending=pendingWorldSubmissionRef.current;
+    if(!pending||pending.key!==key)return;
+    pendingWorldSubmissionRef.current=null;
+    worldSubmissionObservationRef.current?.();
+    const baselineRebuildCount=current.getDiagnostics().renderedWorldRebuildCount;
+    const requestedAtMs=performance.now();
+    worldSubmissionObservationRef.current=observeFocusSubmissionFrame({
+      token:pending.token,
+      baselineRebuildCount,
+      requestedAtMs,
+      readDiagnostics:()=>current.getDiagnostics(),
+      isCurrentGeneration:()=>renderer.current===current,
+      isVisible:()=>visibleRef.current&&!document.hidden,
+      subscribeHidden:callback=>{
+        const onVisibility=()=>{if(document.hidden)callback();};
+        document.addEventListener('visibilitychange',onVisibility);
+        return()=>document.removeEventListener('visibilitychange',onVisibility);
+      },
+      setTimer:(callback,delay)=>setTimeout(callback,delay),
+      clearTimer:handle=>clearTimeout(handle),
+    });
+  };
+  const [documentVisible,setDocumentVisible]=useState(()=>!document.hidden);
+  useEffect(()=>{
+    const changed=()=>setDocumentVisible(!document.hidden);
+    document.addEventListener('visibilitychange',changed);
+    return()=>document.removeEventListener('visibilitychange',changed);
+  },[]);
   // V21 top-right HUD reveal: one shared control governs both the immersive
   // view controls and the ordinary world HUD. Tapping the corner shows them,
   // then they auto-hide after 5 s with the same fade as the other conditional
@@ -74,11 +130,26 @@ export const WorldCanvasV7 = memo(function WorldCanvasV7({service,resourcePacks,
   const pickEnabled=new URLSearchParams(location.search).has('pick')
     || showWorldCoordinates;
   pickEnabledRef.current=pickEnabled; pickTerrainRef.current=onPickTerrain;
-  importedRef.current=new Map(world.projects.flatMap(project=>project.building.importedBlueprint?[[project.building.blueprintId,project.building.importedBlueprint as BlueprintV1]]:[])); focusRef.current=focusedProjectId; selectRef.current=onSelectProject; visibleRef.current=visible;
+  importedRef.current=new Map(world.projects.flatMap(project=>project.building.importedBlueprint?[[project.building.blueprintId,project.building.importedBlueprint as BlueprintV1]]:[])); focusRef.current=focusedProjectId; selectRef.current=onSelectProject; visibleRef.current=visible && documentVisible;
   const blueprintLabel=(blueprintId:string,importedTitle?:string)=>state.buildingBlueprintResources.find(resource=>resource.id===blueprintId)?.displayName??importedTitle??blueprintName(catalog,blueprintId);
-  const decorationDates=decorationDatesByProject(state); const snapshotKey=world.projects.map(project=>`${project.project.id}:${project.building.blueprintId}:${project.building.completionBasisPoints}:${project.building.conditionBasisPoints}:${project.isActive}:${project.settlementIndex}:${(decorationDates.get(project.project.id)??[]).join(',')}:${project.importedDecorations.map(reward=>`${reward.rewardId}@${reward.localPosition.x},${reward.localPosition.z},${reward.rotationQuarterTurns}`).join(';')}`).join('|'); const snapshots=useMemo(()=>toVoxelWorlds(world.projects,state),[snapshotKey]); const summary=world.projects.map(project=>`${project.project.title}，${blueprintLabel(project.building.blueprintId,project.building.importedBlueprint?.title)}，${project.isActive?'正在建造':project.project.status==='paused'?'暂停建造':'纪念建筑'}，建造进度 ${Math.round(project.building.completionBasisPoints/100)}%，保存状况 ${conditionLabel(project.building.conditionBasisPoints)}`).join('；'); const focusedTitle=world.projects.find(project=>project.project.id===focusedProjectId)?.project.title;
+  const decorationDates=decorationDatesByProject(state); const snapshotKey=world.projects.map(project=>`${project.project.id}:${project.building.blueprintId}:${project.building.completionBasisPoints}:${project.building.conditionBasisPoints}:${project.isActive}:${project.settlementIndex}:${(decorationDates.get(project.project.id)??[]).join(',')}:${project.importedDecorations.map(reward=>`${reward.rewardId}@${reward.localPosition.x},${reward.localPosition.z},${reward.rotationQuarterTurns}`).join(';')}`).join('|');
+  const snapshots=useMemo(()=>toVoxelWorlds(world.projects,state),[snapshotKey]); const latestSnapshotsRef=useRef({key:snapshotKey,worlds:snapshots}); latestSnapshotsRef.current={key:snapshotKey,worlds:snapshots}; const summary=world.projects.map(project=>`${project.project.title}，${blueprintLabel(project.building.blueprintId,project.building.importedBlueprint?.title)}，${project.isActive?'正在建造':project.project.status==='paused'?'暂停建造':'纪念建筑'}，建造进度 ${Math.round(project.building.completionBasisPoints/100)}%，保存状况 ${conditionLabel(project.building.conditionBasisPoints)}`).join('；'); const focusedTitle=world.projects.find(project=>project.project.id===focusedProjectId)?.project.title;
+  useLayoutEffect(()=>{
+    if(!isFocusSubmissionDiagnosticsEnabled())return;
+    const previousCommittedKey=committedSnapshotKeyRef.current;
+    const worldKeyChanged=previousCommittedKey!==null&&previousCommittedKey!==snapshotKey;
+    let preservedFrame=null;
+    if(!worldKeyChanged&&renderer.current){
+      try{preservedFrame=renderer.current.getDiagnostics();}catch{/* unavailable after renderer disposal */}
+    }
+    const adoption=commitFocusSubmissionProjection({token:projectionToken,snapshotKey,previousCommittedKey,elapsedMs:worldProjectionMs,preservedFrame});
+    if(adoption.adopted)pendingWorldSubmissionRef.current=adoption.worldKeyChanged?{token:projectionToken!,key:snapshotKey}:null;
+    committedSnapshotKeyRef.current=snapshotKey;
+  },[projectionToken,snapshotKey,worldProjectionMs]);
   useEffect(() => {
     setReady(false);
+    setResourcePackLoading(false);
+    setResourcePackError(false);
     return startRendererGeneration({
       schedule: scheduleAfterPaint,
       load: loadVoxelModule,
@@ -94,7 +165,11 @@ export const WorldCanvasV7 = memo(function WorldCanvasV7({service,resourcePacks,
           debugVoidScan: new URLSearchParams(location.search).has('voidscan'),
         });
         renderer.current = current;
+        snapshotOwnerRef.current = createRendererWorldSnapshotCoordinator(current, latestSnapshotsRef.current, requestedSnapshot => {
+          observeSubmittedWorldRebuild(current,requestedSnapshot.key);
+        });
         ref.current.dataset.rendererGeneration = String(Number(ref.current.dataset.rendererGeneration ?? 0) + 1);
+        recordQualityLifecyclePhase('renderer-created', { rendererGeneration: Number(ref.current.dataset.rendererGeneration) });
         return current;
       },
       initialize: async (current, isCurrent) => {
@@ -102,25 +177,116 @@ export const WorldCanvasV7 = memo(function WorldCanvasV7({service,resourcePacks,
         current.setVisible(visibleRef.current);
         current.setImmersiveBandFraction(immersiveBandRef.current.bottom ?? 0, immersiveBandRef.current.right ?? 0);
         current.setExternalWeatherOverride(externalWeatherRef.current ?? null);
-        current.setWorlds(toVoxelWorlds(service.worldProjection().projects, service.snapshot()));
         current.focusProject(focusRef.current);
-        const pack = await resolveSelectedResourcePack(resourcePacks);
-        if (!isCurrent()) return;
-        await current.setResourcePack(pack ? { id: pack.id, manifest: pack.manifest } : null);
-        if (!isCurrent()) return;
-        appliedPackRef.current = pack ? `${pack.id}:${pack.manifest.pack.packFormat}` : null;
+        let adoptedSelectionMetadata: ResourcePackSelectionMetadata | null = null;
+        await initializeRendererWorlds({
+          isCurrent,
+          latestSnapshot: () => latestSnapshotsRef.current,
+          resolvePack: async () => {
+            const selection = await resolveSelectedResourcePackState(resourcePacks, null, true);
+            adoptedSelectionMetadata = selection.metadata;
+            return selection.pack ? { id: selection.pack.id, manifest: selection.pack.manifest } : null;
+          },
+          initializeWorlds: (worlds, pack) => current.initializeWorlds(worlds, pack),
+          onWorldsInitializationRequested: snapshot => observeSubmittedWorldRebuild(current,snapshot.key),
+          onError: error => { setResourcePackError(true); console.error('Voxel resource pack initialization failed; using default materials', error); },
+          onPrepared: (key, pack, requestedPack, packReadFailed) => {
+            appliedPackRef.current = pack ? `${pack.id}:${pack.manifest.pack.packFormat}` : null;
+            initialPackAttemptRef.current = {
+              key: requestedPack ? `${requestedPack.id}:${requestedPack.manifest.pack.packFormat}` : null,
+              readFailed: packReadFailed,
+            };
+            appliedPackMetadataRef.current = packReadFailed ? null : adoptedSelectionMetadata;
+            forceFullPackValidationRef.current = packReadFailed;
+            snapshotOwnerRef.current?.observe(latestSnapshotsRef.current);
+            snapshotOwnerRef.current?.prepared(key);
+            preparedRendererRef.current = current;
+            if (isCurrent()) current.setLightingQuality(latestQualityRef.current);
+          },
+        });
       },
       ready: () => setReady(true),
-      error: error => console.error('Voxel world initialization failed', error),
+      readyOnError: false,
+      error: error => { setResourcePackError(true); console.error('Voxel world initialization failed', error); },
       release: current => {
         if (renderer.current !== current) return;
+        recordQualityLifecyclePhase('renderer-released');
+        worldSubmissionObservationRef.current?.();
+        worldSubmissionObservationRef.current = null;
+        if(pendingWorldSubmissionRef.current)closeFocusSubmissionObservation(pendingWorldSubmissionRef.current.token,'disposed');
+        pendingWorldSubmissionRef.current = null;
         renderer.current = null;
+        snapshotOwnerRef.current?.dispose();
+        snapshotOwnerRef.current = null;
+        preparedRendererRef.current = null;
+        appliedDebugRef.current = undefined;
         appliedPackRef.current = undefined;
       },
     });
-  }, [service, resourcePacks, lightingQuality, constructionOutlineVisibility, environmentStyle, worldSeed, terrainGenerationVersion]);
-  useEffect(()=>{renderer.current?.setVisible(visible);},[visible]);
+  }, [service, resourcePacks, constructionOutlineVisibility, environmentStyle, worldSeed, terrainGenerationVersion]);
+  useEffect(()=>{
+    const current=renderer.current;
+    if(!ready||!current||preparedRendererRef.current!==current)return;
+    current.setLightingQuality(lightingQuality);
+  },[lightingQuality,ready]);
+  useEffect(()=>{renderer.current?.setVisible(visible && documentVisible);},[visible,documentVisible]);
   useEffect(()=>{renderer.current?.setExternalWeatherOverride(externalWeatherOverride??null);},[externalWeatherOverride]);
+  useEffect(()=>{
+    const current=renderer.current;
+    if (!ready || !visible || !documentVisible || resourcePackLoading || !current || preparedRendererRef.current!==current) return;
+    return scheduleAfterPaint(()=>{
+      if (renderer.current===current && visibleRef.current && !document.hidden) current.setAstronomyContext(astronomyRef.current);
+    });
+  },[astronomyContext,ready,visible,documentVisible,resourcePackLoading]);
+  useEffect(()=>{
+    const current=renderer.current;
+    if (!ready || !visible || !documentVisible || resourcePackLoading || !current || preparedRendererRef.current!==current) {
+      setEnvironmentUpdating(false);
+      return;
+    }
+    if (appliedDebugRef.current===worldDebug) return;
+    if (appliedDebugRef.current===undefined && worldDebug===null) {
+      appliedDebugRef.current=null;
+      return;
+    }
+    const rebuildNeeded=(appliedDebugRef.current?.decayAmount ?? null)!==(worldDebug?.decayAmount ?? null);
+    // Corruption changes can replace building geometry. Paint its loader first;
+    // weather/time only update the resident presentation without that loader.
+    if (rebuildNeeded) setEnvironmentUpdating(true);
+    return scheduleAfterPaint(()=>{
+      if (renderer.current!==current || !visibleRef.current || document.hidden) return;
+      try {
+        current.setEnvironmentDebugOverride(debugRef.current);
+        appliedDebugRef.current=debugRef.current;
+      } catch (error) { console.warn('World presentation update unavailable',error); }
+      finally { setEnvironmentUpdating(false); }
+    });
+  },[worldDebug,ready,visible,documentVisible,resourcePackLoading]);
+  useEffect(()=>{
+    const media=matchMedia('(prefers-reduced-motion: reduce)');
+    const changed=()=>renderer.current?.setReducedMotion(media.matches);
+    media.addEventListener('change',changed);
+    return()=>media.removeEventListener('change',changed);
+  },[]);
+  useEffect(()=>{
+    const current=renderer.current;
+    if (!ready || !visible || !documentVisible || resourcePackLoading || environmentUpdating || !current
+      || current !== preparedRendererRef.current || initialRevealStartedRef.current) return;
+    // Wait until the loader's removal has painted. Direct camera control must
+    // never reuse project selection, which would also open building memory.
+    return scheduleAfterPaint(()=>{
+      if (renderer.current !== current || !visibleRef.current || document.hidden || initialRevealStartedRef.current) return;
+      initialRevealStartedRef.current=true;
+      void current.revealInitialProject(openingProjectRef.current).then(result=>{
+        recordQualityLifecyclePhase('initial-reveal-complete', { status: result === 'completed' ? 'ok' : 'stale' });
+        finishQualityLifecycleBoot(result === 'completed' ? 'completed' : 'cancelled');
+      }).catch(error=>{
+        recordQualityLifecyclePhase('initial-reveal-complete', { status: 'failed' });
+        finishQualityLifecycleBoot('failed');
+        console.warn('Initial world reveal unavailable',error);
+      });
+    });
+  },[ready,visible,documentVisible,resourcePackLoading,environmentUpdating]);
   // IF-01: bounded construction pulses — round completed (stronger) and focus started (gentle).
   useEffect(()=>{if(constructionFeedback>0)renderer.current?.playConstructionPulse(1);},[constructionFeedback]);
   useEffect(()=>{
@@ -140,13 +306,35 @@ export const WorldCanvasV7 = memo(function WorldCanvasV7({service,resourcePacks,
   useEffect(()=>{renderer.current?.setImmersiveBandFraction(immersiveBandRef.current.bottom??0,immersiveBandRef.current.right??0);},[immersiveBand?.bottom,immersiveBand?.right]);
   // MT-02: with the renderer resident, the pack switched in settings must apply when the pane returns; re-apply only when the active pack actually changed.
   useEffect(() => {
+    const refreshOwner = ++packRefreshOwnerRef.current;
+    let ownsLoading = false;
+    const finishOwnedLoading = () => {
+      if (!ownsLoading || packRefreshOwnerRef.current !== refreshOwner) return;
+      ownsLoading = false;
+      setResourcePackLoading(false);
+    };
     const current = renderer.current;
-    if (!visible || !ready || !current) return;
+    if (!visible || !documentVisible || !ready || !current) return () => { finishOwnedLoading(); };
+    if (packRetryRevision > lastHandledPackRetryRef.current) {
+      lastHandledPackRetryRef.current = packRetryRevision;
+      forceFullPackValidationRef.current = true;
+    }
     let cancelled = false;
-    void resolveSelectedResourcePack(resourcePacks).then(async pack => {
+    void resolveSelectedResourcePackState(resourcePacks, appliedPackMetadataRef.current, forceFullPackValidationRef.current || resourcePackError).then(async selection => {
       if (cancelled || renderer.current !== current) return;
+      const pack = selection.pack;
       const key = pack ? `${pack.id}:${pack.manifest.pack.packFormat}` : null;
-      if (appliedPackRef.current === key) return;
+      const initialAttempt = initialPackAttemptRef.current;
+      if (selection.unchanged) {
+        initialPackAttemptRef.current = null;
+        forceFullPackValidationRef.current = false;
+        return;
+      }
+      if (initialAttempt && !selection.metadata && !initialAttempt.readFailed && initialAttempt.key === key) {
+        initialPackAttemptRef.current = null;
+        return;
+      }
+      ownsLoading = true;
       setResourcePackLoading(true);
       try {
         await new Promise<void>(resolve => requestAnimationFrame(() => window.setTimeout(resolve, 0)));
@@ -154,16 +342,44 @@ export const WorldCanvasV7 = memo(function WorldCanvasV7({service,resourcePacks,
         await current.setResourcePack(pack ? { id: pack.id, manifest: pack.manifest } : null);
         if (cancelled || renderer.current !== current) return;
         appliedPackRef.current = key;
+        appliedPackMetadataRef.current = selection.metadata;
+        forceFullPackValidationRef.current = false;
+        initialPackAttemptRef.current = null;
         current.setVisible(visibleRef.current);
+        setResourcePackError(false);
       } finally {
-        if (!cancelled) setResourcePackLoading(false);
+        finishOwnedLoading();
       }
-    }).catch(error => { if (!cancelled) console.error('Voxel resource pack refresh failed', error); });
-    return () => { cancelled = true; };
-  }, [visible, resourcePacks, ready]);
-  useEffect(()=>{renderer.current?.setWorlds(snapshots);},[snapshots]);
+    }).catch(error => { if (!cancelled) { forceFullPackValidationRef.current = true; setResourcePackError(true); console.error('Voxel resource pack refresh failed', error); } });
+    return () => { cancelled = true; finishOwnedLoading(); };
+  }, [visible, documentVisible, resourcePacks, ready, packRetryRevision]);
+  useEffect(()=>{snapshotOwnerRef.current?.observe({key:snapshotKey,worlds:snapshots});},[snapshotKey,snapshots]);
   useEffect(()=>{renderer.current?.focusProject(focusedProjectId);},[focusedProjectId]);
   const memoryProject=world.projects.find(project=>project.project.id===memoryProjectId);
   const memory=memoryProject?createBuildingMemory(state,memoryProject,blueprintLabel(memoryProject.building.blueprintId,memoryProject.building.importedBlueprint?.title)):null;
-  return <><figure className={focusedProjectId?'world is-project-focused':'world'}><canvas ref={ref} role="img" aria-label="项目建筑世界" aria-describedby="world-summary" data-coordinate-picking={pickEnabled?'true':'false'}/>{visible&&<div className="world-hud-tapzone" aria-hidden="true" onPointerDown={event=>event.stopPropagation()} onPointerUp={event=>{event.stopPropagation();toggleViewControls();}}/>}{visible&&immersivePresentation&&(viewControlsVisible||viewControlsLeaving)&&<div className={`immersive-view-controls${viewControlsLeaving?' is-leaving':''}`}>{focusedProjectId&&<button type="button" className="immersive-reset-view" aria-label="重置地图" title="重置地图" onClick={()=>runViewAction(onClearWorldFocus)}><MapIcon/></button>}<button type="button" className="immersive-reset-view" aria-label="重置视角" title="重置视角" onClick={()=>runViewAction(()=>renderer.current?.resetCamera())}><RotateCcw/></button></div>}{visible&&<figcaption id="world-summary" className="sr-only">林边聚落，共 {world.projects.length} 栋建筑。{summary}</figcaption>}{visible&&!immersivePresentation&&<nav className="world-building-index" aria-label="聚落建筑">{world.projects.map(project=><button key={project.project.id} type="button" onClick={()=>onSelectProject(project.project.id)}>查看建筑记忆：{project.project.title}</button>)}</nav>}{visible&&pickEnabled&&pickedCell&&<div className="world-pick-chip" role="status" data-testid="world-pick">x {pickedCell.x} · z {pickedCell.z} · 高 {pickedCell.y}</div>}{visible&&!immersivePresentation&&(viewControlsVisible||viewControlsLeaving)&&<div className={`world-hud${viewControlsLeaving?' is-leaving':''}`}><span>{focusedTitle?`正在查看 · ${focusedTitle}`:`林边聚落 · ${world.projects.length} 栋`}</span><div className="world-hud-actions">{focusedProjectId&&<button title="重置地图" aria-label="重置地图" onClick={()=>runViewAction(onClearWorldFocus)}><MapIcon/></button>}<button title="重置视角" aria-label="重置视角" onClick={()=>runViewAction(()=>renderer.current?.resetCamera())}><RotateCcw/></button></div></div>}{visible&&constructionFeedback>0&&<div key={constructionFeedback} className="construction-feedback" role="status"><Hammer/><span>材料已送达，继续建造</span><i/><i/><i/></div>}</figure>{visible&&!immersivePresentation&&memory&&<BuildingMemoryPanel memory={memory} switchBlockedReason={memory.isActive?undefined:switchBlockedReason} onClose={onCloseMemory} onContinue={()=>void onContinueProject(memory.projectId)}/>} {(!ready||resourcePackLoading)&&<LoadingPage status={resourcePackLoading?'正在更新世界材质…':'正在建造世界…'}/>}</>;
+  const loadingStatus=!ready?(resourcePackError?'世界初始化失败，请重新打开此页面或刷新后重试。':'正在建造世界…'):resourcePackLoading?'正在更新世界材质…':environmentUpdating?'正在更新世界画面…':null;
+  return <>
+    <figure className={focusedProjectId?'world is-project-focused':'world'}>
+      <canvas ref={ref} role="img" aria-label="项目建筑世界" aria-describedby="world-summary" data-coordinate-picking={pickEnabled?'true':'false'}/>
+      {visible&&<div className="world-hud-tapzone" aria-hidden="true" onPointerDown={event=>event.stopPropagation()} onPointerUp={event=>{event.stopPropagation();toggleViewControls();}}/>}
+      {visible&&immersivePresentation&&(viewControlsVisible||viewControlsLeaving)&&<div className={`immersive-view-controls${viewControlsLeaving?' is-leaving':''}`}>
+        {focusedProjectId&&<button type="button" className="immersive-reset-view" aria-label="重置地图" title="重置地图" onClick={()=>runViewAction(onClearWorldFocus)}><MapIcon/></button>}
+        <button type="button" className="immersive-reset-view" aria-label="重置视角" title="重置视角" onClick={()=>runViewAction(()=>renderer.current?.resetCamera())}><RotateCcw/></button>
+      </div>}
+      {visible&&<figcaption id="world-summary" className="sr-only">林边聚落，共 {world.projects.length} 栋建筑。{summary}</figcaption>}
+      {visible&&ready&&resourcePackError&&<div className="world-pack-error" role="status">材质包暂不可用，当前使用默认材质。 <button type="button" onClick={()=>setPackRetryRevision(value=>value+1)}>重试</button></div>}
+      {visible&&!immersivePresentation&&<nav className="world-building-index" aria-label="聚落建筑">{world.projects.map(project=><button key={project.project.id} type="button" onClick={()=>onSelectProject(project.project.id)}>查看建筑记忆：{project.project.title}</button>)}</nav>}
+      {visible&&pickEnabled&&pickedCell&&<div className="world-pick-chip" role="status" data-testid="world-pick">x {pickedCell.x} · z {pickedCell.z} · 高 {pickedCell.y}</div>}
+      {visible&&!immersivePresentation&&(viewControlsVisible||viewControlsLeaving)&&<div className={`world-hud${viewControlsLeaving?' is-leaving':''}`}>
+        <span>{focusedTitle?`正在查看 · ${focusedTitle}`:`林边聚落 · ${world.projects.length} 栋`}</span>
+        <div className="world-hud-actions">
+          {focusedProjectId&&<button title="重置地图" aria-label="重置地图" onClick={()=>runViewAction(onClearWorldFocus)}><MapIcon/></button>}
+          <button title="重置视角" aria-label="重置视角" onClick={()=>runViewAction(()=>renderer.current?.resetCamera())}><RotateCcw/></button>
+        </div>
+      </div>}
+      {visible&&constructionFeedback>0&&<div key={constructionFeedback} className="construction-feedback" role="status"><Hammer/><span>材料已送达，继续建造</span><i/><i/><i/></div>}
+    </figure>
+    {visible&&!immersivePresentation&&memory&&<BuildingMemoryPanel memory={memory} switchBlockedReason={memory.isActive?undefined:switchBlockedReason} onClose={onCloseMemory} onContinue={()=>void onContinueProject(memory.projectId)}/>}
+    {loadingStatus&&<LoadingPage status={loadingStatus}/>}
+  </>;
 });

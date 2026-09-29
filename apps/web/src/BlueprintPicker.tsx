@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
-import type { BlueprintCatalogEntry } from '@tomato-clock/voxel';
-import type { ResourcePackRepository } from '@tomato-clock/resource-pack-indexeddb';
+import type { BlueprintCatalogEntry } from '@blockcolc/voxel';
+import type { ResourcePackRepository } from '@blockcolc/resource-pack-indexeddb';
 import { Check } from 'lucide-react';
 import { BlueprintPreview } from './BlueprintPreview';
 

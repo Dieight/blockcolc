@@ -4,64 +4,56 @@
 
 # 方块钟 / Blockcolc
 
-方块钟是一款本地优先的专注计时应用。它把一个大型任务表现为一栋方块建筑：你手动拆分任务、完成专注轮次并汇报进度，建筑会随之逐步建成。
+Blockcolc 是本地优先的专注计时应用。把真实投入转化为方块建筑：
+普通大型任务由小任务自报进度推进，习惯任务由有效专注轮次推进。
 
-## 主要功能
+## 主要能力
 
-- 以“专注 + 休息”为一轮，默认 45 分钟专注、5 分钟休息，时长和轮次数均可调整。
-- 创建和切换多个大型任务，并将每个大型任务拆分为可执行的小任务。
-- 每次专注结束后自行确认完成情况，进度会反映在对应建筑上。
-- 支持每日目标、连续专注、建筑腐败与加速修复机制。
-- 提供近 26 周有效专注分钟热力图、本周回顾，以及本地 JSON 备份与恢复；中断前已经投入的时间也会如实计入有效分钟。
-- 可限制专注期间切出应用的次数，超过设定值时判定本次专注失败。
-- 支持导入 Minecraft Java 版 `.litematic` 蓝图，并可选择作为主任务建筑或每日奖励装饰。
-- 支持导入兼容的 Java 版资源包，在设备性能允许时显示方块材质、复杂几何、昼夜光照与阴影。
-- 自然山谷环境使用稳定种子生成分层地形、山丘、湖泊、河流和森林，并按距离使用有界细节层级。
-- 扩展 Minecraft Java 26.3 方块兼容：颜色变体、透明/发光/流体材质、multipart 状态和旋转模型；不支持内容会安全回退。
+- 普通、习惯、固定轮次、马拉松和极简专注，共用时间真相与沉浸表面。
+- 多任务切换、每日目标、可选自动连续专注、离开保护和系统通知。
+- 今日时间轴、热力图、任务投入、纪念建筑、小任务分布和本地成就。
+- JSON 备份/恢复与原子回滚；中断前已投入的时间如实统计。
+- Litematic 蓝图导入、真实预览及本地保存；Java 26.3 资源包的模型/纹理、
+  染色、动画与受限特殊方块静态显示，不支持内容明确回退。
+- 自然山谷、经典空岛、海洋小岛，昼夜光照、天气及环境装饰。
+- 默认本地天气；可选现实天气，失败仍保持离线核心可用。
 
-所有任务、计时和资源数据默认保存在本机。核心流程离线可用，不需要注册账号或连接服务器。
+核心不要求账号或服务器。Android 是主要发布平台，Web 共用 React 界面与业务逻辑。
+标准版不含私人同步上传模块；私人集成构筑不属于公开下载内容。
 
-## 平台
+## 安装与运行
 
-- Android：主要发布平台，通过 Capacitor 容器运行。
-- Web：共享同一套 React 界面与业务逻辑，可作为本地 Web 应用运行。
-
-Android 安装包可从 [Releases](https://github.com/Dieight/blockcolc/releases) 下载。
-
-## 本地运行
-
-需要 Node.js 20.19 或更高版本。
+Android 安装包见 [Releases](https://github.com/Dieight/blockcolc/releases)。
+本地需要 Node.js 20.19 或更高，Android 工具链使用 JDK 21 与 Android SDK。
 
 ```powershell
 npm install
-npm run dev -w @tomato-clock/web
+npm run dev -w @blockcolc/web
 ```
 
-构建 Web 应用：
+Web 构建：`npm run build -w @blockcolc/web`。
+Android 本地调试：`npm run android:sync -w @blockcolc/android`，
+然后 `npm run android:assemble -w @blockcolc/android`。
+测试与签名交付使用 [验证策略](docs/TESTING.md)，不要把 debug 包当正式候选。
 
-```powershell
-npm run build -w @tomato-clock/web
-```
+## 数据与版权
 
-构建 Android debug APK 还需要 Android Studio、Android SDK 和 JDK 21：
+本地任务与资源默认保存在本机。标准版不上传任务或统计；
+用户显式开启现实天气时按设置请求位置与天气，不上传任务内容。
+用户导入资源在本机校验，受限方块实体只恢复已支持的静态信息，不模拟完整 Minecraft 游戏。
 
-```powershell
-npm run android:sync -w @tomato-clock/android
-npm run android:assemble -w @tomato-clock/android
-```
+Minecraft 是 Mojang Studios 的商标。本项目与 Mojang Studios 或 Microsoft 无关联，
+不附带未经授权的原版纹理、字体、声音或模型。
+已发行备份格式与数据库名保留兼容，不因项目改名重置用户数据。
 
-## 数据与兼容性
+## 工程入口
 
-方块钟不会上传用户任务、统计、蓝图或资源包。导入内容在浏览器或 Android WebView 内解析；不支持的方块会使用安全的替代外观，实体、方块实体和计划刻不会被重建。
+- [当前产品规则](BLOCKCOLC.md)
+- [当前工作范围](docs/TODO.md)
+- [架构](ARCHITECTURE.md)与[设计](DESIGN.md)
+- [验证与交付](docs/TESTING.md)
+- [工作区维护](docs/WORKSPACE-MAINTENANCE.md)
+- [版本记录](docs/versions/README.md)
 
-Minecraft 是 Mojang Studios 的商标。本项目与 Mojang Studios 或 Microsoft 没有关联，也不附带 Minecraft 原版纹理或其他受版权保护的游戏资源。
-
-## 项目文档与测试
-
-- 当前产品事实：[`Tomato Clock.md`](./Tomato%20Clock.md)
-- 工程边界：[`ARCHITECTURE.md`](./ARCHITECTURE.md)
-- 设计规则：[`DESIGN.md`](./DESIGN.md)
-- 测试分层：[`docs/TESTING.md`](./docs/TESTING.md)
-- 版本工作包：[`docs/versions`](./docs/versions)
-
-日常改动先运行 `npm run test:fast`，再按影响范围选择指定 E2E 或 `npm run test:web:smoke`。完整单 worker Web 回归只用于发布或高风险跨层改动。
+部分内部规范按既有本机 Git 排除策略维护；源码获取者如未携带本地规范，
+以随源码提供的 AGENTS、产品文件、测试工具与版本文档为准。

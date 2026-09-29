@@ -11,6 +11,7 @@ export interface ExternalWeatherVisual {
   kind: 'clear' | 'cloudy' | 'rain' | 'mist' | 'snow';
   cloudIntensity: number;
   precipitationIntensity: number;
+  thunderstorm?: boolean;
 }
 
 const clamp01 = (value: number) => Math.min(1, Math.max(0, Number.isFinite(value) ? value : 0));
@@ -48,5 +49,6 @@ export function qweatherVisual(input: QWeatherVisualInput): ExternalWeatherVisua
   const precipitationIntensity = kind === 'rain' || kind === 'snow'
     ? clamp01((precipitationMmPerHour(input.precipitationIntensity) ?? 1.5) / 5)
     : 0;
-  return { kind, cloudIntensity, precipitationIntensity };
+  return { kind, cloudIntensity, precipitationIntensity,
+    ...(kind === 'rain' && qweatherIsThunderstorm(code) ? { thunderstorm: true } : {}) };
 }

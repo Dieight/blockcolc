@@ -1,5 +1,5 @@
-import type { ApplicationCommand, ApplicationResult, ApplicationService } from '@tomato-clock/application';
-import type { DomainState } from '@tomato-clock/domain';
+import type { ApplicationCommand, ApplicationResult, ApplicationService } from '@blockcolc/application';
+import type { DomainState } from '@blockcolc/domain';
 import { subscribeSavedRoundPlan as subscribeSavedPlan } from './round-plan-store';
 import {
   automaticContinuationEventId,
@@ -16,6 +16,99 @@ export interface AutomaticContinuationDeadlineEvent {
   eventId: string;
   authorizationId: string;
   scheduledAtEpochMs: number;
+  /** A bounded, absolute-time projection for Android's notification surface. */
+  timeline?: AutomaticContinuationTimeline;
+}
+
+export interface AutomaticContinuationPhase {
+  kind: 'focus' | 'break';
+  startsAtEpochMs: number;
+  endsAtEpochMs: number;
+  round: number;
+  /** Present only for focus starts that the domain layer must replay. */
+  eventId?: string;
+}
+
+export interface AutomaticContinuationTimeline {
+  authorizationId: string;
+  phases: AutomaticContinuationPhase[];
+  projectTitle: string;
+  taskTitle: string;
+}
+
+/**
+ * Projects only already-authorized absolute stages. This is sent to Android so
+ * its single ongoing notification can follow lock-screen time without a
+ * WebView; it never creates domain sessions or history.
+ */
+export function projectAutomaticContinuationTimeline(
+  plan: RoundPlan,
+  state: DomainState,
+  event: Pick<AutomaticContinuationDeadlineEvent, 'eventId' | 'scheduledAtEpochMs'>,
+): AutomaticContinuationTimeline | undefined {
+  const authorization = plan.automaticContinuation;
+  const project = state.projects.find(candidate => candidate.id === plan.projectId);
+  const roundMatch = /:round:(\d+)$/.exec(event.eventId);
+  const firstRound = roundMatch ? Number(roundMatch[1]) : -1;
+  if (!authorization || !project || firstRound < 1 || !Number.isSafeInteger(event.scheduledAtEpochMs)) return undefined;
+
+  const phases: AutomaticContinuationPhase[] = [];
+  let focusStart = event.scheduledAtEpochMs;
+  let round = firstRound;
+  const active = state.activeFocusSession;
+  if (plan.status === 'focus' && active && active.id === plan.currentSessionId) {
+    const activeEnd = Date.parse(active.endsAt);
+    if (Number.isFinite(activeEnd) && activeEnd < focusStart && authorization.breakDurationMs > 0) {
+      phases.push({ kind: 'break', startsAtEpochMs: activeEnd, endsAtEpochMs: focusStart, round: firstRound - 1 });
+    }
+  } else if (plan.status === 'break' && plan.breakEndsAt) {
+    focusStart = Date.parse(plan.breakEndsAt);
+    if (!Number.isFinite(focusStart)) return undefined;
+    const breakStart = Date.parse(plan.breakStartedAt ?? '')
+      || focusStart - authorization.breakDurationMs;
+    if (breakStart < focusStart && authorization.breakDurationMs > 0) {
+      phases.push({ kind: 'break', startsAtEpochMs: breakStart, endsAtEpochMs: focusStart, round: firstRound - 1 });
+    }
+  }
+
+  let remainingStarts = Math.max(0, plan.totalRounds - firstRound + 1);
+  if (project.kind === 'habit') {
+    const habit = project.habit;
+    if (!habit) return undefined;
+    const deferred = plan.deferredSettlement === true
+      ? plan.reportedSessionIds.filter(sessionId => state.focusHistory.some(session =>
+          session.id === sessionId && session.projectId === plan.projectId && session.deferredSettlement === true,
+        )).length
+      : 0;
+    const activeHabitRound = plan.status === 'focus' && state.activeFocusSession?.projectId === plan.projectId ? 1 : 0;
+    remainingStarts = Math.min(remainingStarts, Math.max(0,
+      habit.targetRounds - habit.completedFocusSessionIds.length - deferred - activeHabitRound,
+    ));
+  }
+
+  const taskTitle = project.kind === 'habit' ? project.title
+    : project.subtasks.find(candidate => candidate.id === plan.subtaskId)?.title ?? project.title;
+  const projectTitle = project.title;
+  for (let index = 0; index < remainingStarts; index += 1, round += 1) {
+    const focusEnd = focusStart + authorization.focusDurationMs;
+    if (!Number.isSafeInteger(focusEnd)) break;
+    if (plan.mode === 'marathon' && plan.endAt && focusEnd > Date.parse(plan.endAt)) break;
+    phases.push({
+      kind: 'focus', startsAtEpochMs: focusStart, endsAtEpochMs: focusEnd, round,
+      eventId: automaticContinuationEventId(authorization.authorizationId, round),
+    });
+    if (index + 1 >= remainingStarts) break;
+    if (authorization.breakDurationMs <= 0) {
+      focusStart = focusEnd;
+      continue;
+    }
+    const breakEnd = focusEnd + authorization.breakDurationMs;
+    if (!Number.isSafeInteger(breakEnd)) break;
+    phases.push({ kind: 'break', startsAtEpochMs: focusEnd, endsAtEpochMs: breakEnd, round });
+    focusStart = breakEnd;
+  }
+
+  return phases.length > 0 ? { authorizationId: authorization.authorizationId, phases, projectTitle, taskTitle } : undefined;
 }
 
 export interface AutomaticContinuationDeadlinePort {
@@ -56,8 +149,9 @@ const RETRY_DELAY_MS = 30_000;
 
 /**
  * Serial Web orchestration shared by live deadline events, resume, and local
- * foreground timers. Native deadlines are a wake-up signal only: the JS/domain
- * service remains the sole authority that creates and settles focus sessions.
+ * foreground timers. Android may project these authorized absolute phases
+ * while the WebView is absent, but the JS/domain service remains the sole
+ * authority that creates and settles focus sessions.
  */
 export function createAutomaticContinuationCoordinator(ports: AutomaticContinuationCoordinatorPorts) {
   let tail: Promise<void> = Promise.resolve();
@@ -422,6 +516,8 @@ export function createAutomaticContinuationCoordinator(ports: AutomaticContinuat
   }
 
   async function scheduleDeadline(event: AutomaticContinuationDeadlineEvent): Promise<void> {
+    const plan = ports.readPlan();
+    if (plan) event = { ...event, timeline: projectAutomaticContinuationTimeline(plan, ports.service.snapshot(), event) };
     const key = `${event.eventId}\u0000${event.scheduledAtEpochMs}`;
     if (localTimerKey !== key) {
       if (localTimer !== null) clearTimer(localTimer);

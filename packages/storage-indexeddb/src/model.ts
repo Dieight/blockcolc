@@ -1,4 +1,4 @@
-import type { DomainState, ISOInstant } from "@tomato-clock/domain";
+import type { DomainState, ISOInstant } from "@blockcolc/domain";
 
 export interface BackupEnvelopeV1 {
   format: "tomato-clock-backup";

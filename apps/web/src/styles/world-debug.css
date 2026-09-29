@@ -1,0 +1,12 @@
+.world-debug-settings select{width:auto;max-width:52%;min-height:44px;padding:8px 12px}
+.world-debug-time{width:126px;min-height:44px;padding:8px}
+.world-debug-follow{display:flex;align-items:center;gap:6px;min-height:44px;font-size:.75rem;color:var(--muted)}
+.world-debug-follow input{width:18px;height:18px;padding:0;accent-color:var(--focus)}
+.world-debug-decay{display:flex;align-items:center;gap:8px;width:min(50%,220px);font-size:.8125rem;font-variant-numeric:tabular-nums}
+.world-debug-decay input{min-width:0;width:100%;height:44px;padding:0;accent-color:var(--focus)}
+.world-debug-decay span{min-width:3em;text-align:right}
+/* Feedback belongs over the world, not underneath the full-height glass face. */
+.is-focusing .construction-feedback{top:calc(max(12px,var(--safe-top)) + 48px);bottom:auto;z-index:8;max-width:calc(100% - 32px);min-width:0;width:max-content}
+@media(min-width:700px) and (orientation:landscape){
+  .is-focusing .construction-feedback{left:calc((100% - clamp(288px,34vw,330px))/2)}
+}

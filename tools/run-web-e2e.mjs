@@ -3,6 +3,7 @@ import { promises as fs } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
+import { collectReportEvidence, summarizePlaywrightReport } from './web-release-report.mjs';
 
 const toolsDirectory = path.dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = path.dirname(toolsDirectory);
@@ -156,32 +157,6 @@ async function runPlaywright(arguments_, reportPath) {
   return { exitCode, report };
 }
 
-function collectReportEvidence(report, suiteName) {
-  const tests = [];
-  const visit = (suite) => {
-    for (const spec of suite.specs ?? []) {
-      for (const test of spec.tests ?? []) {
-        const durationMs = (test.results ?? []).reduce((total, result) => total + Number(result.duration ?? 0), 0);
-        tests.push({
-          suite: suiteName,
-          file: spec.file,
-          line: spec.line,
-          title: spec.title,
-          project: test.projectName,
-          status: test.status,
-          durationSeconds: Math.round(durationMs / 100) / 10,
-          skipReason: test.status === 'skipped'
-            ? test.annotations?.find((annotation) => annotation.type === 'skip')?.description ?? 'explicit test.skip'
-            : undefined,
-        });
-      }
-    }
-    for (const child of suite.suites ?? []) visit(child);
-  };
-  for (const suite of report?.suites ?? []) visit(suite);
-  return tests;
-}
-
 function listTestCount(arguments_) {
   const result = spawnSync(process.execPath, [
     playwrightEntry,
@@ -245,6 +220,8 @@ async function runReleaseSuites() {
     fullTestCount,
     source: await getWorkingTreeFingerprint(),
     suites: [],
+    retryCount: 0,
+    flakyTestCount: 0,
     skippedTests: [],
     slowTests: [],
   };
@@ -255,23 +232,41 @@ async function runReleaseSuites() {
     const suiteReportPath = path.join(webRoot, `.release-${suite.name}-report.json`);
     process.stdout.write(`\n==> Web release suite ${suite.name}: ${suite.testCount} tests, ${suite.workers} worker(s)\n`);
     const { exitCode, report } = await runPlaywright([...suite.specArguments, `--workers=${suite.workers}`, ...playwrightArguments], suiteReportPath);
-    const tests = collectReportEvidence(report, suite.name);
+    if (!report) throw new Error(`Playwright did not produce a JSON report for suite ${suite.name}.`);
+    const reportSummary = summarizePlaywrightReport(report, suite.name);
+    const suiteEvidenceName = `${summary.startedAt.replaceAll(':', '-').replaceAll('.', '-')}-${suite.name}.playwright.json`;
+    const suiteEvidencePath = path.join(releaseSummaryArchiveDirectory, 'playwright', suiteEvidenceName);
+    await fs.mkdir(path.dirname(suiteEvidencePath), { recursive: true });
+    const originalReport = await fs.readFile(suiteReportPath);
+    await fs.writeFile(suiteEvidencePath, originalReport);
     await fs.rm(suiteReportPath, { force: true });
-    summary.skippedTests.push(...tests.filter((test) => test.status === 'skipped'));
-    summary.slowTests.push(...tests.filter((test) => test.status !== 'skipped'));
+    const suiteTests = collectReportEvidence(report, suite.name);
+    summary.retryCount += reportSummary.retryCount;
+    summary.flakyTestCount += reportSummary.flakyTestCount;
+    summary.skippedTests.push(...reportSummary.skippedTests);
+    summary.slowTests.push(...suiteTests.filter((test) => test.status !== 'skipped'));
     summary.slowTests.sort((left, right) => right.durationSeconds - left.durationSeconds);
     summary.slowTests = summary.slowTests.slice(0, 20);
     summary.suites.push({
       name: suite.name,
       workers: suite.workers,
+      attemptCount: 1,
       specCount: suite.specs.length,
       testCount: suite.testCount,
       durationSeconds: Math.round((Date.now() - startedAt) / 100) / 10,
       exitCode,
       status: exitCode === 0 ? 'passed' : 'failed',
+      retryCount: reportSummary.retryCount,
+      flakyTestCount: reportSummary.flakyTestCount,
+      skippedTestCount: reportSummary.skippedTestCount,
+      playwrightReport: path.relative(repositoryRoot, suiteEvidencePath).split(path.sep).join('/'),
+      playwrightReportSha256: sha256(originalReport),
+      reportSummary: { stats: reportSummary.stats, testCount: reportSummary.testCount },
     });
     if (exitCode !== 0) {
       summary.status = 'failed';
+      summary.exitCode = exitCode;
+      summary.attemptCount = summary.suites.reduce((total, item) => total + item.attemptCount, 0);
       summary.finishedAt = new Date().toISOString();
       await writeReleaseSummary(summary, true);
       return exitCode;
@@ -279,6 +274,8 @@ async function runReleaseSuites() {
     await writeReleaseSummary(summary);
   }
   summary.status = 'passed';
+  summary.exitCode = 0;
+  summary.attemptCount = summary.suites.reduce((total, suite) => total + suite.attemptCount, 0);
   summary.finishedAt = new Date().toISOString();
   summary.durationSeconds = summary.suites.reduce((total, suite) => total + suite.durationSeconds, 0);
   await writeReleaseSummary(summary, true);

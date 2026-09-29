@@ -1,4 +1,4 @@
-import type { DomainState } from '@tomato-clock/domain';
+import type { DomainState } from '@blockcolc/domain';
 
 type Metric = 'completed-rounds' | 'focus-minutes' | 'buildings' | 'focus-days';
 

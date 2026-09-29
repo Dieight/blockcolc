@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createInitialState, execute, type DomainCommand, type DomainState } from '@tomato-clock/domain';
+import { createInitialState, execute, type DomainCommand, type DomainState } from '@blockcolc/domain';
 import { deriveFocusViewState, type FocusViewInput } from './focus-view-state';
 import type { RoundPlan } from './round-plan';
 
@@ -47,7 +47,7 @@ describe('focus view ownership', () => {
     expect(deriveFocusViewState({ ...input, minimalWanted: false, plan: marathonRest })).toMatchObject({ phase: 'break', minimal: false, isImmersiveLayout: true });
   });
   it('keeps ordinary pending reporting ahead of minimal idle', () => {
-    expect(deriveFocusViewState({ ...input, hasPendingReport: true })).toMatchObject({ phase: 'report', minimal: false, activePendingBlocksWorkbench: true });
+    expect(deriveFocusViewState({ ...input, hasPendingReport: true })).toMatchObject({ phase: 'report', minimal: false, isImmersiveLayout: true, activePendingBlocksWorkbench: true });
   });
   it('recovers retained rounds into report even after their host was deleted', () => {
     const finished = apply(deferred, { type: 'CompleteFocus' }, nowMs + 60000);

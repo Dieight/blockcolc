@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
-import { createInitialState, execute, type DomainCommand, type DomainState } from '@tomato-clock/domain';
-import { createBackupEnvelope } from '@tomato-clock/storage-indexeddb';
+import { createInitialState, execute, type DomainCommand, type DomainState } from '@blockcolc/domain';
+import { createBackupEnvelope } from '@blockcolc/storage-indexeddb';
 
 const RECEIPT_KEY = 'blockcolc-achievement-display-receipts-v1';
 const startAt = Date.parse('2026-09-13T08:00:00+08:00');

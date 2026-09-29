@@ -293,14 +293,14 @@ describe("parseJava16xResourcePack", () => {
     expect(unlocked).toMatchObject({
       status: "resolved",
       faceMetadata: {
-        west: { texture: "acme:block/north", uv: [2, 1, 14, 15], rotation: 180 },
-        up: { texture: "acme:block/up", uv: [1, 1, 15, 15], rotation: 0 },
+        east: { texture: "acme:block/north", uv: [2, 1, 14, 15], rotation: 180 },
+        up: { texture: "acme:block/up", uv: [1, 1, 15, 15], rotation: 180 },
       },
     });
     expect(locked).toMatchObject({
       status: "resolved",
       faceMetadata: {
-        west: { texture: "acme:block/north", uv: [2, 1, 14, 15], rotation: 180 },
+        east: { texture: "acme:block/north", uv: [2, 1, 14, 15], rotation: 180 },
         up: { texture: "acme:block/up", uv: [1, 1, 15, 15], rotation: 90 },
       },
     });
@@ -334,10 +334,10 @@ describe("parseJava16xResourcePack", () => {
   it("maps x/y model rotation and uvlock deterministically for every cube face", () => {
     expect(["down", "up", "north", "south", "west", "east"].map((face) =>
       resolveFaceTextureRotation(face as "down" | "up" | "north" | "south" | "west" | "east", 90, 0, false),
-    )).toEqual([180, 0, 180, 0, 90, 270]);
+    )).toEqual([0, 180, 180, 0, 270, 90]);
     expect(["down", "up", "north", "south", "west", "east"].map((face) =>
       resolveFaceTextureRotation(face as "down" | "up" | "north" | "south" | "west" | "east", 0, 90, false),
-    )).toEqual([90, 270, 0, 0, 0, 0]);
+    )).toEqual([270, 90, 0, 0, 0, 0]);
     expect(["down", "up", "north", "south", "west", "east"].map((face) =>
       resolveFaceTextureRotation(face as "down" | "up" | "north" | "south" | "west" | "east", 90, 270, true, 90),
     )).toEqual([90, 90, 90, 90, 90, 90]);

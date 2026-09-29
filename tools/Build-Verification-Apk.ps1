@@ -1,18 +1,22 @@
 [CmdletBinding()]
 param(
     [string[]]$Serial,
-    [switch]$AllowBusyDevice
+    [switch]$AllowBusyDevice,
+    [switch]$ArtifactOnly,
+    [string]$DeliveryRoundId
 )
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Release-Common.ps1')
 
 $context = Get-ReleaseContext
-$artifactDirectory = Join-Path $context.Root "artifacts\verification\v$($context.VersionName)"
+$artifactDirectory = Join-Path $context.Root "artifacts\verification\v$($context.VersionName)\build-$($context.VersionCode)-$([guid]::NewGuid().ToString('N'))"
 $buildApk = Join-Path $context.Root 'apps\android\android\app\build\outputs\apk\release\app-release.apk'
 $verificationName = $context.ApkName -replace '\.apk$', '-verification.apk'
 $verificationApk = Join-Path $artifactDirectory $verificationName
 $evidencePath = Join-Path $artifactDirectory 'verification-evidence.json'
+$deliveredHistory = @(Get-DeliveredApkHistory -Context $context -Channel all)
+Assert-NotOlderThanDeliveredVersion -VersionCode $context.VersionCode -Context $context -Channel all -History $deliveredHistory
 
 function Get-WorkingTreeEvidence {
     param([Parameter(Mandatory)][string]$Root)
@@ -50,6 +54,7 @@ function Get-WorkingTreeEvidence {
 Push-Location $context.Root
 try {
     Write-Host 'Building a signed device-verification APK. This does not run or replace the full release gate.'
+    Invoke-External -FilePath 'node' -Arguments @('tools/check-ui-assets.mjs', '--check')
     $sourceEvidence = Get-WorkingTreeEvidence -Root $context.Root
 
     & (Join-Path $PSScriptRoot 'Build-AndroidRelease.ps1')
@@ -61,26 +66,54 @@ try {
     Assert-Sha256Equal -Expected $buildMetadata.Sha256 -Actual $verificationHash -Boundary 'build output to verification copy'
     $verificationMetadata = Assert-ApkMetadata -Path $verificationApk -Context $context
 
-    $authorized = @(Get-AuthorizedAndroidDevices)
-    $targets = if (@($Serial).Count -gt 0) { @($Serial) } else { $authorized }
-    foreach ($target in $targets) {
-        if ($authorized -notcontains $target) { throw "Android device is not connected and authorized: $target" }
+    $devices = @()
+    $targets = @()
+    if ($ArtifactOnly) {
+        Write-Host 'Artifact-only verification requested; skipping Android device discovery and installation.'
+    } else {
+        $authorized = @(Get-AuthorizedAndroidDevices)
+        $targets = if (@($Serial).Count -gt 0) { @($Serial) } else { $authorized }
+        foreach ($target in $targets) {
+            if ($authorized -notcontains $target) { throw "Android device is not connected and authorized: $target" }
+        }
+
+        if (@($targets).Count -gt 0) {
+            foreach ($target in $targets) {
+                $installedMetadata = Get-InstalledApkMetadata -Serial $target -PackageId $context.PackageId
+                if (-not $installedMetadata) { continue }
+                if ($installedMetadata.SignerSha256 -ne $context.SignerSha256) { throw "Installed app signer identity does not match release config on $target." }
+                $knownDelivery = @($deliveredHistory | Where-Object { $_.PackageId -eq $installedMetadata.PackageId -and $_.VersionCode -eq $installedMetadata.VersionCode -and $_.Sha256 -eq $installedMetadata.Sha256 })
+                if ($knownDelivery.Count -gt 0) { continue }
+                $deliveredHistory += [pscustomobject]@{
+                    Channel = $installedMetadata.BuildChannel; PackageId = $installedMetadata.PackageId
+                    VersionName = $installedMetadata.VersionName; VersionCode = $installedMetadata.VersionCode
+                    SignerSha256 = $installedMetadata.SignerSha256; Sha256 = $installedMetadata.Sha256
+                    EvidencePath = "device:$target"; Kind = 'installed-device'
+                    DeliveryRoundId = $null
+                }
+            }
+        }
     }
 
-    $devices = @()
-    foreach ($target in $targets) {
-        $devices += Install-AndVerifyApk -ApkPath $verificationApk -Serial $target -Context $context -ExpectedSha256 $verificationHash -AllowBusyDevice:$AllowBusyDevice
+    Assert-NextDeliveredApkVersion -Metadata $verificationMetadata -Context $context -Channel standard -History $deliveredHistory -DeliveryRoundId $DeliveryRoundId
+
+    if (-not $ArtifactOnly) {
+        foreach ($target in $targets) {
+            $devices += Install-AndVerifyApk -ApkPath $verificationApk -Serial $target -Context $context -ExpectedSha256 $verificationHash -AllowBusyDevice:$AllowBusyDevice
+        }
     }
 
     $evidence = [ordered]@{
-        schemaVersion = 1
-        phase = 'device-verification'
+        schemaVersion = 2
+        phase = if ($ArtifactOnly) { 'artifact-only-verification' } else { 'device-verification' }
         releasable = $false
+        deliveryStatus = if ($ArtifactOnly -or @($devices).Count -eq 0) { 'artifact-only-not-delivered' } else { 'delivered-to-device' }
         builtAt = (Get-Date).ToUniversalTime().ToString('o')
         versionName = $context.VersionName
         versionCode = $context.VersionCode
         packageId = $context.PackageId
         signerSha256 = $context.SignerSha256
+        deliveryRoundId = if ([string]::IsNullOrWhiteSpace($DeliveryRoundId)) { $null } else { $DeliveryRoundId.Trim() }
         source = [ordered]@{
             head = $sourceEvidence.Head
             fingerprintSha256 = $sourceEvidence.FingerprintSha256

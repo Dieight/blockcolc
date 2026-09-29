@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { strToU8, zipSync } from 'fflate';
-import type { ResourcePackRepository } from '@tomato-clock/resource-pack-indexeddb';
+import type { ResourcePackRepository } from '@blockcolc/resource-pack-indexeddb';
 import { importResourcePackFromPicker, RESOURCE_PACK_PICKER_MAX_BYTES, ResourcePackPanel } from './ResourcePackPanel';
 
 describe('resource-pack picker import',()=>{
@@ -35,10 +35,12 @@ describe('resource-pack picker import',()=>{
   });
 
   it('keeps setup guidance concise while retaining local, backup, and fallback boundaries',()=>{
-    const html=renderToStaticMarkup(createElement(ResourcePackPanel,{repository:mockRepository()}));
+    const html=renderToStaticMarkup(createElement(ResourcePackPanel,{active:true,repository:mockRepository()}));
     expect(html).toContain('可导入资源包 ZIP 或 Java 26.3 客户端 JAR');
     expect(html).toContain('外观优先，基础包补缺');
     expect(html).toContain('方块钟不内置或上传，JSON 备份不含资源包');
+    expect(html).toContain('尚未读取本机资源包。');
+    expect(html).not.toContain('正在使用');
     expect(html).not.toContain('纹理与 Java 方块模型。可指定一个外观包');
   });
 });

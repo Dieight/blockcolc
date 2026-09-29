@@ -1,4 +1,7 @@
-export type DayPhase = "night" | "dawn" | "day" | "dusk";
+import { applyNightReadability } from "./night-readability";
+import type { BlueprintVoxel } from "./blueprint";
+
+export type DayPhase = "night" | "astronomical-twilight" | "nautical-twilight" | "civil-twilight" | "dawn" | "day" | "dusk";
 
 export interface SunState {
   phase: DayPhase;
@@ -6,6 +9,8 @@ export interface SunState {
   sunPosition: readonly [number, number, number];
   moonPosition: readonly [number, number, number];
   sunVisibility: number;
+  /** Strength of direct solar illumination after apparent-disc visibility. */
+  directSunIntensity?: number;
   moonVisibility: number;
   starVisibility: number;
   intensity: number;
@@ -21,6 +26,14 @@ export interface SunState {
   hemisphereIntensity: number;
   exposure: number;
   nightFactor: number;
+  sunAzimuthDeg?: number;
+  sunAltitudeDeg?: number;
+  moonAzimuthDeg?: number;
+  moonAltitudeDeg?: number;
+  moonIllumination?: number;
+  moonPhase?: number;
+  moonWaxing?: boolean;
+  moonBrightLimbAngleDeg?: number;
 }
 
 export interface EmissivePoint {
@@ -28,6 +41,96 @@ export interface EmissivePoint {
   y: number;
   z: number;
   intensity: number;
+}
+
+/** Effective renderer identity keeps legacy kind-only emission distinct from an explicit zero. */
+export interface EffectiveEmissionIdentity {
+  readonly kind: string;
+  readonly level: number;
+}
+
+export function effectiveEmissionIdentity(
+  voxel: Pick<BlueprintVoxel, "emissiveKind" | "emissiveLevel">,
+  projection?: { readonly kind?: string; readonly level?: number },
+): EffectiveEmissionIdentity {
+  if (projection !== undefined) {
+    const kind = projection.kind ?? "";
+    return { kind, level: projection.level ?? (kind ? 15 : 0) };
+  }
+  const kind = voxel.emissiveKind ?? "";
+  return { kind, level: voxel.emissiveLevel ?? (kind ? 15 : 0) };
+}
+
+/** Private renderer/test seam. The map contains every admitted light point,
+ * with source-state colors overriding the warm legacy/default projection. */
+export function emissiveColorForPoint(point: EmissivePoint, colors: ReadonlyMap<string, number>): number {
+  const exact = colors.get(`${point.x}:${point.y}:${point.z}`);
+  if (exact !== undefined) return exact;
+  let nearestColor = 0xffb45f;
+  let nearestDistance = Number.POSITIVE_INFINITY;
+  for (const [key, color] of colors) {
+    const [x, y, z] = key.split(":").map(Number);
+    const distance = (x! - point.x) ** 2 + (y! - point.y) ** 2 + (z! - point.z) ** 2;
+    if (distance < nearestDistance) { nearestDistance = distance; nearestColor = color; }
+  }
+  return nearestColor;
+}
+
+/** Registers the complete lamp-point domain before exact/nearest color projection. */
+export function registerEmissivePoint(
+  points: EmissivePoint[],
+  colors: Map<string, number>,
+  point: EmissivePoint,
+  color = 0xffb45f,
+): void {
+  points.push(point);
+  colors.set(`${point.x}:${point.y}:${point.z}`, color);
+}
+
+export interface SourceLanternEmission {
+  readonly kind: "lantern" | "soul-lantern" | string;
+  readonly level: number;
+  readonly color: number;
+}
+
+/** Explicit persisted emission facts win; exact lantern states are only a render projection. */
+export function sourceLanternEmissionForVoxel(
+  voxel: Pick<BlueprintVoxel, "sourceBlockId" | "sourceBlockState" | "emissiveKind" | "emissiveLevel">,
+): SourceLanternEmission | undefined {
+  if (voxel.emissiveLevel === 0) return undefined;
+  if (voxel.emissiveKind !== undefined || (voxel.emissiveLevel ?? 0) > 0) {
+    const kind = voxel.emissiveKind ?? "light";
+    return { kind, level: voxel.emissiveLevel ?? 15, color: /soul/i.test(kind) ? 0x65cfe3 : /redstone/i.test(kind) ? 0xe94b35 : 0xffb45f };
+  }
+  const rawId = voxel.sourceBlockId?.trim().toLowerCase();
+  if (rawId !== "minecraft:lantern" && rawId !== "minecraft:soul_lantern") return undefined;
+  const state = voxel.sourceBlockState;
+  if (!state || typeof state !== "object" || Array.isArray(state)
+    || Object.keys(state).length !== 2
+    || Object.keys(state).some((key) => key !== "hanging" && key !== "waterlogged")
+    || (state.hanging !== "true" && state.hanging !== "false")
+    || (state.waterlogged !== "true" && state.waterlogged !== "false")) return undefined;
+  const soul = rawId === "minecraft:soul_lantern";
+  return { kind: soul ? "soul-lantern" : "lantern", level: soul ? 10 : 15, color: soul ? 0x65cfe3 : 0xffb45f };
+}
+
+/** Java 26.3 candle light levels are 3, 6, 9 and 12 by candle count. */
+export function sourceCandleEmissionForVoxel(
+  voxel: Pick<BlueprintVoxel, "sourceBlockId" | "sourceBlockState" | "emissiveKind" | "emissiveLevel">,
+): SourceLanternEmission | undefined {
+  // Caller first projects explicit persisted emission; zero must not be raised
+  // back to a source-derived light by this fallback.
+  if (voxel.emissiveKind !== undefined || voxel.emissiveLevel !== undefined) return undefined;
+  const rawId = voxel.sourceBlockId?.trim().toLowerCase();
+  if (!rawId || !/^minecraft:(?:candle|(?:black|blue|brown|cyan|gray|green|light_blue|light_gray|lime|magenta|orange|pink|purple|red|white|yellow)_candle)$/.test(rawId)) return undefined;
+  const state = voxel.sourceBlockState;
+  if (!state || typeof state !== "object" || Array.isArray(state)
+    || Object.keys(state).length !== 3
+    || Object.keys(state).some((key) => key !== "candles" && key !== "lit" && key !== "waterlogged")
+    || !/^[1-4]$/.test(state.candles ?? "")
+    || state.waterlogged !== "true" && state.waterlogged !== "false"
+    || state.lit !== "true") return undefined;
+  return { kind: "candle", level: Number(state.candles) * 3, color: 0xffb45f };
 }
 
 export type LightingVector = readonly [number, number, number];
@@ -41,6 +144,15 @@ export type LightingVector = readonly [number, number, number];
 export function shadowDirectionFromPosition(position: LightingVector): LightingVector {
   const length = Math.max(1e-6, Math.hypot(position[0], position[1], position[2]));
   return [-position[0] / length, -position[1] / length, -position[2] / length];
+}
+
+/** Put the directional-light camera behind the whole settlement shadow volume.
+ * The sun/moon sprites keep their astronomical positions; only the depth-map
+ * camera's source is moved, without changing the direction of the rays. */
+export function shadowLightPositionForExtent(position: LightingVector, halfExtent: number): LightingVector {
+  const length = Math.max(1e-6, Math.hypot(position[0], position[1], position[2]));
+  const radius = Math.max(48, Math.max(1, halfExtent) * 2.4);
+  return [position[0] / length * radius, position[1] / length * radius, position[2] / length * radius];
 }
 
 export function lightingDirectionFingerprint(state: Pick<SunState, "position" | "sunPosition" | "moonPosition">): string {
@@ -81,7 +193,7 @@ export function sunStateForLocalTime(date: Date): SunState {
   const skyLowerColor = mixColor(mixColor(0x182536, 0xc8d5d2, dayFactor), 0xc77b68, horizonWarmth * 0.3);
   const cloudColor = mixColor(mixColor(0x344256, 0xe7ece8, dayFactor), 0xf0b28e, horizonWarmth * 0.3);
 
-  return {
+  const state: SunState = {
     phase,
     position,
     sunPosition,
@@ -89,7 +201,7 @@ export function sunStateForLocalTime(date: Date): SunState {
     sunVisibility,
     moonVisibility,
     starVisibility,
-    intensity: mix(0.65, 1.35 + Math.max(0, elevation) * 0.85, dayFactor),
+    intensity: mix(0.92, 1.48 + Math.max(0, elevation) * 0.9, dayFactor),
     color: mixColor(mixColor(0x9db7d9, 0xfff1ce, dayFactor), 0xffae68, horizonWarmth * 0.72),
     skyColor,
     skyZenithColor,
@@ -99,10 +211,11 @@ export function sunStateForLocalTime(date: Date): SunState {
     fogColor: mixColor(mixColor(0x263444, 0xadc1b8, dayFactor), 0xc98269, horizonWarmth * 0.42),
     hemisphereSkyColor: mixColor(0x7895b5, 0xf4f0dc, dayFactor),
     hemisphereGroundColor: mixColor(0x24382d, 0x4d6659, dayFactor),
-    hemisphereIntensity: mix(1.05, 1.1, dayFactor),
-    exposure: mix(1.2, 1.22, dayFactor),
+    hemisphereIntensity: mix(1.24, 1.12, dayFactor),
+    exposure: mix(1.28, 1.22, dayFactor),
     nightFactor,
   };
+  return applyNightReadability(state);
 }
 
 export function clusterEmissivePoints(points: readonly EmissivePoint[], maximum: number): EmissivePoint[] {

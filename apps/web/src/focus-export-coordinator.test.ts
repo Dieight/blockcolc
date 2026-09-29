@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createInitialState } from '@tomato-clock/domain';
+import { createInitialState } from '@blockcolc/domain';
 import { attachFocusExport } from './focus-export-coordinator';
 
-vi.mock('@tomato-clock/platform-capacitor', () => ({ nativeFocusExport: {} }));
+vi.mock('@blockcolc/platform-capacitor', () => ({ nativeFocusExport: {} }));
 const disposers: (() => void)[] = [];
 afterEach(() => { disposers.splice(0).forEach(stop => stop()); vi.useRealTimers(); });
 async function flush() { for (let index = 0; index < 12; index++) await Promise.resolve(); }

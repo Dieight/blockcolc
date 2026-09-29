@@ -21,7 +21,7 @@ $battery = (& $adb shell dumpsys battery) -join "`n"
 $renderProcess = (& $adb shell pidof $Package) -join ' '
 
 @"
-Tomato Clock V9 device metrics
+Blockcolc device metrics
 capturedAt=$timestamp
 package=$Package
 pid=$renderProcess

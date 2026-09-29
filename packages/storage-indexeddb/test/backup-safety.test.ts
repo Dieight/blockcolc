@@ -5,7 +5,7 @@ import {
   type Clock,
   type DomainCommand,
   type DomainState,
-} from "@tomato-clock/domain";
+} from "@blockcolc/domain";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   BackupValidationError,

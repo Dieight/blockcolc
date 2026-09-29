@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { shiftClockSelection, MinimalClockGesture } from './MinimalClockGesture';
+import { shiftClockSelection, minimalRoundDetentOffsetPx, MinimalClockGesture } from './MinimalClockGesture';
 import { FocusFace } from './FocusFace';
 import { FocusAllocationChart, FocusCalendarChart, MonumentFocusChart } from './FocusStatsCharts';
 import { AchievementsSection } from './AchievementsPanel';
@@ -29,6 +29,12 @@ describe('shared focus face and clock gesture', () => {
     expect(shiftClockSelection(shiftClockSelection(null,1,now),-1,now)).toBeNull();
     expect(shiftClockSelection(null,0,now)).toBeNull();
     expect(shiftClockSelection(null,10000,now)).toBe(Date.parse('2026-09-10T08:00:00Z'));
+  });
+  it('adds a short bounded drag resistance per crossed round and cannot accumulate into a lock', () => {
+    expect(minimalRoundDetentOffsetPx(0)).toBe(0);
+    expect(minimalRoundDetentOffsetPx(1)).toBe(10);
+    expect(minimalRoundDetentOffsetPx(3)).toBe(30);
+    expect(minimalRoundDetentOffsetPx(24)).toBe(120);
   });
 });
 

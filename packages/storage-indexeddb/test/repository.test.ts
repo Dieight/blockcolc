@@ -1,5 +1,5 @@
 import "fake-indexeddb/auto";
-import { createInitialState } from "@tomato-clock/domain";
+import { createInitialState } from "@blockcolc/domain";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as codec from "../src/codec.js";
 import { BackupValidationError, IndexedDbStateRepository, canonicalJson, sha256 } from "../src/index.js";

@@ -3,7 +3,7 @@ import { createElement } from 'react';
 import { readAchievementReceipt, reconcileAchievementBatch, writeAchievementReceipt, MonumentStatistics, type AchievementReceiptStorage } from './StatsScreen';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { AchievementEntry } from './ui/AchievementsPanel';
-import type { MonumentFocusProjection, UnallocatedFocusProjection } from '@tomato-clock/application';
+import type { MonumentFocusProjection, UnallocatedFocusProjection } from '@blockcolc/application';
 
 function storage(initial: string | null): AchievementReceiptStorage & { value: string | null; failWrites: boolean } {
   return {

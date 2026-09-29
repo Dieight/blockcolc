@@ -130,6 +130,7 @@ test("lets the settlement inspect the same large blueprint closer than its previ
   await page.getByRole("button", { name: "开始建造" }).click();
   const world = page.getByLabel("项目建筑世界");
   await expect(world).toBeVisible();
+  await expect(world).toHaveAttribute("data-initial-reveal-completed-count", "1", { timeout: 15_000 });
   await expect.poll(async () => Number(await world.getAttribute("data-camera-distance-ratio"))).toBeGreaterThan(0);
   const worldBox = await world.boundingBox();
   if (!worldBox) throw new Error("Settlement world has no layout box");

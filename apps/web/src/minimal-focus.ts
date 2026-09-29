@@ -1,5 +1,5 @@
-import type { ApplicationCommand, ApplicationResult } from '@tomato-clock/application';
-import type { DomainState } from '@tomato-clock/domain';
+import type { ApplicationCommand, ApplicationResult } from '@blockcolc/application';
+import type { DomainState } from '@blockcolc/domain';
 import type { FocusPreferences } from './app-types';
 import { marathonEndInstant } from './marathon-end-time';
 import { settledFocusSessionIds, unsettledMarathonSessions } from './marathon-settlement';
@@ -12,6 +12,47 @@ export interface MinimalFocusDraft {
   day: 'today' | 'tomorrow';
   /** A gesture selects an exact instant; never roll an expired selection to tomorrow. */
   endMs?: number;
+}
+
+/**
+ * Minimal mode only rounds an end-time forward when it is at most one minute
+ * before the next real round boundary. Boundaries include the breaks between
+ * rounds; the first boundary is one focus duration from `now`.
+ */
+export function roundsForMinimalEndTime(
+  endMs: number,
+  now: number,
+  focusMinutes: number,
+  breakMinutes: number,
+  maxRounds = MAX_MARATHON_ROUNDS,
+): { rounds: number; endsAtMs: number } | null {
+  const schedule = planRoundsForDuration(endMs - now, focusMinutes, breakMinutes, maxRounds + 1);
+  const rounds = schedule?.rounds ?? 0;
+  if (rounds > maxRounds) return { rounds, endsAtMs: now + rounds * focusMinutes * 60_000 + Math.max(0, rounds - 1) * breakMinutes * 60_000 };
+
+  const nextRound = rounds + 1;
+  const nextBoundary = now + nextRound * focusMinutes * 60_000 + (nextRound - 1) * breakMinutes * 60_000;
+  const shortfall = nextBoundary - endMs;
+  const shouldCompleteNextRound = shortfall >= 0 && shortfall <= 60_000;
+  const plannedRounds = rounds + (shouldCompleteNextRound ? 1 : 0);
+  if (plannedRounds === 0) return null;
+  const endsAtMs = shouldCompleteNextRound
+    ? nextBoundary
+    : endMs;
+  return { rounds: plannedRounds, endsAtMs };
+}
+
+/** Round-end instants crossed by one discrete selection update. */
+export function minimalRoundThresholdCrossings(fromMs: number, toMs: number, now: number, focusMinutes: number, breakMinutes: number, maxRounds = MAX_MARATHON_ROUNDS): number[] {
+  if (fromMs === toMs) return [];
+  const low = Math.min(fromMs, toMs);
+  const high = Math.max(fromMs, toMs);
+  const crossed: number[] = [];
+  for (let round = 1; round <= maxRounds; round += 1) {
+    const boundary = now + round * focusMinutes * 60_000 + (round - 1) * breakMinutes * 60_000;
+    if (low < boundary && boundary <= high) crossed.push(round);
+  }
+  return crossed;
 }
 type FocusTiming = Pick<FocusPreferences, 'focusMinutes' | 'breakMinutes'> & Partial<Pick<FocusPreferences, 'autoContinueFocus'>>;
 type StartCommand = Extract<ApplicationCommand, { type: 'StartFocus' }>;
@@ -40,10 +81,9 @@ export function prepareMinimalFocus(
   //（day 传 undefined，marathonEndInstant 对过去时刻自动滚动到明天）。
   const endMs = draft.endMs ?? marathonEndInstant(time, now);
   if (endMs === null || !Number.isFinite(endMs) || endMs <= now) return { ok: false, message: '请选择未来的有效结束时间。' };
-  let schedule;
+  let schedule: { rounds: number; endsAtMs: number } | null;
   try {
-    // One extra round detects overflow instead of silently truncating the plan.
-    schedule = planRoundsForDuration(endMs - now, preferences.focusMinutes, preferences.breakMinutes, MAX_MARATHON_ROUNDS + 1);
+    schedule = roundsForMinimalEndTime(endMs, now, preferences.focusMinutes, preferences.breakMinutes);
   } catch {
     return { ok: false, message: '专注或休息时长无效，请在设置中检查。' };
   }
@@ -54,7 +94,7 @@ export function prepareMinimalFocus(
     plan: {
       projectId: host.id, subtaskId: null, totalRounds: schedule.rounds, completedRounds: 0,
       status: 'ready', reportedSessionIds: [], mode: 'marathon', deferredSettlement: true,
-      endAt: new Date(endMs).toISOString(),
+    endAt: new Date(schedule.endsAtMs).toISOString(),
     },
     command: { type: 'StartFocus', projectId: host.id, subtaskId: null,
       plannedDurationMs: preferences.focusMinutes * 60_000, marathon: true, deferredSettlement: true },

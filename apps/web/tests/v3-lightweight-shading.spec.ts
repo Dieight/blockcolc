@@ -115,6 +115,7 @@ test("renders distinct day phases with a bounded optional post-process and no co
     }
     captures.push(await canvas.screenshot({ path: testInfo.outputPath(`lighting-${name}.png`) }));
     if (name === "night") {
+      await expect(canvas).toHaveAttribute("data-initial-reveal-completed-count", "1", { timeout: 15_000 });
       const moonBefore = Number(await canvas.getAttribute("data-moon-screen-x"));
       const moonBeforeZoomY = Number(await canvas.getAttribute("data-moon-screen-y"));
       const box = await canvas.boundingBox();

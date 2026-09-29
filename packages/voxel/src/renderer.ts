@@ -1,30 +1,39 @@
 import * as THREE from "three";
 import { FrameRequestScheduler, PointerOwnership, type ReleasedPointer } from "./input-frame-scheduler";
 import { cameraZoomBounds, clampCameraDistance } from "./camera-zoom";
-import type { BlockFace, ResourcePackManifest } from "@tomato-clock/resource-pack";
-import { BlueprintV1, resolveBuiltinBlueprint, validateBlueprint } from "./blueprint";
+import type { BlockFace, ResourcePackManifest } from "@blockcolc/resource-pack";
+import { BlueprintV1, resolveBuiltinBlueprint, validateBlueprint, type BlueprintVoxel } from "./blueprint";
 import {
   clusterEmissivePoints,
+  emissiveColorForPoint,
+  registerEmissivePoint,
   selectEmissiveVisualPoints,
+  sourceCandleEmissionForVoxel,
+  sourceLanternEmissionForVoxel,
+  effectiveEmissionIdentity,
   shadowDirectionFromPosition,
+  shadowLightPositionForExtent,
   lightingDirectionFingerprint,
   sunStateForLocalTime,
   type EmissivePoint,
   type SunState,
 } from "./lighting";
+import { sunStateForAstronomy } from "./astronomy-visual";
+import { astronomyDayAt, type AstronomyContext } from "./astronomy";
 import {
-  AMBIENT_DECORATION_BUDGETS,
-  ambientDecorationsForWorld,
   cloudBudgetForView,
+  cloudAdvectionSpeed,
   conditionVisualForVoxels,
   decorationsForProject,
+  effectiveWeatherOverride,
   fogRangeForView,
   localDateForDate,
+  precipitationParticleCount,
   weatherForLocalDate,
   weatherForExternalOverride,
+  ambientScaleForWeather,
   sunlightScaleForWeather,
-  weatherVisualForKind,
-  type AmbientDecorationKind,
+  weatherVisualForWeather,
   type ExternalWeatherVisualOverride,
   type WeatherState,
 } from "./environment";
@@ -39,6 +48,7 @@ import {
 import {
   createRoadGeometryData,
   createSteppedTerrainData,
+  terrainGenerationInputKey,
   settlementSupportHeightForPlacement,
   supportGroundHeightAt,
   type MergedGeometryData,
@@ -54,6 +64,7 @@ import {
   type QualityTier,
   type VoxelLightingQuality,
 } from "./quality";
+import { attemptQualityProjection, resolveCappedQualityTier } from "./quality-projection";
 import {
   buildResourcePackAtlas,
   createAtlasMaterial,
@@ -78,7 +89,7 @@ import { planMovingPistonRenderVoxels } from "./resource-special-piston";
 import { createStaticBlockEntityDisplayRenderer } from "./resource-special-block-entity";
 import { applyMaterialEffects, type MaterialEffectsPatch } from "./material-effects";
 import { atlasShadowPolicy, createAtlasCutoutDepthMaterial, disposeAtlasDepthMaterial } from "./atlas-depth-material";
-import { constructionRevealPlans, constructionWaveSchedule } from "./construction-reveal";
+import { constructionRevealPlans, constructionRevealScale, constructionWaveSchedule } from "./construction-reveal";
 import { createAtlasAnimationController, type AtlasAnimationController } from "./atlas-animation";
 import {
   createAtlasGeometry,
@@ -99,6 +110,7 @@ import {
 import { blockOcclusionFor, createLocalOcclusionField, type LocalOcclusionField } from "./local-occlusion";
 import { materialResponse, materialResponseForMaterialId } from "./material-response";
 import {
+  fallbackVisualStyleForOriginalComponent,
   fallbackVisualStyleForVoxel,
   parseFallbackVisualKey,
   staticFluidHeight,
@@ -111,6 +123,32 @@ import {
   type OriginalMaterialPattern,
 } from "./original-materials";
 import { LightingPostProcessor } from "./lighting-postprocess";
+import { cloneEnvironmentRevealMaterial } from "./environment-reveal-material";
+import { addOriginalFlowerShapes, naturalFlowerSourceBlockId } from "./original-flower-shapes";
+import { disableNaturalFlowerShadowCasting } from "./natural-flower-shadow";
+import { planNaturalFlowerPackBatches } from "./natural-flower-pack";
+import {
+  emptyPrecipitationViewCache,
+  invalidatePrecipitationViewCache,
+  rainParticleInstanceCoordinate,
+  rainParticleMatricesNeedRewrite,
+  updatePrecipitationViewCache,
+  type PrecipitationViewCache,
+} from "./precipitation-view-cache";
+import {
+  createOriginalStaticShapeComponentGeometry,
+  createOriginalStaticShapeGeometry,
+  groupOriginalStaticShapeEntries,
+  isOriginalStaticShapeBlockId,
+  planOriginalStaticShapeBatches,
+} from "./original-static-shapes";
+import { initializeWorldConfiguration } from "./initial-world-configuration";
+import { ambientEnvironmentDecorations, naturalDecorationBatchDiagnostics, naturalDecorationLodForCamera, naturalDecorationParts, naturalDecorationVariantVisible, naturalTreeMushroomCandidates, NATURAL_SHELF_MUSHROOM_RENDER_SCALE, visibleNaturalTreeCount, type NaturalDecorationKind, type NaturalDecorationLod, type NaturalDecorationPart, type NaturalDecorationPlacement } from "./natural-decorations";
+import { naturalTreeAttachmentMatrix } from "./natural-tree-attachment";
+import { precipitationFieldForView, precipitationPositionForOffset, rainCrossSectionScaleForView, stepPrecipitationClock, type PrecipitationField } from "./precipitation-field";
+import { commitRenderedWorldFrame, emptyWorldFrameCommitDiagnostics } from "./world-frame-commit";
+import { qualityLifecycleAtlasInstance, qualityLifecycleProbe, qualityLifecycleProbeEnabled, qualityLifecycleSampleVisibleFrameError } from "./quality-lifecycle-probe";
+import { qualityLifecycleWorldIdentity } from "./quality-lifecycle-world-identity";
 
 export interface WorldSnapshot {
   projectId: string;
@@ -155,6 +193,33 @@ export interface NativeInputSample {
   nativeDispatchUptimeMs: number;
 }
 
+interface PrecipitationParticle {
+  x: number;
+  z: number;
+  offsetX: number;
+  offsetZ: number;
+  phase: number;
+}
+
+interface PrecipitationAnimation {
+  mesh: THREE.InstancedMesh;
+  particles: readonly PrecipitationParticle[];
+  baseY: number;
+  spanY: number;
+  elapsedMs: number;
+  lastUpdateMs: number;
+  paused: boolean;
+  field: PrecipitationField;
+}
+
+interface RainAnimation extends PrecipitationAnimation {
+  speedScale: number;
+  baseCrossSection: number;
+  projectedCssPx: number;
+}
+
+type SnowAnimation = PrecipitationAnimation;
+
 export interface RendererDiagnostics {
   qualityTier: QualityTier;
   pixelRatio: number;
@@ -162,6 +227,14 @@ export interface RendererDiagnostics {
   memory: { geometries: number; textures: number };
   /** Complete scene rebuilds since this renderer instance was created. */
   worldRebuildCount: number;
+  /** Rebuilds with a successful visible non-empty renderer submission. */
+  renderedWorldRebuildCount: number;
+  /** performance.now() at the last successful visible non-empty world submission. */
+  lastWorldFrameCommittedAtMs: number | null;
+  naturalFlowerPackPlacementCount: number;
+  naturalFlowerOriginalFallbackCount: number;
+  naturalFlowerVisibleBatchCount: number;
+  treeSideMushroomCount: number;
   worldRebuildLastMs: number;
   worldRebuildTotalMs: number;
   worldRebuildMaxMs: number;
@@ -218,6 +291,24 @@ export interface RendererDiagnostics {
   dayPhase: SunState["phase"];
   /** Current local-time sample and the actual light/shadow vectors applied. */
   lightingUpdateCount: number;
+  astronomySource: "synthetic" | "ephemeris-only" | "provider+ephemeris";
+  astronomyLocationSource: "none" | "fresh" | "cached";
+  sunAltitudeDeg: number | null;
+  sunAzimuthDeg: number | null;
+  moonAltitudeDeg: number | null;
+  moonAzimuthDeg: number | null;
+  moonIllumination: number | null;
+  astronomyDayStartMs: number | null;
+  astronomyDayEndMs: number | null;
+  astronomyUpdateCount: number;
+  environmentTransitionActive: boolean;
+  environmentTransitionTarget: "weather" | "decay" | "astronomy" | "synthetic";
+  environmentTransitionStartedCount: number;
+  environmentTransitionCompletedCount: number;
+  environmentTransitionCancelledCount: number;
+  openingRevealStartedCount: number;
+  openingRevealCompletedCount: number;
+  openingRevealCancelledCount: number;
   lightingSampledAtMs: number;
   lightingFingerprint: string;
   sunPosition: readonly [number, number, number];
@@ -232,13 +323,30 @@ export interface RendererDiagnostics {
   moonScreenY: number;
   visibleStarCount: number;
   cloudBlockCount: number;
+  visibleCloudBlockCount: number;
   cloudBudgetMode: "main-world" | "preview";
   cloudBlockScale: number;
   weatherKind: WeatherState["kind"];
   weatherCloudIntensity: number;
   weatherPrecipitationIntensity: number;
+  weatherVisualPrecipitationIntensity: number;
   rainDropCount: number;
+  visibleRainDropCount: number;
   snowFlakeCount: number;
+  visibleSnowFlakeCount: number;
+  precipitationFieldMode: "main-world" | "preview";
+  precipitationFieldCenterX: number;
+  precipitationFieldCenterZ: number;
+  precipitationFieldSpanX: number;
+  precipitationFieldSpanZ: number;
+  precipitationFieldUsedFallback: boolean;
+  precipitationFieldSyncCount: number;
+  rainCameraFrustumCount: number;
+  snowCameraFrustumCount: number;
+  precipitationMotionPaused: boolean;
+  rainElapsedMs: number;
+  snowElapsedMs: number;
+  rainStreakProjectedCssPx: number;
   fogNear: number;
   fogFar: number;
   cameraNear: number;
@@ -276,7 +384,21 @@ export interface RendererDiagnostics {
   ambientDecorationCount: number;
   ambientDecorationKindCount: number;
   ambientDecorationDrawCalls: number;
+  ambientDecorationAllocatedBatchCount: number;
   ambientDecorationShadowCasters: number;
+  localLightCreatedCount: number;
+  visibleLocalLightCount: number;
+  /** Static original silhouettes actually emitted; safe count only, no user text. */
+  originalStaticShapeVoxelCount: number;
+  /** Renderer instances grouped by topology and fallback visual material. */
+  originalStaticShapeBatchCount: number;
+  originalStaticShapeTopologyCount: number;
+  originalStaticShapeMaterialGroupCount: number;
+  originalStaticShapeEmissiveMaterialGroupCount: number;
+  originalStaticShapeTopologyOverflow: number;
+  originalStaticShapeMaterialGroupOverflow: number;
+  originalStaticShapeBudgetFallbackVoxelCount: number;
+  sourceLanternPointLightCount: number;
 }
 
 export interface VoxelResourcePack {
@@ -285,13 +407,20 @@ export interface VoxelResourcePack {
 }
 
 export interface VoxelRenderer {
+  /** First bootstrap only: stage optional atlas and adopt the initial world with one scene rebuild. */
+  initializeWorlds(worlds: readonly WorldSnapshot[], pack: VoxelResourcePack | null): Promise<void>;
   setWorld(world: WorldSnapshot | null): void;
   setWorlds(worlds: readonly WorldSnapshot[]): void;
   /** Updates sky, clouds, precipitation, and ambient light without rebuilding the world. */
   setExternalWeatherOverride(override: ExternalWeatherVisualOverride | null): void;
+  setAstronomyContext(context: AstronomyContext | null): void;
+  setEnvironmentDebugOverride(override: WorldEnvironmentDebugOverride | null): void;
+  revealInitialProject(projectId?: string | null): Promise<"completed" | "cancelled">;
   /** Frames one existing building, or the complete settlement when null, without rebuilding scene geometry or lighting. */
   focusProject(projectId: string | null): void;
   setResourcePack(pack: VoxelResourcePack | null): Promise<void>;
+  /** Applies a reversible visual profile to the current scene without replacing its world generation. */
+  setLightingQuality(preference: VoxelLightingQuality): boolean;
   setReducedMotion(value: boolean): void;
   /** Pauses frame rendering and texture animation while the canvas pane is hidden (tab switches); resuming re-sizes and renders once. */
   setVisible(value: boolean): void;
@@ -337,136 +466,11 @@ const colors: Record<string, number> = {
   shipwreck: 0x6e4c38,
 };
 
-interface AmbientDecorationPart {
-  size: readonly [number, number, number];
-  position: readonly [number, number, number];
-  rotationY?: number;
-  rotationZ?: number;
-}
-
-/**
- * Ambient props deliberately use one merged geometry per semantic kind.  This
- * keeps the budget measured in InstancedMesh batches while still giving the
- * player a readable silhouette (rather than a collection of anonymous boxes).
- * The parts are authored here so no Minecraft or resource-pack geometry is
- * distributed with the product.
- */
-function ambientDecorationGeometry(kind: AmbientDecorationKind): THREE.BufferGeometry {
-  const parts: AmbientDecorationPart[] = [];
-  const add = (
-    size: readonly [number, number, number],
-    position: readonly [number, number, number],
-    rotationY = 0,
-    rotationZ = 0,
-  ): void => { parts.push({ size, position, rotationY, rotationZ }); };
-
-  if (kind === "flower") {
-    add([0.1, 0.62, 0.1], [0, 0.31, 0]);
-    add([0.2, 0.13, 0.2], [0, 0.66, 0]);
-    for (let index = 0; index < 5; index += 1) {
-      const angle = index * (Math.PI * 2 / 5);
-      add([0.18, 0.07, 0.32], [Math.cos(angle) * 0.13, 0.68, Math.sin(angle) * 0.13], angle);
-    }
-  } else if (kind === "grass-tuft") {
-    for (let index = 0; index < 5; index += 1) {
-      const angle = -0.42 + index * 0.21;
-      add([0.09, 0.58, 0.09], [Math.sin(angle) * 0.11, 0.29, Math.cos(angle) * 0.06], index * (Math.PI * 2 / 5), angle);
-    }
-  } else if (kind === "rock") {
-    add([0.82, 0.46, 0.72], [0, 0.23, 0], 0, -0.06);
-    add([0.48, 0.34, 0.45], [0.12, 0.56, -0.04], 0.25, 0.12);
-  } else if (kind === "reed") {
-    add([0.1, 1.12, 0.1], [-0.16, 0.56, 0], 0, -0.1);
-    add([0.1, 1.28, 0.1], [0.02, 0.64, 0.02], 0.12, 0.04);
-    add([0.1, 0.94, 0.1], [0.18, 0.47, -0.01], -0.14, 0.12);
-  } else if (kind === "coral") {
-    add([0.18, 0.82, 0.18], [0, 0.41, 0]);
-    add([0.14, 0.62, 0.14], [-0.2, 0.31, 0.03], 0, -0.24);
-    add([0.14, 0.7, 0.14], [0.2, 0.35, -0.02], 0, 0.2);
-    add([0.13, 0.48, 0.13], [0.03, 0.72, 0.1], 0.35, -0.18);
-  } else {
-    // A restrained wreck silhouette: tapered-looking stepped hull, deck
-    // rails, a central mast, and a broken spar.  All pieces share one merged
-    // geometry and one material, so it remains one instanced draw call.
-    add([2.65, 0.32, 0.78], [0, 0.2, 0]);
-    add([2.18, 0.16, 0.94], [0, 0.43, 0]);
-    add([2.18, 0.12, 0.1], [0, 0.59, -0.42]);
-    add([1.72, 0.12, 0.1], [0.16, 0.58, 0.42], 0, -0.04);
-    add([0.14, 1.7, 0.14], [-0.35, 1.17, 0.02], 0, -0.04);
-    add([1.28, 0.1, 0.1], [0.08, 1.72, 0.02], 0.18, 0.12);
-    add([0.72, 0.09, 0.09], [0.65, 1.2, 0.04], -0.24, -0.42);
-  }
-
-  const positions: number[] = [];
-  const normals: number[] = [];
-  const uvs: number[] = [];
-  const indices: number[] = [];
-  for (const part of parts) {
-    const geometry = new THREE.BoxGeometry(...part.size);
-    geometry.applyMatrix4(new THREE.Matrix4().compose(
-      new THREE.Vector3(...part.position),
-      new THREE.Quaternion().setFromEuler(new THREE.Euler(0, part.rotationY ?? 0, part.rotationZ ?? 0)),
-      new THREE.Vector3(1, 1, 1),
-    ));
-    const position = geometry.getAttribute("position") as THREE.BufferAttribute;
-    const normal = geometry.getAttribute("normal") as THREE.BufferAttribute;
-    const uv = geometry.getAttribute("uv") as THREE.BufferAttribute;
-    const vertexOffset = positions.length / 3;
-    for (let index = 0; index < position.count; index += 1) {
-      positions.push(position.getX(index), position.getY(index), position.getZ(index));
-      normals.push(normal.getX(index), normal.getY(index), normal.getZ(index));
-      uvs.push(uv.getX(index), uv.getY(index));
-    }
-    const index = geometry.getIndex();
-    if (index) {
-      for (let item = 0; item < index.count; item += 1) indices.push(index.getX(item) + vertexOffset);
-    } else {
-      for (let item = 0; item < position.count; item += 1) indices.push(item + vertexOffset);
-    }
-    geometry.dispose();
-  }
-  const merged = new THREE.BufferGeometry();
-  merged.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
-  merged.setAttribute("normal", new THREE.Float32BufferAttribute(normals, 3));
-  merged.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
-  merged.setIndex(indices);
-  merged.computeBoundingBox();
-  merged.computeBoundingSphere();
-  return merged;
-}
-
-/** Stable inspection hook for the voxel unit suite; production code uses the same helper above. */
-export const ambientDecorationGeometryForTest = ambientDecorationGeometry;
-
-/** Surface gate shared by the renderer and its multi-world placement tests. */
-export function ambientDecorationCanUseSurface(kind: AmbientDecorationKind, hasWaterSurface: boolean): boolean {
-  return kind === "shipwreck" ? hasWaterSurface : !hasWaterSurface;
-}
-
-/**
- * Resolve a decoration's support datum. A null result means the candidate is
- * not legal for that surface (for example a shipwreck on land or a flower in
- * open water); a wreck deliberately uses the water datum rather than a max()
- * fallback so it cannot float above a shallow shoreline.
- */
-export function ambientDecorationGroundForSurface(
-  kind: AmbientDecorationKind,
-  supportGround: number,
-  terrainGround: number | undefined,
-  waterGround: number | undefined,
-): number | null {
-  if (!Number.isFinite(supportGround)) return null;
-  const onWater = waterGround !== undefined;
-  if (!ambientDecorationCanUseSurface(kind, onWater)) return null;
-  if (kind === "shipwreck") return Number.isFinite(waterGround) ? waterGround! : null;
-  return terrainGround === undefined ? supportGround : terrainGround;
-}
-
-/** The support datum is half a block above the visible terrain surface. */
-export function ambientDecorationOriginY(kind: AmbientDecorationKind, support: number, minimumY: number, heightScale: number): number {
-  return kind === "shipwreck"
-    ? support - 0.5 - 0.2 * heightScale
-    : support - 0.5 - minimumY * heightScale;
+export interface WorldEnvironmentDebugOverride {
+  date?: number | null;
+  weather?: ExternalWeatherVisualOverride | null;
+  /** Visual decay amount, 0..1. Null restores each world's real condition. */
+  decayAmount?: number | null;
 }
 
 const DEFAULT_FACE_UV_WORDS = packFaceUvTransform();
@@ -515,92 +519,69 @@ export function alignWorldsToEnvironment(
     : { ...world, worldPosition: { ...world.worldPosition, y: 4 } });
 }
 
-export interface AmbientDecorationScenePlacement {
-  projectId: string;
-  kind: AmbientDecorationKind;
-  x: number;
-  y: number;
-  z: number;
-  scale: number;
-  variant: number;
-  castsShadow: boolean;
-  /** The visible terrain class chosen by the same support gate as the renderer. */
-  surface: "land" | "water";
-}
-
-/**
- * Resolves seeded, building-local candidates against the actual rendered terrain
- * and road/building exclusions. Keeping this plan pure lets tests exercise the
- * same placements that are turned into InstancedMeshes below.
- */
-export function ambientDecorationPlacementsForScene(input: {
+/** Terrain-owned placements shared by production meshes and geometry regressions. */
+export function naturalDecorationPlacementsForScene(input: {
   worlds: readonly PositionedWorldSnapshot[];
   roads: readonly RoadCell[];
   importedDecorations: readonly ImportedDecorationPlacement[];
   environmentStyle: TerrainEnvironmentStyle;
   terrain: MergedGeometryData;
   worldSeed?: string;
-}): AmbientDecorationScenePlacement[] {
-  const budget = AMBIENT_DECORATION_BUDGETS[input.environmentStyle];
-  const roadKeys = new Set(input.roads.map((road) => `${road.x}:${road.z}`));
-  const buildingRects = input.worlds.map((world) => ({
-    x: world.worldPosition.x,
-    z: world.worldPosition.z,
-    width: world.footprint.width + 2.2,
-    depth: world.footprint.depth + 2.2,
-  }));
-  const rewardPoints = input.importedDecorations.map((decoration) => ({
-    x: decoration.worldPosition.x,
-    z: decoration.worldPosition.z,
-    width: decoration.footprint.width + 1.5,
-    depth: decoration.footprint.depth + 1.5,
-  }));
-  const terrainSurfaces = terrainSurfaceRectangles(input.terrain);
-  const placements: AmbientDecorationScenePlacement[] = [];
-  for (const world of input.worlds) {
-    if (placements.length >= budget.maxInstances) break;
-    const candidates = ambientDecorationsForWorld({
-      projectId: world.projectId,
-      blueprint: world.blueprint,
-      environmentStyle: input.environmentStyle,
-      worldSeed: input.worldSeed,
-    });
-    for (const candidate of candidates) {
-      const cos = Math.cos(world.rotationY);
-      const sin = Math.sin(world.rotationY);
-      const localX = candidate.x + world.blueprintOffset.x;
-      const localZ = candidate.z + world.blueprintOffset.z;
-      const x = world.worldPosition.x + localX * cos + localZ * sin;
-      const z = world.worldPosition.z - localX * sin + localZ * cos;
-      if (buildingRects.some((rect) => ambientWithinRect(x, z, rect))) continue;
-      if (rewardPoints.some((rect) => ambientWithinRect(x, z, rect))) continue;
-      if (ambientNearRoad(x, z, roadKeys)) continue;
-      const waterSurface = terrainSurfaces.find((rect) => rect.water
-        && x >= rect.minX && x <= rect.maxX && z >= rect.minZ && z <= rect.maxZ);
-      const terrainSurface = terrainSurfaces.find((rect) => !rect.water
-        && x >= rect.minX && x <= rect.maxX && z >= rect.minZ && z <= rect.maxZ);
-      const ground = ambientDecorationGroundForSurface(
-        candidate.kind,
-        supportGroundHeightAt(x, z, input.worlds, [], input.environmentStyle),
-        terrainSurface?.supportY,
-        waterSurface?.supportY,
-      );
-      if (ground === null) continue;
-      placements.push({
-        projectId: world.projectId,
-        kind: candidate.kind,
-        x,
-        y: ground,
-        z,
-        scale: candidate.scale,
-        variant: candidate.variant,
-        castsShadow: candidate.castsShadow,
-        surface: waterSurface ? "water" : "land",
-      });
-      if (placements.length >= budget.maxInstances) break;
+  qualityTier?: QualityTier;
+}): readonly import("./natural-decorations").NaturalDecorationPlacement[] {
+  const surfaces = terrainSurfaceRectangles(input.terrain);
+  const bounds = input.terrain.framingBounds;
+  const span = Math.max(bounds.maxX - bounds.minX, bounds.maxZ - bounds.minZ);
+  const step = THREE.MathUtils.clamp(span / 14, 8, 18);
+  const roadKeys = new Set(input.roads.map(road => `${road.x}:${road.z}`));
+  const occupied = [
+    ...input.worlds.map(world => ({ x: world.worldPosition.x, z: world.worldPosition.z,
+      width: world.footprint.width + 5, depth: world.footprint.depth + 5 })),
+    ...input.importedDecorations.map(item => ({ x: item.worldPosition.x, z: item.worldPosition.z,
+      width: item.footprint.width + 5, depth: item.footprint.depth + 5 })),
+  ];
+  const candidates: import("./natural-decorations").NaturalDecorationCandidate[] = [];
+  for (let x = bounds.minX + 3; x <= bounds.maxX - 3; x += step) {
+    for (let z = bounds.minZ + 3; z <= bounds.maxZ - 3; z += step) {
+      if (occupied.some(rect => ambientWithinRect(x, z, rect)) || ambientNearRoad(x, z, roadKeys)) continue;
+      const water = input.environmentStyle === "ocean-island"
+        ? surfaces.find(rect => rect.water && x >= rect.minX && x <= rect.maxX && z >= rect.minZ && z <= rect.maxZ)
+        : undefined;
+      const ground = surfaces.find(rect => !rect.water && x >= rect.minX && x <= rect.maxX && z >= rect.minZ && z <= rect.maxZ);
+      const surface = water ?? ground;
+      if (surface) candidates.push({ x, z, y: surface.supportY, support: water ? "water" : "ground" });
     }
   }
-  return placements;
+  const visibleTreeCount = visibleNaturalTreeCount(input.terrain.naturalTrees.length, input.qualityTier ?? "high");
+  const treeCandidates = naturalTreeMushroomCandidates(input.terrain.naturalTrees, visibleTreeCount)
+    .filter(candidate => {
+      const tree = input.terrain.naturalTrees[candidate.supportTreeIndex!];
+      return tree !== undefined
+        && !occupied.some(rect => ambientWithinRect(tree.x, tree.z, rect))
+        && !ambientNearRoad(tree.x, tree.z, roadKeys)
+        && !occupied.some(rect => ambientWithinRect(candidate.x, candidate.z, rect))
+        && !ambientNearRoad(candidate.x, candidate.z, roadKeys);
+    });
+  candidates.push(...treeCandidates);
+  if (input.environmentStyle === "ocean-island") {
+    // The settlement frame intentionally excludes the shoreline. Restricting
+    // candidate sampling to it silently produced no wreck anywhere in the sea.
+    const shoreline = surfaces.filter(surface => surface.water).map(surface => ({
+      x: (surface.minX + surface.maxX) / 2,
+      z: (surface.minZ + surface.maxZ) / 2,
+      y: surface.supportY,
+      support: "water" as const,
+    })).filter(point => !occupied.some(rect => ambientWithinRect(point.x, point.z, rect))
+      && !ambientNearRoad(point.x, point.z, roadKeys))
+      .sort((left, right) => left.x ** 2 + left.z ** 2 - right.x ** 2 - right.z ** 2
+        || left.x - right.x || left.z - right.z).slice(0, 24);
+    candidates.push(...shoreline);
+  }
+  return ambientEnvironmentDecorations({
+    environmentStyle: input.environmentStyle,
+    worldSeed: input.worldSeed ?? "world-default",
+    candidates,
+  });
 }
 
 function ambientWithinRect(x: number, z: number, rect: { x: number; z: number; width: number; depth: number }): boolean {
@@ -641,29 +622,6 @@ function terrainSurfaceRectangles(terrain: MergedGeometryData): Array<{ minX: nu
   return rectangles;
 }
 
-/** Per-kind display scales keep the 1-block prototypes legible at default
- * island framing without turning reeds or rocks into oversized set pieces. */
-export const AMBIENT_DECORATION_PRESENTATION_SCALES: Readonly<Record<AmbientDecorationKind, number>> = Object.freeze({
-  flower: 5.2,
-  "grass-tuft": 6.2,
-  rock: 3.8,
-  reed: 2.5,
-  coral: 3,
-  shipwreck: 1,
-});
-
-export function ambientDecorationRenderScale(
-  kind: AmbientDecorationKind,
-  scale: number,
-  variant: number,
-): { width: number; height: number } {
-  const presentationScale = AMBIENT_DECORATION_PRESENTATION_SCALES[kind];
-  if (kind === "shipwreck") return { width: scale, height: scale };
-  return {
-    width: scale * presentationScale * (0.8 + (variant % 3) * 0.1),
-    height: scale * presentationScale * (0.82 + (variant % 2) * 0.18),
-  };
-}
 
 function sameSpatialWorldLayout(left: readonly WorldSnapshot[], right: readonly WorldSnapshot[]): boolean {
   if (left.length !== right.length) return false;
@@ -806,7 +764,34 @@ export function createVoxelRenderer(
   sun.shadow.normalBias = 0.018;
   lightRig.add(sun, sun.target);
   const sunSpriteMaterial = new THREE.SpriteMaterial({ color: 0xffe2a1, transparent: true, opacity: 1, depthWrite: false, depthTest: false, fog: false, toneMapped: false });
-  const moonSpriteMaterial = new THREE.SpriteMaterial({ color: 0xd7e3ef, transparent: false, depthWrite: false, depthTest: false, fog: false, toneMapped: false });
+  const moonPhaseUniforms = {
+    uMoonIllumination: { value: 1 },
+    uMoonWaxing: { value: 1 },
+    uMoonBrightLimbAngle: { value: 0 },
+  };
+  const moonSpriteMaterial = new THREE.SpriteMaterial({
+    color: 0xd7e3ef, transparent: true, depthWrite: false, depthTest: false, fog: false, toneMapped: false,
+  });
+  (moonSpriteMaterial as THREE.SpriteMaterial & { onBeforeCompile: THREE.Material["onBeforeCompile"] }).onBeforeCompile = function (shader) {
+      Object.assign(shader.uniforms, moonPhaseUniforms);
+      shader.fragmentShader = shader.fragmentShader
+        .replace("#include <common>", "#include <common>\nuniform float uMoonIllumination;\nuniform float uMoonWaxing;\nuniform float uMoonBrightLimbAngle;")
+        .replace("#include <color_fragment>", `#include <color_fragment>
+          vec2 moonUv = vUv * 2.0 - 1.0;
+          float moonRadiusSq = dot(moonUv, moonUv);
+          if (moonRadiusSq > 1.0) discard;
+          float moonCosPhase = clamp(2.0 * uMoonIllumination - 1.0, -1.0, 1.0);
+          float moonLimb = sqrt(max(0.0, 1.0 - moonCosPhase * moonCosPhase)) * uMoonWaxing;
+          float moonAngleCos = cos(uMoonBrightLimbAngle);
+          float moonAngleSin = sin(uMoonBrightLimbAngle);
+          vec2 moonRotated = vec2(moonUv.x * moonAngleCos - moonUv.y * moonAngleSin,
+                                  moonUv.x * moonAngleSin + moonUv.y * moonAngleCos);
+          vec3 moonNormal = vec3(moonRotated, sqrt(max(0.0, 1.0 - moonRadiusSq)));
+          vec3 moonLightDirection = normalize(vec3(moonLimb, 0.0, moonCosPhase));
+          float moonLit = smoothstep(-0.035, 0.035, dot(moonNormal, moonLightDirection));
+          diffuseColor.rgb *= mix(0.12, 1.0, moonLit);
+          diffuseColor.a *= smoothstep(0.0, 0.06, 1.0 - moonRadiusSq);`);
+    };
   const glowTexture = createLampGlowTexture();
   const glowMaterial = new THREE.SpriteMaterial({
     map: glowTexture,
@@ -819,6 +804,12 @@ export function createVoxelRenderer(
     fog: false,
     toneMapped: false,
   });
+  const glowMaterials = new Map<number, THREE.SpriteMaterial>([
+    [0xffb45f, glowMaterial],
+    [0x65cfe3, glowMaterial.clone()],
+    [0xe94b35, glowMaterial.clone()],
+  ]);
+  for (const [color, spriteMaterial] of glowMaterials) spriteMaterial.color.setHex(color);
   const sunSprite = new THREE.Sprite(sunSpriteMaterial);
   sunSprite.name = "squareSun";
   sunSprite.scale.set(8.5, 8.5, 1);
@@ -851,13 +842,30 @@ export function createVoxelRenderer(
   let visibilityFarthestDistance = 0;
   let currentWeather: WeatherState = weatherForLocalDate(localDateForDate(new Date()));
   let externalWeatherOverride: ExternalWeatherVisualOverride | null = null;
+  let astronomyContext: AstronomyContext | null = null;
+  let environmentDebugOverride: WorldEnvironmentDebugOverride | null = null;
+  let lightingTransition: { from: SunState; startedAtMs: number; durationMs: number } | null = null;
+  let environmentReveal: { startedAtMs: number; durationMs: number; target: "weather" | "decay";
+    objects: Array<{ mesh: THREE.Mesh; material: THREE.Material | THREE.Material[] }>;
+    clones: Map<THREE.Material, { material: THREE.Material; opacity: number }> } | null = null;
+  let decayRevealRequested = false;
+  let environmentTransitionStartedCount = 0;
+  let environmentTransitionCompletedCount = 0;
+  let environmentTransitionCancelledCount = 0;
+  let astronomyUpdateCount = 0;
+  let openingReveal: { fromTarget: THREE.Vector3; toTarget: THREE.Vector3; fromDistance: number; toDistance: number; startedAtMs: number; durationMs: number; resolve: (result: "completed" | "cancelled") => void } | null = null;
+  let openingRevealStartedCount = 0;
+  let openingRevealCompletedCount = 0;
+  let openingRevealCancelledCount = 0;
   let currentLighting = sunStateForLocalTime(new Date());
   let lightingUpdateCount = 0;
   let lightingSampledAtMs = Date.now();
-  const requestedLightingQuality = options.lightingQuality ?? "auto";
+  let requestedLightingQuality = options.lightingQuality ?? "auto";
   const constructionOutlineVisibility = options.constructionOutlineVisibility ?? "current";
   let qualityTier = selectQualityTierForLighting(deviceSignals(renderer, 0), requestedLightingQuality);
   let qualityProfile = QUALITY_PROFILES[qualityTier];
+  let adaptiveQualityCap: QualityTier = "high";
+  const fallbackOcclusionMeshes = new Map<THREE.InstancedMesh, { voxels: BlueprintV1["voxels"]; field: LocalOcclusionField }>();
   let interactionFrameDurations: number[] = [];
   let interactionTotalDurations: number[] = [];
   let interactionTotalMaxMs = 0;
@@ -874,11 +882,60 @@ export function createVoxelRenderer(
   let postProcessRenderCount = 0;
   let postProcessBypassCount = 0;
   const rendererCreatedAtMs = performance.now();
+  const lifecycleProbeEnabled = qualityLifecycleProbeEnabled();
+  function buildQualityLifecycleAtlas(manifest: ResourcePackManifest, maximumSize: number): ResourcePackAtlas {
+    const startedAt = lifecycleProbeEnabled ? performance.now() : 0;
+    try {
+      const atlas = buildResourcePackAtlas(manifest, maximumSize);
+      if (lifecycleProbeEnabled) {
+        const durationMs = performance.now() - startedAt;
+        const atlasInstance = qualityLifecycleAtlasInstance(atlas);
+        const atlasTextureCount = atlas.pages.reduce((count, page) => count + 1 + (page.animationLookup ? 2 : 0), 0);
+        qualityLifecycleProbe("atlas-build-complete", {
+          durationMs, rendererGeneration: Number(canvas.dataset.rendererGeneration ?? 0),
+          atlasInstance, atlasPageCount: atlas.pages.length, atlasTextureCount, status: "ok",
+        });
+      }
+      return atlas;
+    } catch (error) {
+      if (lifecycleProbeEnabled) qualityLifecycleProbe("atlas-build-complete", { durationMs: performance.now() - startedAt, status: "failed" });
+      throw error;
+    }
+  }
+  function disposeQualityLifecycleAtlas(atlas: ResourcePackAtlas | null | undefined): void {
+    if (!atlas) return;
+    if (lifecycleProbeEnabled) qualityLifecycleProbe("atlas-disposed", {
+      rendererGeneration: Number(canvas.dataset.rendererGeneration ?? 0),
+      atlasInstance: qualityLifecycleAtlasInstance(atlas),
+      atlasPageCount: atlas.pages.length,
+      atlasTextureCount: atlas.pages.reduce((count, page) => count + 1 + (page.animationLookup ? 2 : 0), 0),
+      status: "ok",
+    });
+    atlas.dispose();
+  }
+  function lifecycleIdentityMetrics() {
+    if (!lifecycleProbeEnabled) return {};
+    const atlas = activeResourcePack?.atlas;
+    return {
+      rendererGeneration: Number(canvas.dataset.rendererGeneration ?? 0),
+      worldIdentityFingerprint: qualityLifecycleWorldIdentity(
+        lastWorlds, options.worldSeed, options.environmentStyle ?? "classic-island", options.terrainGenerationVersion,
+      ),
+      ...(atlas ? {
+        atlasInstance: qualityLifecycleAtlasInstance(atlas),
+        atlasPageCount: atlas.pages.length,
+        atlasTextureCount: atlas.pages.reduce((count, page) => count + 1 + (page.animationLookup ? 2 : 0), 0),
+      } : {}),
+    };
+  }
   let worldRebuildCount = 0;
+  let worldFrameCommit = emptyWorldFrameCommitDiagnostics;
   let worldRebuildLastMs = 0;
   let worldRebuildTotalMs = 0;
   let worldRebuildMaxMs = 0;
+  let terrainGenerationCache: { key: string; data: MergedGeometryData } | null = null;
   let firstNonemptyFrameMs: number | null = null;
+  let qualityFramePendingSinceMs: number | null = null;
   let pointerMoveCount = 0;
   let resizeCount = 0;
   let shadowToggleCount = 0;
@@ -911,6 +968,86 @@ export function createVoxelRenderer(
     if (!options.readNativeInput) return;
     try { consumeNativeInput(options.readNativeInput()); } catch { /* A missing native bridge falls back to DOM input. */ }
   }
+
+  function finishOpeningReveal(result: "completed" | "cancelled"): void {
+    const reveal = openingReveal;
+    if (!reveal) return;
+    openingReveal = null;
+    if (result === "completed") openingRevealCompletedCount += 1;
+    else openingRevealCancelledCount += 1;
+    canvas.dataset.openingRevealState = result;
+    canvas.dataset.initialRevealCompletedCount = String(openingRevealCompletedCount);
+    canvas.dataset.initialRevealCancelledCount = String(openingRevealCancelledCount);
+    reveal.resolve(result);
+    updateDiagnosticsDataset();
+  }
+
+  function updateOpeningReveal(nowMs: number): boolean {
+    const reveal = openingReveal;
+    if (!reveal) return false;
+    if (disposed || !paneVisible || document.hidden || reducedMotion || interacting) {
+      finishOpeningReveal("cancelled");
+      return false;
+    }
+    const progress = Math.min(1, Math.max(0, (nowMs - reveal.startedAtMs) / reveal.durationMs));
+    const eased = smoothstep(0, 1, progress);
+    cameraTarget.lerpVectors(reveal.fromTarget, reveal.toTarget, eased);
+    cameraDistance = reveal.fromDistance + (reveal.toDistance - reveal.fromDistance) * eased;
+    updateCamera();
+    canvas.dataset.openingRevealProgress = eased.toFixed(3);
+    if (progress >= 1) {
+      finishOpeningReveal("completed");
+      return false;
+    }
+    return true;
+  }
+
+  function startOpeningReveal(projectId?: string | null): Promise<"completed" | "cancelled"> {
+    if (openingReveal) finishOpeningReveal("cancelled");
+    if (disposed || !paneVisible || document.hidden || reducedMotion || positionedWorlds.length === 0) {
+      openingRevealCancelledCount += 1;
+      canvas.dataset.openingRevealState = "cancelled";
+      updateDiagnosticsDataset();
+      return Promise.resolve("cancelled");
+    }
+    frameScene(true);
+    const fromTarget = cameraTarget.clone();
+    const fromDistance = maximumCameraDistance;
+    cameraDistance = fromDistance;
+    updateCamera();
+    let toTarget = fromTarget.clone();
+    // Settlement opening (minimal and marathon) must traverse the complete
+    // approved zoom range, not stop at the intermediate fit distance.
+    let toDistance = minimumCameraDistance;
+    const project = projectId ? positionedWorlds.find(world => world.projectId === projectId) : undefined;
+    if (project) {
+      const bounds = focusBoundsFor(project);
+      const size = bounds.getSize(new THREE.Vector3());
+      const center = bounds.getCenter(new THREE.Vector3());
+      const radius = Math.max(6, size.length() / 2);
+      const verticalFov = THREE.MathUtils.degToRad(camera.fov);
+      const horizontalFov = 2 * Math.atan(Math.tan(verticalFov / 2) * Math.max(0.1, camera.aspect));
+      const fit = (radius / Math.sin(Math.max(0.1, Math.min(verticalFov, horizontalFov)) / 2)) * 1.04;
+      const boundsForFocus = cameraZoomBounds(fit, "focused");
+      toDistance = THREE.MathUtils.clamp(fit * 0.84, boundsForFocus.minimum, boundsForFocus.maximum);
+      toTarget = new THREE.Vector3(center.x, Math.max(1.5, center.y * 0.68), center.z);
+    }
+    openingRevealStartedCount += 1;
+    canvas.dataset.openingRevealState = "active";
+    canvas.dataset.initialRevealStartedCount = String(openingRevealStartedCount);
+    canvas.dataset.openingRevealProjectTarget = project ? "focused" : "settlement";
+    canvas.dataset.openingRevealFromDistance = fromDistance.toFixed(3);
+    canvas.dataset.openingRevealToDistance = toDistance.toFixed(3);
+    updateDiagnosticsDataset();
+    return new Promise(resolve => {
+      openingReveal = {
+        fromTarget, toTarget, fromDistance, toDistance,
+        startedAtMs: performance.now(), durationMs: 1_500, resolve,
+      };
+      requestRender();
+    });
+  }
+
   let sceneVoxelCount = 0;
   let plannedOutlineVoxelCount = 0;
   let fittedDistance = 24;
@@ -945,6 +1082,16 @@ export function createVoxelRenderer(
   const fluidAvailableAnimationIndices = new Map<number, Set<number>>();
   let texturedBatchCount = 0;
   let texturedVoxelCount = 0;
+  let originalStaticShapeVoxelCount = 0;
+  let originalStaticShapeBatchCount = 0;
+  let originalStaticShapeTopologyCount = 0;
+  let originalStaticShapeMaterialGroupCount = 0;
+  let originalStaticShapeEmissiveMaterialGroupCount = 0;
+  let originalStaticShapeTopologyOverflow = 0;
+  let originalStaticShapeMaterialGroupOverflow = 0;
+  let originalStaticShapeBudgetFallbackVoxelCount = 0;
+  let sourceLanternPointLightCount = 0;
+  const emissivePointColors = new Map<string, number>();
   let resourceFluidVoxelCount = 0;
   let resourceSpecialVoxelCount = 0;
   let fallbackVoxelCount = 0;
@@ -974,18 +1121,37 @@ export function createVoxelRenderer(
   let cloudsBuiltBaseY = 0;
   const previewMode = options.previewMode === true;
   let naturalTreeMeshes: { trunks: THREE.InstancedMesh; crowns: THREE.InstancedMesh; total: number } | null = null;
-  let rainAnimation: { mesh: THREE.InstancedMesh; drops: readonly { x: number; z: number; phase: number }[]; baseY: number; spanY: number; elapsedMs: number; lastUpdateMs: number } | null = null;
-  let snowAnimation: { mesh: THREE.InstancedMesh; flakes: readonly { x: number; z: number; phase: number }[]; baseY: number; spanY: number; elapsedMs: number; lastUpdateMs: number } | null = null;
-  // V20 ambient motion: the world breathes while the pane is visible and the tab
-  // is foreground. Each cloud drifts along its own slow sine path; each tree crown
+  let rainAnimation: RainAnimation | null = null;
+  let snowAnimation: SnowAnimation | null = null;
+  const stormFlash = new THREE.PointLight(0xd9e7ff, 0, 28, 2);
+  stormFlash.castShadow = false;
+  lightRig.add(stormFlash);
+  let lightningBolt: THREE.Group | null = null;
+  let lightningStartedAtMs = Number.NEGATIVE_INFINITY;
+  let nextLightningAtMs = Number.POSITIVE_INFINITY;
+  let lightningStrikeCount = 0;
+  let stormRandom = seededRandom(0x26c3);
+  let precipitationField: PrecipitationField | null = null;
+  let precipitationFieldSyncCount = 0;
+  let precipitationViewCache: PrecipitationViewCache = emptyPrecipitationViewCache();
+  let rainCameraFrustumCount = 0;
+  let snowCameraFrustumCount = 0;
+  let rainStreakProjectedCssPx = 0;
+  const precipitationProjectionPoint = new THREE.Vector3();
+  const precipitationCameraWorldPosition = new THREE.Vector3();
+  const precipitationCameraDirection = new THREE.Vector3();
+  // Ambient motion runs while the pane is visible and the tab is foreground.
+  // Weather clouds advect across the sky; each tree crown
   // and trunk tilts around its planted base; newly completed buildings grow
   // block by block. Everything is driven by one throttled interval pump (never a
   // continuous rAF loop), stays silent under reduced motion and on the
   // performance tier, and stops the moment the pane hides or the tab backgrounds.
   let cloudDrift: {
     mesh: THREE.InstancedMesh;
-    clouds: Array<{ first: number; count: number; phase: number; periodMs: number; amp: number; angle: number }>;
+    clouds: Array<{ first: number; count: number; speed: number; angle: number }>;
     basePositions: Float32Array;
+    spanX: number;
+    spanZ: number;
     elapsedMs: number;
     lastUpdateMs: number;
   } | null = null;
@@ -993,17 +1159,22 @@ export function createVoxelRenderer(
     trunks: THREE.InstancedMesh;
     crowns: THREE.InstancedMesh;
     trees: Array<{ pivotX: number; pivotY: number; pivotZ: number; trunkY: number; crownY: number; scale: number; phase: number; periodMs: number; amp: number; axisAngle: number }>;
+    attachments: Array<{ mesh: THREE.InstancedMesh; index: number; treeIndex: number; baseMatrix: THREE.Matrix4 }>;
     elapsedMs: number;
     lastUpdateMs: number;
   } | null = null;
-  let constructionReveals: Array<{ mesh: THREE.InstancedMesh; index: number; popAtMs: number; done: boolean }> = [];
+  let constructionReveals: Array<{ mesh: THREE.InstancedMesh; index: number; popAtMs: number; targetScale: number; done: boolean }> = [];
   let constructionRevealStartedMs = 0;
   const terrainPackTextures: THREE.Texture[] = [];
   let terrainMeshForPicking: THREE.Mesh | null = null;
   let ambientDecorationCount = 0;
   let ambientDecorationKindCount = 0;
   let ambientDecorationDrawCalls = 0;
+  let ambientDecorationAllocatedBatchCount = 0;
   let ambientDecorationShadowCasters = 0;
+  let naturalFlowerPackPlacementCount = 0;
+  let naturalFlowerOriginalFallbackCount = 0;
+  let treeSideMushroomCount = 0;
 
   function material(id: string): THREE.MeshStandardMaterial {
     let found = materials.get(id);
@@ -1119,6 +1290,7 @@ export function createVoxelRenderer(
     }
   }
 
+  let totalRenderedFrames = 0;
   function renderFrame(frameStarted: number): boolean {
     pollNativeInput();
     if ((options.readNativeInput || options.subscribeNativeInput) && (nativeInputDeltaX !== 0 || nativeInputDeltaY !== 0)) {
@@ -1128,7 +1300,11 @@ export function createVoxelRenderer(
       nativeInputDeltaY = 0;
       nativeInputRenderedSequence = nativeInputLastSequence;
     }
-    const cameraStillMoving = applyPendingCameraUpdate(frameStarted);
+    const revealStillMoving = updateOpeningReveal(frameStarted);
+    const cameraStillMoving = applyPendingCameraUpdate(frameStarted) || revealStillMoving || updateEnvironmentReveal(frameStarted);
+    // Also catch a changed parent/root transform on a request-driven frame,
+    // without tying precipitation synchronization to a world rebuild.
+    syncPrecipitationField();
     const pulseActive = frameStarted < constructionPulseUntilMs;
     let pulseGlow = 0;
     if (pulseActive) {
@@ -1154,13 +1330,50 @@ export function createVoxelRenderer(
     } finally {
       endGpuTimer();
     }
+    totalRenderedFrames += 1;
+    canvas.dataset.renderFrameCount = String(totalRenderedFrames);
     canvas.dataset.renderCalls = String(renderer.info.render.calls);
     canvas.dataset.renderTriangles = String(renderer.info.render.triangles);
     canvas.dataset.pixelRatio = renderer.getPixelRatio().toFixed(2);
     canvas.dataset.postProcessRenderCount = String(postProcessRenderCount);
     canvas.dataset.postProcessBypassCount = String(postProcessBypassCount);
+    const previousWorldFrameCommit = worldFrameCommit;
+    worldFrameCommit = commitRenderedWorldFrame({
+      current: worldFrameCommit,
+      worldRebuildCount,
+      renderedTriangles: renderer.info.render.triangles,
+      worldHasGeometry: sceneVoxelCount > 0,
+      committedAtMs: performance.now(),
+      visible: paneVisible && !document.hidden,
+      disposed,
+    });
+    if (worldFrameCommit !== previousWorldFrameCommit) {
+      canvas.dataset.renderedWorldRebuildCount = String(worldFrameCommit.renderedWorldRebuildCount);
+      if (worldFrameCommit.lastWorldFrameCommittedAtMs !== null) {
+        canvas.dataset.lastWorldFrameCommittedAtMs = String(worldFrameCommit.lastWorldFrameCommittedAtMs);
+      }
+    }
+    if (qualityFramePendingSinceMs !== null && paneVisible && !document.hidden
+      && sceneVoxelCount > 0 && worldRebuildCount > 0
+      && worldFrameCommit.renderedWorldRebuildCount === worldRebuildCount
+      && renderer.info.render.triangles > 0
+      && !renderer.getContext().isContextLost()) {
+      qualityLifecycleProbe("visible-world-frame", {
+        durationMs: performance.now() - qualityFramePendingSinceMs,
+        renderedWorldRebuildCount: worldFrameCommit.renderedWorldRebuildCount,
+        worldRebuildCount,
+        renderedTriangleCount: renderer.info.render.triangles,
+        requestedPreference: requestedLightingQuality,
+        effectiveTier: qualityTier,
+        ...lifecycleIdentityMetrics(),
+        status: "ok",
+      });
+      qualityLifecycleSampleVisibleFrameError(renderer.getContext());
+      qualityFramePendingSinceMs = null;
+    }
     if (firstNonemptyFrameMs === null && renderer.info.render.triangles > 0) {
       firstNonemptyFrameMs = performance.now() - rendererCreatedAtMs;
+      qualityLifecycleProbe("first-nonempty-frame", { durationMs: firstNonemptyFrameMs, status: "ok" });
       canvas.dataset.firstNonemptyFrameMs = firstNonemptyFrameMs.toFixed(2);
       logNativeRenderDiagnostic(`[blockcolc-first-nonempty-frame] ${JSON.stringify({ durationMs: Number(firstNonemptyFrameMs.toFixed(2)), triangles: renderer.info.render.triangles, rebuildCount: worldRebuildCount })}`);
     }
@@ -1211,7 +1424,7 @@ export function createVoxelRenderer(
       // single frame. Recheck after rendering so a stolen pointer cannot keep
       // scheduling expensive interaction frames while interval tasks starve.
       releaseStaleInteraction(performance.now());
-      return interacting || nativeInputActive || cameraStillMoving || performance.now() < constructionPulseUntilMs;
+      return interacting || nativeInputActive || cameraStillMoving || openingReveal !== null || performance.now() < constructionPulseUntilMs;
     },
   });
 
@@ -1238,14 +1451,25 @@ export function createVoxelRenderer(
 
   function animationControllersFor(atlas: ResourcePackAtlas): Array<AtlasAnimationController | null> {
     const startedAtMs = performance.now();
-    return atlas.pages.map((page) => page.animationLookup
-      ? createAtlasAnimationController(page.animationLookup, requestRender, {
-        reducedMotion,
-        visible: !document.hidden,
-        activeTextureIndices: [],
-        startedAtMs,
-      })
-      : null);
+    const controllers: Array<AtlasAnimationController | null> = [];
+    try {
+      for (const page of atlas.pages) {
+        controllers.push(page.animationLookup
+          ? createAtlasAnimationController(page.animationLookup, requestRender, {
+            reducedMotion,
+            visible: !document.hidden,
+            activeTextureIndices: [],
+            startedAtMs,
+          })
+          : null);
+      }
+      return controllers;
+    } catch (error) {
+      for (const controller of controllers) {
+        try { controller?.dispose(); } catch { /* release the remaining staged controllers */ }
+      }
+      throw error;
+    }
   }
 
   function referenceAnimatedTexture(page: number, textureIndex: number): void {
@@ -1265,10 +1489,21 @@ export function createVoxelRenderer(
   }
 
   function rebuild(worlds: readonly WorldSnapshot[], previousWorlds: readonly WorldSnapshot[] = lastWorlds): void {
+    if (openingReveal) finishOpeningReveal("cancelled");
+    if (environmentReveal) finishEnvironmentReveal(true);
     const rebuildStartedAtMs = performance.now();
+    const rebuildStageMs: Record<string, number> = {};
+    let rebuildStageStartedAtMs = rebuildStartedAtMs;
+    const finishRebuildStage = (stage: string) => {
+      const now = performance.now();
+      rebuildStageMs[stage] = Number((now - rebuildStageStartedAtMs).toFixed(2));
+      rebuildStageStartedAtMs = now;
+    };
     const preserveCameraView = positionedWorlds.length > 0 && sameSpatialWorldLayout(previousWorlds, worlds);
     sceneRevision += 1;
     clearGroup(buildingGroup);
+    fallbackOcclusionMeshes.clear();
+    cutoutShadowMeshes.clear();
     blockEntityDisplay.reset();
     clearGroup(terrainGroup);
     // A rebuild invalidates every per-frame animation state whose meshes just got
@@ -1284,6 +1519,16 @@ export function createVoxelRenderer(
     emissiveMaterials = [];
     texturedBatchCount = 0;
     texturedVoxelCount = 0;
+    originalStaticShapeVoxelCount = 0;
+    originalStaticShapeBatchCount = 0;
+    originalStaticShapeTopologyCount = 0;
+    originalStaticShapeMaterialGroupCount = 0;
+    originalStaticShapeEmissiveMaterialGroupCount = 0;
+    originalStaticShapeTopologyOverflow = 0;
+    originalStaticShapeMaterialGroupOverflow = 0;
+    originalStaticShapeBudgetFallbackVoxelCount = 0;
+    sourceLanternPointLightCount = 0;
+    emissivePointColors.clear();
     resourceFluidVoxelCount = 0;
     resourceSpecialVoxelCount = 0;
     fallbackVoxelCount = 0;
@@ -1299,10 +1544,15 @@ export function createVoxelRenderer(
     ambientDecorationCount = 0;
     ambientDecorationKindCount = 0;
     ambientDecorationDrawCalls = 0;
+    ambientDecorationAllocatedBatchCount = 0;
     ambientDecorationShadowCasters = 0;
+    naturalFlowerPackPlacementCount = 0;
+    naturalFlowerOriginalFallbackCount = 0;
+    treeSideMushroomCount = 0;
     referencedAnimatedTextureIndices.clear();
     referencedFluidAnimatedTextures.clear();
     fluidAvailableAnimationIndices.clear();
+    finishRebuildStage("clear");
     const initialPositioned = layoutWorlds(worlds, resolveBlueprint);
     const environmentStyle: TerrainEnvironmentStyle = previewMode
       ? "classic-island"
@@ -1325,8 +1575,9 @@ export function createVoxelRenderer(
     positionedWorlds = positioned;
     const voxelCount = positioned.reduce((sum, world) => sum + world.blueprint.voxels.length, 0);
     sceneVoxelCount = voxelCount;
+    adaptiveQualityCap = "high";
     qualityTier = selectQualityTierForLighting(deviceSignals(renderer, voxelCount), requestedLightingQuality);
-    applyQuality(qualityTier);
+    applyQuality(qualityTier, false, true);
 
     // V20 BX-01: when a focus round completes, the finished building grows block
     // by block instead of popping in whole. Reveal only applies to buildings whose
@@ -1362,18 +1613,31 @@ export function createVoxelRenderer(
       depth: decoration.footprint.depth,
       groundLevel: decoration.worldPosition.y,
     }));
-    const terrainData = createSteppedTerrainData(
-      positioned,
-      roads,
-      [...buildingPads, ...decorationPads],
-      previewMode ? { x: 64, z: 64 } : undefined,
-      {
-        environmentStyle,
-        worldSeed: options.worldSeed,
-        terrainGenerationVersion: options.terrainGenerationVersion,
-        refinedFar: !softwareRendererName,
-      },
-    );
+    finishRebuildStage("layout");
+    const terrainPads = [...buildingPads, ...decorationPads];
+    const terrainMinimumRadius = previewMode ? { x: 64, z: 64 } : undefined;
+    const terrainOptions = {
+      environmentStyle,
+      worldSeed: options.worldSeed,
+      terrainGenerationVersion: options.terrainGenerationVersion,
+      refinedFar: !softwareRendererName,
+    };
+    const terrainKey = terrainGenerationInputKey(positioned, roads, terrainPads, terrainMinimumRadius, terrainOptions);
+    const terrainCacheHit = terrainGenerationCache?.key === terrainKey;
+    const terrainData = terrainCacheHit
+      ? terrainGenerationCache!.data
+      : createSteppedTerrainData(positioned, roads, terrainPads, terrainMinimumRadius, terrainOptions);
+    if (!terrainCacheHit) {
+      const numericLength = terrainData.positions.length
+        + Object.values(terrainData.indicesByMaterial).reduce((sum, indices) => sum + indices.length, 0)
+        + terrainData.sideIndices.dirt.length + terrainData.sideIndices.stone.length;
+      // Keep at most one recent layout, and never pin an unusually large world.
+      terrainGenerationCache = numericLength * 8 <= 16 * 1024 * 1024
+        ? { key: terrainKey, data: terrainData }
+        : null;
+    }
+    canvas.dataset.terrainGenerationCacheHit = String(terrainCacheHit);
+    finishRebuildStage("terrainGeneration");
     canvas.dataset.environmentStyle = environmentStyle;
     canvas.dataset.terrainGenerationVersion = String(terrainData.terrainGenerationVersion);
     canvas.dataset.terrainCellCount = String(terrainData.cellCount);
@@ -1394,6 +1658,7 @@ export function createVoxelRenderer(
     canvas.dataset.terrainHydrologyProtectedWater = String(terrainData.hydrology.protectedWaterCellCount);
     canvas.dataset.terrainFarExtent = String(terrainData.bounds.maxX);
     addTerrain(terrainData);
+    finishRebuildStage("terrainMesh");
     const roadGroundHeightAt = (x: number, z: number) => supportGroundHeightAt(
       x,
       z,
@@ -1411,26 +1676,42 @@ export function createVoxelRenderer(
     addRoads(roads, positioned, [...buildingPads, ...decorationPads], roadGroundHeightAt);
     const emissivePoints: EmissivePoint[] = [];
     addRoadLamps(roads, positioned, emissivePoints, roadGroundHeightAt);
+    finishRebuildStage("roadsAndLamps");
     for (const world of positioned) addBuilding(world, emissivePoints, revealPlans.get(world.projectId) ?? null);
     for (const decoration of importedDecorations) addImportedDecoration(decoration, emissivePoints);
-    addAmbientDecorations(positioned, roads, importedDecorations, environmentStyle, terrainData);
+    finishRebuildStage("buildings");
+    addNaturalEnvironmentDecorations(positioned, roads, importedDecorations, environmentStyle, terrainData);
+    finishRebuildStage("naturalDecorations");
     activeResourcePack?.atlas.pages.forEach((page, pageIndex) => {
       const controller = atlasAnimationControllers[pageIndex];
       if (page.animationLookup && controller) controller.setActiveTextureIndices(referencedAnimatedTextureIndices.get(pageIndex) ?? []);
     });
-    addClusteredLights(emissivePoints);
+    addClusteredLights(emissivePoints, emissivePointColors);
     updateSceneBounds(positioned, importedDecorations, terrainData, previewMode);
     // Frame the new content before capturing the forced shadow sample. Doing
     // this afterward leaves the sample anchored to the previous camera target,
     // so the next ordinary lighting tick is misclassified as camera movement.
     frameScene(!preserveCameraView, preserveCameraView);
     updateWeather(localDateForDate(new Date()), true);
+    if (decayRevealRequested) {
+      decayRevealRequested = false;
+      startEnvironmentReveal([terrainGroup, roadGroup, buildingGroup], "decay");
+    }
     updateLighting(new Date(), true);
     cacheStaticWorldTransforms();
+    finishRebuildStage("lightingAndFinalize");
+    canvas.dataset.worldRebuildStagesMs = JSON.stringify(rebuildStageMs);
     worldRebuildLastMs = performance.now() - rebuildStartedAtMs;
     worldRebuildCount += 1;
     worldRebuildTotalMs += worldRebuildLastMs;
     worldRebuildMaxMs = Math.max(worldRebuildMaxMs, worldRebuildLastMs);
+    qualityLifecycleProbe("world-rebuild-complete", {
+      durationMs: worldRebuildLastMs,
+      worldRebuildCount,
+      renderedWorldRebuildCount: worldFrameCommit.renderedWorldRebuildCount,
+      ...lifecycleIdentityMetrics(),
+      status: "ok",
+    });
     logNativeRenderDiagnostic(`[blockcolc-world-rebuild] ${JSON.stringify({ count: worldRebuildCount, durationMs: Number(worldRebuildLastMs.toFixed(2)), worldCount: worlds.length, environmentStyle })}`);
     updateDiagnosticsDataset();
     requestRender();
@@ -1645,6 +1926,7 @@ export function createVoxelRenderer(
         amp: 0.06 + ((index * 97) % 12) / 12 * 0.04,
         axisAngle: ((index * 53) % 360) * (Math.PI / 180),
       })),
+      attachments: [],
       elapsedMs: 0,
       lastUpdateMs: performance.now(),
     };
@@ -1654,11 +1936,38 @@ export function createVoxelRenderer(
 
   function updateNaturalTreeDensity(): void {
     if (!naturalTreeMeshes) return;
-    const density = qualityTier === "low" ? 0.36 : qualityTier === "balanced" ? 0.68 : 1;
-    const visible = Math.max(1, Math.round(naturalTreeMeshes.total * density));
+    const visible = visibleNaturalTreeCount(naturalTreeMeshes.total, qualityTier);
     naturalTreeMeshes.trunks.count = visible;
     naturalTreeMeshes.crowns.count = visible;
     naturalTreeMeshes.trunks.castShadow = qualityTier === "high";
+    syncNaturalTreeAttachments();
+  }
+
+  function syncNaturalTreeAttachments(): void {
+    const sway = naturalTreeSway;
+    const visibleCount = naturalTreeMeshes?.trunks.count ?? 0;
+    if (!sway) {
+      treeSideMushroomCount = 0;
+      return;
+    }
+    for (const attachment of sway.attachments) {
+      const tree = sway.trees[attachment.treeIndex];
+      if (!tree) continue;
+      const swayAngle = sway.elapsedMs > 0
+        ? tree.amp * Math.sin((sway.elapsedMs / tree.periodMs) * Math.PI * 2 + tree.phase * Math.PI * 2)
+        : 0;
+      attachment.mesh.setMatrixAt(attachment.index, naturalTreeAttachmentMatrix({
+        baseMatrix: attachment.baseMatrix,
+        pivot: [tree.pivotX, tree.pivotY, tree.pivotZ],
+        axisAngle: tree.axisAngle,
+        swayAngle,
+        hostVisible: attachment.treeIndex < visibleCount,
+      }));
+    }
+    for (const mesh of new Set(sway.attachments.map(attachment => attachment.mesh))) {
+      mesh.instanceMatrix.needsUpdate = true;
+    }
+    treeSideMushroomCount = sway.attachments.filter(attachment => attachment.treeIndex < visibleCount).length;
   }
 
   type TerrainMaterialKey = "grass" | "dirt" | "stone" | "water";
@@ -1694,7 +2003,8 @@ export function createVoxelRenderer(
       const ground = groundHeightAt(cell.x, cell.z) - 0.455;
       matrix.makeTranslation(cell.x, ground + 1.25, cell.z); poles.setMatrixAt(index, matrix);
       matrix.makeTranslation(cell.x, ground + 2.55, cell.z); lanterns.setMatrixAt(index, matrix);
-      emissivePoints.push({ x: cell.x, y: ground + 2.55, z: cell.z, intensity: 15 });
+        registerEmissivePoint(emissivePoints, emissivePointColors,
+          { x: cell.x, y: ground + 2.55, z: cell.z, intensity: 15 }, 0xffb45f);
     });
     poles.instanceMatrix.needsUpdate = true;
     lanterns.instanceMatrix.needsUpdate = true;
@@ -1720,16 +2030,19 @@ export function createVoxelRenderer(
     const conditionVisual = conditionVisualForVoxels(world.projectId, visible, world.buildingConditionBasisPoints);
     const occlusionField = createLocalOcclusionField(conditionVisual.intactVoxels);
     for (const voxel of conditionVisual.intactVoxels) {
-      if (voxel.emissiveKind || (voxel.emissiveLevel ?? 0) > 0) {
+      const sourceEmission = sourceLanternEmissionForVoxel(voxel) ?? sourceCandleEmissionForVoxel(voxel);
+      if (sourceEmission) {
         const cos = Math.cos(world.rotationY); const sin = Math.sin(world.rotationY);
         const localX = voxel.x + world.blueprintOffset.x;
         const localZ = voxel.z + world.blueprintOffset.z;
-        emissivePoints.push({
+        const point = {
           x: world.worldPosition.x + localX * cos + localZ * sin,
           y: world.worldPosition.y + voxel.y,
           z: world.worldPosition.z - localX * sin + localZ * cos,
-          intensity: voxel.emissiveLevel ?? 15,
-        });
+          intensity: sourceEmission.level,
+        };
+        registerEmissivePoint(emissivePoints, emissivePointColors, point, sourceEmission.color);
+        if (sourceEmission.kind === "lantern" || sourceEmission.kind === "soul-lantern") sourceLanternPointLightCount += 1;
       }
     }
     // V20 BX-01: the increment this round just built appears block by block, from
@@ -1747,15 +2060,29 @@ export function createVoxelRenderer(
     // While a building reveals, its voxels render through the per-instance fallback
     // path so each block's scale can animate independently; the merged atlas
     // batches cannot hide single voxels. The next rebuild re-batches it normally.
+    // Known non-cube vanilla states bypass the generic six-face cube texture
+    // route. Give a resolved pack model first chance through geometry planning;
+    // unresolved states then use the original static silhouette below.
+    const staticShapeCandidates = conditionVisual.intactVoxels.filter((voxel) => isOriginalStaticShapeBlockId(voxel.sourceBlockId));
+    const genericTextureCandidates = conditionVisual.intactVoxels.filter((voxel) => !isOriginalStaticShapeBlockId(voxel.sourceBlockId));
     const texturePlan = activeResourcePack && !revealing
-      ? createTextureBatches(conditionVisual.intactVoxels, activeResourcePack.manifest, activeResourcePack.atlas, occlusionField)
-      : { batches: [], fallbackVoxels: conditionVisual.intactVoxels };
+      ? createTextureBatches(genericTextureCandidates, activeResourcePack.manifest, activeResourcePack.atlas, occlusionField)
+      : { batches: [], fallbackVoxels: genericTextureCandidates };
     addTexturedBatches(structure, texturePlan.batches, conditionVisual.weathering);
-    const geometryPlan = activeResourcePack && !revealing
-      ? createGeometryBatches(texturePlan.fallbackVoxels, activeResourcePack.manifest, activeResourcePack.atlas, occlusionField)
-      : { batches: [], fallbackVoxels: texturePlan.fallbackVoxels };
-    addGeometryBatches(structure, geometryPlan.batches, conditionVisual.weathering);
-    const visibleFallbackVoxels = geometryPlan.fallbackVoxels.filter((voxel) => !isVisuallyEmptyVanillaBlock(voxel));
+    const geometryCandidates = !activeResourcePack ? [] : revealing
+      ? staticShapeCandidates
+      : [...texturePlan.fallbackVoxels, ...staticShapeCandidates];
+    const geometryPlan = activeResourcePack
+      ? createGeometryBatches(geometryCandidates, activeResourcePack.manifest, activeResourcePack.atlas, occlusionField)
+      : { batches: [], fallbackVoxels: [] };
+    addGeometryBatches(structure, geometryPlan.batches, conditionVisual.weathering,
+      revealing ? revealOrderIndex : null, revealSchedule);
+    const fallbackCandidates = !activeResourcePack
+      ? [...genericTextureCandidates, ...staticShapeCandidates]
+      : revealing
+        ? [...texturePlan.fallbackVoxels, ...geometryPlan.fallbackVoxels]
+        : geometryPlan.fallbackVoxels;
+    const visibleFallbackVoxels = fallbackCandidates.filter((voxel) => !isVisuallyEmptyVanillaBlock(voxel));
     const specialVoxels = addSpecialResourceVoxels(structure, visibleFallbackVoxels);
     resourceSpecialVoxelCount += specialVoxels.size;
     const blockEntityFallbackVoxels = blockEntityDisplay.add(
@@ -1767,13 +2094,22 @@ export function createVoxelRenderer(
     const ordinaryFallbackVoxels = visibleFallbackVoxels.filter((voxel) => (
       !specialVoxels.has(voxel) && !blockEntityFallbackVoxels.has(voxel)
     ));
-    const resourceFluidCount = addStaticFluidVoxels(structure, ordinaryFallbackVoxels, conditionVisual.intactVoxels);
+    const flowerShapes = addOriginalFlowerShapes(structure, ordinaryFallbackVoxels);
+    const remainingFallbackVoxels = ordinaryFallbackVoxels.filter((voxel) => !flowerShapes.has(voxel));
+    const resourceFluidCount = addStaticFluidVoxels(structure, remainingFallbackVoxels, conditionVisual.intactVoxels);
     if (activeResourcePack) fallbackVoxelCount += ordinaryFallbackVoxels.length - resourceFluidCount;
-    const groups = groupFallbackVoxels(ordinaryFallbackVoxels.filter((voxel) => staticFluidKind(voxel) === undefined));
+    const staticShapeVoxels = remainingFallbackVoxels.filter((voxel) => isOriginalStaticShapeBlockId(voxel.sourceBlockId));
+    const staticShapeFallback = addOriginalStaticShapeMeshes(structure, staticShapeVoxels, occlusionField,
+      conditionVisual.weathering, revealOrderIndex, revealSchedule);
+    const cubeFallbackVoxels = remainingFallbackVoxels.filter((voxel) => (
+      staticFluidKind(voxel) === undefined && !staticShapeFallback.has(voxel)
+    ));
+    const groups = groupFallbackVoxels(cubeFallbackVoxels);
     for (const [key, voxels] of groups) {
       const [materialId, emissiveKind = "", levelText = ""] = key.split("|");
       const level = levelText === "" ? 0 : Number(levelText);
-      const owned = conditionVisual.weathering > 0 || emissiveKind !== "" || level > 0;
+      const emissiveActive = level > 0;
+      const owned = conditionVisual.weathering > 0 || emissiveActive;
       const meshMaterial = owned ? material(materialId!).clone() : material(materialId!);
       const translucent = materialId === "glass" || parseFallbackVisualKey(materialId!)?.transparent === true;
       trackMaterialEffects(meshMaterial, translucent ? 0.22 : 0.12);
@@ -1781,8 +2117,8 @@ export function createVoxelRenderer(
         meshMaterial.color.multiplyScalar(1 - conditionVisual.weathering * 0.28);
         meshMaterial.roughness = Math.min(1, meshMaterial.roughness + conditionVisual.weathering * 0.1);
       }
-      if (emissiveKind !== "" || level > 0) {
-        emissiveMaterials.push({ material: meshMaterial, level: level || 15, kind: emissiveKind || "light" });
+      if (emissiveActive) {
+        emissiveMaterials.push({ material: meshMaterial, level: level > 0 ? level : 15, kind: emissiveKind || "light" });
       }
       const mesh = new THREE.InstancedMesh(new THREE.BoxGeometry(0.97, 0.97, 0.97), meshMaterial, voxels.length);
       const matrix = new THREE.Matrix4();
@@ -1798,6 +2134,7 @@ export function createVoxelRenderer(
             mesh,
             index,
             popAtMs: revealSchedule.popAtMsFor(constructionRevealStartedMs, orderIndex),
+            targetScale: 0.97,
             done: false,
           });
           return;
@@ -1833,27 +2170,36 @@ export function createVoxelRenderer(
     const renderVoxels = planMovingPistonRenderVoxels(decoration.blueprint.voxels).displayVoxels;
     const occlusionField = createLocalOcclusionField(renderVoxels);
     for (const voxel of renderVoxels) {
-      if (voxel.emissiveKind || (voxel.emissiveLevel ?? 0) > 0) {
+      const sourceEmission = sourceLanternEmissionForVoxel(voxel) ?? sourceCandleEmissionForVoxel(voxel);
+      if (sourceEmission) {
         const localX = voxel.x + decoration.blueprintOffset.x;
         const localZ = voxel.z + decoration.blueprintOffset.z;
         const cos = Math.cos(decoration.rotationY); const sin = Math.sin(decoration.rotationY);
-        emissivePoints.push({
+        const point = {
           x: decoration.worldPosition.x + localX * cos + localZ * sin,
           y: decoration.worldPosition.y + voxel.y,
           z: decoration.worldPosition.z - localX * sin + localZ * cos,
-          intensity: voxel.emissiveLevel ?? 15,
-        });
+          intensity: sourceEmission.level,
+        };
+        registerEmissivePoint(emissivePoints, emissivePointColors, point, sourceEmission.color);
+        if (sourceEmission.kind === "lantern" || sourceEmission.kind === "soul-lantern") sourceLanternPointLightCount += 1;
       }
     }
+    const staticShapeCandidates = renderVoxels.filter((voxel) => isOriginalStaticShapeBlockId(voxel.sourceBlockId));
+    const genericTextureCandidates = renderVoxels.filter((voxel) => !isOriginalStaticShapeBlockId(voxel.sourceBlockId));
     const texturePlan = activeResourcePack
-      ? createTextureBatches(renderVoxels, activeResourcePack.manifest, activeResourcePack.atlas, occlusionField)
-      : { batches: [], fallbackVoxels: renderVoxels };
+      ? createTextureBatches(genericTextureCandidates, activeResourcePack.manifest, activeResourcePack.atlas, occlusionField)
+      : { batches: [], fallbackVoxels: genericTextureCandidates };
     addTexturedBatches(structure, texturePlan.batches, 0);
+    const geometryCandidates = activeResourcePack ? [...texturePlan.fallbackVoxels, ...staticShapeCandidates] : [];
     const geometryPlan = activeResourcePack
-      ? createGeometryBatches(texturePlan.fallbackVoxels, activeResourcePack.manifest, activeResourcePack.atlas, occlusionField)
-      : { batches: [], fallbackVoxels: texturePlan.fallbackVoxels };
+      ? createGeometryBatches(geometryCandidates, activeResourcePack.manifest, activeResourcePack.atlas, occlusionField)
+      : { batches: [], fallbackVoxels: [] };
     addGeometryBatches(structure, geometryPlan.batches, 0);
-    const visibleFallbackVoxels = geometryPlan.fallbackVoxels.filter((voxel) => !isVisuallyEmptyVanillaBlock(voxel));
+    const fallbackCandidates = activeResourcePack
+      ? geometryPlan.fallbackVoxels
+      : [...genericTextureCandidates, ...staticShapeCandidates];
+    const visibleFallbackVoxels = fallbackCandidates.filter((voxel) => !isVisuallyEmptyVanillaBlock(voxel));
     const specialVoxels = addSpecialResourceVoxels(structure, visibleFallbackVoxels);
     resourceSpecialVoxelCount += specialVoxels.size;
     const blockEntityFallbackVoxels = blockEntityDisplay.add(structure, renderVoxels, visibleFallbackVoxels);
@@ -1861,17 +2207,25 @@ export function createVoxelRenderer(
     const ordinaryFallbackVoxels = visibleFallbackVoxels.filter((voxel) => (
       !specialVoxels.has(voxel) && !blockEntityFallbackVoxels.has(voxel)
     ));
-    const resourceFluidCount = addStaticFluidVoxels(structure, ordinaryFallbackVoxels, renderVoxels);
+    const flowerShapes = addOriginalFlowerShapes(structure, ordinaryFallbackVoxels);
+    const remainingFallbackVoxels = ordinaryFallbackVoxels.filter((voxel) => !flowerShapes.has(voxel));
+    const resourceFluidCount = addStaticFluidVoxels(structure, remainingFallbackVoxels, renderVoxels);
     if (activeResourcePack) fallbackVoxelCount += ordinaryFallbackVoxels.length - resourceFluidCount;
-    const groups = groupFallbackVoxels(ordinaryFallbackVoxels.filter((voxel) => staticFluidKind(voxel) === undefined));
+    const staticShapeVoxels = remainingFallbackVoxels.filter((voxel) => isOriginalStaticShapeBlockId(voxel.sourceBlockId));
+    const staticShapeFallback = addOriginalStaticShapeMeshes(structure, staticShapeVoxels, occlusionField, 0, null, null);
+    const cubeFallbackVoxels = remainingFallbackVoxels.filter((voxel) => (
+      staticFluidKind(voxel) === undefined && !staticShapeFallback.has(voxel)
+    ));
+    const groups = groupFallbackVoxels(cubeFallbackVoxels);
     for (const [key, voxels] of groups) {
       const [materialId, emissiveKind = "", levelText = ""] = key.split("|");
       const level = levelText === "" ? 0 : Number(levelText);
-      const owned = emissiveKind !== "" || level > 0;
+      const emissiveActive = level > 0;
+      const owned = emissiveActive;
       const meshMaterial = owned ? material(materialId!).clone() : material(materialId!);
       const translucent = materialId === "glass" || parseFallbackVisualKey(materialId!)?.transparent === true;
       trackMaterialEffects(meshMaterial, translucent ? 0.22 : 0.12);
-      if (owned) emissiveMaterials.push({ material: meshMaterial, level: level || 15, kind: emissiveKind || "light" });
+      if (emissiveActive) emissiveMaterials.push({ material: meshMaterial, level: level > 0 ? level : 15, kind: emissiveKind || "light" });
       const mesh = new THREE.InstancedMesh(new THREE.BoxGeometry(0.97, 0.97, 0.97), meshMaterial, voxels.length);
       const matrix = new THREE.Matrix4();
       voxels.forEach((voxel, index) => { matrix.makeTranslation(voxel.x, voxel.y, voxel.z); mesh.setMatrixAt(index, matrix); });
@@ -1895,10 +2249,10 @@ export function createVoxelRenderer(
         meshMaterial.color.multiplyScalar(1 - weathering * 0.28);
         meshMaterial.roughness = Math.min(1, meshMaterial.roughness + weathering * 0.1);
       }
-      if (batch.emissiveKind !== "" || batch.emissiveLevel > 0) {
+      if (batch.emissiveLevel > 0) {
         emissiveMaterials.push({
           material: meshMaterial,
-          level: batch.emissiveLevel || 15,
+          level: batch.emissiveLevel > 0 ? batch.emissiveLevel : 15,
           kind: batch.emissiveKind || "light",
         });
       }
@@ -1942,8 +2296,10 @@ export function createVoxelRenderer(
     mesh: THREE.InstancedMesh,
     voxels: BlueprintV1["voxels"],
     field: LocalOcclusionField,
+    tier: QualityTier = qualityTier,
   ): void {
-    const strength = LIGHTWEIGHT_SHADING_PROFILES[qualityTier].ambientOcclusionStrength * 0.7;
+    fallbackOcclusionMeshes.set(mesh, { voxels, field });
+    const strength = LIGHTWEIGHT_SHADING_PROFILES[tier].ambientOcclusionStrength * 0.7;
     const color = new THREE.Color();
     voxels.forEach((voxel, index) => {
       const brightness = 1 - blockOcclusionFor(voxel, field) * strength;
@@ -1953,7 +2309,14 @@ export function createVoxelRenderer(
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
   }
 
-  function addGeometryBatches(root: THREE.Group, batches: readonly GeometryVoxelBatch[], weathering: number): void {
+  function addGeometryBatches(
+    root: THREE.Group,
+    batches: readonly GeometryVoxelBatch[],
+    weathering: number,
+    revealOrderIndex: ReadonlyMap<BlueprintV1["voxels"][number], number> | null = null,
+    revealSchedule: ReturnType<typeof constructionWaveSchedule> | null = null,
+    instanceTransform?: (voxel: BlueprintVoxel) => THREE.Matrix4 | undefined,
+  ): void {
     for (const batch of batches) {
       const page = activeResourcePack?.atlas.pages[batch.page];
       if (!page) continue;
@@ -1963,19 +2326,38 @@ export function createVoxelRenderer(
         meshMaterial.color.multiplyScalar(1 - weathering * 0.28);
         meshMaterial.roughness = Math.min(1, meshMaterial.roughness + weathering * 0.1);
       }
-      if (batch.emissiveKind !== "" || batch.emissiveLevel > 0) {
+      if (batch.emissiveLevel > 0) {
         emissiveMaterials.push({
           material: meshMaterial,
-          level: batch.emissiveLevel || 15,
+          level: batch.emissiveLevel > 0 ? batch.emissiveLevel : 15,
           kind: batch.emissiveKind || "light",
         });
       }
       const geometry = createAtlasGeometry(batch);
       const mesh = new THREE.InstancedMesh(geometry, meshMaterial, batch.entries.length);
       const matrix = new THREE.Matrix4();
+      const hiddenMatrix = new THREE.Matrix4();
       for (const [index, entry] of batch.entries.entries()) {
-        matrix.makeTranslation(entry.voxel.x, entry.voxel.y, entry.voxel.z);
-        mesh.setMatrixAt(index, matrix);
+        const orderIndex = revealOrderIndex?.get(entry.voxel);
+        if (orderIndex !== undefined && revealSchedule) {
+          hiddenMatrix.makeTranslation(entry.voxel.x, entry.voxel.y, entry.voxel.z)
+            .scale(new THREE.Vector3(0.0001, 0.0001, 0.0001));
+          mesh.setMatrixAt(index, hiddenMatrix);
+          constructionReveals.push({
+            mesh,
+            index,
+            popAtMs: revealSchedule.popAtMsFor(constructionRevealStartedMs, orderIndex),
+            targetScale: 1,
+            done: false,
+          });
+        } else {
+          const transformed = instanceTransform?.(entry.voxel);
+          if (transformed) mesh.setMatrixAt(index, transformed);
+          else {
+            matrix.makeTranslation(entry.voxel.x, entry.voxel.y, entry.voxel.z);
+            mesh.setMatrixAt(index, matrix);
+          }
+        }
         for (const textureIndex of entry.faceTiles.slice(0, batch.topology.textureSlotCount)) {
           referenceAnimatedTexture(batch.page, textureIndex);
         }
@@ -2012,7 +2394,8 @@ export function createVoxelRenderer(
     const groups = new Map<string, BlueprintV1["voxels"]>();
     for (const voxel of voxels) {
       const materialKey = voxel.sourceBlockId ? fallbackVisualStyleForVoxel(voxel).key : voxel.materialId;
-      const key = `${materialKey}|${voxel.emissiveKind ?? ""}|${voxel.emissiveLevel ?? ""}`;
+      const emission = effectiveEmissionIdentity(voxel);
+      const key = `${materialKey}|${emission.kind}|${emission.level}`;
       const list = groups.get(key) ?? [];
       list.push(voxel);
       groups.set(key, list);
@@ -2236,70 +2619,231 @@ export function createVoxelRenderer(
       || !occupied.has(`${voxel.x}:${voxel.y}:${voxel.z + 1}`);
   }
 
-  function addAmbientDecorations(
+  function addNaturalEnvironmentDecorations(
     worlds: readonly PositionedWorldSnapshot[],
     roads: readonly ReturnType<typeof roadCellsForVillage>[number][],
     importedDecorations: readonly ImportedDecorationPlacement[],
     environmentStyle: TerrainEnvironmentStyle,
     terrain: MergedGeometryData,
   ): void {
-    const budget = AMBIENT_DECORATION_BUDGETS[environmentStyle];
-    const placements = ambientDecorationPlacementsForScene({
-      worlds,
-      roads,
-      importedDecorations,
-      environmentStyle,
-      terrain,
-      worldSeed: options.worldSeed,
+    const placements = naturalDecorationPlacementsForScene({
+      worlds, roads, importedDecorations, environmentStyle, terrain, worldSeed: options.worldSeed, qualityTier,
     });
-    const byKind = new Map<AmbientDecorationKind, Array<{ x: number; y: number; z: number; scale: number; variant: number; castsShadow: boolean }>>();
-    for (const placement of placements) {
-      const list = byKind.get(placement.kind) ?? [];
-      list.push({ ...placement });
-      byKind.set(placement.kind, list);
-    }
-
-    const drawOrder: readonly AmbientDecorationKind[] = environmentStyle === "ocean-island"
-      ? ["shipwreck", "flower", "grass-tuft", "coral", "reed", "rock"]
-      : ["rock", "flower", "grass-tuft", "reed", "coral", "shipwreck"];
-    const kinds = drawOrder.filter((kind) => (byKind.get(kind)?.length ?? 0) > 0).slice(0, budget.maxDrawCalls);
-    for (const kind of kinds) {
-      const entries = byKind.get(kind) ?? [];
-      const mesh = new THREE.InstancedMesh(ambientDecorationGeometry(kind), material(kind), entries.length);
+    const lod = naturalDecorationLodForCamera(cameraDistance, maximumCameraDistance);
+    for (const kind of [...new Set(placements.map(entry => entry.kind))]) {
+      const entries = placements.filter(entry => entry.kind === kind);
+      if (kind === "flower") {
+        addNaturalFlowerBatches(entries, lod);
+        continue;
+      }
+      const fullGeometry = naturalDecorationGeometry(kind, "full");
+      const silhouetteGeometry = naturalDecorationGeometry(kind, "silhouette");
+      const geometry = lod === "full" ? fullGeometry : silhouetteGeometry;
+      const alternateGeometry = lod === "full" ? silhouetteGeometry : fullGeometry;
+      const material = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.92, metalness: 0 });
+      const mesh = new THREE.InstancedMesh(geometry, material, entries.length);
+      const kindScale = naturalDecorationRenderScale(kind);
       const matrix = new THREE.Matrix4();
       entries.forEach((entry, index) => {
-        const isShipwreck = kind === "shipwreck";
-        const renderScale = ambientDecorationRenderScale(kind, entry.scale, entry.variant);
-        const widthScale = renderScale.width;
-        const heightScale = renderScale.height;
-        // Terrain water tops sit 0.5 below the shared support datum.  Put the
-        // wreck hull centre on that plane so roughly half the hull is visible
-        // above water while the deck and mast remain readable.
-        const originY = ambientDecorationOriginY(kind, entry.y, mesh.geometry.boundingBox?.min.y ?? 0, heightScale);
-        matrix.compose(
-          new THREE.Vector3(entry.x, originY, entry.z),
-          new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), (entry.variant % 4) * Math.PI / 2),
-          new THREE.Vector3(widthScale, heightScale, widthScale),
-        );
+        const scale = kindScale * entry.scale;
+        const y = naturalDecorationOriginY(kind, entry.support, entry.y!, geometry.boundingBox!.min.y, scale);
+        matrix.compose(new THREE.Vector3(entry.x, y, entry.z),
+          new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), entry.rotationY),
+          new THREE.Vector3(scale, scale, scale));
         mesh.setMatrixAt(index, matrix);
       });
       mesh.instanceMatrix.needsUpdate = true;
-      // Ambient props intentionally stay out of the shadow caster set. Their
-      // budget is therefore zero in every quality tier; the building/road
-      // shadow silhouettes remain the high-value directional result.
+      mesh.name = `natural-environment-${kind}-${lod}`;
       mesh.castShadow = false;
       mesh.receiveShadow = false;
       mesh.frustumCulled = false;
-      mesh.userData.ambientDecorationKind = kind;
+      mesh.userData.naturalDecorationKind = kind;
+      mesh.userData.naturalDecorationIds = entries.map(entry => entry.id);
+      mesh.userData.naturalDecorationLod = lod;
+      mesh.userData.ownedMaterial = material;
+      mesh.userData.naturalDecorationAlternateGeometry = alternateGeometry;
+      mesh.userData.naturalDecorationPlacements = entries;
+      mesh.userData.naturalDecorationKindScale = kindScale;
+      if (kind === "shelf-mushroom" && naturalTreeSway) {
+        entries.forEach((entry, index) => {
+          if (entry.supportTreeIndex === undefined) return;
+          const baseMatrix = new THREE.Matrix4();
+          mesh.getMatrixAt(index, baseMatrix);
+          naturalTreeSway!.attachments.push({ mesh, index, treeIndex: entry.supportTreeIndex, baseMatrix });
+        });
+      }
       buildingGroup.add(mesh);
-      ambientDecorationCount += entries.length;
-      ambientDecorationKindCount += 1;
-      ambientDecorationDrawCalls += 1;
     }
-    canvas.dataset.ambientDecorationCount = String(ambientDecorationCount);
+    ambientDecorationCount = placements.length;
+    treeSideMushroomCount = placements.filter(entry => entry.kind === "shelf-mushroom" && entry.supportTreeIndex !== undefined
+      && entry.supportTreeIndex < visibleNaturalTreeCount(terrain.naturalTrees.length, qualityTier)).length;
+    syncNaturalTreeAttachments();
+    syncNaturalDecorationBatchDiagnostics();
+    canvas.dataset.naturalDecorationCount = String(placements.length);
+    canvas.dataset.naturalDecorationLod = lod;
+  }
+
+  function syncNaturalDecorationBatchDiagnostics(): void {
+    const batches = buildingGroup.children.filter((child): child is THREE.InstancedMesh =>
+      child instanceof THREE.InstancedMesh && typeof child.userData.naturalDecorationKind === "string");
+    const diagnostics = naturalDecorationBatchDiagnostics(batches.map(child => ({
+      kind: String(child.userData.naturalDecorationKind), visible: child.visible, castsShadow: child.castShadow,
+    })));
+    // Kind count represents currently visible kinds; allocation includes alternate LODs.
+    ambientDecorationKindCount = diagnostics.kindCount;
+    ambientDecorationDrawCalls = diagnostics.drawCalls;
+    ambientDecorationAllocatedBatchCount = diagnostics.allocatedBatchCount;
+    ambientDecorationShadowCasters = diagnostics.shadowCasters;
     canvas.dataset.ambientDecorationKindCount = String(ambientDecorationKindCount);
     canvas.dataset.ambientDecorationDrawCalls = String(ambientDecorationDrawCalls);
+    canvas.dataset.ambientDecorationAllocatedBatchCount = String(ambientDecorationAllocatedBatchCount);
     canvas.dataset.ambientDecorationShadowCasters = String(ambientDecorationShadowCasters);
+    canvas.dataset.naturalDecorationDrawCalls = String(ambientDecorationDrawCalls);
+    canvas.dataset.naturalDecorationAllocatedBatchCount = String(ambientDecorationAllocatedBatchCount);
+  }
+
+  function addNaturalFlowerBatches(entries: readonly NaturalDecorationPlacement[], lod: NaturalDecorationLod): void {
+    const voxelPlacements = new Map<BlueprintVoxel, NaturalDecorationPlacement>();
+    const bySource = new Map<string, BlueprintVoxel[]>();
+    for (const entry of entries) {
+      const sourceBlockId = naturalFlowerSourceBlockId(entry.variant);
+      const voxel: BlueprintVoxel = {
+        x: entry.x,
+        y: entry.y!,
+        z: entry.z,
+        materialId: "accent",
+        buildOrder: 0,
+        sourceBlockId,
+      };
+      voxelPlacements.set(voxel, entry);
+      const group = bySource.get(sourceBlockId) ?? [];
+      group.push(voxel);
+      bySource.set(sourceBlockId, group);
+    }
+
+    const originalChildren = new Set(buildingGroup.children);
+    const packSuccess = new Set<BlueprintVoxel>();
+    for (const voxels of bySource.values()) {
+      const plan = planNaturalFlowerPackBatches(voxels, activeResourcePack?.manifest, activeResourcePack?.atlas);
+      plan.packVoxels.forEach(voxel => packSuccess.add(voxel));
+      if (activeResourcePack) {
+        const transform = (voxel: BlueprintVoxel): THREE.Matrix4 | undefined => {
+          const placement = voxelPlacements.get(voxel);
+          if (!placement) return undefined;
+          const scale = naturalDecorationRenderScale("flower") * placement.scale;
+          const y = naturalDecorationOriginY("flower", "ground", placement.y!, -0.5, scale);
+          return new THREE.Matrix4().compose(
+            new THREE.Vector3(placement.x, y, placement.z),
+            new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), placement.rotationY),
+            new THREE.Vector3(scale, scale, scale),
+          );
+        };
+        addGeometryBatches(buildingGroup, plan.batches, 0, null, null, transform);
+      }
+    }
+
+    const newlyAddedFull = buildingGroup.children.filter((child): child is THREE.InstancedMesh =>
+      child instanceof THREE.InstancedMesh && !originalChildren.has(child));
+    for (const mesh of newlyAddedFull) {
+      mesh.userData.naturalDecorationKind = "flower";
+      mesh.userData.naturalDecorationVariant = "full";
+      mesh.userData.naturalDecorationLod = lod;
+      mesh.visible = naturalDecorationVariantVisible(lod, "full");
+      mesh.frustumCulled = false;
+      // Ambient flowers intentionally do not cast shadows. Resource-pack cutout
+      // geometry is otherwise registered for atlas depth passes by the generic batcher.
+      disableNaturalFlowerShadowCasting(mesh, cutoutShadowMeshes);
+    }
+
+    const fallback = [...voxelPlacements.keys()].filter(voxel => !packSuccess.has(voxel));
+    const fallbackChildren = new Set(buildingGroup.children);
+    addOriginalFlowerShapes(buildingGroup, fallback, (voxel) => {
+      const placement = voxelPlacements.get(voxel);
+      if (!placement) return undefined;
+      const scale = naturalDecorationRenderScale("flower") * placement.scale;
+      const y = naturalDecorationOriginY("flower", "ground", placement.y!, -0.45, scale);
+      return new THREE.Matrix4().compose(
+        new THREE.Vector3(placement.x, y, placement.z),
+        new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), placement.rotationY),
+        new THREE.Vector3(scale, scale, scale),
+      );
+    });
+    for (const child of buildingGroup.children) {
+      if (child instanceof THREE.InstancedMesh && !fallbackChildren.has(child)) {
+        child.userData.naturalDecorationKind = "flower";
+        child.userData.naturalDecorationVariant = "full";
+        child.userData.naturalDecorationLod = lod;
+        child.visible = naturalDecorationVariantVisible(lod, "full");
+        child.frustumCulled = false;
+      }
+    }
+    const silhouette = naturalDecorationGeometry("flower", "silhouette");
+    const silhouetteMaterial = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.92, metalness: 0 });
+    const silhouetteMesh = new THREE.InstancedMesh(silhouette, silhouetteMaterial, entries.length);
+    const kindScale = naturalDecorationRenderScale("flower");
+    const matrix = new THREE.Matrix4();
+    entries.forEach((entry, index) => {
+      const scale = kindScale * entry.scale;
+      const y = naturalDecorationOriginY("flower", entry.support, entry.y!, silhouette.boundingBox!.min.y, scale);
+      matrix.compose(new THREE.Vector3(entry.x, y, entry.z),
+        new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), entry.rotationY),
+        new THREE.Vector3(scale, scale, scale));
+      silhouetteMesh.setMatrixAt(index, matrix);
+    });
+    silhouetteMesh.instanceMatrix.needsUpdate = true;
+    silhouetteMesh.name = `natural-environment-flower-silhouette`;
+    silhouetteMesh.castShadow = false;
+    silhouetteMesh.receiveShadow = false;
+    silhouetteMesh.frustumCulled = false;
+    silhouetteMesh.userData.naturalDecorationKind = "flower";
+    silhouetteMesh.userData.naturalDecorationVariant = "silhouette";
+    silhouetteMesh.userData.naturalDecorationLod = lod;
+    silhouetteMesh.userData.naturalDecorationIds = entries.map(entry => entry.id);
+    silhouetteMesh.userData.ownedMaterial = silhouetteMaterial;
+    silhouetteMesh.visible = naturalDecorationVariantVisible(lod, "silhouette");
+    buildingGroup.add(silhouetteMesh);
+    naturalFlowerPackPlacementCount = packSuccess.size;
+    naturalFlowerOriginalFallbackCount = fallback.length;
+  }
+
+  function updateNaturalDecorationLod(): void {
+    const observedLods = new Set<NaturalDecorationLod>();
+    for (const child of buildingGroup.children) {
+      if (!(child instanceof THREE.InstancedMesh) || !String(child.userData.naturalDecorationKind ?? "").length) continue;
+      const currentLod = child.userData.naturalDecorationLod as NaturalDecorationLod;
+      const targetLod = naturalDecorationLodForCamera(cameraDistance, maximumCameraDistance, currentLod);
+      observedLods.add(targetLod);
+      const variant = child.userData.naturalDecorationVariant as "full" | "silhouette" | undefined;
+      if (variant) {
+        child.visible = naturalDecorationVariantVisible(targetLod, variant);
+        child.userData.naturalDecorationLod = targetLod;
+        continue;
+      }
+      if (child.userData.naturalDecorationLod === targetLod) continue;
+      const alternate = child.userData.naturalDecorationAlternateGeometry as THREE.BufferGeometry | undefined;
+      const placements = child.userData.naturalDecorationPlacements as readonly NaturalDecorationPlacement[] | undefined;
+      if (!alternate || !placements || !alternate.boundingBox) continue;
+      const current = child.geometry;
+      child.geometry = alternate;
+      child.userData.naturalDecorationAlternateGeometry = current;
+      child.userData.naturalDecorationLod = targetLod;
+      const kind = child.userData.naturalDecorationKind as NaturalDecorationKind;
+      const kindScale = child.userData.naturalDecorationKindScale as number;
+      const matrix = new THREE.Matrix4();
+      placements.forEach((entry, index) => {
+        const scale = kindScale * entry.scale;
+        const y = naturalDecorationOriginY(kind, entry.support, entry.y!, alternate.boundingBox!.min.y, scale);
+        matrix.compose(new THREE.Vector3(entry.x, y, entry.z),
+          new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), entry.rotationY),
+          new THREE.Vector3(scale, scale, scale));
+        child.setMatrixAt(index, matrix);
+      });
+      child.instanceMatrix.needsUpdate = true;
+    }
+    syncNaturalTreeAttachments();
+    syncNaturalDecorationBatchDiagnostics();
+    canvas.dataset.naturalDecorationLod = observedLods.size > 1 ? "mixed"
+      : observedLods.values().next().value ?? "none";
   }
 
   function addDecorations(root: THREE.Group, world: PositionedWorldSnapshot, emissivePoints: EmissivePoint[]): void {
@@ -2319,12 +2863,12 @@ export function createVoxelRenderer(
         const localX = placement.x + world.blueprintOffset.x;
         const localZ = placement.z + world.blueprintOffset.z;
         const cos = Math.cos(world.rotationY); const sin = Math.sin(world.rotationY);
-        emissivePoints.push({
+        registerEmissivePoint(emissivePoints, emissivePointColors, {
           x: world.worldPosition.x + localX * cos + localZ * sin,
           y: world.worldPosition.y + 2.55,
           z: world.worldPosition.z - localX * sin + localZ * cos,
           intensity: 15,
-        });
+        }, 0xffb45f);
       } else {
         addBox(decoration, "wood", [1.8, 0.3, 0.7], [0, 0.75, 0]);
         addBox(decoration, "wood", [0.25, 0.75, 0.25], [-0.62, 0.35, 0]);
@@ -2342,11 +2886,11 @@ export function createVoxelRenderer(
     parent.add(mesh);
   }
 
-  function addClusteredLights(points: readonly EmissivePoint[]): void {
+  function addClusteredLights(points: readonly EmissivePoint[], colors: ReadonlyMap<string, number>): void {
     clearLights();
-    const lightPoints = clusterEmissivePoints(points, Math.min(2, qualityProfile.maxLocalLights));
+    const lightPoints = clusterEmissivePoints(points, QUALITY_PROFILES.high.maxLocalLights);
     for (const point of lightPoints) {
-      const light = new THREE.PointLight(0xffb45f, 0, 12, 2);
+      const light = new THREE.PointLight(emissiveColorForPoint(point, colors), 0, 12, 2);
       light.position.set(point.x, point.y, point.z);
       light.castShadow = false;
       localLightGroup.add(light);
@@ -2354,8 +2898,9 @@ export function createVoxelRenderer(
     }
     // Glow sprites are a presentation cue, so anchor them to actual lamp
     // blocks instead of the centroids used to amortize dynamic point lights.
-    for (const point of selectEmissiveVisualPoints(points, Math.min(2, qualityProfile.maxGlowSprites))) {
-      const sprite = new THREE.Sprite(glowMaterial);
+    for (const point of selectEmissiveVisualPoints(points, QUALITY_PROFILES.high.maxGlowSprites)) {
+      const color = emissiveColorForPoint(point, colors);
+      const sprite = new THREE.Sprite(glowMaterials.get(color) ?? glowMaterial);
       const scale = 0.92 + (point.intensity / 15) * 0.2;
       sprite.position.set(point.x, point.y, point.z);
       sprite.scale.set(scale, scale, 1);
@@ -2366,28 +2911,52 @@ export function createVoxelRenderer(
   }
 
   function updateLighting(now: Date, forceShadowRefresh = false): void {
-    currentLighting = sunStateForLocalTime(now);
+    const projectedNow = environmentDebugOverride?.date == null
+      ? now
+      : new Date(environmentDebugOverride.date);
+    const targetLighting = astronomyContext
+      ? sunStateForAstronomy(projectedNow, astronomyContext.coordinates) ?? sunStateForLocalTime(projectedNow)
+      : sunStateForLocalTime(projectedNow);
+    const transition = lightingTransition;
+    if (transition && !reducedMotion && paneVisible && !document.hidden) {
+      const progress = Math.min(1, Math.max(0, (performance.now() - transition.startedAtMs) / transition.durationMs));
+      currentLighting = interpolateSunState(transition.from, targetLighting, smoothstep(0, 1, progress));
+      if (progress >= 1) {
+        lightingTransition = null;
+        environmentTransitionCompletedCount += 1;
+      }
+    } else {
+      currentLighting = targetLighting;
+      if (lightingTransition && (reducedMotion || !paneVisible || document.hidden)) {
+        lightingTransition = null;
+        environmentTransitionCancelledCount += 1;
+      }
+    }
     const state = currentLighting;
     lightingUpdateCount += 1;
-    lightingSampledAtMs = now.getTime();
+    lightingSampledAtMs = projectedNow.getTime();
+    if (astronomyContext) astronomyUpdateCount += 1;
     const snappedTarget = snappedShadowTarget();
     sun.target.position.copy(snappedTarget);
+    const shadowSource = shadowLightPositionForExtent(state.position, shadowExtent);
     sun.position.set(
-      snappedTarget.x + state.position[0],
-      snappedTarget.y + state.position[1],
-      snappedTarget.z + state.position[2],
+      snappedTarget.x + shadowSource[0],
+      snappedTarget.y + shadowSource[1],
+      snappedTarget.z + shadowSource[2],
     );
     // Shadow auto-update is intentionally disabled for mobile cost. Explicitly
     // flush the dynamic light rig before requesting the next depth sample so a
     // time-of-day update cannot render one frame with the previous light matrix.
     lightRig.updateMatrixWorld(true);
     sun.shadow.updateMatrices(sun);
-    sun.intensity = state.intensity * sunlightScaleForWeather(currentWeather);
+    // Night readability comes from hemisphere/exposure, not a below-horizon
+    // directional source that would keep casting a false daytime shadow.
+    sun.intensity = state.intensity * state.sunVisibility * sunlightScaleForWeather(currentWeather);
     sun.color.setHex(state.color);
     hemisphere.color.setHex(state.hemisphereSkyColor);
     hemisphere.groundColor.setHex(state.hemisphereGroundColor);
     const sunlightScale = sunlightScaleForWeather(currentWeather);
-    hemisphere.intensity = state.hemisphereIntensity * (0.94 + sunlightScale * 0.06);
+    hemisphere.intensity = state.hemisphereIntensity * ambientScaleForWeather(currentWeather, state.nightFactor);
     renderer.toneMappingExposure = state.exposure;
     for (const entry of emissiveMaterials) {
       entry.material.emissive.setHex(emissiveColor(entry.kind));
@@ -2395,13 +2964,17 @@ export function createVoxelRenderer(
     }
     const lamp = materials.get("lamp");
     if (lamp) { lamp.emissive.setHex(0xffb75f); lamp.emissiveIntensity = state.nightFactor * 1.2; }
-    for (const entry of localLights) entry.light.intensity = entry.baseIntensity * state.nightFactor;
-    glowMaterial.opacity = state.nightFactor * (qualityTier === "high" ? 0.62 : 0.48);
-    for (const entry of glowSprites) entry.sprite.visible = glowMaterial.opacity > 0.015;
+    for (const [index, entry] of localLights.entries()) {
+      entry.light.visible = index < qualityProfile.maxLocalLights;
+      entry.light.intensity = entry.baseIntensity * state.nightFactor;
+    }
+    setGlowMaterialsOpacity(state.nightFactor * (qualityTier === "high" ? 0.62 : 0.48));
+    for (const [index, entry] of glowSprites.entries()) entry.sprite.visible = index < qualityProfile.maxGlowSprites
+      && glowMaterial.opacity > 0.015;
     updateReflectiveMaterials(state);
     updateMaterialEffects(state);
     applyAtmosphere();
-    requestShadowRefresh(now, forceShadowRefresh);
+    requestShadowRefresh(projectedNow, forceShadowRefresh);
     // Keep the diagnostic vector fields coherent with the fingerprint and
     // update count.  The lighting timer changes the scene synchronously and
     // schedules its render on the one-slot frame pump; waiting for that frame
@@ -2413,7 +2986,91 @@ export function createVoxelRenderer(
     canvas.dataset.sunPosition = state.sunPosition.map((value) => value.toFixed(4)).join(",");
     canvas.dataset.moonPosition = state.moonPosition.map((value) => value.toFixed(4)).join(",");
     canvas.dataset.shadowDirection = shadowDirectionFromPosition(state.position).map((value) => value.toFixed(4)).join(",");
+    canvas.dataset.astronomySampleTime = String(lightingSampledAtMs);
+    canvas.dataset.astronomyPhase = state.phase;
+    canvas.dataset.environmentTransitionTarget = astronomyContext ? "astronomy" : "synthetic";
+    canvas.dataset.environmentTransitionActive = String(lightingTransition !== null || environmentReveal !== null);
     requestRender();
+  }
+
+  function beginLightingTransition(): void {
+    if (reducedMotion || !paneVisible || document.hidden || disposed) {
+      lightingTransition = null;
+      updateLighting(new Date(), false);
+      return;
+    }
+    lightingTransition = { from: currentLighting, startedAtMs: performance.now(), durationMs: 1_500 };
+    environmentTransitionStartedCount += 1;
+    updateLighting(new Date(), false);
+  }
+
+  function startEnvironmentReveal(roots: readonly THREE.Group[], target: "weather" | "decay"): void {
+    if (environmentReveal) finishEnvironmentReveal(true);
+    if (reducedMotion || !paneVisible || document.hidden || disposed) return;
+    const objects: Array<{ mesh: THREE.Mesh; material: THREE.Material | THREE.Material[] }> = [];
+    const clones = new Map<THREE.Material, { material: THREE.Material; opacity: number }>();
+    for (const root of roots) root.traverse(object => {
+      if (!(object instanceof THREE.Mesh)) return;
+      const original = object.material;
+      const originals = Array.isArray(original) ? original : [original];
+      const copy = originals.map(material => {
+        let entry = clones.get(material);
+        if (!entry) {
+          const clone = cloneEnvironmentRevealMaterial(material);
+          const opacity = material.opacity;
+          clone.transparent = true;
+          clone.depthWrite = false;
+          clone.opacity = 0;
+          clone.needsUpdate = true;
+          entry = { material: clone, opacity };
+          clones.set(material, entry);
+        }
+        return entry.material;
+      });
+      objects.push({ mesh: object, material: original });
+      object.material = Array.isArray(original) ? copy : copy[0]!;
+    });
+    if (objects.length === 0) return;
+    environmentReveal = { startedAtMs: performance.now(), durationMs: 1_500, target, objects, clones };
+    environmentTransitionStartedCount += 1;
+    canvas.dataset.environmentTransitionTarget = target;
+    canvas.dataset.environmentTransitionActive = "true";
+    canvas.dataset.environmentTransitionPhase = "0.000";
+    updateDiagnosticsDataset();
+    requestRender();
+  }
+
+  function updateEnvironmentReveal(nowMs: number): boolean {
+    if (!environmentReveal) return false;
+    if (reducedMotion || !paneVisible || document.hidden || disposed) {
+      finishEnvironmentReveal(true);
+      return false;
+    }
+    const reveal = environmentReveal;
+    const progress = THREE.MathUtils.clamp((nowMs - reveal.startedAtMs) / reveal.durationMs, 0, 1);
+    const opacity = smoothstep(0, 1, progress);
+    for (const entry of reveal.clones.values()) {
+      entry.material.opacity = entry.opacity * opacity;
+    }
+    canvas.dataset.environmentTransitionPhase = opacity.toFixed(3);
+    if (progress >= 1) {
+      finishEnvironmentReveal(false);
+      return false;
+    }
+    return true;
+  }
+
+  function finishEnvironmentReveal(cancelled: boolean): void {
+    const reveal = environmentReveal;
+    if (!reveal) return;
+    environmentReveal = null;
+    for (const entry of reveal.objects) entry.mesh.material = entry.material;
+    for (const entry of reveal.clones.values()) entry.material.dispose();
+    if (cancelled) environmentTransitionCancelledCount += 1;
+    else environmentTransitionCompletedCount += 1;
+    canvas.dataset.environmentTransitionActive = String(lightingTransition !== null);
+    canvas.dataset.environmentTransitionPhase = cancelled ? "cancelled" : "1.000";
+    updateDiagnosticsDataset();
   }
 
   function trackMaterialEffects(meshMaterial: THREE.MeshStandardMaterial, edgeStrength = 0): void {
@@ -2523,6 +3180,223 @@ export function createVoxelRenderer(
     lastShadowSample = candidate;
   }
 
+  function precipitationFieldForCamera(precipitationMaxY: number): PrecipitationField {
+    const bounds = previewMode ? contentBounds : visibilityBounds;
+    const boundsSize = bounds.getSize(new THREE.Vector3());
+    const focused = focusedProjectId === null ? undefined : positionedWorlds.find(world => world.projectId === focusedProjectId);
+    const framingBounds = focused ? focusBoundsFor(focused) : contentBounds;
+    const framingSize = framingBounds.getSize(new THREE.Vector3());
+    const framingSpanX = Math.max(1, framingSize.x);
+    const framingSpanZ = Math.max(1, framingSize.z);
+    const maximumSpanX = previewMode
+      ? Math.min(boundsSize.x, Math.max(12, framingSpanX * 1.45 + 6))
+      : Math.min(boundsSize.x, Math.max(48, Math.min(180, framingSpanX * 2.5 + 12)));
+    const maximumSpanZ = previewMode
+      ? Math.min(boundsSize.z, Math.max(12, framingSpanZ * 1.45 + 6))
+      : Math.min(boundsSize.z, Math.max(48, Math.min(180, framingSpanZ * 2.5 + 12)));
+    const minimumSpanX = previewMode
+      ? Math.min(maximumSpanX, Math.max(8, framingSpanX * 0.65))
+      : Math.min(maximumSpanX, Math.max(24, framingSpanX * 0.65));
+    const minimumSpanZ = previewMode
+      ? Math.min(maximumSpanZ, Math.max(8, framingSpanZ * 0.65))
+      : Math.min(maximumSpanZ, Math.max(24, framingSpanZ * 0.65));
+    camera.getWorldDirection(precipitationCameraDirection);
+    return precipitationFieldForView({
+      cameraPosition: camera.position,
+      cameraDirection: precipitationCameraDirection,
+      cameraUp: camera.up,
+      fovDegrees: camera.fov,
+      aspect: camera.aspect,
+      near: camera.near,
+      far: camera.far,
+      rootRotationY: rotatableWorldRoot.rotation.y,
+      precipitationMinY: -2,
+      precipitationMaxY,
+      target: cameraTarget,
+      bounds: { minX: bounds.min.x, maxX: bounds.max.x, minZ: bounds.min.z, maxZ: bounds.max.z },
+      minSpanX: minimumSpanX,
+      minSpanZ: minimumSpanZ,
+      maxSpanX: Math.max(1, maximumSpanX),
+      maxSpanZ: Math.max(1, maximumSpanZ),
+      edgeMargin: previewMode ? 2 : 6,
+    });
+  }
+
+  function particleY(animation: PrecipitationAnimation, particle: PrecipitationParticle): number {
+    const rain = animation === rainAnimation ? rainAnimation : null;
+    const fall = rain
+      ? animation.elapsedMs * 0.00078 * rain.speedScale
+      : animation.elapsedMs * 0.00022;
+    return animation.baseY + (((particle.phase - fall + 1) % 1 + 1) % 1) * animation.spanY;
+  }
+
+  function projectedParticleCount(animation: PrecipitationAnimation): number {
+    let count = 0;
+    const rain = animation === rainAnimation ? rainAnimation : null;
+    const snow = animation === snowAnimation ? snowAnimation : null;
+    const flutter = snow ? snow.elapsedMs * 0.00055 : 0;
+    for (const particle of animation.particles.slice(0, animation.mesh.count)) {
+      const drift = snow ? particle.phase * Math.PI * 2 + flutter : 0;
+      const localX = particle.x + (snow ? Math.sin(drift) * 1.35 : 0);
+      const localZ = particle.z + (snow ? Math.cos(drift * 0.72) * 0.8 : 0);
+      precipitationProjectionPoint.set(localX, particleY(animation, particle), localZ)
+        .applyMatrix4(rotatableWorldRoot.matrixWorld).project(camera);
+      if (Math.abs(precipitationProjectionPoint.x) <= 1 && Math.abs(precipitationProjectionPoint.y) <= 1
+        && precipitationProjectionPoint.z >= -1 && precipitationProjectionPoint.z <= 1) count += 1;
+    }
+    if (rain) rainCameraFrustumCount = count;
+    if (snow) snowCameraFrustumCount = count;
+    return count;
+  }
+
+  function writePrecipitationMatrices(animation: PrecipitationAnimation, isRain: boolean): void {
+    const rain = isRain ? animation as RainAnimation : null;
+    const snow = isRain ? null : animation as SnowAnimation;
+    const matrix = new THREE.Matrix4();
+    const scaleXz = rain ? rain.mesh.scale.x : 1;
+    const flutter = snow ? snow.elapsedMs * 0.00055 : 0;
+    animation.particles.forEach((particle, index) => {
+      const position = precipitationPositionForOffset(animation.field, particle.offsetX, particle.offsetZ);
+      particle.x = position.x;
+      particle.z = position.z;
+      const drift = snow ? particle.phase * Math.PI * 2 + flutter : 0;
+      const instanceX = rain ? rainParticleInstanceCoordinate(particle.x, scaleXz) : particle.x;
+      const instanceZ = rain ? rainParticleInstanceCoordinate(particle.z, scaleXz) : particle.z;
+      matrix.makeTranslation(
+        instanceX + (snow ? Math.sin(drift) * 1.35 : 0),
+        particleY(animation, particle),
+        instanceZ + (snow ? Math.cos(drift * 0.72) * 0.8 : 0),
+      );
+      animation.mesh.setMatrixAt(index, matrix);
+    });
+    animation.mesh.instanceMatrix.needsUpdate = true;
+    if (rain) rainCameraFrustumCount = projectedParticleCount(rain);
+    if (snow) snowCameraFrustumCount = projectedParticleCount(snow);
+  }
+
+  function syncPrecipitationField(force = false): void {
+    const rain = rainAnimation;
+    const snow = snowAnimation;
+    if (!rain && !snow) {
+      precipitationField = null;
+      precipitationViewCache = emptyPrecipitationViewCache();
+      rainCameraFrustumCount = 0;
+      snowCameraFrustumCount = 0;
+      rainStreakProjectedCssPx = 0;
+      canvas.dataset.precipitationFieldMode = previewMode ? "preview" : "main-world";
+      canvas.dataset.precipitationFieldCenterX = "0.00";
+      canvas.dataset.precipitationFieldCenterZ = "0.00";
+      canvas.dataset.precipitationFieldSpanX = "0.00";
+      canvas.dataset.precipitationFieldSpanZ = "0.00";
+      canvas.dataset.precipitationFieldUsedFallback = "false";
+      canvas.dataset.precipitationFieldSyncCount = String(precipitationFieldSyncCount);
+      canvas.dataset.rainCameraFrustumCount = "0";
+      canvas.dataset.snowCameraFrustumCount = "0";
+      canvas.dataset.rainStreakProjectedCssPx = "0.00";
+      return;
+    }
+    if ((!paneVisible || document.hidden) && !force) {
+      precipitationViewCache = invalidatePrecipitationViewCache(precipitationViewCache);
+      return;
+    }
+    camera.updateMatrixWorld(true);
+    rotatableWorldRoot.updateMatrixWorld(true);
+    camera.getWorldDirection(precipitationCameraDirection);
+    const rect = canvas.getBoundingClientRect();
+    const viewDecision = updatePrecipitationViewCache(precipitationViewCache, {
+      cameraDistance,
+      cameraPosition: camera.position.toArray() as [number, number, number],
+      cameraDirection: precipitationCameraDirection.toArray() as [number, number, number],
+      cameraUp: camera.up.toArray() as [number, number, number],
+      fovDegrees: camera.fov,
+      aspect: camera.aspect,
+      near: camera.near,
+      far: camera.far,
+      rootRotationY: rotatableWorldRoot.rotation.y,
+      rootTransform: rotatableWorldRoot.matrixWorld.elements,
+      viewportWidthCss: rect.width,
+      viewportHeightCss: rect.height,
+      rainBaseCrossSection: rain?.baseCrossSection ?? 0,
+      targetProjectedCssPx: 1.2,
+      maximumCrossSectionScale: 3,
+    });
+    precipitationViewCache = viewDecision.cache;
+    const maxY = Math.max(rain ? rain.baseY + rain.spanY : -2, snow ? snow.baseY + snow.spanY : -2);
+    const next = precipitationFieldForCamera(maxY);
+    const current = precipitationField;
+    const unchanged = current !== null && Math.abs(current.centerX - next.centerX) < 0.75
+      && Math.abs(current.centerZ - next.centerZ) < 0.75
+      && Math.abs(current.spanX - next.spanX) < 1
+      && Math.abs(current.spanZ - next.spanZ) < 1
+      && current.usedFallback === next.usedFallback;
+    const fieldChanged = force || !unchanged;
+    if (!force && !fieldChanged && !viewDecision.changed) return;
+    if (fieldChanged) precipitationField = next;
+    const activeField = fieldChanged ? next : current!;
+    precipitationFieldSyncCount += 1;
+    const cssHeight = Math.max(1, rect.height);
+    if (rain) {
+      let rewriteRainMatrices = fieldChanged;
+      if (force || viewDecision.crossSectionChanged) {
+        const previousScale = rain.mesh.scale.x;
+        const crossSection = rainCrossSectionScaleForView({
+          baseCrossSection: rain.baseCrossSection,
+          cameraDistance: Math.max(camera.near, cameraDistance),
+          fovDegrees: camera.fov,
+          viewportHeightCss: cssHeight,
+          targetProjectedCssPx: 1.2,
+          maximumScale: 3,
+        });
+        rain.mesh.scale.set(crossSection.scale, 1, crossSection.scale);
+        rain.mesh.updateMatrix();
+        rewriteRainMatrices = rainParticleMatricesNeedRewrite(fieldChanged, previousScale, crossSection.scale);
+        rain.projectedCssPx = crossSection.projectedCssPx;
+        rainStreakProjectedCssPx = rain.projectedCssPx;
+      }
+      rain.field = activeField;
+      if (rewriteRainMatrices) writePrecipitationMatrices(rain, true);
+      else if (viewDecision.projectionChanged) rainCameraFrustumCount = projectedParticleCount(rain);
+    }
+    if (snow) {
+      snow.field = activeField;
+      if (fieldChanged) writePrecipitationMatrices(snow, false);
+      else if (viewDecision.projectionChanged) snowCameraFrustumCount = projectedParticleCount(snow);
+    }
+    canvas.dataset.precipitationFieldMode = previewMode ? "preview" : "main-world";
+    canvas.dataset.precipitationFieldCenterX = activeField.centerX.toFixed(2);
+    canvas.dataset.precipitationFieldCenterZ = activeField.centerZ.toFixed(2);
+    canvas.dataset.precipitationFieldSpanX = activeField.spanX.toFixed(2);
+    canvas.dataset.precipitationFieldSpanZ = activeField.spanZ.toFixed(2);
+    canvas.dataset.precipitationFieldUsedFallback = String(activeField.usedFallback);
+    canvas.dataset.precipitationFieldSyncCount = String(precipitationFieldSyncCount);
+    canvas.dataset.rainStreakProjectedCssPx = rainStreakProjectedCssPx.toFixed(2);
+    canvas.dataset.rainCameraFrustumCount = String(rainCameraFrustumCount);
+    canvas.dataset.snowCameraFrustumCount = String(snowCameraFrustumCount);
+    canvas.dataset.rainElapsedMs = String(Math.round(rain?.elapsedMs ?? 0));
+    canvas.dataset.snowElapsedMs = String(Math.round(snow?.elapsedMs ?? 0));
+    canvas.dataset.precipitationMotionPaused = String(!paneVisible || interacting || reducedMotion || document.hidden);
+  }
+
+  function syncPrecipitationMotionGate(nowMs: number): void {
+    const shouldPause = !paneVisible || interacting || reducedMotion || document.hidden;
+    let resumed = false;
+    for (const animation of [rainAnimation, snowAnimation]) {
+      if (!animation) continue;
+      if (shouldPause) {
+        animation.paused = true;
+        animation.lastUpdateMs = nowMs;
+      } else if (animation.paused) {
+        animation.paused = false;
+        animation.lastUpdateMs = nowMs;
+        resumed = true;
+      }
+    }
+    if (resumed) requestRender();
+    canvas.dataset.precipitationMotionPaused = String(shouldPause);
+    canvas.dataset.rainElapsedMs = String(Math.round(rainAnimation?.elapsedMs ?? 0));
+    canvas.dataset.snowElapsedMs = String(Math.round(snowAnimation?.elapsedMs ?? 0));
+  }
+
   function updateWeather(localDate: string, force = false): void {
     // Clouds and rain cover the full visible terrain, not just the settlement core:
     // V16 expanded the world far beyond contentBounds and the sky must follow it.
@@ -2531,13 +3405,23 @@ export function createVoxelRenderer(
     const cloudBaseBeforeWeather = previewMode
       ? Math.max(12, contentBounds.max.y + 8)
       : Math.max(20, visibilityBounds.max.y + 9);
-    const nextWeather = externalWeatherOverride === null
-      ? weatherForLocalDate(localDate, options.environmentStyle === "ocean-island")
-      : weatherForExternalOverride(localDate, externalWeatherOverride);
+    const projectedDate = environmentDebugOverride?.date == null
+      ? localDate
+      : localDateForDate(new Date(environmentDebugOverride.date));
+    // A debug payload often carries weather:null while only pinning time or
+    // decay. Null means "no debug weather override", not "erase live weather".
+    const activeWeatherOverride = effectiveWeatherOverride(environmentDebugOverride?.weather, externalWeatherOverride);
+    const nextWeather = activeWeatherOverride === null
+      ? weatherForLocalDate(projectedDate, options.environmentStyle === "ocean-island")
+      : weatherForExternalOverride(projectedDate, activeWeatherOverride);
+    const weatherChanged = currentWeather.kind !== nextWeather.kind
+      || currentWeather.thunderstorm !== nextWeather.thunderstorm
+      || currentWeather.visualPrecipitationIntensity !== nextWeather.visualPrecipitationIntensity
+      || currentWeather.cloudIntensity !== nextWeather.cloudIntensity;
     const nextCloudBudget = cloudBudgetForView({
       previewMode,
       weatherCloudCount: nextWeather.cloudCount,
-      weatherDensity: qualityProfile.weatherDensity,
+      weatherDensity: QUALITY_PROFILES.high.weatherDensity,
       weatherKind: nextWeather.kind,
       contentWidth: contentSize.x,
       contentDepth: contentSize.z,
@@ -2546,20 +3430,29 @@ export function createVoxelRenderer(
     });
     // Rebuild when the terrain envelope changed (environment style switch resizes
     // the whole visible world), not only when the date rolls over.
-    if (!force && currentWeather.localDate === localDate
+    if (!force && !weatherChanged && currentWeather.localDate === projectedDate
       && cloudsBuiltBaseY === cloudBaseBeforeWeather
       && cloudsBuiltSpanX === nextCloudBudget.spanX
       && cloudsBuiltSpanZ === nextCloudBudget.spanZ
       && cloudBudgetMode === (nextCloudBudget.previewMode ? "preview" : "main-world")
       && cloudBlockScale === nextCloudBudget.blockScale) return;
+    clearLightning();
     currentWeather = nextWeather;
+    stormRandom = seededRandom(nextWeather.seed ^ 0x51e7b017);
+    nextLightningAtMs = nextWeather.thunderstorm && !previewMode
+      ? performance.now() + 1_600 + stormRandom() * 1_600
+      : Number.POSITIVE_INFINITY;
     const sunlightScale = sunlightScaleForWeather(currentWeather);
-    sun.intensity = currentLighting.intensity * sunlightScale;
-    hemisphere.intensity = currentLighting.hemisphereIntensity * (0.94 + sunlightScale * 0.06);
+    sun.intensity = currentLighting.intensity * currentLighting.sunVisibility * sunlightScale;
+    hemisphere.intensity = currentLighting.hemisphereIntensity * ambientScaleForWeather(currentWeather, currentLighting.nightFactor);
     const cloudBudget = nextCloudBudget;
     const spanX = cloudBudget.spanX;
     const spanZ = cloudBudget.spanZ;
     const cloudBase = cloudBaseBeforeWeather;
+    // Restore any reveal-owned clones before destroying the meshes/materials
+    // they temporarily replaced. Otherwise those clones are disposed by the
+    // clear and again by finishEnvironmentReveal, while the originals leak.
+    if (environmentReveal) finishEnvironmentReveal(true);
     clearGroup(atmosphereGroup, true);
     cloudMaterial = null;
     rainAnimation = null;
@@ -2582,14 +3475,18 @@ export function createVoxelRenderer(
     const instanceCap = cloudBudget.maxInstances;
     const distantCount = cloudBudget.cloudCount === 0 || previewMode
       ? 0
-      : raining ? 2 : Math.min(5, 2 + Math.round(qualityProfile.weatherDensity * 2));
+      : raining ? 2 : Math.min(5, 2 + Math.round(QUALITY_PROFILES.high.weatherDensity * 2));
     const distantBudget = distantCount * 16;
     let totalInstances = 0;
     for (let cloudIndex = 0; cloudIndex < cloudCount; cloudIndex += 1) {
       const roll = random();
-      const kind = raining
-        ? roll < 0.8 ? "storm" : roll < 0.92 ? "cumulus" : "stratus"
-        : roll < 0.24 ? "cirrus" : roll < 0.82 ? "cumulus" : "stratus";
+      const kind = currentWeather.thunderstorm
+        ? roll < 0.94 ? "storm" : "stratus"
+        : raining ? roll < 0.68 ? "storm" : roll < 0.88 ? "cumulus" : "stratus"
+          : currentWeather.kind === "mist" ? roll < 0.88 ? "stratus" : "cirrus"
+            : currentWeather.kind === "snow" ? roll < 0.7 ? "stratus" : "cumulus"
+              : currentWeather.kind === "cloudy" ? roll < 0.55 ? "stratus" : roll < 0.8 ? "cumulus" : "cirrus"
+                : roll < 0.48 ? "cirrus" : "cumulus";
       const blocks = kind === "cirrus" ? 3 + Math.floor(random() * 3) : kind === "stratus" ? 4 + Math.floor(random() * 4) : 4 + Math.floor(random() * 4);
       if (totalInstances + blocks > instanceCap - distantBudget) break;
       cloudKinds.push(kind as "cirrus" | "cumulus" | "stratus" | "storm");
@@ -2609,13 +3506,13 @@ export function createVoxelRenderer(
     const cloudGeometry = new THREE.BoxGeometry(1, 1, 1);
     cloudMaterial = new THREE.MeshLambertMaterial({
       color: currentLighting.cloudColor,
-      fog: false,
+      fog: currentWeather.kind === "mist",
     });
     const clouds = new THREE.InstancedMesh(cloudGeometry, cloudMaterial, totalInstances);
     const quaternion = new THREE.Quaternion();
     // V20 WX-02: every cloud remembers its block positions and its own drift
     // rhythm so the ambient pump can move each one along a slow sine path.
-    const driftClouds: Array<{ first: number; count: number; phase: number; periodMs: number; amp: number; angle: number }> = [];
+    const driftClouds: Array<{ first: number; count: number; speed: number; angle: number }> = [];
     const cloudBasePositions = new Float32Array(totalInstances * 3);
     // The camera always looks down at the settlement, so clouds live just above
     // the terrain silhouette: near ones float in the middle of the frame and far
@@ -2641,7 +3538,7 @@ export function createVoxelRenderer(
         const gz = (random() * 2 - 1) * spanLocal * 0.62;
         const layer = Math.floor(random() * layers);
         const gy = layer * (previewMode ? 0.35 : 1.0) + random() * 0.3;
-        const blockSize = ((kind === "distant" ? 5 : 3.2) + random() * (kind === "distant" ? 3 : 2.4)) * cloudBudget.blockScale;
+        const blockSize = ((kind === "distant" ? 3.8 : 2.3) + random() * (kind === "distant" ? 2.2 : 1.7)) * cloudBudget.blockScale;
         matrix.compose(
           new THREE.Vector3(center.x + gx, center.y + gy, center.z + gz),
           quaternion,
@@ -2657,14 +3554,9 @@ export function createVoxelRenderer(
         driftClouds.push({
           first,
           count: instanceIndex - first,
-          phase: random() * Math.PI * 2,
-          // Preview clouds stay near their compact model; main-world amplitudes
-          // are sized against the much larger island weather envelope.
-          periodMs: kind === "distant" ? 45_000 + random() * 45_000 : 30_000 + random() * 30_000,
-          amp: previewMode
-            ? 0.35 + random() * 0.45
-            : kind === "distant" ? 5 + random() * 4 : 10 + random() * 8,
-          angle: random() * Math.PI * 2,
+          speed: cloudAdvectionSpeed(currentWeather) * (previewMode ? 0.25 : 1)
+            * (kind === "distant" ? 0.62 : 0.8 + random() * 0.5),
+          angle: Math.PI / 5 + (random() - 0.5) * 0.44,
         });
       }
     };
@@ -2682,20 +3574,30 @@ export function createVoxelRenderer(
     clouds.instanceMatrix.needsUpdate = true;
     clouds.userData.ownedMaterial = cloudMaterial;
     atmosphereGroup.add(clouds);
-    cloudDrift = { mesh: clouds, clouds: driftClouds, basePositions: cloudBasePositions, elapsedMs: 0, lastUpdateMs: performance.now() };
+    cloudDrift = { mesh: clouds, clouds: driftClouds, basePositions: cloudBasePositions,
+      spanX, spanZ, elapsedMs: 0, lastUpdateMs: performance.now() };
     }
-    const rainCount = Math.min(
-      previewMode ? 80 : 600,
-      Math.round(currentWeather.rainDropCount * qualityProfile.weatherDensity * (previewMode ? Math.max(1, cloudBudget.cloudCount / 3) : Math.min(24, Math.max(1, (visibleSize.x * visibleSize.z) / Math.max(1, contentSize.x * contentSize.z))))),
-    );
+    const precipitationAreaMultiplier = previewMode
+      ? Math.max(1, cloudBudget.cloudCount / 3)
+      : Math.min(24, Math.max(1, (visibleSize.x * visibleSize.z) / Math.max(1, contentSize.x * contentSize.z)));
+    const rainCount = precipitationParticleCount(currentWeather.rainDropCount, QUALITY_PROFILES.high.weatherDensity,
+      precipitationAreaMultiplier, previewMode ? 80 : 600, previewMode ? 3 : 6);
     if (rainCount > 0) {
-      const rainMaterial = new THREE.MeshBasicMaterial({ color: 0xa8c5cf, transparent: true, opacity: 0.62 });
-      const rain = new THREE.InstancedMesh(new THREE.BoxGeometry(0.035, 1.5, 0.035), rainMaterial, rainCount);
-      const drops = Array.from({ length: rainCount }, () => ({ x: (random() - 0.5) * spanX, z: (random() - 0.5) * spanZ, phase: random() }));
+      const visualIntensity = Math.min(1, Math.max(0, currentWeather.visualPrecipitationIntensity));
+      const baseCrossSection = 0.022 + visualIntensity * 0.013;
+      const rainMaterial = new THREE.MeshBasicMaterial({ color: currentWeather.thunderstorm ? 0xd5e6f1 : 0xb8d6df,
+        transparent: true, opacity: 0.42 + visualIntensity * 0.35, depthWrite: false, fog: false });
+      // Narrow tapered streaks read as moving water at the elevated, oblique
+      // world camera; the former square prisms looked like stepping pixels.
+      const rain = new THREE.InstancedMesh(new THREE.CylinderGeometry(
+        baseCrossSection * 0.32, baseCrossSection, 1.02 + visualIntensity * 0.96, 4, 1,
+      ), rainMaterial, rainCount);
+      rain.frustumCulled = false;
+      const drops = Array.from({ length: rainCount }, () => ({ x: 0, z: 0, offsetX: random() - 0.5, offsetZ: random() - 0.5, phase: random() }));
       const rainSpanY = cloudBase + 8;
       for (let index = 0; index < drops.length; index += 1) {
         const drop = drops[index]!;
-        matrix.makeTranslation(drop.x, -2 + drop.phase * rainSpanY, drop.z);
+        matrix.makeTranslation(0, -2 + drop.phase * rainSpanY, 0);
         rain.setMatrixAt(index, matrix);
       }
       rain.instanceMatrix.needsUpdate = true;
@@ -2703,74 +3605,162 @@ export function createVoxelRenderer(
       atmosphereGroup.add(rain);
       // Rain falls from the storm base all the way to the ground so it stays
       // visually connected to the clouds above the camera.
-      rainAnimation = { mesh: rain, drops, baseY: -2, spanY: rainSpanY, elapsedMs: 0, lastUpdateMs: performance.now() };
+      rainAnimation = { mesh: rain, particles: drops, baseY: -2, spanY: rainSpanY,
+        field: precipitationFieldForCamera(rainSpanY), speedScale: 0.72 + visualIntensity * 0.58,
+        elapsedMs: 0, lastUpdateMs: performance.now(), paused: !paneVisible || interacting || reducedMotion || document.hidden,
+        baseCrossSection, projectedCssPx: 0 };
       canvas.dataset.rainPhaseMs = "0";
     }
-    const snowCount = Math.min(
-      previewMode ? 80 : 800,
-      Math.round(currentWeather.snowFlakeCount * qualityProfile.weatherDensity * (previewMode ? Math.max(1, cloudBudget.cloudCount / 3) : Math.min(24, Math.max(1, (visibleSize.x * visibleSize.z) / Math.max(1, contentSize.x * contentSize.z))))),
-    );
+    const snowCount = precipitationParticleCount(currentWeather.snowFlakeCount, QUALITY_PROFILES.high.weatherDensity,
+      precipitationAreaMultiplier, previewMode ? 80 : 800, previewMode ? 4 : 8);
     if (snowCount > 0) {
       const snowMaterial = new THREE.MeshBasicMaterial({ color: 0xe6f0f5, transparent: true, opacity: 0.86, depthWrite: false });
-      const snow = new THREE.InstancedMesh(new THREE.OctahedronGeometry(0.13, 0), snowMaterial, snowCount);
-      const flakes = Array.from({ length: snowCount }, () => ({ x: (random() - 0.5) * spanX, z: (random() - 0.5) * spanZ, phase: random() }));
+      const snow = new THREE.InstancedMesh(new THREE.SphereGeometry(0.13, 5, 4), snowMaterial, snowCount);
+      snow.frustumCulled = false;
+      const flakes = Array.from({ length: snowCount }, () => ({ x: 0, z: 0, offsetX: random() - 0.5, offsetZ: random() - 0.5, phase: random() }));
       const snowSpanY = cloudBase + 8;
       for (let index = 0; index < flakes.length; index += 1) {
         const flake = flakes[index]!;
-        matrix.makeTranslation(flake.x, -2 + flake.phase * snowSpanY, flake.z);
+        matrix.makeTranslation(0, -2 + flake.phase * snowSpanY, 0);
         snow.setMatrixAt(index, matrix);
       }
       snow.instanceMatrix.needsUpdate = true;
       snow.userData.ownedMaterial = snowMaterial;
       atmosphereGroup.add(snow);
-      snowAnimation = { mesh: snow, flakes, baseY: -2, spanY: snowSpanY, elapsedMs: 0, lastUpdateMs: performance.now() };
+      snowAnimation = { mesh: snow, particles: flakes, baseY: -2, spanY: snowSpanY,
+        field: precipitationFieldForCamera(snowSpanY), elapsedMs: 0, lastUpdateMs: performance.now(),
+        paused: !paneVisible || interacting || reducedMotion || document.hidden };
       canvas.dataset.snowPhaseMs = "0";
     }
+    syncPrecipitationField(true);
     applyAtmosphere();
+    syncQualityVisibility();
     cacheStaticTransformTree(atmosphereGroup);
+    if (weatherChanged) startEnvironmentReveal([atmosphereGroup], "weather");
     cloudsBuiltSpanX = spanX;
     cloudsBuiltSpanZ = spanZ;
     cloudsBuiltBaseY = cloudBase;
     requestRender();
   }
 
+  function worldsWithDebugDecay(worlds: readonly WorldSnapshot[]): readonly WorldSnapshot[] {
+    const decay = environmentDebugOverride?.decayAmount;
+    if (decay == null || !Number.isFinite(decay)) return worlds;
+    const condition = Math.round((1 - THREE.MathUtils.clamp(decay, 0, 1)) * 10_000);
+    return worlds.map(world => ({ ...world, buildingConditionBasisPoints: condition }));
+  }
+
   function updateRainAnimation(nowMs: number): void {
     const rain = rainAnimation;
-    if (!rain || !paneVisible || interacting || reducedMotion || document.hidden || nowMs - rain.lastUpdateMs < 80) return;
-    rain.elapsedMs += nowMs - rain.lastUpdateMs;
-    const fall = rain.elapsedMs * 0.00078;
-    const matrix = new THREE.Matrix4();
-    rain.drops.forEach((drop, index) => {
-      const phase = (drop.phase - fall + 1) % 1;
-      matrix.makeTranslation(drop.x, rain.baseY + phase * rain.spanY, drop.z);
-      rain.mesh.setMatrixAt(index, matrix);
-    });
-    rain.mesh.instanceMatrix.needsUpdate = true;
-    rain.lastUpdateMs = nowMs;
+    if (!rain) return;
+    const step = stepPrecipitationClock(rain, nowMs, !paneVisible || interacting || reducedMotion || document.hidden, 30);
+    rain.elapsedMs = step.elapsedMs;
+    rain.lastUpdateMs = step.lastUpdateMs;
+    rain.paused = step.paused;
+    if (step.resumed) {
+      canvas.dataset.precipitationMotionPaused = "false";
+      requestRender();
+      return;
+    }
+    if (!step.advanced) return;
+    writePrecipitationMatrices(rain, true);
     canvas.dataset.rainPhaseMs = String(Math.round(rain.elapsedMs));
+    canvas.dataset.rainElapsedMs = String(Math.round(rain.elapsedMs));
+    canvas.dataset.rainCameraFrustumCount = String(rainCameraFrustumCount);
     requestRender();
   }
 
   function updateSnowAnimation(nowMs: number): void {
     const snow = snowAnimation;
-    if (!snow || !paneVisible || interacting || reducedMotion || document.hidden || nowMs - snow.lastUpdateMs < 120) return;
-    snow.elapsedMs += nowMs - snow.lastUpdateMs;
-    const fall = snow.elapsedMs * 0.00022;
-    const flutter = snow.elapsedMs * 0.00055;
-    const matrix = new THREE.Matrix4();
-    snow.flakes.forEach((flake, index) => {
-      const phase = (flake.phase - fall + 1) % 1;
-      const drift = flake.phase * Math.PI * 2 + flutter;
-      matrix.makeTranslation(
-        flake.x + Math.sin(drift) * 1.35,
-        snow.baseY + phase * snow.spanY,
-        flake.z + Math.cos(drift * 0.72) * 0.8,
-      );
-      snow.mesh.setMatrixAt(index, matrix);
-    });
-    snow.mesh.instanceMatrix.needsUpdate = true;
-    snow.lastUpdateMs = nowMs;
+    if (!snow) return;
+    const step = stepPrecipitationClock(snow, nowMs, !paneVisible || interacting || reducedMotion || document.hidden, 30);
+    snow.elapsedMs = step.elapsedMs;
+    snow.lastUpdateMs = step.lastUpdateMs;
+    snow.paused = step.paused;
+    if (step.resumed) {
+      canvas.dataset.precipitationMotionPaused = "false";
+      requestRender();
+      return;
+    }
+    if (!step.advanced) return;
+    writePrecipitationMatrices(snow, false);
     canvas.dataset.snowPhaseMs = String(Math.round(snow.elapsedMs));
+    canvas.dataset.snowElapsedMs = String(Math.round(snow.elapsedMs));
+    canvas.dataset.snowCameraFrustumCount = String(snowCameraFrustumCount);
+    requestRender();
+  }
+
+  function clearLightning(): void {
+    stormFlash.intensity = 0;
+    if (lightningBolt) {
+      atmosphereGroup.remove(lightningBolt);
+      clearGroup(lightningBolt, true);
+      lightningBolt = null;
+    }
+    lightningStartedAtMs = Number.NEGATIVE_INFINITY;
+  }
+
+  function updateStormLightning(nowMs: number): void {
+    if (!currentWeather.thunderstorm || previewMode || reducedMotion || !paneVisible || document.hidden) {
+      if (lightningBolt) { clearLightning(); requestRender(); }
+      return;
+    }
+    if (nowMs >= nextLightningAtMs) {
+      clearLightning();
+      const center = contentBounds.getCenter(new THREE.Vector3());
+      const width = Math.max(8, Math.min(20, contentBounds.max.x - contentBounds.min.x));
+      const depth = Math.max(8, Math.min(20, contentBounds.max.z - contentBounds.min.z));
+      const targetX = center.x + (stormRandom() - 0.5) * width;
+      const targetZ = center.z + (stormRandom() - 0.5) * depth;
+      const topY = Math.max(24, cloudsBuiltBaseY + 3);
+      const bottomY = Math.max(0, center.y - 1);
+      const vertices: THREE.Vector3[] = [];
+      for (let index = 0; index <= 8; index += 1) {
+        const fraction = index / 8;
+        const wander = (1 - fraction) * 2.8;
+        vertices.push(new THREE.Vector3(
+          targetX + (stormRandom() - 0.5) * wander,
+          topY + (bottomY - topY) * fraction,
+          targetZ + (stormRandom() - 0.5) * wander,
+        ));
+      }
+      const bolt = new THREE.Group();
+      for (let index = 1; index < vertices.length; index += 1) {
+        const from = vertices[index - 1]!;
+        const to = vertices[index]!;
+        const delta = to.clone().sub(from);
+        const material = new THREE.MeshBasicMaterial({ color: 0xf2f7ff, transparent: true,
+          opacity: 0.96, depthWrite: false, fog: false, toneMapped: false });
+        const segment = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.11, delta.length(), 5), material);
+        segment.position.copy(from).add(to).multiplyScalar(0.5);
+        segment.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), delta.normalize());
+        segment.renderOrder = 6;
+        bolt.add(segment);
+      }
+      atmosphereGroup.add(bolt);
+      lightningBolt = bolt;
+      lightningStartedAtMs = nowMs;
+      nextLightningAtMs = nowMs + 15_000 + stormRandom() * 16_000;
+      lightningStrikeCount += 1;
+      stormFlash.position.set(targetX, bottomY + 6, targetZ);
+      canvas.dataset.lightningStrikeCount = String(lightningStrikeCount);
+      requestRender();
+    }
+    if (!lightningBolt) return;
+    const age = nowMs - lightningStartedAtMs;
+    if (age > 1_450) {
+      clearLightning();
+      requestRender();
+      return;
+    }
+    const core = age < 180 ? 1 : 0;
+    const afterglow = Math.max(0, 1 - age / 1_450);
+    for (const child of lightningBolt.children) {
+      if (child instanceof THREE.Mesh && child.material instanceof THREE.MeshBasicMaterial) {
+        child.material.opacity = 0.12 + core * 0.84 + (1 - core) * afterglow * 0.28;
+      }
+    }
+    stormFlash.intensity = core * 2.3 + afterglow * 0.28;
     requestRender();
   }
 
@@ -2786,30 +3776,39 @@ export function createVoxelRenderer(
 
   function updateCloudDrift(nowMs: number): void {
     const drift = cloudDrift;
-    if (!drift || !ambientMotionAllowed() || interacting || nowMs - drift.lastUpdateMs < 100) return;
+    if (!drift || !paneVisible || document.hidden || reducedMotion || interacting
+      || options.debugFlatColors || options.debugVoidScan || nowMs - drift.lastUpdateMs < 100) return;
     drift.elapsedMs += nowMs - drift.lastUpdateMs;
     const matrix = new THREE.Matrix4();
     const position = new THREE.Vector3();
     const quaternion = new THREE.Quaternion();
     const scale = new THREE.Vector3();
     for (const cloud of drift.clouds) {
-      const wave = Math.sin((drift.elapsedMs / cloud.periodMs) * Math.PI * 2 + cloud.phase);
-      const offsetX = Math.cos(cloud.angle) * cloud.amp * wave;
-      const offsetZ = Math.sin(cloud.angle) * cloud.amp * wave;
+      const offsetX = Math.cos(cloud.angle) * cloud.speed * drift.elapsedMs / 1000;
+      const offsetZ = Math.sin(cloud.angle) * cloud.speed * drift.elapsedMs / 1000;
+      const centerX = drift.basePositions[cloud.first * 3]!;
+      const centerZ = drift.basePositions[cloud.first * 3 + 2]!;
+      const wrappedCenterX = wrapCloudCoordinate(centerX + offsetX, drift.spanX);
+      const wrappedCenterZ = wrapCloudCoordinate(centerZ + offsetZ, drift.spanZ);
       for (let block = 0; block < cloud.count; block += 1) {
         const instance = cloud.first + block;
         drift.mesh.getMatrixAt(instance, matrix);
         matrix.decompose(position, quaternion, scale);
         position.set(
-          drift.basePositions[instance * 3]! + offsetX,
+          wrappedCenterX + drift.basePositions[instance * 3]! - centerX,
           drift.basePositions[instance * 3 + 1]!,
-          drift.basePositions[instance * 3 + 2]! + offsetZ,
+          wrappedCenterZ + drift.basePositions[instance * 3 + 2]! - centerZ,
         );
         matrix.compose(position, quaternion, scale);
         drift.mesh.setMatrixAt(instance, matrix);
       }
     }
     drift.mesh.instanceMatrix.needsUpdate = true;
+    if (drift.mesh.count > 0) {
+      drift.mesh.getMatrixAt(0, matrix);
+      position.setFromMatrixPosition(matrix);
+      canvas.dataset.cloudFirstBlockPosition = `${position.x.toFixed(4)},${position.z.toFixed(4)}`;
+    }
     drift.lastUpdateMs = nowMs;
     canvas.dataset.cloudDriftMs = String(Math.round(drift.elapsedMs));
     requestAmbientRender(nowMs);
@@ -2847,6 +3846,7 @@ export function createVoxelRenderer(
     }
     sway.trunks.instanceMatrix.needsUpdate = true;
     sway.crowns.instanceMatrix.needsUpdate = true;
+    syncNaturalTreeAttachments();
     sway.lastUpdateMs = nowMs;
     requestAmbientRender(nowMs);
   }
@@ -2873,9 +3873,7 @@ export function createVoxelRenderer(
         continue;
       }
       const progress = Math.min(1, elapsed / 240);
-      // Underdamped settle: rises fast, overshoots to ~1.04, lands on 0.97.
-      const settle = 1 - Math.exp(-7 * progress) * Math.cos(6 * progress);
-      const size = Math.max(0.0001, 0.97 * settle);
+      const size = constructionRevealScale(progress, reveal.targetScale);
       reveal.mesh.getMatrixAt(reveal.index, matrix);
       matrix.decompose(position, quaternion, scale);
       scale.setScalar(size);
@@ -2902,11 +3900,126 @@ export function createVoxelRenderer(
     }
   }
 
+  function syncQualityVisibility(): void {
+    for (const [mesh, data] of fallbackOcclusionMeshes) applyFallbackOcclusion(mesh, data.voxels, data.field, qualityTier);
+    for (const [index, entry] of localLights.entries()) entry.light.visible = index < qualityProfile.maxLocalLights;
+    for (const [index, entry] of glowSprites.entries()) entry.sprite.visible = index < qualityProfile.maxGlowSprites
+      && glowMaterial.opacity > 0.015;
+    updateNaturalTreeDensity();
+    for (const animation of [rainAnimation, snowAnimation]) {
+      if (!animation) continue;
+      animation.mesh.count = Math.min(animation.mesh.instanceMatrix.count,
+        Math.max(0, Math.floor(animation.particles.length * qualityProfile.weatherDensity)));
+    }
+    if (cloudDrift) cloudDrift.mesh.count = Math.min(cloudDrift.mesh.instanceMatrix.count,
+      Math.max(0, Math.floor(cloudDrift.mesh.instanceMatrix.count * qualityProfile.weatherDensity)));
+    starGeometry.setDrawRange(0, qualityProfile.starCount);
+  }
+
+  function setGlowMaterialsOpacity(opacity: number): void {
+    for (const spriteMaterial of glowMaterials.values()) spriteMaterial.opacity = opacity;
+  }
+
+  function addOriginalStaticShapeMeshes(
+    root: THREE.Group,
+    voxels: readonly BlueprintV1["voxels"][number][],
+    occlusionField: LocalOcclusionField,
+    weathering: number,
+    revealOrderIndex: ReadonlyMap<BlueprintV1["voxels"][number], number> | null,
+    revealSchedule: ReturnType<typeof constructionWaveSchedule> | null,
+  ): Set<BlueprintV1["voxels"][number]> {
+    const handled = new Set<BlueprintV1["voxels"][number]>();
+    if (voxels.length === 0) return handled;
+    const plan = planOriginalStaticShapeBatches(voxels);
+    const grouped = groupOriginalStaticShapeEntries(
+      plan,
+      (voxel, componentKey = "") => fallbackVisualStyleForOriginalComponent(voxel, componentKey).key,
+      64,
+      (voxel, componentKey) => {
+        if (componentKey === "lantern-frame" || componentKey === "candle-wax") return { kind: "", level: 0 };
+        if (componentKey.startsWith("lantern-core-") && voxel.emissiveLevel === 0) return { kind: "", level: 0 };
+        if (componentKey === "candle-wick" && voxel.emissiveLevel === 0) return { kind: "", level: 0 };
+        const emission = sourceLanternEmissionForVoxel(voxel) ?? sourceCandleEmissionForVoxel(voxel);
+        if ((componentKey.startsWith("lantern-core-") || componentKey === "candle-wick") && emission) return emission;
+        return undefined;
+      },
+    );
+    originalStaticShapeTopologyCount += plan.budget.actual;
+    originalStaticShapeTopologyOverflow += plan.budget.overflow;
+    originalStaticShapeMaterialGroupCount += grouped.groups.length;
+    originalStaticShapeMaterialGroupOverflow += grouped.overflow;
+    originalStaticShapeBudgetFallbackVoxelCount += new Set(grouped.fallbackEntries.map(({ voxel }) => voxel)).size;
+    for (const group of grouped.groups) {
+      const { topologyKey, componentKey, component, materialKey: materialId, emissiveKind, emissiveLevel: level, entries } = group;
+      const weathered = weathering > 0;
+      const emissiveActive = level > 0;
+      if (emissiveActive) originalStaticShapeEmissiveMaterialGroupCount += 1;
+      const owned = weathered || emissiveActive;
+      const meshMaterial = owned ? material(materialId).clone() : material(materialId);
+      const translucent = materialId === "glass" || parseFallbackVisualKey(materialId)?.transparent === true;
+      trackMaterialEffects(meshMaterial, translucent ? 0.22 : 0.12);
+      if (weathered) {
+        meshMaterial.color.multiplyScalar(1 - weathering * 0.28);
+        meshMaterial.roughness = Math.min(1, meshMaterial.roughness + weathering * 0.1);
+      }
+      if (emissiveActive) {
+        emissiveMaterials.push({ material: meshMaterial, level: level > 0 ? level : 15, kind: emissiveKind || "light" });
+      }
+      const first = entries[0];
+      if (!first || first.shape.kind !== "original-approximation") {
+        if (owned) meshMaterial.dispose();
+        continue;
+      }
+      const mesh = new THREE.InstancedMesh(createOriginalStaticShapeComponentGeometry(component), meshMaterial, entries.length);
+      const matrix = new THREE.Matrix4();
+      const hiddenMatrix = new THREE.Matrix4();
+      entries.forEach((entry, index) => {
+        handled.add(entry.voxel);
+        const entryComponent = entry.shape.kind === "original-approximation"
+          ? entry.shape.components?.find((candidate) => candidate.key === componentKey && candidate.topologyKey === topologyKey)
+          : undefined;
+        const componentTransform = new THREE.Matrix4().fromArray([...(entryComponent?.transform ?? component.transform)]);
+        const orderIndex = revealOrderIndex?.get(entry.voxel);
+        if (orderIndex !== undefined && revealSchedule) {
+          hiddenMatrix.makeTranslation(entry.voxel.x, entry.voxel.y, entry.voxel.z)
+            .multiply(componentTransform)
+            .scale(new THREE.Vector3(0.0001, 0.0001, 0.0001));
+          mesh.setMatrixAt(index, hiddenMatrix);
+          constructionReveals.push({
+            mesh,
+            index,
+            popAtMs: revealSchedule.popAtMsFor(constructionRevealStartedMs, orderIndex),
+            targetScale: 1,
+            done: false,
+          });
+        } else {
+          matrix.makeTranslation(entry.voxel.x, entry.voxel.y, entry.voxel.z).multiply(componentTransform);
+          mesh.setMatrixAt(index, matrix);
+        }
+      });
+      mesh.instanceMatrix.needsUpdate = true;
+      applyFallbackOcclusion(mesh, entries.map((entry) => entry.voxel), occlusionField);
+      mesh.castShadow = !translucent;
+      mesh.receiveShadow = true;
+      if (translucent) mesh.renderOrder = 10;
+      if (owned) mesh.userData.ownedMaterial = meshMaterial;
+      mesh.userData.originalStaticTopology = topologyKey;
+      root.add(mesh);
+      originalStaticShapeBatchCount += 1;
+    }
+    originalStaticShapeVoxelCount += handled.size;
+    // The planner caps topology batches at 64; over-budget and invalid entries
+    // remain untouched so the caller routes them through the established cube path.
+    return handled;
+  }
+
   function updateAmbientMotion(nowMs: number): void {
     if (disposed) return;
     releaseStaleInteraction(nowMs);
+    if (lightingTransition && paneVisible && !document.hidden && !reducedMotion) updateLighting(new Date());
     updateRainAnimation(nowMs);
     updateSnowAnimation(nowMs);
+    updateStormLightning(nowMs);
     updateCloudDrift(nowMs);
     updateTreeSway(nowMs);
     updateConstructionReveals(nowMs);
@@ -2926,10 +4039,15 @@ export function createVoxelRenderer(
       moonSprite.visible = false;
       return;
     }
-    const weatherTint = weatherVisualForKind(currentWeather.kind).tint;
+    const weatherVisual = weatherVisualForWeather(currentWeather);
+    const weatherTint = weatherVisual.tint;
     const sky = new THREE.Color(currentLighting.skyColor);
     const fog = new THREE.Color(currentLighting.fogColor);
-    if (weatherTint !== null) { sky.lerp(new THREE.Color(weatherTint), 0.2); fog.lerp(new THREE.Color(weatherTint), 0.28); }
+    if (weatherTint !== null) {
+      const response = Math.pow(currentWeather.cloudIntensity, 0.68);
+      sky.lerp(new THREE.Color(weatherTint), weatherVisual.cloudBlend * response * 0.82);
+      fog.lerp(new THREE.Color(weatherTint), weatherVisual.cloudBlend * response * 0.74);
+    }
     renderer.setClearColor(sky, 1);
     updateSkyVisuals(currentLighting);
     scene.fog = new THREE.Fog(fog, 1, 2);
@@ -2957,9 +4075,10 @@ export function createVoxelRenderer(
   }
 
   function updateSkyVisuals(state: SunState): void {
-    const weatherVisual = weatherVisualForKind(currentWeather.kind);
+    const weatherVisual = weatherVisualForWeather(currentWeather);
     const weatherTint = weatherVisual.tint;
-    updateSkyDomeColors(skyGeometry, state, weatherTint);
+    updateSkyDomeColors(skyGeometry, state, weatherTint,
+      weatherVisual.cloudBlend * Math.pow(currentWeather.cloudIntensity, 0.68) * 0.78);
     const celestialRadius = SKY_RADIUS * CELESTIAL_RADIUS_RATIO;
     setCelestialPosition(sunSprite, state.sunPosition, celestialRadius);
     setCelestialPosition(moonSprite, state.moonPosition, celestialRadius);
@@ -2972,6 +4091,10 @@ export function createVoxelRenderer(
     sunSpriteMaterial.opacity = sunlightScale;
     sunSprite.visible = state.sunVisibility > 0.08 && sunlightScale > 0.08;
     moonSpriteMaterial.color.setHex(state.skyHorizonColor).lerp(new THREE.Color(0xd7e3ef), state.moonVisibility);
+    moonPhaseUniforms.uMoonIllumination.value = Number.isFinite(state.moonIllumination) ? state.moonIllumination! : 1;
+    moonPhaseUniforms.uMoonWaxing.value = state.moonWaxing === false ? -1 : 1;
+    moonPhaseUniforms.uMoonBrightLimbAngle.value = Number.isFinite(state.moonBrightLimbAngleDeg)
+      ? state.moonBrightLimbAngleDeg! * Math.PI / 180 : 0;
     moonSprite.visible = state.moonVisibility > 0.08;
     const starStrength = state.starVisibility * weatherVisual.starVisibilityScale;
     starMaterial.color.setHex(state.skyZenithColor).lerp(new THREE.Color(0xdce8ff), THREE.MathUtils.clamp(starStrength * 0.86 + 0.14, 0, 1));
@@ -3131,6 +4254,7 @@ export function createVoxelRenderer(
     canvas.dataset.cameraLookYOffset = (immersiveLook.y - cameraTarget.y).toFixed(3);
     camera.lookAt(immersiveLook);
     camera.updateMatrixWorld(true);
+    syncPrecipitationField();
     // V21 diagnostic: where does the settlement centroid actually land on screen?
     // NDC 0 = the canvas center; +1 top/right, -1 bottom/left.
     settlementProjected.copy(cameraTarget).project(camera);
@@ -3146,6 +4270,7 @@ export function createVoxelRenderer(
     skyGroup.updateMatrixWorld(true);
     updateFogDistances();
     updateNearDetailEffects();
+    updateNaturalDecorationLod();
     // Keep interaction diagnostics truthful while the camera eases after a drag.
     canvas.dataset.cameraAzimuth = cameraAzimuth.toFixed(4);
     canvas.dataset.cameraPitchDegrees = THREE.MathUtils.radToDeg(cameraPitch).toFixed(2);
@@ -3203,6 +4328,7 @@ export function createVoxelRenderer(
   }
 
   const pointerDown = (event: PointerEvent): void => {
+    if (openingReveal) finishOpeningReveal("cancelled");
     if (pointerOwnership.count === 0) {
       pointerMoveCount = 0;
       interactionAnimationFrameIntervals = [];
@@ -3211,6 +4337,7 @@ export function createVoxelRenderer(
       lastInteractionAnimationFrameMs = null;
     }
     interacting = true;
+    syncPrecipitationMotionGate(performance.now());
     pointerOwnership.begin(event.pointerId, { x: event.clientX, y: event.clientY }, performance.now());
     updateDiagnosticsDataset();
     try { canvas.setPointerCapture(event.pointerId); } catch { /* Synthetic QA events do not own native capture. */ }
@@ -3272,6 +4399,7 @@ export function createVoxelRenderer(
     if (pointerOwnership.count < 2) { previousPinchDistance = null; previousPinchCenterY = null; }
     if (pointerOwnership.count === 0) {
       interacting = false;
+      syncPrecipitationMotionGate(performance.now());
       updateDiagnosticsDataset();
       requestRender();
     }
@@ -3282,11 +4410,13 @@ export function createVoxelRenderer(
     previousPinchDistance = null;
     previousPinchCenterY = null;
     interacting = false;
+    syncPrecipitationMotionGate(performance.now());
     updateDiagnosticsDataset();
     requestRender();
   };
   const wheel = (event: WheelEvent): void => {
     event.preventDefault();
+    if (openingReveal) finishOpeningReveal("cancelled");
     interacting = true;
     cameraDistance = clampCameraDistance(
       cameraDistance * Math.exp(event.deltaY * 0.0012),
@@ -3296,6 +4426,7 @@ export function createVoxelRenderer(
     updateCamera();
     requestRender();
     interacting = false;
+    syncPrecipitationMotionGate(performance.now());
   };
 
   function updatePinchReference(): void {
@@ -3361,46 +4492,138 @@ export function createVoxelRenderer(
     requestRender();
   }
 
-  function applyQuality(tier: QualityTier, runtimeDowngrade = false): void {
-    qualityTier = tier;
-    qualityProfile = QUALITY_PROFILES[tier];
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, qualityProfile.maxPixelRatio));
-    lightingPostProcessor.configure(
-      LIGHTWEIGHT_SHADING_PROFILES[tier].features.halfResolutionBloom,
-      tier === "high" ? 0.32 : 0,
-    );
-    renderer.shadowMap.enabled = true;
-    sun.shadow.intensity = 0.62 + LIGHTWEIGHT_SHADING_PROFILES[tier].shadowStrength * 0.25;
-    sun.shadow.bias = -0.00035;
-    sun.shadow.normalBias = tier === "low" ? 0.024 : tier === "balanced" ? 0.018 : 0.013;
-    // A runtime downgrade must stay visually silent: disposing the shadow map,
-    // rewriting water/glass materials, culling trees and lights, or rebuilding
-    // the cloud layer mid-session reads as a white-edged flash on rivers and a
-    // sky pop. Those structural changes wait for the next scene rebuild, which
-    // applies the full profile anyway; the runtime step only trims the costly
-    // post-process and pixel ratio.
-    if (!runtimeDowngrade) {
+  function applyQuality(tier: QualityTier, _runtimeDowngrade = false, force = false): boolean {
+    if (disposed) return false;
+    if (rendererContextIsLost()) {
+      if (lifecycleProbeEnabled) qualityLifecycleProbe("quality-apply-end", {
+        ...lifecycleIdentityMetrics(), requestedPreference: requestedLightingQuality,
+        effectiveTier: qualityTier, status: "failed",
+      });
+      return false;
+    }
+    const previousTier = qualityTier;
+    const previousProfile = qualityProfile;
+    const previousShadowMapSize = sun.shadow.mapSize.x;
+    const previousShadowMap = sun.shadow.map;
+    const previousQualityFramePendingSinceMs = qualityFramePendingSinceMs;
+    if (!force && tier === previousTier) return true;
+    const qualityStartedAt = lifecycleProbeEnabled ? performance.now() : 0;
+    const previousPixelRatio = renderer.getPixelRatio();
+    const viewport = canvas.getBoundingClientRect();
+    const nextPixelRatio = Math.min(window.devicePixelRatio || 1, QUALITY_PROFILES[tier].maxPixelRatio);
+    if (lifecycleProbeEnabled) qualityFramePendingSinceMs = qualityStartedAt;
+    if (lifecycleProbeEnabled) qualityLifecycleProbe("quality-apply-start", {
+      ...lifecycleIdentityMetrics(), requestedPreference: requestedLightingQuality, effectiveTier: tier, status: "ok",
+    });
+    let preparedPostProcess: ReturnType<typeof lightingPostProcessor.prepareConfiguration> | null = null;
+    let projectionCommitted = false;
+    try {
+      const nextProfile = QUALITY_PROFILES[tier];
+      // Allocate/resize the optional post-process before changing the resident
+      // projection. Its configuration is transactional; a failed prepare leaves
+      // the previous profile and render target usable.
+      preparedPostProcess = lightingPostProcessor.prepareConfiguration(
+        LIGHTWEIGHT_SHADING_PROFILES[tier].features.halfResolutionBloom,
+        tier === "high" ? 0.32 : 0,
+        Math.max(1, viewport.width), Math.max(1, viewport.height), nextPixelRatio,
+      );
+      renderer.setPixelRatio(nextPixelRatio);
+      qualityTier = tier;
+      qualityProfile = nextProfile;
+      renderer.shadowMap.enabled = true;
+      sun.shadow.intensity = 0.62 + LIGHTWEIGHT_SHADING_PROFILES[tier].shadowStrength * 0.25;
+      sun.shadow.bias = -0.00035;
+      sun.shadow.normalBias = tier === "low" ? 0.024 : tier === "balanced" ? 0.018 : 0.013;
       if (sun.shadow.mapSize.x !== qualityProfile.shadowMapSize) {
-        sun.shadow.map?.dispose();
         sun.shadow.mapSize.set(qualityProfile.shadowMapSize, qualityProfile.shadowMapSize);
       }
       updateMaterialEffects(currentLighting);
       updateReflectiveMaterials(currentLighting);
+      setGlowMaterialsOpacity(currentLighting.nightFactor * (tier === "high" ? 0.62 : 0.48));
       for (const mesh of cutoutShadowMeshes) mesh.castShadow = LIGHTWEIGHT_SHADING_PROFILES[tier].features.cutoutShadows;
+      syncQualityVisibility();
       requestShadowRefresh(new Date(), true);
-      while (localLights.length > qualityProfile.maxLocalLights) {
-        const removed = localLights.pop();
-        if (removed) localLightGroup.remove(removed.light);
+      syncPrecipitationMotionGate(performance.now());
+      preparedPostProcess.commit();
+      requestRender();
+      canvas.dataset.qualityTier = tier;
+      updateDiagnosticsDataset();
+      projectionCommitted = true;
+    } catch {
+      preparedPostProcess?.rollback();
+      preparedPostProcess?.discard();
+      qualityTier = previousTier;
+      qualityProfile = previousProfile;
+      qualityFramePendingSinceMs = previousQualityFramePendingSinceMs;
+      try {
+        renderer.setPixelRatio(previousPixelRatio);
+        sun.shadow.intensity = 0.62 + LIGHTWEIGHT_SHADING_PROFILES[previousTier].shadowStrength * 0.25;
+        if (sun.shadow.mapSize.x !== previousShadowMapSize) {
+          sun.shadow.mapSize.set(previousShadowMapSize, previousShadowMapSize);
+          requestShadowRefresh(new Date(), true);
+        }
+        sun.shadow.normalBias = previousTier === "low" ? 0.024 : previousTier === "balanced" ? 0.018 : 0.013;
+        updateMaterialEffects(currentLighting);
+        updateReflectiveMaterials(currentLighting);
+        setGlowMaterialsOpacity(currentLighting.nightFactor * (previousTier === "high" ? 0.62 : 0.48));
+        for (const mesh of cutoutShadowMeshes) mesh.castShadow = LIGHTWEIGHT_SHADING_PROFILES[previousTier].features.cutoutShadows;
+        syncQualityVisibility();
+      } catch { /* retain the original projection error; retry remains available */ }
+      try {
+        canvas.dataset.qualityTier = previousTier;
+        updateDiagnosticsDataset();
+      } catch (error) { console.error("Lighting quality rollback retained the previous projection, but diagnostics could not be refreshed", error); }
+      if (lifecycleProbeEnabled) {
+        try {
+          qualityLifecycleProbe("quality-apply-end", {
+            ...lifecycleIdentityMetrics(), requestedPreference: requestedLightingQuality, effectiveTier: previousTier, status: "failed",
+          });
+        } catch (error) { console.error("Lighting quality rollback completed, but lifecycle observation failed", error); }
       }
-      while (glowSprites.length > qualityProfile.maxGlowSprites) {
-        const removed = glowSprites.pop();
-        if (removed) localLightGroup.remove(removed.sprite);
-      }
-      updateNaturalTreeDensity();
-      if (atmosphereGroup.children.length > 0) updateWeather(currentWeather.localDate, true);
+      return false;
     }
-    canvas.dataset.qualityTier = tier;
-    updateDiagnosticsDataset();
+
+    // This is the transaction boundary. All calls that can reject the new
+    // projection have completed while the old post-process and shadow targets
+    // are still retained. Cleanup faults are not a failed apply/rollback.
+    if (!projectionCommitted) return false;
+    try {
+      preparedPostProcess?.finalize();
+      if (previousShadowMap && previousShadowMapSize !== qualityProfile.shadowMapSize) previousShadowMap.dispose();
+    } catch (error) {
+      console.error("Lighting quality committed, but retired GPU target cleanup failed", error);
+    }
+    preparedPostProcess = null;
+    if (lifecycleProbeEnabled && sceneVoxelCount > 0) {
+      try {
+        qualityLifecycleProbe("quality-projection-complete", {
+          durationMs: performance.now() - qualityStartedAt,
+          ...lifecycleIdentityMetrics(),
+          requestedPreference: requestedLightingQuality,
+          effectiveTier: tier,
+          devicePixelRatio: window.devicePixelRatio || 1,
+          pixelRatio: renderer.getPixelRatio(),
+          shadowMapSize: qualityProfile.shadowMapSize,
+          localLightCount: localLights.filter(entry => entry.light.visible).length,
+          localLightCreatedCount: localLights.length,
+          glowSpriteCount: glowSprites.filter(entry => entry.sprite.visible).length,
+          glowSpriteCreatedCount: glowSprites.length,
+          naturalTreeCount: naturalTreeMeshes?.trunks.count ?? 0,
+          ambientDecorationCount,
+          weatherParticleCount: (rainAnimation?.mesh.count ?? 0) + (snowAnimation?.mesh.count ?? 0),
+          starCount: starField.visible ? qualityProfile.starCount : 0,
+          status: "ok",
+        });
+      } catch (error) { console.error("Lighting quality committed, but lifecycle observation failed", error); }
+    }
+    if (lifecycleProbeEnabled) {
+      try {
+        qualityLifecycleProbe("quality-apply-end", {
+          ...lifecycleIdentityMetrics(), requestedPreference: requestedLightingQuality, effectiveTier: tier, status: "ok",
+        });
+      } catch (error) { console.error("Lighting quality committed, but lifecycle observation failed", error); }
+    }
+    return true;
   }
 
   function maybeDowngradeQuality(): void {
@@ -3410,9 +4633,15 @@ export function createVoxelRenderer(
     const sustainedSlow = interactionFrameDurations.length >= 24 && p95 !== null && p95 > 22;
     const sceneHeavy = render.calls > 180 || render.triangles > 340_000;
     if (!sustainedSlow && !sceneHeavy) return;
-    applyQuality(lowerQualityTier(qualityTier), true);
+    const next = lowerQualityTier(qualityTier);
+    if (applyQuality(next, true)) adaptiveQualityCap = next;
     interactionFrameDurations = [];
     resize();
+  }
+
+  function rendererContextIsLost(): boolean {
+    try { return renderer.getContext().isContextLost(); }
+    catch { return true; }
   }
 
   function getDiagnostics(): RendererDiagnostics {
@@ -3420,12 +4649,20 @@ export function createVoxelRenderer(
     const visualBiomePalette = activeResourcePack?.atlas.pages[0]?.visualBiomePalette;
     const sunProjection = celestialProjection(sunSprite, camera);
     const moonProjection = celestialProjection(moonSprite, camera);
+    const astronomyDay = astronomyContext ? astronomyDayAt(astronomyContext.schedule, lightingSampledAtMs) : null;
     return {
       qualityTier,
       pixelRatio: renderer.getPixelRatio(),
       render: { ...renderer.info.render },
       memory: { ...renderer.info.memory },
       worldRebuildCount,
+      renderedWorldRebuildCount: worldFrameCommit.renderedWorldRebuildCount,
+      lastWorldFrameCommittedAtMs: worldFrameCommit.lastWorldFrameCommittedAtMs,
+      naturalFlowerPackPlacementCount,
+      naturalFlowerOriginalFallbackCount,
+      naturalFlowerVisibleBatchCount: buildingGroup.children.filter(child =>
+        child instanceof THREE.InstancedMesh && child.userData.naturalDecorationKind === "flower" && child.visible && child.count > 0).length,
+      treeSideMushroomCount,
       worldRebuildLastMs,
       worldRebuildTotalMs,
       worldRebuildMaxMs,
@@ -3480,6 +4717,24 @@ export function createVoxelRenderer(
       cutoutShadowMeshCount: [...cutoutShadowMeshes].filter((mesh) => mesh.castShadow).length,
       dayPhase: currentLighting.phase,
       lightingUpdateCount,
+      astronomySource: !astronomyContext ? "synthetic" : astronomyDay ? "provider+ephemeris" : "ephemeris-only",
+      astronomyLocationSource: astronomyContext?.locationSource ?? "none",
+      sunAltitudeDeg: currentLighting.sunAltitudeDeg ?? null,
+      sunAzimuthDeg: currentLighting.sunAzimuthDeg ?? null,
+      moonAltitudeDeg: currentLighting.moonAltitudeDeg ?? null,
+      moonAzimuthDeg: currentLighting.moonAzimuthDeg ?? null,
+      moonIllumination: currentLighting.moonIllumination ?? null,
+      astronomyDayStartMs: astronomyDay?.intervalStartMs ?? null,
+      astronomyDayEndMs: astronomyDay?.intervalEndMs ?? null,
+      astronomyUpdateCount,
+      environmentTransitionActive: lightingTransition !== null || environmentReveal !== null,
+      environmentTransitionTarget: environmentReveal?.target ?? (astronomyContext ? "astronomy" : "synthetic"),
+      environmentTransitionStartedCount,
+      environmentTransitionCompletedCount,
+      environmentTransitionCancelledCount,
+      openingRevealStartedCount,
+      openingRevealCompletedCount,
+      openingRevealCancelledCount,
       lightingSampledAtMs,
       lightingFingerprint: lightingDirectionFingerprint(currentLighting),
       sunPosition: currentLighting.sunPosition,
@@ -3494,13 +4749,31 @@ export function createVoxelRenderer(
       moonScreenY: moonProjection.y,
       visibleStarCount: starField.visible ? qualityProfile.starCount : 0,
       cloudBlockCount,
+      visibleCloudBlockCount: cloudDrift?.mesh.count ?? 0,
       cloudBudgetMode,
       cloudBlockScale,
       weatherKind: currentWeather.kind,
       weatherCloudIntensity: currentWeather.cloudIntensity,
       weatherPrecipitationIntensity: currentWeather.precipitationIntensity,
-      rainDropCount: rainAnimation?.drops.length ?? 0,
-      snowFlakeCount: snowAnimation?.flakes.length ?? 0,
+      weatherVisualPrecipitationIntensity: currentWeather.visualPrecipitationIntensity,
+      rainDropCount: rainAnimation?.particles.length ?? 0,
+      visibleRainDropCount: rainAnimation?.mesh.count ?? 0,
+      snowFlakeCount: snowAnimation?.particles.length ?? 0,
+      visibleSnowFlakeCount: snowAnimation?.mesh.count ?? 0,
+      precipitationFieldMode: previewMode ? "preview" : "main-world",
+      precipitationFieldCenterX: precipitationField?.centerX ?? 0,
+      precipitationFieldCenterZ: precipitationField?.centerZ ?? 0,
+      precipitationFieldSpanX: precipitationField?.spanX ?? 0,
+      precipitationFieldSpanZ: precipitationField?.spanZ ?? 0,
+      precipitationFieldUsedFallback: precipitationField?.usedFallback ?? false,
+      precipitationFieldSyncCount,
+      rainCameraFrustumCount,
+      snowCameraFrustumCount,
+      precipitationMotionPaused: (rainAnimation?.paused ?? false) || (snowAnimation?.paused ?? false)
+        || !paneVisible || interacting || reducedMotion || document.hidden,
+      rainElapsedMs: rainAnimation?.elapsedMs ?? 0,
+      snowElapsedMs: snowAnimation?.elapsedMs ?? 0,
+      rainStreakProjectedCssPx,
       fogNear: scene.fog instanceof THREE.Fog ? scene.fog.near : 0,
       fogFar: scene.fog instanceof THREE.Fog ? scene.fog.far : 0,
       cameraNear: camera.near,
@@ -3538,7 +4811,19 @@ export function createVoxelRenderer(
       ambientDecorationCount,
       ambientDecorationKindCount,
       ambientDecorationDrawCalls,
+      ambientDecorationAllocatedBatchCount,
       ambientDecorationShadowCasters,
+      localLightCreatedCount: localLights.length,
+      visibleLocalLightCount: localLights.filter(entry => entry.light.visible).length,
+      originalStaticShapeVoxelCount,
+      originalStaticShapeBatchCount,
+      originalStaticShapeTopologyCount,
+      originalStaticShapeMaterialGroupCount,
+      originalStaticShapeEmissiveMaterialGroupCount,
+      originalStaticShapeTopologyOverflow,
+      originalStaticShapeMaterialGroupOverflow,
+      originalStaticShapeBudgetFallbackVoxelCount,
+      sourceLanternPointLightCount,
     };
   }
 
@@ -3550,6 +4835,14 @@ export function createVoxelRenderer(
     canvas.dataset.renderTriangles = String(diagnostics.render.triangles);
     canvas.dataset.pixelRatio = diagnostics.pixelRatio.toFixed(2);
     canvas.dataset.worldRebuildCount = String(diagnostics.worldRebuildCount);
+    canvas.dataset.renderedWorldRebuildCount = String(diagnostics.renderedWorldRebuildCount);
+    if (diagnostics.lastWorldFrameCommittedAtMs !== null) {
+      canvas.dataset.lastWorldFrameCommittedAtMs = String(diagnostics.lastWorldFrameCommittedAtMs);
+    }
+    canvas.dataset.naturalFlowerPackPlacementCount = String(diagnostics.naturalFlowerPackPlacementCount);
+    canvas.dataset.naturalFlowerOriginalFallbackCount = String(diagnostics.naturalFlowerOriginalFallbackCount);
+    canvas.dataset.naturalFlowerVisibleBatchCount = String(diagnostics.naturalFlowerVisibleBatchCount);
+    canvas.dataset.treeSideMushroomCount = String(diagnostics.treeSideMushroomCount);
     canvas.dataset.worldRebuildLastMs = diagnostics.worldRebuildLastMs.toFixed(2);
     canvas.dataset.worldRebuildTotalMs = diagnostics.worldRebuildTotalMs.toFixed(2);
     canvas.dataset.worldRebuildMaxMs = diagnostics.worldRebuildMaxMs.toFixed(2);
@@ -3562,6 +4855,19 @@ export function createVoxelRenderer(
     canvas.dataset.cameraTargetY = cameraTarget.y.toFixed(3);
     canvas.dataset.cameraTargetZ = cameraTarget.z.toFixed(3);
     canvas.dataset.cameraDistance = cameraDistance.toFixed(3);
+    canvas.dataset.precipitationFieldMode = diagnostics.precipitationFieldMode;
+    canvas.dataset.precipitationFieldCenterX = diagnostics.precipitationFieldCenterX.toFixed(2);
+    canvas.dataset.precipitationFieldCenterZ = diagnostics.precipitationFieldCenterZ.toFixed(2);
+    canvas.dataset.precipitationFieldSpanX = diagnostics.precipitationFieldSpanX.toFixed(2);
+    canvas.dataset.precipitationFieldSpanZ = diagnostics.precipitationFieldSpanZ.toFixed(2);
+    canvas.dataset.precipitationFieldUsedFallback = String(diagnostics.precipitationFieldUsedFallback);
+    canvas.dataset.precipitationFieldSyncCount = String(diagnostics.precipitationFieldSyncCount);
+    canvas.dataset.rainCameraFrustumCount = String(diagnostics.rainCameraFrustumCount);
+    canvas.dataset.snowCameraFrustumCount = String(diagnostics.snowCameraFrustumCount);
+    canvas.dataset.precipitationMotionPaused = String(diagnostics.precipitationMotionPaused);
+    canvas.dataset.rainElapsedMs = String(Math.round(diagnostics.rainElapsedMs));
+    canvas.dataset.snowElapsedMs = String(Math.round(diagnostics.snowElapsedMs));
+    canvas.dataset.rainStreakProjectedCssPx = diagnostics.rainStreakProjectedCssPx.toFixed(2);
     canvas.dataset.skyCameraWorldOffset = new THREE.Vector3().setFromMatrixPosition(skyGroup.matrixWorld).distanceTo(camera.position).toFixed(4);
     canvas.dataset.worldRootMembers = rotatableWorldRoot.children.map((child) => child.name).join(",");
     canvas.dataset.shadowAutoUpdate = String(renderer.shadowMap.autoUpdate);
@@ -3583,7 +4889,8 @@ export function createVoxelRenderer(
     canvas.dataset.shadowTransformSyncTotalMs = diagnostics.shadowTransformSyncTotalMs.toFixed(2);
     canvas.dataset.shadowTransformSyncMaxMs = diagnostics.shadowTransformSyncMaxMs.toFixed(2);
     if (!canvas.getAttribute("aria-label")) canvas.setAttribute("aria-label", `项目建筑世界。诊断：draw calls ${diagnostics.render.calls}，triangles ${diagnostics.render.triangles}，完整交互 p95 ${diagnostics.interactionTotalP95Ms?.toFixed(2) ?? "无"} ms，阴影同步 ${diagnostics.shadowTransformSyncCount} 次，resize ${diagnostics.resizeCount} 次，低延迟 WebGL ${diagnostics.lowLatencyWebGl ? "已启用" : "未启用"}。`);
-    canvas.dataset.localLightCount = String(localLights.length);
+    canvas.dataset.localLightCount = String(localLights.filter(entry => entry.light.visible).length);
+    canvas.dataset.localLightCreatedCount = String(localLights.length);
     canvas.dataset.activeResourcePackId = diagnostics.activeResourcePackId ?? "";
     canvas.dataset.atlasPageCount = String(diagnostics.atlasPageCount);
     canvas.dataset.texturedBatchCount = String(diagnostics.texturedBatchCount);
@@ -3615,6 +4922,30 @@ export function createVoxelRenderer(
     canvas.dataset.cutoutShadowMeshCount = String(diagnostics.cutoutShadowMeshCount);
     canvas.dataset.dayPhase = diagnostics.dayPhase;
     canvas.dataset.lightingUpdateCount = String(diagnostics.lightingUpdateCount);
+    canvas.dataset.astronomySource = diagnostics.astronomySource;
+    canvas.dataset.astronomySampleTime = String(diagnostics.lightingSampledAtMs);
+    canvas.dataset.astronomyPhase = diagnostics.dayPhase;
+    canvas.dataset.environmentTransitionTarget = diagnostics.environmentTransitionTarget;
+    canvas.dataset.environmentTransitionActive = String(diagnostics.environmentTransitionActive);
+    canvas.dataset.initialRevealStartedCount = String(diagnostics.openingRevealStartedCount);
+    canvas.dataset.initialRevealCompletedCount = String(diagnostics.openingRevealCompletedCount);
+    canvas.dataset.initialRevealCancelledCount = String(diagnostics.openingRevealCancelledCount);
+    canvas.dataset.astronomyLocationSource = diagnostics.astronomyLocationSource;
+    canvas.dataset.sunAltitudeDeg = diagnostics.sunAltitudeDeg?.toFixed(3) ?? "";
+    canvas.dataset.sunAzimuthDeg = diagnostics.sunAzimuthDeg?.toFixed(3) ?? "";
+    canvas.dataset.moonAltitudeDeg = diagnostics.moonAltitudeDeg?.toFixed(3) ?? "";
+    canvas.dataset.moonAzimuthDeg = diagnostics.moonAzimuthDeg?.toFixed(3) ?? "";
+    canvas.dataset.moonIllumination = diagnostics.moonIllumination?.toFixed(3) ?? "";
+    canvas.dataset.astronomyDayStartMs = diagnostics.astronomyDayStartMs === null ? "" : String(diagnostics.astronomyDayStartMs);
+    canvas.dataset.astronomyDayEndMs = diagnostics.astronomyDayEndMs === null ? "" : String(diagnostics.astronomyDayEndMs);
+    canvas.dataset.astronomyUpdateCount = String(diagnostics.astronomyUpdateCount);
+    canvas.dataset.environmentTransitionActive = String(diagnostics.environmentTransitionActive);
+    canvas.dataset.environmentTransitionStartedCount = String(diagnostics.environmentTransitionStartedCount);
+    canvas.dataset.environmentTransitionCompletedCount = String(diagnostics.environmentTransitionCompletedCount);
+    canvas.dataset.environmentTransitionCancelledCount = String(diagnostics.environmentTransitionCancelledCount);
+    canvas.dataset.openingRevealStartedCount = String(diagnostics.openingRevealStartedCount);
+    canvas.dataset.openingRevealCompletedCount = String(diagnostics.openingRevealCompletedCount);
+    canvas.dataset.openingRevealCancelledCount = String(diagnostics.openingRevealCancelledCount);
     canvas.dataset.lightingSampledAtMs = String(diagnostics.lightingSampledAtMs);
     canvas.dataset.lightingFingerprint = diagnostics.lightingFingerprint;
     canvas.dataset.sunPosition = diagnostics.sunPosition.map((value) => value.toFixed(4)).join(",");
@@ -3634,6 +4965,7 @@ export function createVoxelRenderer(
     canvas.dataset.weatherKind = diagnostics.weatherKind;
     canvas.dataset.weatherCloudIntensity = diagnostics.weatherCloudIntensity.toFixed(3);
     canvas.dataset.weatherPrecipitationIntensity = diagnostics.weatherPrecipitationIntensity.toFixed(3);
+    canvas.dataset.weatherVisualPrecipitationIntensity = diagnostics.weatherVisualPrecipitationIntensity.toFixed(3);
     canvas.dataset.rainDropCount = String(diagnostics.rainDropCount);
     canvas.dataset.snowFlakeCount = String(diagnostics.snowFlakeCount);
     canvas.dataset.fogNear = diagnostics.fogNear.toFixed(2);
@@ -3671,7 +5003,16 @@ export function createVoxelRenderer(
     canvas.dataset.ambientDecorationCount = String(diagnostics.ambientDecorationCount);
     canvas.dataset.ambientDecorationKindCount = String(diagnostics.ambientDecorationKindCount);
     canvas.dataset.ambientDecorationDrawCalls = String(diagnostics.ambientDecorationDrawCalls);
+    canvas.dataset.ambientDecorationAllocatedBatchCount = String(diagnostics.ambientDecorationAllocatedBatchCount);
     canvas.dataset.ambientDecorationShadowCasters = String(diagnostics.ambientDecorationShadowCasters);
+    canvas.dataset.originalStaticShapeVoxelCount = String(diagnostics.originalStaticShapeVoxelCount);
+    canvas.dataset.originalStaticShapeBatchCount = String(diagnostics.originalStaticShapeBatchCount);
+    canvas.dataset.originalStaticShapeTopologyCount = String(diagnostics.originalStaticShapeTopologyCount);
+    canvas.dataset.originalStaticShapeMaterialGroupCount = String(diagnostics.originalStaticShapeMaterialGroupCount);
+    canvas.dataset.originalStaticShapeTopologyOverflow = String(diagnostics.originalStaticShapeTopologyOverflow);
+    canvas.dataset.originalStaticShapeMaterialGroupOverflow = String(diagnostics.originalStaticShapeMaterialGroupOverflow);
+    canvas.dataset.originalStaticShapeBudgetFallbackVoxelCount = String(diagnostics.originalStaticShapeBudgetFallbackVoxelCount);
+    canvas.dataset.sourceLanternPointLightCount = String(diagnostics.sourceLanternPointLightCount);
   }
 
   function logInteractionDiagnostics(): void {
@@ -3715,7 +5056,9 @@ export function createVoxelRenderer(
       cloudBudgetMode: diagnostics.cloudBudgetMode,
       cloudBlockScale: diagnostics.cloudBlockScale,
       ambientDecorationCount: diagnostics.ambientDecorationCount,
+      ambientDecorationKindCount: diagnostics.ambientDecorationKindCount,
       ambientDecorationDrawCalls: diagnostics.ambientDecorationDrawCalls,
+      ambientDecorationAllocatedBatchCount: diagnostics.ambientDecorationAllocatedBatchCount,
       ambientDecorationShadowCasters: diagnostics.ambientDecorationShadowCasters,
       nativeInputTransport: diagnostics.nativeInputTransport,
     });
@@ -3765,6 +5108,8 @@ export function createVoxelRenderer(
           return;
         }
         object.geometry.dispose();
+        const alternateLodGeometry = object.userData.naturalDecorationAlternateGeometry as THREE.BufferGeometry | undefined;
+        if (alternateLodGeometry && alternateLodGeometry !== object.geometry) alternateLodGeometry.dispose();
         if (disposeAllMaterials) {
           const meshMaterials = Array.isArray(object.material) ? object.material : [object.material];
           meshMaterials.forEach((entry) => entry.dispose());
@@ -3791,8 +5136,15 @@ export function createVoxelRenderer(
   const contextLost = (event: Event): void => { event.preventDefault(); };
   const contextRestored = (): void => { resize(); };
   const visibilityChange = (): void => {
+    if (document.hidden) precipitationViewCache = invalidatePrecipitationViewCache(precipitationViewCache);
     for (const controller of atlasAnimationControllers) controller?.setVisible(!document.hidden && paneVisible);
+    syncPrecipitationMotionGate(performance.now());
     if (!document.hidden) { updateLighting(new Date()); updateWeather(localDateForDate(new Date())); }
+    else if (lightingTransition) {
+      lightingTransition = null;
+      environmentTransitionCancelledCount += 1;
+    }
+    if (document.hidden && environmentReveal) finishEnvironmentReveal(true);
   };
   const observer = new ResizeObserver(resize);
   observer.observe(canvas);
@@ -3815,37 +5167,138 @@ export function createVoxelRenderer(
     }).catch(() => undefined);
   }
   document.addEventListener("visibilitychange", visibilityChange);
-  applyQuality(qualityTier);
+  applyQuality(qualityTier, false, true);
   updateLighting(new Date(), true);
   updateWeather(localDateForDate(new Date()), true);
-  // One low-frequency two-minute local-clock sample is enough to advance the
-  // sun/moon and shadow direction without adding a continuous background rAF
-  // loop.
+  // A visible-only 30-second sample keeps the celestial path current without
+  // adding a continuous render loop or background work.
   const lightingTimer = window.setInterval(() => {
-    if (document.hidden) return;
+    if (document.hidden || !paneVisible) return;
     const now = new Date();
     updateLighting(now);
     updateWeather(localDateForDate(now));
-  }, 120_000);
-  const ambientMotionTimer = window.setInterval(() => updateAmbientMotion(performance.now()), 100);
+  }, 30_000);
+  // Precipitation used to advance on this 100 ms pump (snow additionally every
+  // 120 ms), making a nominally live storm look like an 8–10 fps slideshow.
+  // The frame scheduler still coalesces requests and hidden/reduced-motion
+  // paths pause the motion; visible weather can now present at ~30 fps.
+  const ambientMotionTimer = window.setInterval(() => updateAmbientMotion(performance.now()), 32);
   resize();
 
   return {
+    async initializeWorlds(worlds, pack) {
+      const generation = ++resourcePackGeneration;
+      await initializeWorldConfiguration(worlds, pack, {
+        async prepare(selectedPack) {
+          if (selectedPack === null) return { pack: null, atlas: null, controllers: [] as Array<AtlasAnimationController | null> };
+          const requestedMaximum = options.resourcePackAtlasMaximumSize ?? 2048;
+          const atlas = buildQualityLifecycleAtlas(
+            selectedPack.manifest,
+            Math.min(requestedMaximum, renderer.capabilities.maxTextureSize),
+          );
+          try {
+            return { pack: { id: selectedPack.id, manifest: selectedPack.manifest }, atlas, controllers: animationControllersFor(atlas) };
+          } catch (error) {
+            disposeQualityLifecycleAtlas(atlas);
+            throw error;
+          }
+        },
+        isCurrent: () => !disposed && generation === resourcePackGeneration,
+        capture: () => ({ worlds: lastWorlds, pack: activeResourcePack, controllers: atlasAnimationControllers }),
+        commit(stagedWorlds, staged) {
+          const previousWorlds = lastWorlds;
+          lastWorlds = [...stagedWorlds];
+          activeResourcePack = staged.atlas === null || staged.pack === null
+            ? null
+            : { ...staged.pack, atlas: staged.atlas };
+          atlasAnimationControllers = staged.controllers;
+          rebuild(worldsWithDebugDecay(lastWorlds), worldsWithDebugDecay(previousWorlds));
+        },
+        rollback(previous, staged) {
+          lastWorlds = previous.worlds;
+          activeResourcePack = previous.pack;
+          atlasAnimationControllers = previous.controllers;
+          try {
+            rebuild(worldsWithDebugDecay(previous.worlds), worldsWithDebugDecay(previous.worlds));
+          } catch {
+            // Preserve the original failed commit; renderer references are already
+            // restored so a later world update can rebuild from the prior state.
+          }
+          // The generic transaction owns staged disposal after rollback.
+          void staged;
+        },
+        disposeStaged(staged) {
+          for (const controller of staged.controllers) {
+            try { controller?.dispose(); } catch { /* continue releasing staged resources */ }
+          }
+          try { disposeQualityLifecycleAtlas(staged.atlas); } catch { /* do not hide the original transaction result */ }
+        },
+        disposePrevious(previous) {
+          for (const controller of previous.controllers) {
+            try { controller?.dispose(); } catch { /* retire every prior controller */ }
+          }
+          try { disposeQualityLifecycleAtlas(previous.pack?.atlas); } catch { /* committed configuration remains active */ }
+        },
+      });
+    },
     setWorld(world) {
       const previous = lastWorlds;
       lastWorlds = world === null ? [] : [world];
-      rebuild(lastWorlds, previous);
+      rebuild(worldsWithDebugDecay(lastWorlds), worldsWithDebugDecay(previous));
     },
     setWorlds(worlds) {
       const previous = lastWorlds;
       lastWorlds = [...worlds];
-      rebuild(lastWorlds, previous);
+      rebuild(worldsWithDebugDecay(lastWorlds), worldsWithDebugDecay(previous));
     },
     setExternalWeatherOverride(override) {
       if (disposed) return;
       externalWeatherOverride = override === null ? null : { ...override };
       updateWeather(localDateForDate(new Date()), true);
+      beginLightingTransition();
       updateDiagnosticsDataset();
+    },
+    setAstronomyContext(context) {
+      if (disposed) return;
+      const previous = astronomyContext;
+      const unchanged = previous === context || (previous !== null && context !== null
+        && previous.coordinates.latitude === context.coordinates.latitude
+        && previous.coordinates.longitude === context.coordinates.longitude
+        && previous.locationSource === context.locationSource
+        && previous.schedule?.fetchedAtMs === context.schedule?.fetchedAtMs);
+      if (unchanged) return;
+      astronomyContext = context === null ? null : {
+        coordinates: { ...context.coordinates },
+        locationSource: context.locationSource,
+        schedule: context.schedule,
+      };
+      beginLightingTransition();
+      canvas.dataset.astronomySource = astronomyContext
+        ? astronomyDayAt(astronomyContext.schedule, Date.now()) ? "provider+ephemeris" : "ephemeris-only"
+        : "synthetic";
+      updateDiagnosticsDataset();
+    },
+    setEnvironmentDebugOverride(override) {
+      if (disposed) return;
+      const previousDecay = environmentDebugOverride?.decayAmount ?? null;
+      environmentDebugOverride = override === null ? null : {
+        ...override,
+        date: override.date !== undefined && override.date !== null && Number.isFinite(override.date) ? override.date : null,
+        decayAmount: override.decayAmount !== undefined && override.decayAmount !== null && Number.isFinite(override.decayAmount)
+          ? THREE.MathUtils.clamp(override.decayAmount, 0, 1) : null,
+        weather: override.weather ? { ...override.weather } : override.weather,
+      };
+      const nextDecay = environmentDebugOverride?.decayAmount ?? null;
+      if (previousDecay !== nextDecay) {
+        decayRevealRequested = true;
+        rebuild(worldsWithDebugDecay(lastWorlds), worldsWithDebugDecay(lastWorlds));
+      }
+      updateWeather(localDateForDate(new Date()), true);
+      beginLightingTransition();
+      updateDiagnosticsDataset();
+    },
+    revealInitialProject(projectId) {
+      return startOpeningReveal(projectId);
     },
     focusProject(projectId) {
       if (projectId === focusedProjectId) return;
@@ -3867,15 +5320,15 @@ export function createVoxelRenderer(
         const previousAnimations = atlasAnimationControllers;
         activeResourcePack = null;
         atlasAnimationControllers = [];
-        rebuild(lastWorlds);
+        rebuild(worldsWithDebugDecay(lastWorlds));
         for (const controller of previousAnimations) controller?.dispose();
-        previous?.atlas.dispose();
+        disposeQualityLifecycleAtlas(previous?.atlas);
         return;
       }
       const requestedMaximum = options.resourcePackAtlasMaximumSize ?? 2048;
-      const atlas = buildResourcePackAtlas(pack.manifest, Math.min(requestedMaximum, renderer.capabilities.maxTextureSize));
+      const atlas = buildQualityLifecycleAtlas(pack.manifest, Math.min(requestedMaximum, renderer.capabilities.maxTextureSize));
       if (disposed || generation !== resourcePackGeneration) {
-        atlas.dispose();
+        disposeQualityLifecycleAtlas(atlas);
         return;
       }
       const previous = activeResourcePack;
@@ -3883,25 +5336,78 @@ export function createVoxelRenderer(
       activeResourcePack = { id: pack.id, manifest: pack.manifest, atlas };
       atlasAnimationControllers = animationControllersFor(atlas);
       try {
-        rebuild(lastWorlds);
+        rebuild(worldsWithDebugDecay(lastWorlds));
       } catch (error) {
         for (const controller of atlasAnimationControllers) controller?.dispose();
         activeResourcePack = previous;
         atlasAnimationControllers = previousAnimations;
-        atlas.dispose();
-        rebuild(lastWorlds);
+        disposeQualityLifecycleAtlas(atlas);
+        rebuild(worldsWithDebugDecay(lastWorlds));
         throw error;
       }
       for (const controller of previousAnimations) controller?.dispose();
-      previous?.atlas.dispose();
+      disposeQualityLifecycleAtlas(previous?.atlas);
+    },
+    setLightingQuality(preference) {
+      if (disposed || rendererContextIsLost()) {
+        if (lifecycleProbeEnabled) qualityLifecycleProbe("quality-apply-end", {
+          ...lifecycleIdentityMetrics(),
+          requestedPreference: requestedLightingQuality, effectiveTier: qualityTier, status: "failed",
+        });
+        return false;
+      }
+      const attempt = attemptQualityProjection(
+        { preference: requestedLightingQuality, tier: qualityTier },
+        preference,
+        resolveCappedQualityTier(deviceSignals(renderer, sceneVoxelCount), preference, adaptiveQualityCap),
+        tier => {
+          const previousPreference = requestedLightingQuality;
+          requestedLightingQuality = preference;
+          const succeeded = applyQuality(tier);
+          if (!succeeded) {
+            requestedLightingQuality = previousPreference;
+            try { updateDiagnosticsDataset(); }
+            catch (error) { console.error("Lighting quality failure retained the previous request, but diagnostics could not be refreshed", error); }
+          }
+          return succeeded;
+        },
+      );
+      if (attempt.succeeded) {
+        requestedLightingQuality = attempt.state.preference;
+        // The effective tier can already match a newly selected preference
+        // (for example auto -> balanced). Keep the public DOM diagnostics in
+        // sync even though the renderer projection itself was a true no-op.
+        try { updateDiagnosticsDataset(); }
+        catch (error) { console.error("Lighting quality preference committed, but diagnostics could not be refreshed", error); }
+      }
+      return attempt.succeeded;
     },
     setReducedMotion(value) {
+      if (reducedMotion !== value) precipitationViewCache = invalidatePrecipitationViewCache(precipitationViewCache);
       reducedMotion = value;
+      syncPrecipitationMotionGate(performance.now());
+      if (value && lightingTransition) {
+        lightingTransition = null;
+        environmentTransitionCancelledCount += 1;
+        updateLighting(new Date());
+      }
+      if (value && environmentReveal) finishEnvironmentReveal(true);
+      if (value) finishOpeningReveal("cancelled");
       for (const controller of atlasAnimationControllers) controller?.setReducedMotion(value);
       canvas.dataset.reducedMotion = String(value);
     },
     setVisible(value) {
       paneVisible = value;
+      if (!value) precipitationViewCache = invalidatePrecipitationViewCache(precipitationViewCache);
+      syncPrecipitationMotionGate(performance.now());
+      if (!value) {
+        if (lightingTransition) {
+          lightingTransition = null;
+          environmentTransitionCancelledCount += 1;
+        }
+        if (environmentReveal) finishEnvironmentReveal(true);
+        finishOpeningReveal("cancelled");
+      }
       for (const controller of atlasAnimationControllers) controller?.setVisible(!document.hidden && value);
       if (value) {
         updateLighting(new Date());
@@ -3934,6 +5440,13 @@ export function createVoxelRenderer(
     getDiagnostics,
     dispose() {
       disposed = true;
+      terrainGenerationCache = null;
+      if (lightingTransition) {
+        lightingTransition = null;
+        environmentTransitionCancelledCount += 1;
+      }
+      finishOpeningReveal("cancelled");
+      if (environmentReveal) finishEnvironmentReveal(true);
       if (nativeInputUnsubscribe) void nativeInputUnsubscribe();
       resourcePackGeneration += 1;
       frameScheduler.dispose();
@@ -3966,6 +5479,7 @@ export function createVoxelRenderer(
       starMaterial.dispose();
       sunSpriteMaterial.dispose();
       moonSpriteMaterial.dispose();
+      for (const spriteMaterial of glowMaterials.values()) if (spriteMaterial !== glowMaterial) spriteMaterial.dispose();
       glowMaterial.dispose();
       glowTexture.dispose();
       clearLights();
@@ -3977,7 +5491,7 @@ export function createVoxelRenderer(
       renderer.dispose();
       materials.forEach((entry) => entry.dispose());
       originalMaterialTextures.forEach((entry) => entry.dispose());
-      activeResourcePack?.atlas.dispose();
+      disposeQualityLifecycleAtlas(activeResourcePack?.atlas);
       activeResourcePack = null;
     },
   };
@@ -4051,7 +5565,7 @@ function createStarGeometry(count: number, radius: number): THREE.BufferGeometry
   return geometry;
 }
 
-function updateSkyDomeColors(geometry: THREE.BufferGeometry, state: SunState, weatherTint: number | null): void {
+function updateSkyDomeColors(geometry: THREE.BufferGeometry, state: SunState, weatherTint: number | null, weatherBlend: number): void {
   const positions = geometry.getAttribute("position");
   const colors = geometry.getAttribute("color") as THREE.BufferAttribute;
   const zenith = new THREE.Color(state.skyZenithColor);
@@ -4063,10 +5577,16 @@ function updateSkyDomeColors(geometry: THREE.BufferGeometry, state: SunState, we
     const height = positions.getY(index) / SKY_RADIUS;
     if (height >= 0) color.copy(horizon).lerp(zenith, smoothstep01(height / 0.82));
     else color.copy(lower).lerp(horizon, smoothstep01((height + 0.72) / 0.72));
-    if (tint) color.lerp(tint, 0.18);
+    if (tint) color.lerp(tint, weatherBlend);
     colors.setXYZ(index, color.r, color.g, color.b);
   }
   colors.needsUpdate = true;
+}
+
+function wrapCloudCoordinate(value: number, halfSpan: number): number {
+  const radius = Math.max(1, Math.abs(halfSpan));
+  const period = radius * 2;
+  return ((value + radius) % period + period) % period - radius;
 }
 
 function setCelestialPosition(
@@ -4078,9 +5598,124 @@ function setCelestialPosition(
   sprite.position.set(direction[0] / length, direction[1] / length, direction[2] / length).multiplyScalar(radius);
 }
 
+const naturalPalette: Readonly<Record<NaturalDecorationKind, Readonly<Record<NaturalDecorationPart["palette"], number>>>> = {
+  "flower": { base: 0x477345, secondary: 0x35613e, accent: 0xe8b86c },
+  "grass-tuft": { base: 0x60864f, secondary: 0x497448, accent: 0x90a85c },
+  "rock": { base: 0x777d79, secondary: 0x9a9c91, accent: 0xb7a689 },
+  "reed": { base: 0x78885a, secondary: 0x596f4d, accent: 0xa3925b },
+  "coral": { base: 0xd77a56, secondary: 0xb55b4a, accent: 0xf1bd80 },
+  "red-shrub": { base: 0x8f6344, secondary: 0x6f4d38, accent: 0xb74d3e },
+  "leaf-litter": { base: 0x9d6939, secondary: 0xb78945, accent: 0xc3944e },
+  "shelf-mushroom": { base: 0x9c634a, secondary: 0xd8b990, accent: 0xb57e5c },
+  "camp": { base: 0xc4a57b, secondary: 0x715b43, accent: 0xd77b43 },
+  "shipwreck": { base: 0x75533a, secondary: 0x493c34, accent: 0xb0783c },
+};
+
+export function naturalDecorationRenderScale(kind: NaturalDecorationKind): number {
+  switch (kind) {
+    case "flower": return 3.8;
+    case "grass-tuft": return 4.1;
+    case "rock": return 2.8;
+    case "reed": return 2.8;
+    case "coral": return 2.7;
+    case "red-shrub": return 3.2;
+    case "leaf-litter": return 2.5;
+    case "shelf-mushroom": return NATURAL_SHELF_MUSHROOM_RENDER_SCALE;
+    case "camp": return 3.2;
+    case "shipwreck": return 4.2;
+  }
+}
+
+export function naturalDecorationOriginY(kind: NaturalDecorationKind, support: "ground" | "water" | "tree",
+  supportY: number, minimumY: number, scale: number): number {
+  if (support === "tree") return supportY;
+  const surfaceY = supportY - 0.5;
+  // Hull and water flora straddle the visible water surface, not its support datum.
+  if (support === "water") {
+    if (kind === "shipwreck") return surfaceY - 0.45 * scale;
+    if (kind === "coral") return surfaceY - 0.62 * scale;
+    if (kind === "reed") return surfaceY - 0.5 * scale;
+    return surfaceY - minimumY * scale - 0.25 * scale;
+  }
+  return surfaceY - minimumY * scale;
+}
+
+export function naturalDecorationGeometry(kind: NaturalDecorationKind, lod: NaturalDecorationLod,
+  colors: Readonly<Record<NaturalDecorationPart["palette"], number>> = naturalPalette[kind]): THREE.BufferGeometry {
+  const positions: number[] = [];
+  const vertexColors: number[] = [];
+  for (const part of naturalDecorationParts(kind, lod)) {
+    const indexed = new THREE.BoxGeometry(...part.size);
+    const box = indexed.toNonIndexed();
+    indexed.dispose();
+    const transform = new THREE.Matrix4().makeRotationZ(part.rotationZ ?? 0)
+      .multiply(new THREE.Matrix4().makeRotationY(part.rotationY ?? 0));
+    transform.setPosition(...part.position);
+    box.applyMatrix4(transform);
+    const attribute = box.getAttribute("position");
+    const color = new THREE.Color(colors[part.palette]);
+    for (let index = 0; index < attribute.count; index += 1) {
+      positions.push(attribute.getX(index), attribute.getY(index), attribute.getZ(index));
+      vertexColors.push(color.r, color.g, color.b);
+    }
+    box.dispose();
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute("color", new THREE.Float32BufferAttribute(vertexColors, 3));
+  geometry.computeVertexNormals();
+  geometry.computeBoundingBox();
+  geometry.computeBoundingSphere();
+  return geometry;
+}
+
 function smoothstep01(value: number): number {
   const amount = THREE.MathUtils.clamp(value, 0, 1);
   return amount * amount * (3 - 2 * amount);
+}
+
+function smoothstep(edge0: number, edge1: number, value: number): number {
+  const amount = THREE.MathUtils.clamp((value - edge0) / (edge1 - edge0), 0, 1);
+  return amount * amount * (3 - 2 * amount);
+}
+
+function interpolateSunState(from: SunState, to: SunState, amount: number): SunState {
+  const t = THREE.MathUtils.clamp(Number.isFinite(amount) ? amount : 1, 0, 1);
+  const scalarKeys = ["sunVisibility", "moonVisibility", "starVisibility", "intensity", "hemisphereIntensity",
+    "exposure", "nightFactor", "directSunIntensity", "sunAzimuthDeg", "sunAltitudeDeg", "moonAzimuthDeg",
+    "moonAltitudeDeg", "moonIllumination", "moonPhase", "moonBrightLimbAngleDeg"] as const;
+  const result: SunState = { ...to,
+    position: interpolateVector(from.position, to.position, t),
+    sunPosition: interpolateVector(from.sunPosition, to.sunPosition, t),
+    moonPosition: interpolateVector(from.moonPosition, to.moonPosition, t),
+    phase: t < 0.5 ? from.phase : to.phase,
+    color: interpolateColor(from.color, to.color, t),
+    skyColor: interpolateColor(from.skyColor, to.skyColor, t),
+    skyZenithColor: interpolateColor(from.skyZenithColor, to.skyZenithColor, t),
+    skyHorizonColor: interpolateColor(from.skyHorizonColor, to.skyHorizonColor, t),
+    skyLowerColor: interpolateColor(from.skyLowerColor, to.skyLowerColor, t),
+    cloudColor: interpolateColor(from.cloudColor, to.cloudColor, t),
+    fogColor: interpolateColor(from.fogColor, to.fogColor, t),
+    hemisphereSkyColor: interpolateColor(from.hemisphereSkyColor, to.hemisphereSkyColor, t),
+    hemisphereGroundColor: interpolateColor(from.hemisphereGroundColor, to.hemisphereGroundColor, t),
+    moonWaxing: t < 0.5 ? from.moonWaxing : to.moonWaxing,
+  };
+  for (const key of scalarKeys) {
+    const left = from[key];
+    const right = to[key];
+    if (typeof left === "number" && typeof right === "number") result[key] = left + (right - left) * t;
+  }
+  return result;
+}
+
+function interpolateVector(from: readonly [number, number, number], to: readonly [number, number, number], amount: number): readonly [number, number, number] {
+  return [from[0] + (to[0] - from[0]) * amount, from[1] + (to[1] - from[1]) * amount, from[2] + (to[2] - from[2]) * amount];
+}
+
+function interpolateColor(from: number, to: number, amount: number): number {
+  const t = THREE.MathUtils.clamp(amount, 0, 1);
+  const channel = (shift: number) => Math.round(((from >> shift) & 0xff) + (((to >> shift) & 0xff) - ((from >> shift) & 0xff)) * t);
+  return (channel(16) << 16) | (channel(8) << 8) | channel(0);
 }
 
 function celestialProjection(sprite: THREE.Sprite, camera: THREE.Camera): { x: number; y: number; inView: boolean } {

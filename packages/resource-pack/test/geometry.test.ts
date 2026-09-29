@@ -35,12 +35,12 @@ describe("axis-aligned block geometry", () => {
       status: "resolved_geometry",
       modelId: "test:block/shape",
       elements: [{
-        from: [0, 0, 8],
-        to: [16, 4, 16],
+        from: [0, 0, 0],
+        to: [16, 4, 8],
         shade: false,
         shadeDirectionOverride: "up",
         faces: {
-          west: { texture: "test:block/stone", cullFace: "west" },
+          east: { texture: "test:block/stone", cullFace: "east" },
           up: { texture: "test:block/stone" },
         },
       }],
@@ -50,6 +50,117 @@ describe("axis-aligned block geometry", () => {
       reason: "COMPLEX_GEOMETRY",
       resourceId: "test:block/shape",
     });
+  });
+
+  it("uses the 26.3 blockstate quarter-turn group for asymmetric bounds, faces, cull hints and shade", () => {
+    const rotations = [
+      { key: "x0", x: 0, y: 0, from: [5, 7, 11], to: [6, 9, 12], down: "down", north: "north", shade: "north" },
+      // The vanilla north-wall button variant is x90: its down/base face must point +Z at the support.
+      { key: "x90", x: 90, y: 0, from: [5, 11, 7], to: [6, 12, 9], down: "south", north: "down", shade: "down" },
+      { key: "x180", x: 180, y: 0, from: [5, 7, 4], to: [6, 9, 5], down: "up", north: "south", shade: "south" },
+      { key: "x270", x: 270, y: 0, from: [5, 4, 7], to: [6, 5, 9], down: "north", north: "up", shade: "up" },
+      { key: "y0", x: 0, y: 0, from: [5, 7, 11], to: [6, 9, 12], down: "down", north: "north", shade: "north" },
+      { key: "y90", x: 0, y: 90, from: [4, 7, 5], to: [5, 9, 6], down: "down", north: "east", shade: "east" },
+      { key: "y180", x: 0, y: 180, from: [10, 7, 4], to: [11, 9, 5], down: "down", north: "south", shade: "south" },
+      { key: "y270", x: 0, y: 270, from: [11, 7, 10], to: [12, 9, 11], down: "down", north: "west", shade: "west" },
+      { key: "x90-y90", x: 90, y: 90, from: [7, 11, 5], to: [9, 12, 6], down: "west", north: "down", shade: "down" },
+      { key: "x90-y270", x: 90, y: 270, from: [7, 11, 10], to: [9, 12, 11], down: "east", north: "down", shade: "down" },
+    ] as const;
+    const variants = Object.fromEntries(rotations.map(({ key, x, y }) => [
+      `rotation=${key}`,
+      { model: "test:block/asymmetric", x, y },
+    ]));
+    const manifest = pack({
+      "assets/test/blockstates/rotated.json": json({ variants }),
+      "assets/test/models/block/asymmetric.json": json({
+        textures: { all: "test:block/stone" },
+        elements: [{
+          from: [5, 7, 11],
+          to: [6, 9, 12],
+          shade: true,
+          shade_direction_override: "north",
+          faces: {
+            down: { texture: "#all", cullface: "down" },
+            north: { texture: "#all", cullface: "north" },
+          },
+        }],
+      }),
+      "assets/test/textures/block/stone.png": png16(),
+    });
+
+    for (const expected of rotations) {
+      const resolved = resolveBlockGeometry(manifest, "test:rotated", { rotation: expected.key });
+      expect(resolved.status).toBe("resolved_geometry");
+      if (resolved.status !== "resolved_geometry") continue;
+      expect.soft(resolved.elements[0]).toMatchObject({
+        from: expected.from,
+        to: expected.to,
+        // 26.3 MaterialInfo carries an explicit world-cardinal override unchanged.
+        shadeDirectionOverride: "north",
+        faces: {
+          [expected.down]: { cullFace: expected.down },
+          [expected.north]: { cullFace: expected.north },
+        },
+      });
+      expect.soft(resolved.elements[0]).not.toHaveProperty("blockRotation");
+    }
+  });
+
+  it("keeps UV lock separate from blockstate geometry rotation", () => {
+    const manifest = pack({
+      "assets/test/blockstates/uv.json": json({ variants: {
+        "locked=true": { model: "test:block/uv", x: 90, uvlock: true },
+        "locked=false": { model: "test:block/uv", x: 90, uvlock: false },
+      } }),
+      "assets/test/models/block/uv.json": json({
+        textures: { all: "test:block/stone" },
+        elements: [{
+          from: [5, 0, 6], to: [11, 2, 10],
+          faces: { north: { texture: "#all", uv: [1, 2, 13, 14] } },
+        }],
+      }),
+      "assets/test/textures/block/stone.png": png16(),
+    });
+    const locked = resolveBlockGeometry(manifest, "test:uv", { locked: "true" });
+    const unlocked = resolveBlockGeometry(manifest, "test:uv", { locked: "false" });
+    expect(locked.status).toBe("resolved_geometry");
+    expect(unlocked.status).toBe("resolved_geometry");
+    if (locked.status !== "resolved_geometry" || unlocked.status !== "resolved_geometry") return;
+    expect(locked.elements[0]?.from).toEqual([5, 6, 14]);
+    expect(locked.elements[0]?.to).toEqual([11, 10, 16]);
+    expect(unlocked.elements[0]?.from).toEqual(locked.elements[0]?.from);
+    expect(unlocked.elements[0]?.to).toEqual(locked.elements[0]?.to);
+    expect(locked.elements[0]?.faces.down).toMatchObject({ uv: [1, 2, 13, 14], rotation: 0 });
+    expect(unlocked.elements[0]?.faces.down).toMatchObject({ uv: [1, 2, 13, 14], rotation: 180 });
+  });
+
+  it("defers an element-local angle and its enclosing blockstate turn exactly once", () => {
+    const manifest = pack({
+      "assets/test/blockstates/local.json": json({ variants: {
+        "": { model: "test:block/local", x: 90 },
+      } }),
+      "assets/test/models/block/local.json": json({
+        textures: { all: "test:block/stone" },
+        elements: [{
+          from: [5, 0, 6], to: [11, 2, 10],
+          rotation: { origin: [8, 8, 8], axis: "y", angle: 22.5, rescale: true },
+          faces: { down: { texture: "#all" } },
+        }],
+      }),
+      "assets/test/textures/block/stone.png": png16(),
+    });
+
+    const resolved = resolveBlockGeometry(manifest, "test:local");
+    expect(resolved.status).toBe("resolved_geometry");
+    if (resolved.status !== "resolved_geometry") return;
+    expect(resolved.elements[0]).toMatchObject({
+      from: [5, 0, 6],
+      to: [11, 2, 10],
+      rotation: { origin: [8, 8, 8], axis: "y", angle: 22.5, rescale: true },
+      blockRotation: { x: 90, y: 0 },
+    });
+    expect(resolved.elements[0]?.faces.down).toBeDefined();
+    expect(resolved.elements[0]?.faces.south).toBeUndefined();
   });
 
   it("resolves a two-element straight stair without inventing internal faces and keeps bounds independent of uvlock", () => {
@@ -262,7 +373,7 @@ describe("axis-aligned block geometry", () => {
     }
     expect(resolveBlockGeometry(manifest, "minecraft:vault", { facing: "up" })).toMatchObject({
       status: "resolved_geometry",
-      elements: [{ blockRotation: { x: 0, y: 90 }, faces: { up: { rotation: 90 } } }],
+      elements: [{ blockRotation: { x: 0, y: 90 }, faces: { up: { rotation: 270 } } }],
     });
   });
 

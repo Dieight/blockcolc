@@ -1,7 +1,7 @@
 import { strToU8, zlibSync } from "fflate";
 import * as THREE from "three";
 import { describe, expect, it } from "vitest";
-import type { ResourcePackSpecialTexture } from "@tomato-clock/resource-pack";
+import type { ResourcePackSpecialTexture } from "@blockcolc/resource-pack";
 import type { BlueprintVoxel } from "../src/blueprint";
 import { addResourceSpecialFigures } from "../src/resource-special-figures";
 

@@ -1,1 +1,1 @@
-export { DEFAULT_LITEMATIC_LIMITS, parseLitematic } from "@tomato-clock/litematic";
+export { DEFAULT_LITEMATIC_LIMITS, parseLitematic } from "@blockcolc/litematic";

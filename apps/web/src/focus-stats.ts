@@ -1,5 +1,5 @@
-import { addLocalDays, localDateOf, type DomainState, type ISODate, type ISOInstant } from '@tomato-clock/domain';
-import { projectFocusAttribution } from '@tomato-clock/application';
+import { addLocalDays, localDateOf, type DomainState, type ISODate, type ISOInstant } from '@blockcolc/domain';
+import { projectFocusAttribution } from '@blockcolc/application';
 
 export type FocusHistory = DomainState['focusHistory'];
 export type FocusHistoryEntry = FocusHistory[number];

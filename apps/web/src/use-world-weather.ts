@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import type { QWeatherFailureReason, QWeatherLocationSource, QWeatherResult } from '@tomato-clock/platform-capacitor';
-import { qweatherIsThunderstorm, qweatherVisual, type ExternalWeatherVisual } from './qweather-visual';
+import type { QWeatherAstronomyResult, QWeatherFailureReason, QWeatherLocationSource, QWeatherResult } from '@blockcolc/platform-capacitor';
+import { localDateForDate, weatherForExternalOverride, type AstronomyContext, type AstronomySchedule } from '@blockcolc/voxel';
+import { qweatherVisual, type ExternalWeatherVisual } from './qweather-visual';
 
 type NativeWeatherResult = QWeatherResult;
 
@@ -15,12 +16,20 @@ export interface WorldWeatherView {
   fallbackReason: QWeatherFailureReason | 'unknown_condition' | null;
   /** A provider-confirmed thunderstorm, never inferred from generic rain. */
   thunderstorm?: boolean;
+  /** Renderer-owned perceptual projection shared with the glass overlay. */
+  visualPrecipitationIntensity: number;
+  /** Astronomy has its own request lifecycle and must survive weather failures. */
+  astronomyContext: AstronomyContext | null;
+  astronomySyncState: 'not_synced' | 'syncing' | 'calendar' | 'ephemeris_only' | 'unavailable';
+  astronomyFailureReason: QWeatherFailureReason | null;
 }
 
 const LOCAL_WEATHER: WorldWeatherView = { syncState: 'not_synced', override: null, conditionText: null,
-  attributions: [], observedAt: null, locationSource: null, source: 'local', fallbackReason: null };
+  attributions: [], observedAt: null, locationSource: null, source: 'local', fallbackReason: null,
+  visualPrecipitationIntensity: 0, astronomyContext: null, astronomySyncState: 'not_synced', astronomyFailureReason: null };
 const REFRESH_MS = 30 * 60_000;
 const ERROR_RETRY_MS = 5 * 60_000;
+const ASTRONOMY_REFRESH_MS = 12 * 60 * 60_000;
 const MANUAL_RETRY_REASONS = new Set<QWeatherFailureReason>([
   'not_configured', 'location_permission_denied', 'permission_unavailable', 'signing_identity_unavailable',
   'native_plugin_unavailable', 'native_bridge_failed', 'native_result_invalid', 'authentication_failed', 'security_restriction',
@@ -43,13 +52,55 @@ export function isWorldWeatherFailureRetryable(reason: QWeatherFailureReason | '
   return !MANUAL_RETRY_REASONS.has(reason);
 }
 
+export function shouldRefreshAstronomyCalendar(
+  now: number,
+  lastAttempt: number,
+  lastSuccess: number,
+  force = false,
+  hasCoverage = true,
+): boolean {
+  if (force) return true;
+  const delay = lastSuccess > 0 && hasCoverage ? ASTRONOMY_REFRESH_MS : ERROR_RETRY_MS;
+  return now - lastAttempt >= delay;
+}
+
+/** A usable provider calendar must cover the current instant and the next 48
+ * hours without a gap. Day intervals are half-open; event fields may be null. */
+export function astronomyScheduleCovers48Hours(
+  schedule: AstronomySchedule | null,
+  nowMs: number,
+): boolean {
+  if (!schedule || !Number.isSafeInteger(nowMs) || schedule.days.length === 0 || schedule.days.length > 7) return false;
+  let currentIndex = -1;
+  let cursor = Number.NaN;
+  for (let index = 0; index < schedule.days.length; index += 1) {
+    const day = schedule.days[index];
+    if (!Number.isSafeInteger(day.intervalStartMs) || !Number.isSafeInteger(day.intervalEndMs)
+      || day.intervalStartMs >= day.intervalEndMs) return false;
+    if (day.intervalStartMs <= nowMs && nowMs < day.intervalEndMs) {
+      currentIndex = index;
+      cursor = day.intervalEndMs;
+      break;
+    }
+  }
+  if (currentIndex < 0) return false;
+  const requiredEnd = nowMs + 48 * 60 * 60_000;
+  while (cursor < requiredEnd) {
+    currentIndex += 1;
+    const day = schedule.days[currentIndex];
+    if (!day || day.intervalStartMs !== cursor || day.intervalEndMs <= cursor) return false;
+    cursor = day.intervalEndMs;
+  }
+  return true;
+}
+
 async function requestCurrentWeather(shouldContinue: () => boolean, cacheClear: Promise<void> | null): Promise<NativeWeatherResult> {
   if (!shouldContinue()) return { status: 'unavailable', reason: 'request_cancelled' };
   if (cacheClear) await cacheClear;
   if (!shouldContinue()) return { status: 'unavailable', reason: 'request_cancelled' };
-  let platform: typeof import('@tomato-clock/platform-capacitor');
+  let platform: typeof import('@blockcolc/platform-capacitor');
   try {
-    platform = await import('@tomato-clock/platform-capacitor');
+    platform = await import('@blockcolc/platform-capacitor');
   } catch {
     return { status: 'error', reason: 'native_plugin_unavailable' };
   }
@@ -58,9 +109,33 @@ async function requestCurrentWeather(shouldContinue: () => boolean, cacheClear: 
   return await platform.getQWeatherCurrent();
 }
 
+async function requestAstronomy(shouldContinue: () => boolean, cacheClear: Promise<void> | null): Promise<QWeatherAstronomyResult> {
+  if (!shouldContinue()) return { status: 'unavailable', reason: 'request_cancelled' };
+  if (cacheClear) await cacheClear;
+  if (!shouldContinue()) return { status: 'unavailable', reason: 'request_cancelled' };
+  let platform: typeof import('@blockcolc/platform-capacitor');
+  try {
+    platform = await import('@blockcolc/platform-capacitor');
+  } catch {
+    return { status: 'error', reason: 'native_plugin_unavailable' };
+  }
+  if (!shouldContinue()) return { status: 'unavailable', reason: 'request_cancelled' };
+  if (!platform.isQWeatherAvailable()) return { status: 'unavailable', reason: 'unsupported_platform' };
+  return await platform.getQWeatherAstronomy();
+}
+
+async function cancelAstronomyRequest(): Promise<void> {
+  try {
+    const platform = await import('@blockcolc/platform-capacitor');
+    if (platform.isQWeatherAvailable()) await platform.cancelQWeatherAstronomy();
+  } catch {
+    // A hidden route still drops its generation; an older native bridge may lack cancellation.
+  }
+}
+
 async function clearCachedLocation(): Promise<boolean> {
   try {
-    const platform = await import('@tomato-clock/platform-capacitor');
+    const platform = await import('@blockcolc/platform-capacitor');
     if (!platform.isQWeatherAvailable()) return true;
     return await platform.clearQWeatherLocationCache();
   } catch {
@@ -88,12 +163,40 @@ export function getVisibleWorldWeatherView(enabled: boolean, view: WorldWeatherV
     : LOCAL_WEATHER;
 }
 
+export function mergeWorldWeatherPreservingAstronomy(previous: WorldWeatherView, next: WorldWeatherView): WorldWeatherView {
+  return {
+    ...next,
+    astronomyContext: previous.astronomyContext,
+    astronomySyncState: previous.astronomySyncState,
+    astronomyFailureReason: previous.astronomyFailureReason,
+  };
+}
+
+export function mapQWeatherAstronomyContext(result: QWeatherAstronomyResult): AstronomyContext | null {
+  if (result.status !== 'ok' && result.status !== 'ephemeris_only') return null;
+  const schedule: AstronomySchedule | null = result.status === 'ok' ? {
+    coordinates: result.coordinate,
+    locationSource: result.locationSource,
+    fetchedAtMs: result.fetchedAtMs,
+    days: result.days,
+    attribution: result.attributions,
+  } : null;
+  return { coordinates: result.coordinate, schedule, locationSource: result.locationSource };
+}
+
 /** Resident world hook: permission is requested only after explicit opt-in and
  * while the world is visible. A failed/stale reading has no renderer override. */
 export function useWorldWeather(enabled: boolean, visible: boolean): WorldWeatherView {
   const [view, setView] = useState<WorldWeatherView>(LOCAL_WEATHER);
   const pending = useRef<{ generation: number; promise: Promise<NativeWeatherResult> } | null>(null);
   const requestGeneration = useRef(0);
+  const astronomyPending = useRef<{ generation: number; promise: Promise<QWeatherAstronomyResult> } | null>(null);
+  const astronomyGeneration = useRef(0);
+  const astronomyWasVisible = useRef(false);
+  const astronomyLastAttempt = useRef(Number.NEGATIVE_INFINITY);
+  const astronomyLastSuccess = useRef(0);
+  const astronomyScheduleRef = useRef<AstronomySchedule | null>(view.astronomyContext?.schedule ?? null);
+  astronomyScheduleRef.current = view.astronomyContext?.schedule ?? null;
   const lastAttempt = useRef(Number.NEGATIVE_INFINITY);
   const lastSuccess = useRef(0);
   const permissionDenied = useRef(false);
@@ -125,7 +228,7 @@ export function useWorldWeather(enabled: boolean, visible: boolean): WorldWeathe
           pendingCacheClear.current = null;
         });
       }
-      setView(LOCAL_WEATHER);
+      setView(previous => mergeWorldWeatherPreservingAstronomy(previous, LOCAL_WEATHER));
       return;
     }
     disabledCacheClearStarted.current = false;
@@ -169,29 +272,111 @@ export function useWorldWeather(enabled: boolean, visible: boolean): WorldWeathe
         if (result.status === 'permission_denied') permissionDenied.current = true;
         manualRetryRequired.current = !isWorldWeatherFailureRetryable(result.reason);
         lastSuccess.current = 0;
-        setView({ ...LOCAL_WEATHER, syncState: 'fallback', fallbackReason: result.reason });
+        setView(previous => mergeWorldWeatherPreservingAstronomy(previous, { ...LOCAL_WEATHER, syncState: 'fallback', fallbackReason: result.reason }));
         return;
       }
       const override = qweatherVisual(result.current);
       if (!override) {
         manualRetryRequired.current = true;
         lastSuccess.current = 0;
-        setView({ ...LOCAL_WEATHER, syncState: 'fallback', fallbackReason: 'unknown_condition',
-          attributions: result.attributions, observedAt: result.observedAt ?? null });
+        setView(previous => mergeWorldWeatherPreservingAstronomy(previous, { ...LOCAL_WEATHER, syncState: 'fallback', fallbackReason: 'unknown_condition',
+          attributions: result.attributions, observedAt: result.observedAt ?? null }));
         return;
       }
       manualRetryRequired.current = false;
       lastSuccess.current = Date.now();
-      setView({ syncState: 'available', override, conditionText: result.current.conditionText,
+      setView(previous => mergeWorldWeatherPreservingAstronomy(previous, { syncState: 'available', override, conditionText: result.current.conditionText,
         attributions: result.attributions, observedAt: result.observedAt ?? null,
         locationSource: result.locationSource ?? 'fresh',
         source: 'real', fallbackReason: null,
-        thunderstorm: override.kind === 'rain' && qweatherIsThunderstorm(result.current.conditionCode) });
+        visualPrecipitationIntensity: weatherForExternalOverride(localDateForDate(new Date()), override).visualPrecipitationIntensity,
+        thunderstorm: override.thunderstorm === true,
+        astronomyContext: previous.astronomyContext, astronomySyncState: previous.astronomySyncState,
+        astronomyFailureReason: previous.astronomyFailureReason }));
     };
     void refresh();
     const interval = window.setInterval(() => void refresh(), 60_000);
     document.addEventListener('visibilitychange', refresh);
     return () => { alive = false; window.clearInterval(interval); document.removeEventListener('visibilitychange', refresh); };
+  }, [enabled, visible]);
+
+  useEffect(() => {
+    if (!enabled) {
+      astronomyWasVisible.current = false;
+      astronomyGeneration.current += 1;
+      astronomyPending.current = null;
+      astronomyLastAttempt.current = Number.NEGATIVE_INFINITY;
+      astronomyLastSuccess.current = 0;
+      setView(previous => ({ ...previous, astronomyContext: null,
+        astronomySyncState: 'not_synced', astronomyFailureReason: null }));
+      return;
+    }
+    if (!visible) {
+      astronomyWasVisible.current = false;
+      astronomyGeneration.current += 1;
+      astronomyPending.current = null;
+      void cancelAstronomyRequest();
+      return;
+    }
+    let alive = true;
+    const refresh = async (force = false) => {
+      if (!alive || !shouldStartWorldWeatherRequest(enabled, visible,
+        document.visibilityState !== 'hidden', permissionDenied.current)) return;
+      const currentGeneration = astronomyGeneration.current;
+      const currentPending = astronomyPending.current;
+      if (currentPending && currentPending.generation === currentGeneration) {
+        // StrictMode's second effect adopts the one native astronomy request.
+      } else if (!shouldRefreshAstronomyCalendar(Date.now(), astronomyLastAttempt.current,
+        astronomyLastSuccess.current, force,
+        astronomyScheduleCovers48Hours(astronomyScheduleRef.current, Date.now()))) {
+        return;
+      }
+      const canContinue = () => astronomyGeneration.current === currentGeneration
+        && shouldStartWorldWeatherRequest(enabledState.current, visibleState.current,
+          document.visibilityState !== 'hidden', permissionDenied.current);
+      const request = currentPending?.generation === currentGeneration ? currentPending : {
+        generation: currentGeneration,
+        promise: requestAstronomy(canContinue, pendingCacheClear.current),
+      };
+      astronomyPending.current = request;
+      setView(previous => ({ ...previous, astronomySyncState: 'syncing', astronomyFailureReason: null }));
+      const result = await request.promise;
+      if (astronomyPending.current === request) astronomyPending.current = null;
+      if (!alive || astronomyGeneration.current !== request.generation) return;
+      if (result.status === 'unavailable' && result.reason === 'request_cancelled') return;
+      astronomyLastAttempt.current = Date.now();
+      if (result.status === 'unavailable' && result.reason === 'location_permission_denied') {
+        permissionDenied.current = true;
+      }
+      if (result.status === 'ok' || result.status === 'ephemeris_only') {
+        const context = mapQWeatherAstronomyContext(result);
+        astronomyLastSuccess.current = result.status === 'ok' ? Date.now() : 0;
+        setView(previous => ({ ...previous, astronomyContext: context,
+          astronomySyncState: result.status === 'ok' ? 'calendar' : 'ephemeris_only',
+          astronomyFailureReason: result.status === 'ok' ? null : result.reason }));
+        return;
+      }
+      astronomyLastSuccess.current = 0;
+      setView(previous => ({ ...previous, astronomyContext: null,
+        astronomySyncState: 'unavailable', astronomyFailureReason: result.reason }));
+    };
+    const resumedVisibility = !astronomyWasVisible.current;
+    astronomyWasVisible.current = true;
+    void refresh(resumedVisibility);
+    const interval = window.setInterval(() => void refresh(), 60_000);
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        astronomyGeneration.current += 1;
+        astronomyPending.current = null;
+        void cancelAstronomyRequest();
+      } else {
+        astronomyGeneration.current += 1;
+        astronomyPending.current = null;
+        void refresh(true);
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => { alive = false; window.clearInterval(interval); document.removeEventListener('visibilitychange', onVisibilityChange); };
   }, [enabled, visible]);
 
   return getVisibleWorldWeatherView(enabled, view);

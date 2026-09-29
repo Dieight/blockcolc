@@ -3,10 +3,12 @@ import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 test('measures resource-pack panel button positions for device scaling', async ({ page }) => {
+  test.setTimeout(90_000);
   await page.setViewportSize({ width: 360, height: 800 });
   const sample = resolve(process.cwd(), '../../litematic/v17-stay-true-1.21.5.zip');
   test.skip(!existsSync(sample), 'Real pack fixture stays local.');
   await page.goto('/');
+  await page.getByRole('button', { name: '开始建造', exact: true }).click();
   await page.getByRole('button', { name: '设置', exact: true }).click();
   await page.getByLabel('导入 Java 资源包 ZIP').setInputFiles(sample);
   await expect(page.locator('.resource-pack-panel .backup-notice')).toContainText('已导入并启用');
@@ -15,7 +17,8 @@ test('measures resource-pack panel button positions for device scaling', async (
   const original = page.locator('.resource-pack-original');
   const importButton = page.getByLabel('导入 Java 资源包 ZIP');
   const packRow = page.locator('.resource-pack-list li').first();
-  const useButton = packRow.getByRole('button', { name: '使用' });
+  await expect(packRow).toBeVisible();
+  const useButton = packRow.getByRole('button', { name: /使用(?:中)?/ });
   const deleteButton = packRow.getByRole('button', { name: /删除/ });
   const measure = async (locator: import('@playwright/test').Locator, label: string) => {
     const box = await locator.boundingBox();

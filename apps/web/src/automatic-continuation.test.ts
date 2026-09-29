@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { DomainState, FocusSession } from '@tomato-clock/domain';
+import type { DomainState, FocusSession } from '@blockcolc/domain';
 import {
   parseRoundPlan,
   automaticContinuationStartAt,

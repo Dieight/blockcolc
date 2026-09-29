@@ -1,5 +1,5 @@
-import type { Clock, FocusLifecycleEvent, FocusLifecyclePort, IdGenerator, NotificationCapability, NotificationPort } from '@tomato-clock/application';
-import { MAX_BACKUP_BYTES } from '@tomato-clock/storage-indexeddb';
+import type { Clock, FocusLifecycleEvent, FocusLifecyclePort, IdGenerator, NotificationCapability, NotificationPort } from '@blockcolc/application';
+import { MAX_BACKUP_BYTES } from '@blockcolc/storage-indexeddb';
 
 export const LITEMATIC_MAX_COMPRESSED_BYTES = 64 * 1024 * 1024;
 
@@ -33,7 +33,7 @@ export class BrowserFocusLifecyclePort implements FocusLifecyclePort {
 
 /** Saves through the native adapter when available, otherwise downloads a JSON Blob. */
 export async function saveBackupFile(json: string, filename: string): Promise<void> {
-  const platform = await import('@tomato-clock/platform-capacitor');
+  const platform = await import('@blockcolc/platform-capacitor');
   const native = platform as typeof platform & { saveNativeBackupFile?: (name: string, content: string) => Promise<boolean> };
   if (platform.isCapacitorNative() && native.saveNativeBackupFile) {
     if (await native.saveNativeBackupFile(filename, json)) return;

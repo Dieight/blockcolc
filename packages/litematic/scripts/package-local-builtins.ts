@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { validateBlueprint } from "@tomato-clock/voxel";
+import { validateBlueprint } from "@blockcolc/voxel";
 import { parseLitematic } from "../src/index.js";
 
 type LocalBuiltinCategory = "building" | "daily-reward";

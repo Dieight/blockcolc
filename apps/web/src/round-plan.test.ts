@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { DomainState } from '@tomato-clock/domain';
+import type { DomainState } from '@blockcolc/domain';
 import { MAX_MARATHON_ROUNDS, parseRoundPlan, planRoundsForDuration, plannedDurationMs, reconcileRoundPlan, remainingPlanDurationMs, type RoundPlan } from './round-plan';
 
 const projectId = 'project-1';
@@ -86,6 +86,14 @@ describe('marathon scheduling from a chosen end time', () => {
 });
 
 describe('round-plan recovery', () => {
+  it('persists only a supported cancellation reason in the recoverable plan', () => {
+    expect(parseRoundPlan({ ...basePlan, cancellationReason: 'fatigue' }, projectId)?.cancellationReason).toBe('fatigue');
+    expect(parseRoundPlan({ ...basePlan, cancellationReason: null }, projectId)?.cancellationReason).toBeNull();
+    expect(parseRoundPlan({ ...basePlan, cancellationReason: 'invented' }, projectId)).toBeNull();
+    expect(parseRoundPlan({ ...basePlan, cancellationRequested: true, cancellationReason: 'other', cancellationNote: '结束安排' }, projectId)).toMatchObject({ cancellationRequested: true, cancellationNote: '结束安排' });
+    expect(parseRoundPlan({ ...basePlan, cancellationRequested: true, cancellationReason: 'other' }, projectId)).toBeNull();
+    expect(parseRoundPlan({ ...basePlan, cancellationNote: ' '.repeat(3) }, projectId)).toBeNull();
+  });
   it('accepts legacy persisted plans and initializes their recovery evidence', () => {
     expect(parseRoundPlan({ ...basePlan, reportedSessionIds: undefined }, projectId)?.reportedSessionIds).toEqual([]);
   });

@@ -1,4 +1,4 @@
-import type { Clock, DomainState, ISOInstant } from "@tomato-clock/domain";
+import type { Clock, DomainState, ISOInstant } from "@blockcolc/domain";
 
 export type { Clock };
 

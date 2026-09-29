@@ -1,7 +1,7 @@
 import { App } from '@capacitor/app';
 import { Capacitor, registerPlugin } from '@capacitor/core';
 import { LocalNotifications } from '@capacitor/local-notifications';
-import type { FocusLifecycleEvent, FocusLifecyclePort } from '@tomato-clock/application';
+import type { FocusLifecycleEvent, FocusLifecyclePort } from '@blockcolc/application';
 
 export interface NativeBackgroundContext {
   screenInteractive: boolean;

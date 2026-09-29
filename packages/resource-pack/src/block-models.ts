@@ -408,6 +408,8 @@ function resolveGeometryChoices(
         from: transformed?.from ?? element.from,
         to: transformed?.to ?? element.to,
         shade: element.shade,
+        // 26.3 keeps an explicit shading direction in world-cardinal space;
+        // FaceBakery transforms geometry, not MaterialInfo's direction override.
         ...(element.shadeDirectionOverride === undefined ? {} : { shadeDirectionOverride: element.shadeDirectionOverride }),
         faces: resolvedFaces,
         ...(element.rotation === undefined ? {} : {
@@ -920,10 +922,8 @@ function rotateElementBounds(
 }
 
 function rotateElementPoint(point: BlockElementVector, x: FaceRotation, y: FaceRotation): BlockElementVector {
-  let output = { x: point[0] - 8, y: point[1] - 8, z: point[2] - 8 };
-  for (let turns = 0; turns < x / 90; turns += 1) output = { x: output.x, y: -output.z, z: output.y };
-  for (let turns = 0; turns < y / 90; turns += 1) output = { x: output.z, y: output.y, z: -output.x };
-  return [output.x + 8, output.y + 8, output.z + 8];
+  const [rotatedX, rotatedY, rotatedZ] = rotateBlockstateVector([point[0] - 8, point[1] - 8, point[2] - 8], x, y);
+  return [rotatedX + 8, rotatedY + 8, rotatedZ + 8];
 }
 
 function resolveTextureReference(
@@ -943,11 +943,10 @@ function resolveTextureReference(
   return { value: resolved.value, forceTranslucent: resolved.forceTranslucent || forceTranslucentTextures[variable] === true };
 }
 
-function rotateFace(face: BlockFace, x: number, y: number): BlockFace {
-  let vector = faceVector(face);
-  for (let turns = 0; turns < x / 90; turns += 1) vector = { x: vector.x, y: -vector.z, z: vector.y };
-  for (let turns = 0; turns < y / 90; turns += 1) vector = { x: vector.z, y: vector.y, z: -vector.x };
-  return vectorFace(vector);
+function rotateFace(face: BlockFace, x: FaceRotation, y: FaceRotation): BlockFace {
+  const vector = faceVector(face);
+  const [rotatedX, rotatedY, rotatedZ] = rotateBlockstateVector([vector.x, vector.y, vector.z], x, y);
+  return vectorFace({ x: rotatedX, y: rotatedY, z: rotatedZ });
 }
 
 /**
@@ -1021,10 +1020,25 @@ function faceBasis(face: BlockFace): { u: AxisVector; v: AxisVector } {
 }
 
 function rotateVector(vector: AxisVector, x: FaceRotation, y: FaceRotation): AxisVector {
-  let output = vector;
-  for (let turns = 0; turns < x / 90; turns += 1) output = { x: output.x, y: -output.z as AxisVector["y"], z: output.y };
-  for (let turns = 0; turns < y / 90; turns += 1) output = { x: output.z, y: output.y, z: -output.x as AxisVector["z"] };
-  return output;
+  const [rotatedX, rotatedY, rotatedZ] = rotateBlockstateVector([vector.x, vector.y, vector.z], x, y);
+  return {
+    x: rotatedX as AxisVector["x"],
+    y: rotatedY as AxisVector["y"],
+    z: rotatedZ as AxisVector["z"],
+  };
+}
+
+function rotateBlockstateVector(
+  vector: readonly [number, number, number],
+  x: FaceRotation,
+  y: FaceRotation,
+): [number, number, number] {
+  let [rotatedX, rotatedY, rotatedZ] = vector;
+  // Variant$SimpleModelState uses Z·Y·X, so points act through X then Y;
+  // Minecraft 26.3 blockstate quadrants map to negative-axis matrices.
+  for (let turns = 0; turns < x / 90; turns += 1) [rotatedX, rotatedY, rotatedZ] = [rotatedX, rotatedZ, -rotatedY];
+  for (let turns = 0; turns < y / 90; turns += 1) [rotatedX, rotatedY, rotatedZ] = [-rotatedZ, rotatedY, rotatedX];
+  return [rotatedX, rotatedY, rotatedZ];
 }
 
 function vectorEquals(left: AxisVector, right: AxisVector): boolean {

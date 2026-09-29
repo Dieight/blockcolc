@@ -1,5 +1,5 @@
 {
-  "name": "@tomato-clock/platform-capacitor",
+  "name": "@blockcolc/platform-capacitor",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -15,7 +15,7 @@
     "@capacitor/local-notifications": "^7.0.3",
     "@capacitor/share": "^7.0.4",
     "@capacitor/status-bar": "^7.0.3",
-    "@tomato-clock/application": "file:../application"
+    "@blockcolc/application": "file:../application"
   },
   "devDependencies": {
     "@types/node": "^24.10.1",

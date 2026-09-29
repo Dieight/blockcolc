@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { ApplicationService, type ApplicationCommand, type NotificationCapability, type StateRepository } from '@tomato-clock/application';
-import type { DomainState } from '@tomato-clock/domain';
+import { ApplicationService, type ApplicationCommand, type NotificationCapability, type StateRepository } from '@blockcolc/application';
+import type { DomainState } from '@blockcolc/domain';
 import { createFocusFlow } from './focus-flow';
 import { defaultFocusPreferences } from './focus-preferences';
 import type { RoundPlan } from './round-plan';
@@ -43,7 +43,7 @@ async function fixture(kind: 'finite' | 'habit' = 'finite') {
     closeEnding: vi.fn(), closePlan, resetDraftMode: () => { draft.mode = 'rounds'; }, constructionFeedback: vi.fn() });
   const schedule = (deferred = false, rounds = 2) => { plan = { projectId: project.id, subtaskId: deferred ? null : project.subtasks[0]?.id ?? null, mode: 'marathon', ...(deferred ? { deferredSettlement: true as const } : {}), status: 'ready', totalRounds: rounds, completedRounds: 0, reportedSessionIds: [] }; };
   return { service, project, preferences, draft, flow, dispatch, writePlan, resume, closePlan, schedule,
-    plan: () => plan, advance: (ms: number) => { now += ms; }, failSave: () => { failSave = true; } };
+    plan: () => plan, setPlan: (next: RoundPlan | null) => { plan = next; }, advance: (ms: number) => { now += ms; }, failSave: () => { failSave = true; } };
 }
 
 describe('focus flow orchestration', () => {
@@ -101,10 +101,54 @@ describe('focus flow orchestration', () => {
     await f.flow.completeEarly();
     expect(f.plan()).toMatchObject({ status: 'break', completedRounds: 1, deferredSettlement: true });
     expect(f.service.snapshot().projects[0]!.habit?.completedFocusSessionIds.length ?? 0).toBe(0);
-    await f.flow.cancelPlan();
+    await f.flow.cancelPlan('other', '结束当前安排');
     expect(f.plan()?.status).toBe('report');
     expect(unsettledMarathonSessions(f.service.snapshot())).toHaveLength(1);
   });
+  it('cancels an entire fixed plan with the selected reason without counting the interrupted current round', async () => {
+    const f = await fixture();
+    f.schedule();
+    await f.flow.startFocus();
+    await f.flow.cancelPlan('fatigue', '需要休息');
+    expect(f.service.snapshot().activeFocusSession).toBeNull();
+    expect(f.service.snapshot().focusHistory.at(-1)).toMatchObject({ status: 'interrupted', interruptionCategory: 'fatigue', interruptionNote: '需要休息', actualDurationMs: 0 });
+    expect(f.plan()).toBeNull();
+  });
+  it('keeps a write-ahead cancellation intent when the final context save fails', async () => {
+    const f = await fixture(); f.schedule(true);
+    await f.flow.startFocus();
+    let writes = 0;
+      f.writePlan.mockImplementation(next => {
+        writes += 1;
+        if (next === null) throw Error('quota');
+        f.setPlan(next);
+      });
+      await expect(f.flow.cancelPlan('fatigue', '需要休息')).rejects.toThrow('quota');
+      expect(writes).toBeGreaterThanOrEqual(2);
+    expect(f.service.snapshot().activeFocusSession).toBeNull();
+    expect(f.plan()).toMatchObject({ cancellationRequested: true, cancellationReason: 'fatigue', cancellationNote: '需要休息' });
+  });
+  it('keeps completed deferred rounds for one retryable cancellation report and does not count the canceled active round', async () => {
+    const f = await fixture(); f.schedule(true, 3);
+    await f.flow.startFocus(); f.advance(1000); await f.flow.completeEarly();
+    await f.flow.continueFromBreak();
+    await f.flow.cancelPlan('task-blocked', '事情暂时受阻');
+    expect(f.service.snapshot().focusHistory.filter(session => session.status === 'interrupted')).toHaveLength(1);
+    expect(f.plan()).toMatchObject({ status: 'report', completedRounds: 1, cancellationReason: 'task-blocked', cancellationNote: '事情暂时受阻' });
+    expect(unsettledMarathonSessions(f.service.snapshot(), f.project.id)).toHaveLength(1);
+  });
+  it('retains a full round and cancellation note until the report callback confirms the save', async () => {
+    const f = await fixture(); f.schedule(true, 2);
+    await f.flow.startFocus(); f.advance(60_000); await f.service.resume();
+    await f.flow.cancelPlan('priority-changed', '优先事项发生变化');
+    expect(f.service.snapshot().focusHistory.at(-1)).toMatchObject({ status: 'completed' });
+    expect(f.service.snapshot().focusHistory.some(session => session.status === 'interrupted')).toBe(false);
+    expect(f.plan()).toMatchObject({ status: 'report', completedRounds: 1, cancellationNote: '优先事项发生变化' });
+    // A failed report never calls this acknowledgement, so both rounds and note remain retryable.
+    f.flow.afterMarathonReport();
+    expect(f.plan()).toBeNull();
+  });
+
   it('ordinary habit marathon completion advances the building and never opens a final report', async () => {
     const f = await fixture('habit'); f.schedule(false, 1);
     await f.flow.startFocus(); f.advance(1000); await f.flow.completeEarly();
@@ -115,7 +159,7 @@ describe('focus flow orchestration', () => {
     const f = await fixture(); f.schedule(true);
     await f.flow.startFocus(); f.advance(1000); await f.flow.interruptFocus(null);
     expect(f.plan()).toMatchObject({ status: 'ready', completedRounds: 0 });
-    await f.flow.cancelPlan();
+    await f.flow.cancelPlan('other', '不再继续剩余轮次');
     expect(f.plan()).toBeNull();
     expect(unsettledMarathonSessions(f.service.snapshot())).toHaveLength(0);
   });

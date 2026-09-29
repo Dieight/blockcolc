@@ -102,6 +102,13 @@
 .focus-plan-sheet,
 .habit-building-selection,
 .progress-report-panel{animation:ui-fade-in .18s cubic-bezier(.22,.9,.36,1) both}
+.focus-report-surface--immersive{width:min(100%,680px);max-height:calc(100dvh - 40px);margin-inline:auto;overflow-y:auto;overscroll-behavior:contain}
+.cancel-plan-reason{display:grid;gap:10px;margin-top:14px;text-align:left}
+.cancel-plan-reason label{display:grid;gap:6px;color:var(--ink);font-size:13px;font-weight:700}
+.cancel-plan-reason textarea,.cancel-plan-note textarea{min-height:76px;resize:vertical}
+.cancel-plan-note{display:grid;gap:6px;margin:12px 0;text-align:left;color:var(--ink);font-size:13px;font-weight:700}
+.cancel-plan-count{display:block;margin:-8px 0 8px;color:var(--muted);text-align:right}
+.cancel-plan-reason .primary{width:100%;margin-top:0}
 .dialog-backdrop{animation:ui-fade-in .14s ease-out both}
 /* FX-04 exit: closing controls mirror the entrance with a fade-down so
    pop-in and pop-out read as one symmetric move. The immersive integrity chip

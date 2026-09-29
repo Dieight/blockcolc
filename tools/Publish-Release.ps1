@@ -33,8 +33,12 @@ try {
     Assert-ReleaseEvidenceVersion -Evidence $evidence -Context $context
     Assert-AcceptedReleaseEvidence -Evidence $evidence
     Assert-ReleaseWorkPacketComplete -Context $context
+    Assert-ReleaseReportIndex -Evidence $evidence -Context $context
     Assert-ReleaseEvidenceMatchesStagedState -Evidence $evidence
     Invoke-External -FilePath 'node' -Arguments @('tools/sync-version.mjs', '--check')
+    $prepublishCandidate = Assert-ReleaseCandidateEvidence -Evidence $evidence -Context $context -Boundary 'candidate before publication version preflight'
+    $publishedHistory = Get-DeliveredApkHistory -Context $context -Channel all
+    Assert-NextDeliveredApkVersion -Metadata (Assert-ApkMetadata -Path $prepublishCandidate.Path -Context $context) -Context $context -Channel standard -History $publishedHistory -DeliveryRoundId ([string](Get-OptionalEvidenceProperty -Object $evidence -Name 'deliveryRoundId'))
 
     # Release gate: the branch being released must already be green on CI. A red
     # branch is never published; known environment-only flakes require -AllowRedCi
@@ -71,6 +75,8 @@ try {
     $commit = (Invoke-External -FilePath 'git' -Arguments @('rev-parse', 'HEAD') -Capture | Select-Object -First 1).ToString().Trim()
     Invoke-External -FilePath 'git' -Arguments @('push', 'origin', $context.Branch)
     Invoke-External -FilePath 'gh' -Arguments @('release', 'create', $tag, $candidateApk, '--repo', $context.Repository, '--target', $commit, '--title', $tag, '--notes-file', $ReleaseNotesPath)
+    $releaseUrl = (Invoke-External -FilePath 'gh' -Arguments @('release', 'view', $tag, '--repo', $context.Repository, '--json', 'url', '--jq', '.url') -Capture | Select-Object -First 1).ToString().Trim()
+    if ($releaseUrl -notmatch '^https://') { throw "GitHub Release URL was not returned for $tag." }
 
     $downloadDirectory = Join-Path $artifactDirectory 'redownloaded'
     New-Item -ItemType Directory -Path $downloadDirectory -Force | Out-Null
@@ -111,22 +117,28 @@ try {
     }
 
     # Release completeness audit: tag, GitHub Release, and Latest marker must line up.
+    $releaseAuditAttempts = @()
     for ($attempt = 1; $attempt -le 3; $attempt += 1) {
         & (Join-Path $PSScriptRoot 'Audit-Release.ps1')
-        if ($LASTEXITCODE -eq 0) { break }
+        $auditExitCode = [int]$LASTEXITCODE
+        $releaseAuditAttempts += [pscustomobject]@{ attempt = $attempt; exitCode = $auditExitCode; status = if ($auditExitCode -eq 0) { 'passed' } else { 'failed' } }
+        if ($auditExitCode -eq 0) { break }
         if ($attempt -eq 3) { throw "Release audit failed for $tag after retries." }
         Start-Sleep -Seconds 10
     }
 
     Set-EvidenceProperty -Evidence $evidence -Name phase -Value 'published'
+    Set-EvidenceProperty -Evidence $evidence -Name schemaVersion -Value ([Math]::Max(2, [int](Get-OptionalEvidenceProperty -Object $evidence -Name 'schemaVersion')))
     Set-EvidenceProperty -Evidence $evidence -Name publishedAt -Value ((Get-Date).ToUniversalTime().ToString('o'))
     Set-EvidenceProperty -Evidence $evidence -Name commit -Value $commit
     Set-EvidenceProperty -Evidence $evidence -Name tag -Value $tag
+    Set-EvidenceProperty -Evidence $evidence -Name releaseUrl -Value $releaseUrl
     Set-EvidenceProperty -Evidence $evidence -Name redownloadedApk -Value $downloadedApk
     Set-EvidenceProperty -Evidence $evidence -Name redownloadedSha256 -Value $downloadedHash
     Set-EvidenceProperty -Evidence $evidence -Name publishDevices -Value @($devices)
     Set-EvidenceProperty -Evidence $evidence -Name releaseCiRunId -Value $releaseCiRunId
     Set-EvidenceProperty -Evidence $evidence -Name releaseCiConclusion -Value $releaseCiConclusion
+    Set-EvidenceProperty -Evidence $evidence -Name releaseAudit -Value ([ordered]@{ script = 'tools/Audit-Release.ps1'; attempts = @($releaseAuditAttempts); exitCode = 0; retryCount = @($releaseAuditAttempts).Count - 1 })
     Write-ReleaseEvidence -Evidence $evidence -Path $evidencePath
     Write-Host "Published and verified $tag ($downloadedHash)."
 }

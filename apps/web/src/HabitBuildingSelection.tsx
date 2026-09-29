@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import type { ApplicationCommand, ApplicationResult, ApplicationService } from '@tomato-clock/application';
-import type { BlueprintCatalogEntry, BlueprintV1 } from '@tomato-clock/voxel';
-import type { ResourcePackRepository } from '@tomato-clock/resource-pack-indexeddb';
+import type { ApplicationCommand, ApplicationResult, ApplicationService } from '@blockcolc/application';
+import type { BlueprintCatalogEntry, BlueprintV1 } from '@blockcolc/voxel';
+import type { ResourcePackRepository } from '@blockcolc/resource-pack-indexeddb';
 import { Hammer } from 'lucide-react';
 import { useBlueprintCatalog } from './voxel-runtime';
 import { BlueprintPicker } from './BlueprintPicker';

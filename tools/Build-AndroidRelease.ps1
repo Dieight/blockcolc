@@ -44,7 +44,7 @@ try {
         }
 
         $syncScript = if ($QualityGateAlreadyPassed) { 'android:sync:prechecked' } else { 'android:sync' }
-        npm run $syncScript -w '@tomato-clock/android'
+        npm run $syncScript -w '@blockcolc/android'
         if ($LASTEXITCODE -ne 0) { throw 'Capacitor sync failed.' }
 
         Push-Location (Join-Path $repositoryRoot 'apps\android\android')

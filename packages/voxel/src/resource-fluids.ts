@@ -1,4 +1,4 @@
-import type { TextureAlphaMode } from "@tomato-clock/resource-pack";
+import type { TextureAlphaMode } from "@blockcolc/resource-pack";
 import type { BlueprintVoxel } from "./blueprint";
 import { staticFluidHeight, staticFluidKind, type StaticFluidKind } from "./fallback-visual";
 import {

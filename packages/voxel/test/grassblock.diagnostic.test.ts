@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { parseJava16xResourcePack, resolveBlockTextures } from "@tomato-clock/resource-pack";
+import { parseJava16xResourcePack, resolveBlockTextures } from "@blockcolc/resource-pack";
 import { expect, it } from "vitest";
 
 it("reports stay-true grass_block resolution", () => {

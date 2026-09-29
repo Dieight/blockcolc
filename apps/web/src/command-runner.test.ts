@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createInitialState, execute } from '@tomato-clock/domain';
-import type { ApplicationResult } from '@tomato-clock/application';
+import { createInitialState, execute } from '@blockcolc/domain';
+import type { ApplicationResult } from '@blockcolc/application';
 import { commandFeedback } from './command-feedback';
 import { createCommandRunner } from './command-runner';
+import { beginFocusSubmission, readFocusSubmissionDiagnosticsForTest, resetFocusSubmissionDiagnosticsForTest } from './submission-performance';
 
 const created = execute(createInitialState('UTC'), { type: 'CreateProject', projectId: 'p', title: 'Work', blueprintId: 'cottage', subtasks: [{ id: 's', title: 'Task' }] }, { now: () => new Date('2026-09-08T00:00:00Z') });
 if (!created.ok) throw Error(created.message);
@@ -46,6 +47,54 @@ function runner(result: ApplicationResult) {
   return { ...ports, run: createCommandRunner(ports) };
 }
 describe('command execution boundary', () => {
+  it('correlates a successful submitted report with committed dispatch and projection request', async () => {
+    resetFocusSubmissionDiagnosticsForTest();
+    const f = runner(success());
+    const token = beginFocusSubmission('progress')!;
+    await f.run({ type: 'CancelFocus', interruptionCategory: null }, { submissionToken: token });
+    expect(readFocusSubmissionDiagnosticsForTest()).toMatchObject([{
+      token,
+      category: 'progress',
+      terminal: 'pending',
+      phases: [
+        { stage: 'submitted' },
+        { stage: 'dispatch-started' },
+        { stage: 'dispatch-completed', persistenceCommitted: true },
+      ],
+    }]);
+  });
+
+  it('records rejected or thrown submitted writes as failed attempts without retaining error text', async () => {
+    resetFocusSubmissionDiagnosticsForTest();
+    const rejected = runner({ ok: false, state, code: 'FOCUS_NOT_ACTIVE', message: 'Rejected secret title', warnings: [] });
+    const rejectedToken = beginFocusSubmission('progress')!;
+    await rejected.run({ type: 'CancelFocus', interruptionCategory: null }, { submissionToken: rejectedToken });
+
+    const thrown = runner(success());
+    const thrownToken = beginFocusSubmission('marathon')!;
+    thrown.service.dispatch.mockRejectedValue(Error('private command payload'));
+    await expect(thrown.run({ type: 'CancelFocus', interruptionCategory: null }, { submissionToken: thrownToken })).rejects.toThrow();
+    expect(readFocusSubmissionDiagnosticsForTest()).toMatchObject([
+      { terminal: 'failed', failedPhase: 'dispatch', phases: [{ stage: 'submitted' }, { stage: 'dispatch-started' }, { stage: 'dispatch-rejected' }] },
+      { terminal: 'failed', failedPhase: 'dispatch', phases: [{ stage: 'submitted' }, { stage: 'dispatch-started' }, { stage: 'dispatch-threw' }] },
+    ]);
+    expect(JSON.stringify(readFocusSubmissionDiagnosticsForTest())).not.toContain('secret');
+    expect(JSON.stringify(readFocusSubmissionDiagnosticsForTest())).not.toContain('private');
+  });
+
+  it('does not relabel an already persisted report if a later UI refresh throws', async () => {
+    resetFocusSubmissionDiagnosticsForTest();
+    const f = runner(success());
+    f.refresh.mockImplementation(() => { throw new Error('refresh failed'); });
+    const token = beginFocusSubmission('progress')!;
+    await expect(f.run({ type: 'ReportSubtaskProgress', subtaskId: 'private-id', focusSessionIds: ['private-session'], progressBasisPoints: 5000 }, { submissionToken: token })).rejects.toThrow('refresh failed');
+    expect(readFocusSubmissionDiagnosticsForTest()).toMatchObject([{
+      terminal: 'failed',
+      failedPhase: 'projection',
+      phases: [{ stage: 'submitted' }, { stage: 'dispatch-started' }, { stage: 'dispatch-completed', persistenceCommitted: true }, { stage: 'projection-failed' }],
+    }]);
+  });
+
   it('dispatches once, publishes ordinary feedback, and refreshes after completion', async () => {
     const result = success();
     const f = runner(result);

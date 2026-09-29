@@ -1,4 +1,4 @@
-import type { ApplicationResult } from '@tomato-clock/application';
+import type { ApplicationResult } from '@blockcolc/application';
 
 export interface CommandMessage {
   text: string;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createInitialState, type FocusSession } from '@tomato-clock/domain';
+import { createInitialState, type FocusSession } from '@blockcolc/domain';
 import { focusExportDate, projectFocusExportDays, projectFocusExportSnapshot } from '../src/focus-export.js';
 
 function history(id: string, start: string, duration: number, status: FocusSession['status'] = 'completed'): FocusSession {

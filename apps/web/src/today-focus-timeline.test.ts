@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createInitialState, type DomainState, type FocusSession } from '@tomato-clock/domain';
+import { createInitialState, type DomainState, type FocusSession } from '@blockcolc/domain';
 import { projectTodayFocusTimeline } from './today-focus-timeline';
 
 function seed(zone = 'Asia/Shanghai') {

@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
-import type { ApplicationResult, ApplicationService } from '@tomato-clock/application';
+import type { ApplicationResult, ApplicationService } from '@blockcolc/application';
 import type { FocusPreferences } from './app-types';
 import { createMinimalFocusStarter, prepareMinimalFocus, type MinimalFocusDraft } from './minimal-focus';
 import type { RoundPlan } from './round-plan';

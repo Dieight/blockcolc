@@ -1,4 +1,4 @@
-import type { DomainState } from '@tomato-clock/domain';
+import type { DomainState } from '@blockcolc/domain';
 import { canPresentMinimalFocus } from './minimal-presentation';
 import { reconcileRoundPlan, type RoundPlan } from './round-plan';
 
@@ -39,7 +39,7 @@ export function deriveFocusViewState(input: FocusViewInput) {
     // marathon, and also left the navigation visible while a break was active.
     // `fullDeferredPresentation` is retained for callers that need the value,
     // but it no longer reintroduces a second focus surface.
-    isImmersiveLayout: minimal || phase === 'focus' || phase === 'break' || phase === 'ready',
+    isImmersiveLayout: minimal || phase === 'focus' || phase === 'break' || phase === 'ready' || phase === 'report',
     endsAt: session?.endsAt ?? (isBreak ? plan?.breakEndsAt : undefined),
     activePendingBlocksWorkbench,
     activeHabitAwaitingBlocksWorkbench: active?.kind === 'habit' && active.habit?.awaitingNextBuilding === true && !marathonPlan && !minimal,

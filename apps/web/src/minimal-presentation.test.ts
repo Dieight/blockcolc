@@ -1,5 +1,5 @@
 import {describe,expect,it} from 'vitest';
-import {createInitialState,execute} from '@tomato-clock/domain';
+import {createInitialState,execute} from '@blockcolc/domain';
 import {canPresentMinimalFocus} from './minimal-presentation';
 import type {RoundPlan} from './round-plan';
 

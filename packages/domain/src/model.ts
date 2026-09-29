@@ -168,7 +168,7 @@ export type FocusSession = FocusSessionBase &
   (
     | { status: "completed"; completedAt: ISOInstant; completedLocalDate: ISODate; actualDurationMs: number }
     | { status: "completed-early"; completedAt: ISOInstant; completedLocalDate: ISODate; actualDurationMs: number }
-    | { status: "interrupted"; interruptedAt: ISOInstant; interruptionReason: FocusInterruptionReason; interruptionCategory: FocusInterruptionCategory | null; actualDurationMs: number }
+    | { status: "interrupted"; interruptedAt: ISOInstant; interruptionReason: FocusInterruptionReason; interruptionCategory: FocusInterruptionCategory | null; interruptionNote?: string; actualDurationMs: number }
   );
 
 export interface DailyGoal {
@@ -291,7 +291,7 @@ export type DomainCommand =
   | { type: "StartFocus"; sessionId: string; subtaskId: string | null; plannedDurationMs: number; projectId?: string; marathon?: boolean; deferredSettlement?: true }
   | { type: "CompleteFocus" }
   | { type: "CompleteFocusEarly"; reportId: string }
-  | { type: "CancelFocus"; interruptionCategory?: FocusInterruptionCategory | null }
+  | { type: "CancelFocus"; interruptionCategory?: FocusInterruptionCategory | null; interruptionNote?: string }
   | { type: "ConfigureFocusIntegrity"; enabled: boolean; maxEffectiveExcursions: number; excursionThresholdSeconds?: number }
   | { type: "GrantFocusLifecycleExemption" }
   | { type: "RecordFocusBackgrounded"; reason: FocusBackgroundReason }

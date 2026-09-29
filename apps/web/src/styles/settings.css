@@ -96,6 +96,11 @@
 .building-blueprint-list .blueprint-library-actions .blueprint-delete{color:#b4232c}
 .building-blueprint-list .blueprint-library-copy input{min-height:44px}
 .resource-pack-original button,.resource-pack-list li button:not(.resource-pack-delete){min-width:84px;justify-content:center;border:0;background:transparent;color:#276749}
+.resource-pack-list-status{margin:12px 0 0;color:var(--muted);font-size:0.8125rem;line-height:1.5}
+.resource-pack-list-error{margin:12px 0 0;padding:12px;border:1px solid var(--line);border-radius:8px;background:var(--surface-subtle)}
+.resource-pack-list-error p{margin:0;color:var(--danger);font-size:0.8125rem;line-height:1.5}
+.resource-pack-list-error button{min-height:44px;margin-top:4px;padding:0 12px;border:0;border-radius:6px;background:transparent;color:var(--focus);font-weight:700}
+.resource-pack-list-error button:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
 .resource-pack-list .resource-pack-delete{color:#b4232c}
 .rollback-list li{flex-direction:row;align-items:center}
 .rollback-list li button{width:auto;flex:0 0 auto}

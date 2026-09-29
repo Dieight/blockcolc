@@ -1,4 +1,4 @@
-import type { ConstructionOutlineVisibility, VoxelLightingQuality } from '@tomato-clock/voxel';
+import type { ConstructionOutlineVisibility, VoxelLightingQuality } from '@blockcolc/voxel';
 
 export type ThemeMode = 'light' | 'dark' | 'system';
 

@@ -5,6 +5,8 @@ export function startRendererGeneration<M, R extends { dispose(): void }>(ports:
   create(module: M): R | null;
   initialize(renderer: R, isCurrent: () => boolean): Promise<void>;
   ready(): void;
+  /** Keep the loading surface up when an initialization failed without a safe fallback. */
+  readyOnError?: boolean;
   error(error: unknown): void;
   release(renderer: R): void;
 }): () => void {
@@ -22,7 +24,7 @@ export function startRendererGeneration<M, R extends { dispose(): void }>(ports:
     }).catch(error => {
       if (!active) return;
       ports.error(error);
-      ports.ready();
+      if (ports.readyOnError !== false) ports.ready();
     });
   });
   return () => {

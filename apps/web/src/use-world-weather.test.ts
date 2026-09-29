@@ -3,9 +3,14 @@ import {
   getOwnedWorldWeatherRequest,
   getVisibleWorldWeatherView,
   isWorldWeatherFailureRetryable,
+  astronomyScheduleCovers48Hours,
+  mapQWeatherAstronomyContext,
+  mergeWorldWeatherPreservingAstronomy,
+  shouldRefreshAstronomyCalendar,
   shouldStartWorldWeatherRequest,
   type WorldWeatherView,
 } from './use-world-weather';
+import type { AstronomySchedule } from '@blockcolc/voxel';
 
 const localView: WorldWeatherView = {
   syncState: 'not_synced',
@@ -16,6 +21,10 @@ const localView: WorldWeatherView = {
   locationSource: null,
   source: 'local',
   fallbackReason: null,
+  visualPrecipitationIntensity: 0,
+  astronomyContext: null,
+  astronomySyncState: 'not_synced',
+  astronomyFailureReason: null,
 };
 
 describe('world weather request gate', () => {
@@ -56,5 +65,71 @@ describe('world weather request gate', () => {
       syncState: 'fallback', fallbackReason: 'cache_clear_failed' })).toMatchObject({
       source: 'local', syncState: 'fallback', fallbackReason: 'cache_clear_failed',
     });
+  });
+
+  it('backs off a failed astronomy calendar for five minutes and refreshes a valid one after twelve hours', () => {
+    const fiveMinutes = 5 * 60_000;
+    const twelveHours = 12 * 60 * 60_000;
+    expect(shouldRefreshAstronomyCalendar(10_000, 10_000, 0)).toBe(false);
+    expect(shouldRefreshAstronomyCalendar(10_000 + fiveMinutes - 1, 10_000, 0)).toBe(false);
+    expect(shouldRefreshAstronomyCalendar(10_000 + fiveMinutes, 10_000, 0)).toBe(true);
+    expect(shouldRefreshAstronomyCalendar(10_000 + twelveHours - 1, 10_000, 10_000)).toBe(false);
+    expect(shouldRefreshAstronomyCalendar(10_000 + twelveHours, 10_000, 10_000)).toBe(true);
+    expect(shouldRefreshAstronomyCalendar(10_001, 10_000, 10_000, true)).toBe(true);
+  });
+
+  it('refreshes successful calendars whose intervals do not continuously cover the next 48 hours', () => {
+    const now = Date.UTC(2026, 0, 1, 12);
+    const day = (start: number, end: number) => ({
+      intervalStartMs: start, intervalEndMs: end,
+      solar: { astronomicalDawnMs: null, nauticalDawnMs: null, civilDawnMs: null, sunriseMs: null,
+        solarNoonMs: null, sunsetMs: null, civilDuskMs: null, nauticalDuskMs: null,
+        astronomicalDuskMs: null, solarMidnightMs: null },
+      lunar: { moonriseMs: null, moonsetMs: null, moonTransitMs: null, moonUnderfootMs: null, phase: null },
+    });
+    const schedule = (intervals: Array<[number, number]>): AstronomySchedule => ({
+      coordinates: { latitude: 0, longitude: 0 }, locationSource: 'fresh', fetchedAtMs: now,
+      days: intervals.map(([start, end]) => day(start, end)), attribution: [],
+    });
+    const hour = 60 * 60_000;
+    const continuous = schedule([[now - hour, now + 12 * hour], [now + 12 * hour, now + 36 * hour], [now + 36 * hour, now + 60 * hour]]);
+    expect(astronomyScheduleCovers48Hours(continuous, now)).toBe(true);
+    expect(shouldRefreshAstronomyCalendar(now + hour, now, now, false,
+      astronomyScheduleCovers48Hours(continuous, now + hour))).toBe(false);
+    expect(astronomyScheduleCovers48Hours(schedule([[now + hour, now + 72 * hour]]), now)).toBe(false);
+    expect(astronomyScheduleCovers48Hours(schedule([[now - hour, now + 24 * hour], [now + 25 * hour, now + 72 * hour]]), now)).toBe(false);
+    const gapCoverage = astronomyScheduleCovers48Hours(
+      schedule([[now - hour, now + 24 * hour], [now + 25 * hour, now + 72 * hour]]), now + hour);
+    expect(gapCoverage).toBe(false);
+    expect(shouldRefreshAstronomyCalendar(now + 4 * 60_000, now, now, false, gapCoverage)).toBe(false);
+    expect(shouldRefreshAstronomyCalendar(now + 5 * 60_000, now, now, false, gapCoverage)).toBe(true);
+    expect(astronomyScheduleCovers48Hours(schedule([[now - hour, now + 24 * hour], [now + 24 * hour, now + 72 * hour]]), now)).toBe(true);
+    expect(astronomyScheduleCovers48Hours(schedule([[now - 49 * hour, now - hour], [now + hour, now + 72 * hour]]), now)).toBe(false);
+    expect(shouldRefreshAstronomyCalendar(now + 4 * 60_000, now, 0, false, false)).toBe(false);
+  });
+
+  it('maps ephemeris-only to an authorized coordinate without claiming a calendar', () => {
+    const context = mapQWeatherAstronomyContext({
+      status: 'ephemeris_only', reason: 'network_unavailable', coordinate: { latitude: 39.92, longitude: 116.41 },
+      locationSource: 'cached', fetchedAtMs: 1_800_000_000_000,
+    });
+    expect(context).toEqual({
+      coordinates: { latitude: 39.92, longitude: 116.41 }, schedule: null, locationSource: 'cached',
+    });
+  });
+
+  it('keeps independent astronomy data when weather returns to local fallback', () => {
+    const context = {
+      coordinates: { latitude: 39.92, longitude: 116.41 }, schedule: null, locationSource: 'fresh' as const,
+    };
+    const previous = { ...localView, astronomyContext: context,
+      astronomySyncState: 'ephemeris_only' as const, astronomyFailureReason: 'network_unavailable' as const };
+    const next = mergeWorldWeatherPreservingAstronomy(previous, {
+      ...localView, syncState: 'fallback', fallbackReason: 'request_failed',
+    });
+    expect(next.syncState).toBe('fallback');
+    expect(next.astronomySyncState).toBe('ephemeris_only');
+    expect(next.astronomyContext).toBe(context);
+    expect(next.astronomyFailureReason).toBe('network_unavailable');
   });
 });

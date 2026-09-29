@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { ApplicationCommand, ApplicationResult } from '@tomato-clock/application';
-import { createInitialState, execute, type DomainState } from '@tomato-clock/domain';
-import { createMinimalFocusStarter, prepareMinimalFocus, type MinimalFocusStartDependencies } from './minimal-focus';
+import type { ApplicationCommand, ApplicationResult } from '@blockcolc/application';
+import { createInitialState, execute, type DomainState } from '@blockcolc/domain';
+import { createMinimalFocusStarter, prepareMinimalFocus, roundsForMinimalEndTime, minimalRoundThresholdCrossings, type MinimalFocusStartDependencies } from './minimal-focus';
 import { marathonEndInstant } from './marathon-end-time';
 import { reconcileRoundPlan, type RoundPlan } from './round-plan';
 
@@ -17,6 +17,21 @@ function fixture(kind: 'finite' | 'habit' = 'finite') {
 }
 
 describe('minimal focus preparation', () => {
+  it('fills only a shortfall of at most 60 seconds to the next actual round end', () => {
+    const base = Date.parse('2026-09-27T10:00:00.000Z');
+    expect(roundsForMinimalEndTime(base + 9 * 60_000, base, 10, 5)).toEqual({ rounds: 1, endsAtMs: base + 10 * 60_000 });
+    expect(roundsForMinimalEndTime(base + 9 * 60_000 - 1, base, 10, 5)).toBeNull();
+    expect(roundsForMinimalEndTime(base + 24 * 60_000, base, 10, 5)).toEqual({ rounds: 2, endsAtMs: base + 25 * 60_000 });
+    expect(roundsForMinimalEndTime(base + 23 * 60_000, base, 10, 5)).toEqual({ rounds: 1, endsAtMs: base + 23 * 60_000 });
+    expect(roundsForMinimalEndTime(base + 22 * 60_000, base, 10, 5)).toEqual({ rounds: 1, endsAtMs: base + 22 * 60_000 });
+  });
+
+  it('does not cross round thresholds for time values still inside the break gap', () => {
+    expect(minimalRoundThresholdCrossings(0, 24 * 60_000, 0, 10, 5)).toEqual([1]);
+    expect(minimalRoundThresholdCrossings(24 * 60_000, 26 * 60_000, 0, 10, 5)).toEqual([2]);
+    expect(minimalRoundThresholdCrossings(26 * 60_000, 0, 0, 10, 5)).toEqual([1, 2]);
+  });
+
   it('honors the exact gesture instant and refuses an expired selection instead of rolling to tomorrow', () => {
     const endMs = now + 60 * 60_000;
     expect(prepareMinimalFocus(fixture(),null,{...draft,endMs},preferences,now)).toMatchObject({ok:true,plan:{endAt:new Date(endMs).toISOString()}});
@@ -60,7 +75,10 @@ describe('minimal focus preparation', () => {
     expect(future).toMatchObject({ ok: true, plan: { endAt: new Date(2026, 8, 6, 16, 0).toISOString() } });
   });
   it('rejects too-short, too-many-round and invalid-setting schedules', () => {
-    expect(prepareMinimalFocus(fixture(), null, { ...draft, hourDraft: '14', minuteDraft: '44' }, preferences, now)).toMatchObject({ ok: false, message: expect.stringContaining('过近') });
+    // A selection exactly one minute short is intentionally rounded to the
+    // real round boundary; anything more than 60 seconds short is rejected.
+    expect(prepareMinimalFocus(fixture(), null, { ...draft, hourDraft: '14', minuteDraft: '44' }, preferences, now)).toMatchObject({ ok: true, plan: { endAt: new Date(2026, 8, 6, 14, 45).toISOString() } });
+    expect(prepareMinimalFocus(fixture(), null, { ...draft, hourDraft: '14', minuteDraft: '43' }, preferences, now)).toMatchObject({ ok: false, message: expect.stringContaining('过近') });
     expect(prepareMinimalFocus(fixture(), null, draft, { focusMinutes: 1, breakMinutes: 0 }, now)).toMatchObject({ ok: false, message: expect.stringContaining('24') });
     expect(prepareMinimalFocus(fixture(), null, draft, { ...preferences, focusMinutes: 0 }, now)).toMatchObject({ ok: false, message: expect.stringContaining('时长无效') });
   });

@@ -1,5 +1,5 @@
 {
-  "name": "@tomato-clock/application",
+  "name": "@blockcolc/application",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -9,7 +9,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@tomato-clock/domain": "file:../domain"
+    "@blockcolc/domain": "file:../domain"
   },
   "devDependencies": {
     "@types/node": "^24.10.1",

@@ -1,4 +1,4 @@
-import type { DomainState } from '@tomato-clock/domain';
+import type { DomainState } from '@blockcolc/domain';
 
 export const FOCUS_EXPORT_VERSION = 1 as const;
 const DAY_MS = 86_400_000;

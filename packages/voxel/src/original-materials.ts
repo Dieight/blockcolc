@@ -20,6 +20,8 @@ export const ORIGINAL_MATERIAL_PATTERNS = [
   "metal",
   "ore",
   "sculk",
+  "mushroom",
+  "straw",
   "water",
   "lava",
   "path",
@@ -29,6 +31,10 @@ export const ORIGINAL_MATERIAL_PATTERNS = [
 export type OriginalMaterialPattern = typeof ORIGINAL_MATERIAL_PATTERNS[number];
 
 const patternSet = new Set<string>(ORIGINAL_MATERIAL_PATTERNS);
+const exactVanillaSmallComponentPaths = new Set([
+  "stone_button", "stone_pressure_plate", "polished_blackstone_button", "polished_blackstone_pressure_plate",
+  "light_weighted_pressure_plate", "heavy_weighted_pressure_plate",
+]);
 
 export function isOriginalMaterialPattern(value: string): value is OriginalMaterialPattern {
   return patternSet.has(value);
@@ -68,8 +74,22 @@ export function builtinMaterialBlockId(materialId: string): string | undefined {
 
 export function originalPatternForBlockId(sourceBlockId: string | undefined, materialId: string): OriginalMaterialPattern {
   const path = sourceBlockId?.toLowerCase().split(":").pop() ?? "";
+  const namespace = sourceBlockId?.includes(":") ? sourceBlockId.toLowerCase().split(":")[0] : "minecraft";
+  if (namespace !== "minecraft" && exactVanillaSmallComponentPaths.has(path)) return originalPatternForMaterialId(materialId);
+  if (namespace !== "minecraft" && /^(?:iron_(?:door|trapdoor)|(?:waxed_)?(?:(?:exposed|weathered|oxidized)_)?copper_(?:door|trapdoor))$/.test(path)) {
+    return originalPatternForMaterialId(materialId);
+  }
+  if (path.includes("shelf_mushroom") || /(?:^|_)(?:brown|red)_mushroom(?:_block)?$/.test(path)) return "mushroom";
+  if (path.includes("straw_bed") || path === "hay_block") return "straw";
+  if (namespace === "minecraft" && path === "moss_carpet") return "foliage";
+  if (path.includes("cushion")) return "fabric";
+  if (/^(?:iron_(?:door|trapdoor)|(?:waxed_)?(?:(?:exposed|weathered|oxidized)_)?copper_(?:door|trapdoor))$/.test(path)) return "metal";
   if (path === "water" || path === "bubble_column") return "water";
   if (path === "lava") return "lava";
+  if (namespace === "minecraft") {
+    if (["stone_button", "stone_pressure_plate", "polished_blackstone_button", "polished_blackstone_pressure_plate"].includes(path)) return "stone";
+    if (path === "light_weighted_pressure_plate" || path === "heavy_weighted_pressure_plate") return "metal";
+  }
   if (/(?:glass|ice)(?:$|_)/.test(path)) return "glass";
   if (/(?:^|_)(?:log|wood|stem|hyphae)(?:$|_)|bamboo_block/.test(path)) return "bark";
   if (/(?:planks|shelf|bookshelf|door|trapdoor|fence|gate|sign|button|pressure_plate)/.test(path)) return "planks";
@@ -83,7 +103,7 @@ export function originalPatternForBlockId(sourceBlockId: string | undefined, mat
   if (/(?:copper|iron|gold|netherite|anvil|chain|hopper|cauldron|bell|rail|lightning_rod)/.test(path)) return "metal";
   if (path.includes("sculk")) return "sculk";
   if (/(?:torch|lantern|glowstone|shroomlight|froglight|sea_lantern|redstone_lamp|magma|fire|candle)/.test(path)) return "emissive";
-  if (/(?:leaves|vine|moss|azalea|grass|fern|sapling|roots|lichen)/.test(path)) return "foliage";
+  if (/(?:leaves|vine|moss|azalea|grass|fern|sapling|roots|lichen|shrub)/.test(path)) return "foliage";
   if (/(?:dirt|mud|podzol|mycelium|soul_soil)/.test(path)) return "soil";
   if (/(?:stone|deepslate|tuff|blackstone|basalt|netherrack|quartz|sandstone|prismarine|purpur|obsidian)/.test(path)) return "stone";
   return originalPatternForMaterialId(materialId);
@@ -102,8 +122,10 @@ export function createOriginalMaterialTexture(pattern: OriginalMaterialPattern):
   texture.wrapS = THREE.RepeatWrapping;
   texture.wrapT = THREE.RepeatWrapping;
   texture.magFilter = THREE.NearestFilter;
-  texture.minFilter = THREE.NearestMipmapLinearFilter;
-  texture.anisotropy = 2;
+  // Keep the crisp near-field pixel look, but average within and between mip
+  // levels when an overhead building projects several texels onto one pixel.
+  texture.minFilter = THREE.LinearMipmapLinearFilter;
+  texture.anisotropy = 4;
   texture.generateMipmaps = true;
   texture.flipY = false;
   texture.needsUpdate = true;
@@ -225,6 +247,17 @@ function originalMaterialTone(pattern: OriginalMaterialPattern, x: number, y: nu
   if (pattern === "sculk") {
     const vein = (x * 5 + y * 3 + Math.floor(coarse / 24)) % 13 < 2;
     return clampByte(vein ? 248 : 182 + fine * 0.12 + coarse * 0.04);
+  }
+  if (pattern === "mushroom") {
+    const capEdge = y < 5 && (x < 2 || x > 13);
+    const gill = y === 5 || y === 6;
+    const fleck = hash(x, y, seed) % 13 === 0;
+    return clampByte(capEdge ? 162 + fine * 0.05 : gill ? 181 + coarse * 0.06 : fleck ? 255 : 224 + fine * 0.08 + coarse * 0.04);
+  }
+  if (pattern === "straw") {
+    const strand = (x + hash(Math.floor(y / 4), seed, 21)) % 5 === 0;
+    const band = y % 4 === 0;
+    return clampByte(band ? 172 + fine * 0.04 : strand ? 192 + coarse * 0.04 : 235 + fine * 0.08 + coarse * 0.03);
   }
   if (pattern === "water") {
     // Directionless ripple noise: a directional sine pattern moires into

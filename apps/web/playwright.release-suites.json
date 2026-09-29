@@ -1,16 +1,30 @@
 {
   "schemaVersion": 1,
   "diagnostics": [
+    "blockstate-rotation.diagnostic.spec.ts",
     "cine-probe.spec.ts",
     "flat-probe.spec.ts",
     "fog-diag.spec.ts",
     "normal-probe.spec.ts",
+    "natural-decoration-pack.diagnostic.spec.ts",
+    "original-carpet-lever-lantern.diagnostic.spec.ts",
+    "original-bed.diagnostic.spec.ts",
+    "original-candle.diagnostic.spec.ts",
+    "original-pale-moss.diagnostic.spec.ts",
+    "original-static-visual.diagnostic.spec.ts",
     "pack-measure.spec.ts",
     "page-load.diagnostic.spec.ts",
     "pick-diag.spec.ts",
+    "quality-hot-switch.diagnostic.spec.ts",
+    "quality-lifecycle.diagnostic.spec.ts",
+    "resource-pack-cold-start.diagnostic.spec.ts",
+    "resource-pack-cold-list-deferral.diagnostic.spec.ts",
+    "shader-route.diagnostic.spec.ts",
+    "submission-performance.diagnostic.spec.ts",
     "v21-right-band-probe.spec.ts",
     "v24-voidscan.spec.ts",
-    "void-probe.spec.ts"
+    "void-probe.spec.ts",
+    "world-visual-audit.diagnostic.spec.ts"
   ],
   "suites": [
     {
@@ -65,7 +79,9 @@
         "v3-lightweight-shading.spec.ts",
         "visual-flow.spec.ts",
         "world-coordinate-setting.spec.ts",
-        "world-followup-f05-f07.spec.ts"
+        "world-followup-f05-f07.spec.ts",
+        "world-presentation.spec.ts",
+        "world-weather-lifecycle.spec.ts"
       ]
     }
   ]

@@ -1,9 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
-import { ApplicationService, type NotificationCapability, type StateRepository } from '@tomato-clock/application';
-import type { DomainState } from '@tomato-clock/domain';
+import { ApplicationService, type NotificationCapability, type StateRepository } from '@blockcolc/application';
+import type { DomainState } from '@blockcolc/domain';
 import {
   type AutomaticContinuationDeadlineEvent,
   type AutomaticContinuationDeadlinePort,
+  projectAutomaticContinuationTimeline,
   createAutomaticContinuationCoordinator,
 } from './automatic-continuation';
 import { automaticContinuationEventId, automaticContinuationSessionId, type RoundPlan } from './round-plan';
@@ -151,6 +152,59 @@ describe('automatic continuation coordinator', () => {
     expect(f.service.snapshot().focusHistory).toHaveLength(3);
   });
 
+  it('projects multiple zero-break focus rounds and bounds catch-up by marathon end time', async () => {
+    const f = await harness();
+    const current = f.plan()!;
+    const authorization = current.automaticContinuation!;
+    const timeline = projectAutomaticContinuationTimeline({
+      ...current,
+      totalRounds: 4,
+      completedRounds: 1,
+      endAt: new Date(BASE + 6 * 60_000).toISOString(),
+      automaticContinuation: { ...authorization, breakDurationMs: 0 },
+    }, f.service.snapshot(), {
+      eventId: automaticContinuationEventId(AUTH, 2),
+      scheduledAtEpochMs: BASE + 3 * 60_000,
+    });
+
+    expect(timeline?.phases).toEqual([
+      { kind: 'focus', startsAtEpochMs: BASE + 3 * 60_000, endsAtEpochMs: BASE + 4 * 60_000,
+        round: 2, eventId: automaticContinuationEventId(AUTH, 2) },
+      { kind: 'focus', startsAtEpochMs: BASE + 4 * 60_000, endsAtEpochMs: BASE + 5 * 60_000,
+        round: 3, eventId: automaticContinuationEventId(AUTH, 3) },
+      { kind: 'focus', startsAtEpochMs: BASE + 5 * 60_000, endsAtEpochMs: BASE + 6 * 60_000,
+        round: 4, eventId: automaticContinuationEventId(AUTH, 4) },
+    ]);
+  });
+
+  it('does not project future habit buildings past their remaining target budget', async () => {
+    const f = await harness();
+    const state = structuredClone(f.service.snapshot());
+    const project = state.projects.find(candidate => candidate.id === f.project.id)!;
+    project.kind = 'habit';
+    project.subtasks = [];
+    project.habit = {
+      cycleNumber: 1,
+      targetRounds: 3,
+      completedFocusSessionIds: [f.firstSession.id],
+      awaitingNextBuilding: false,
+    };
+    const plan = {
+      ...f.plan()!,
+      subtaskId: null,
+      totalRounds: 6,
+      completedRounds: 1,
+      automaticContinuation: { ...f.plan()!.automaticContinuation!, breakDurationMs: 0 },
+    };
+
+    const timeline = projectAutomaticContinuationTimeline(plan, state, {
+      eventId: automaticContinuationEventId(AUTH, 2),
+      scheduledAtEpochMs: BASE + 3 * 60_000,
+    });
+
+    expect(timeline?.phases.filter(phase => phase.kind === 'focus').map(phase => phase.round)).toEqual([2, 3]);
+  });
+
   it('fails closed when the reservation write fails and retries the same due event', async () => {
     const f = await harness();
     f.setNow(BASE + 5 * 60_000);
@@ -181,6 +235,44 @@ describe('automatic continuation coordinator', () => {
       scheduledAt: new Date(BASE + 3 * 60_000).toISOString(),
     });
     expect(f.deadlines.acknowledgements).toContain(dueEvent.eventId);
+  });
+
+  it('treats repeated native due delivery as one reserved domain round', async () => {
+    const f = await harness();
+    f.setNow(BASE + 3 * 60_000);
+    const dueEvent = {
+      eventId: automaticContinuationEventId(AUTH, 2), authorizationId: AUTH,
+      scheduledAtEpochMs: BASE + 3 * 60_000,
+    };
+    f.deadlines.pending.push(dueEvent);
+    const start = vi.spyOn(f.service, 'startScheduledFocus');
+
+    await f.coordinator.handleDeadline(dueEvent);
+    await f.coordinator.handleDeadline(dueEvent);
+
+    expect(start).toHaveBeenCalledTimes(1);
+    expect(start.mock.calls[0]?.[1].sessionId).toBe(automaticContinuationSessionId(AUTH, 2));
+    expect(f.service.snapshot().focusHistory.filter(session => session.id === automaticContinuationSessionId(AUTH, 2))).toHaveLength(0);
+    expect(f.service.snapshot().activeFocusSession?.id).toBe(automaticContinuationSessionId(AUTH, 2));
+  });
+
+  it('revokes a due native event before it can start when opt-in was disabled', async () => {
+    const f = await harness();
+    f.setNow(BASE + 3 * 60_000);
+    f.setAutoEnabled(false);
+    const dueEvent = {
+      eventId: automaticContinuationEventId(AUTH, 2), authorizationId: AUTH,
+      scheduledAtEpochMs: BASE + 3 * 60_000,
+    };
+    f.deadlines.pending.push(dueEvent);
+    const start = vi.spyOn(f.service, 'startScheduledFocus');
+
+    const result = await f.coordinator.handleDeadline(dueEvent);
+
+    expect(result.startedSessionIds).toEqual([]);
+    expect(start).not.toHaveBeenCalled();
+    expect(f.deadlines.cancelled).toContain(`authorization:${AUTH}`);
+    expect(f.service.snapshot().activeFocusSession).toBeNull();
   });
 
   it('never auto-assigns an ordinary finite round before its explicit progress report', async () => {

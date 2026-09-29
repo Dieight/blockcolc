@@ -7,7 +7,7 @@ const sourceRoot = dirname(fileURLToPath(import.meta.url));
 const styleRoot = resolve(sourceRoot, 'styles');
 const expectedImports = [
   'tokens.css', 'base.css', 'foundation.css', 'settings.css', 'workbench.css',
-  'tasks-stats.css', 'setup.css', 'world.css', 'minimal-mode.css', 'theme.css', 'building-memory.css', 'glass-overlays.css',
+  'tasks-stats.css', 'setup.css', 'world.css', 'minimal-mode.css', 'theme.css', 'building-memory.css', 'glass-overlays.css', 'world-debug.css',
 ];
 
 describe('style architecture', () => {

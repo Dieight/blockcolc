@@ -1,4 +1,4 @@
-import type { DomainState } from '@tomato-clock/domain';
+import type { DomainState } from '@blockcolc/domain';
 
 /** Includes allocations made by older versions, before settledAt was stored. */
 export function settledFocusSessionIds(state: DomainState): Set<string> {

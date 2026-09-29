@@ -1,7 +1,7 @@
 import { strToU8, zipSync, zlibSync } from "fflate";
 import * as THREE from "three";
 import { describe, expect, it } from "vitest";
-import { layerResourcePackManifests, parseJava16xResourcePack } from "@tomato-clock/resource-pack";
+import { layerResourcePackManifests, parseJava16xResourcePack } from "@blockcolc/resource-pack";
 import { buildResourcePackAtlas, createAtlasMaterial } from "../src/resource-textures";
 import { createAtlasGeometryMaterial } from "../src/resource-geometry";
 

@@ -8,6 +8,16 @@ export interface LightingPostProcessDiagnostics {
   sampleCount: number;
 }
 
+export interface PreparedLightingPostProcessConfiguration {
+  commit(): void;
+  rollback(): void;
+  finalize(): void;
+  discard(): void;
+}
+
+/** The terminal fullscreen pass must match Three's direct ACES + sRGB output path. */
+export const POSTPROCESS_TERMINAL_TONE_MAPPED = true;
+
 /**
  * Small, mobile-oriented bloom compositor. The scene remains the normal
  * forward-rendered scene; only the bright texture and two blur passes use a
@@ -15,10 +25,10 @@ export interface LightingPostProcessDiagnostics {
  */
 export class LightingPostProcessor {
   private readonly renderer: THREE.WebGLRenderer;
-  private readonly sceneTarget: THREE.WebGLRenderTarget;
-  private readonly brightTarget: THREE.WebGLRenderTarget;
-  private readonly blurTarget: THREE.WebGLRenderTarget;
-  private readonly compositeTarget: THREE.WebGLRenderTarget;
+  private sceneTarget: THREE.WebGLRenderTarget;
+  private brightTarget: THREE.WebGLRenderTarget;
+  private blurTarget: THREE.WebGLRenderTarget;
+  private compositeTarget: THREE.WebGLRenderTarget;
   private readonly quadScene = new THREE.Scene();
   private readonly quadCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
   private readonly quadGeometry = new THREE.PlaneGeometry(2, 2);
@@ -75,50 +85,131 @@ export class LightingPostProcessor {
         uVignette: { value: 0 },
       },
       vertexShader: fullscreenVertexShader,
-      fragmentShader: compositeFragmentShader,
+      fragmentShader: terminalCompositeFragmentShader,
       depthTest: false,
       depthWrite: false,
-      toneMapped: false,
+      toneMapped: POSTPROCESS_TERMINAL_TONE_MAPPED,
     });
     this.quad.frustumCulled = false;
     this.quadScene.add(this.quad);
   }
 
-  configure(enabled: boolean, bloomStrength = 0.28): void {
-    this.enabled = enabled;
-    this.compositeMaterial.uniforms.uBloomStrength!.value = THREE.MathUtils.clamp(bloomStrength, 0, 0.75);
-    if (enabled) this.resizeTargets();
-    else this.releaseLargeTargets();
+  configure(enabled: boolean, bloomStrength = 0.28, width = this.width, height = this.height, pixelRatio = this.pixelRatio): void {
+    const prepared = this.prepareConfiguration(enabled, bloomStrength, width, height, pixelRatio);
+    prepared.commit();
+    prepared.finalize();
+  }
+
+  prepareConfiguration(enabled: boolean, bloomStrength = 0.28, width = this.width, height = this.height,
+    pixelRatio = this.pixelRatio): PreparedLightingPostProcessConfiguration {
+    const nextWidth = Math.max(1, Math.round(width));
+    const nextHeight = Math.max(1, Math.round(height));
+    const nextPixelRatio = Math.max(0.5, pixelRatio);
+    const drawingWidth = Math.max(1, Math.round(nextWidth * nextPixelRatio));
+    const drawingHeight = Math.max(1, Math.round(nextHeight * nextPixelRatio));
+    if (this.enabled === enabled && this.width === nextWidth && this.height === nextHeight
+      && this.pixelRatio === nextPixelRatio
+      && this.sceneTarget.width === (enabled ? drawingWidth : 1)
+      && this.sceneTarget.height === (enabled ? drawingHeight : 1)) {
+      let state: "staged" | "committed" | "discarded" = "staged";
+      const previousStrength = this.compositeMaterial.uniforms.uBloomStrength!.value as number;
+      return {
+        commit: () => {
+          if (state !== "staged") return;
+          this.compositeMaterial.uniforms.uBloomStrength!.value = THREE.MathUtils.clamp(bloomStrength, 0, 0.75);
+          state = "committed";
+        },
+        rollback: () => {
+          if (state !== "committed") return;
+          this.compositeMaterial.uniforms.uBloomStrength!.value = previousStrength;
+          state = "staged";
+        },
+        finalize: () => { if (state === "committed") state = "discarded"; },
+        discard: () => { if (state === "staged") state = "discarded"; },
+      };
+    }
+    const next = createTargets(this.renderer, enabled ? drawingWidth : 1, enabled ? drawingHeight : 1);
+    const previous = this.readTargets();
+    const previousConfiguration = { width: this.width, height: this.height, pixelRatio: this.pixelRatio, enabled: this.enabled,
+      bloomStrength: this.compositeMaterial.uniforms.uBloomStrength!.value as number };
+    let state: "staged" | "committed" | "discarded" = "staged";
+    return {
+      commit: () => {
+        if (state !== "staged") return;
+        try {
+          this.commitTargets(next);
+          this.width = nextWidth;
+          this.height = nextHeight;
+          this.pixelRatio = nextPixelRatio;
+          this.enabled = enabled;
+          this.compositeMaterial.uniforms.uBloomStrength!.value = THREE.MathUtils.clamp(bloomStrength, 0, 0.75);
+          state = "committed";
+        } catch (error) {
+          this.commitTargets(previous);
+          this.width = previousConfiguration.width;
+          this.height = previousConfiguration.height;
+          this.pixelRatio = previousConfiguration.pixelRatio;
+          this.enabled = previousConfiguration.enabled;
+          this.compositeMaterial.uniforms.uBloomStrength!.value = previousConfiguration.bloomStrength;
+          throw error;
+        }
+      },
+      rollback: () => {
+        if (state !== "committed") return;
+        this.commitTargets(previous);
+        this.width = previousConfiguration.width;
+        this.height = previousConfiguration.height;
+        this.pixelRatio = previousConfiguration.pixelRatio;
+        this.enabled = previousConfiguration.enabled;
+        this.compositeMaterial.uniforms.uBloomStrength!.value = previousConfiguration.bloomStrength;
+        state = "staged";
+      },
+      finalize: () => {
+        if (state !== "committed") return;
+        state = "discarded";
+        disposeTargets(previous);
+      },
+      discard: () => {
+        if (state !== "staged") return;
+        state = "discarded";
+        disposeTargets(next);
+      },
+    };
   }
 
   setSize(width: number, height: number, pixelRatio: number): void {
-    this.width = Math.max(1, Math.round(width));
-    this.height = Math.max(1, Math.round(height));
-    this.pixelRatio = Math.max(0.5, pixelRatio);
-    if (!this.enabled) {
-      this.releaseLargeTargets();
-      return;
+    const nextWidth = Math.max(1, Math.round(width));
+    const nextHeight = Math.max(1, Math.round(height));
+    const nextPixelRatio = Math.max(0.5, pixelRatio);
+    if (this.enabled) {
+      const current = this.readTargets();
+      const next = createTargets(this.renderer,
+        Math.max(1, Math.round(nextWidth * nextPixelRatio)),
+        Math.max(1, Math.round(nextHeight * nextPixelRatio)));
+      this.commitTargets(next);
+      disposeTargets(current);
     }
-    this.resizeTargets();
+    this.width = nextWidth;
+    this.height = nextHeight;
+    this.pixelRatio = nextPixelRatio;
   }
 
-  private resizeTargets(): void {
-    const drawingWidth = Math.max(1, Math.round(this.width * this.pixelRatio));
-    const drawingHeight = Math.max(1, Math.round(this.height * this.pixelRatio));
-    this.sceneTarget.setSize(drawingWidth, drawingHeight);
-    const halfWidth = Math.max(1, Math.ceil(drawingWidth * 0.5));
-    const halfHeight = Math.max(1, Math.ceil(drawingHeight * 0.5));
-    this.brightTarget.setSize(halfWidth, halfHeight);
-    this.blurTarget.setSize(halfWidth, halfHeight);
-    this.compositeTarget.setSize(halfWidth, halfHeight);
-    this.blurMaterial.uniforms.uTexelSize!.value.set(1 / halfWidth, 1 / halfHeight);
+  private readTargets(): TargetBundle {
+    return { sceneTarget: this.sceneTarget, brightTarget: this.brightTarget,
+      blurTarget: this.blurTarget, compositeTarget: this.compositeTarget };
   }
 
-  private releaseLargeTargets(): void {
-    this.sceneTarget.setSize(1, 1);
-    this.brightTarget.setSize(1, 1);
-    this.blurTarget.setSize(1, 1);
-    this.compositeTarget.setSize(1, 1);
+  private commitTargets(targets: TargetBundle): void {
+    this.sceneTarget = targets.sceneTarget;
+    this.brightTarget = targets.brightTarget;
+    this.blurTarget = targets.blurTarget;
+    this.compositeTarget = targets.compositeTarget;
+    this.brightMaterial.uniforms.tSource!.value = targets.sceneTarget.texture;
+    this.blurMaterial.uniforms.tSource!.value = targets.brightTarget.texture;
+    this.compositeMaterial.uniforms.tScene!.value = targets.sceneTarget.texture;
+    const width = Math.max(1, Math.ceil(targets.sceneTarget.width * 0.5));
+    const height = Math.max(1, Math.ceil(targets.sceneTarget.height * 0.5));
+    this.blurMaterial.uniforms.uTexelSize!.value.set(1 / width, 1 / height);
   }
 
   render(scene: THREE.Scene, camera: THREE.Camera): void {
@@ -160,10 +251,7 @@ export class LightingPostProcessor {
   }
 
   dispose(): void {
-    this.sceneTarget.dispose();
-    this.brightTarget.dispose();
-    this.blurTarget.dispose();
-    this.compositeTarget.dispose();
+    disposeTargets(this.readTargets());
     this.quadGeometry.dispose();
     this.brightMaterial.dispose();
     this.blurMaterial.dispose();
@@ -179,6 +267,38 @@ export class LightingPostProcessor {
 
 export function boundedSceneSampleCount(maxSamples: number): number {
   return Number.isFinite(maxSamples) && maxSamples >= 2 ? 2 : 0;
+}
+
+interface TargetBundle {
+  sceneTarget: THREE.WebGLRenderTarget;
+  brightTarget: THREE.WebGLRenderTarget;
+  blurTarget: THREE.WebGLRenderTarget;
+  compositeTarget: THREE.WebGLRenderTarget;
+}
+
+function createTargets(renderer: THREE.WebGLRenderer, width: number, height: number): TargetBundle {
+  const targets: Partial<TargetBundle> = {};
+  try {
+    targets.sceneTarget = createTarget(width, height, true);
+    targets.sceneTarget.samples = boundedSceneSampleCount(renderer.capabilities.maxSamples);
+    targets.sceneTarget.texture.colorSpace = THREE.NoColorSpace;
+    const halfWidth = Math.max(1, Math.ceil(width * 0.5));
+    const halfHeight = Math.max(1, Math.ceil(height * 0.5));
+    targets.brightTarget = createTarget(halfWidth, halfHeight, false);
+    targets.blurTarget = createTarget(halfWidth, halfHeight, false);
+    targets.compositeTarget = createTarget(halfWidth, halfHeight, false);
+    return targets as TargetBundle;
+  } catch (error) {
+    disposeTargets(targets as TargetBundle);
+    throw error;
+  }
+}
+
+function disposeTargets(targets: Partial<TargetBundle>): void {
+  targets.sceneTarget?.dispose();
+  targets.brightTarget?.dispose();
+  targets.blurTarget?.dispose();
+  targets.compositeTarget?.dispose();
 }
 
 function createTarget(width: number, height: number, depthBuffer: boolean): THREE.WebGLRenderTarget {
@@ -226,7 +346,7 @@ void main() {
   gl_FragColor = vec4(color, 1.0);
 }`;
 
-const compositeFragmentShader = `
+export const terminalCompositeFragmentShader = `
 uniform sampler2D tScene;
 uniform sampler2D tBloom;
 uniform float uBloomStrength;
@@ -238,5 +358,6 @@ void main() {
   vec2 centered = vUv * 2.0 - 1.0;
   float vignette = 1.0 - smoothstep(0.35, 1.25, dot(centered, centered)) * uVignette;
   gl_FragColor = vec4((sceneColor + bloomColor * uBloomStrength) * vignette, 1.0);
+  #include <tonemapping_fragment>
 #include <colorspace_fragment>
 }`;

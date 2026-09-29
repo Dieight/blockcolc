@@ -1,5 +1,5 @@
 import { useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react';
-import type { DomainState } from '@tomato-clock/domain';
+import type { DomainState } from '@blockcolc/domain';
 import { FocusFace } from './ui/FocusFace';
 import { MinimalTodayPanel } from './MinimalTodayPanel';
 import './styles/minimal-idle-carousel.css';

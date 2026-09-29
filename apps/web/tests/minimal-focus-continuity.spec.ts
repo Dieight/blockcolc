@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
-import { createInitialState, execute, type DomainCommand, type DomainState } from '@tomato-clock/domain';
+import { createInitialState, execute, type DomainCommand, type DomainState } from '@blockcolc/domain';
 import type { RoundPlan } from '../src/round-plan';
+import { preparePlanCancellation } from './focus-plan-controls';
 
 const startAt = Date.parse('2026-09-06T08:00:00Z');
 function fixture(kind: 'finite' | 'habit', complete = false, orphan = false) {
@@ -140,7 +141,7 @@ test('early completion on a deferred habit host stays unallocated and cancelling
   expect((await snapshot(page)).projects.find(p => p.id === 'h')?.habit?.completedFocusSessionIds).toEqual([]);
   await page.getByRole('button', { name: '跳过休息' }).click();
   await page.getByRole('button', { name: '调整本次计划' }).click();
-  await page.getByRole('button', { name: '取消计划' }).click();
+  await (await preparePlanCancellation(page.getByRole('dialog', { name: '安排下一轮' }))).click();
   const report = page.locator('.marathon-progress-report');
   await expect(report).toContainText('1 轮专注已结束');
   await report.getByRole('button', { name: '提交本次推进' }).click();
@@ -159,8 +160,69 @@ test('interrupting the only deferred round preserves the plan but cancelling it 
   await page.getByRole('button', { name: '外部打扰' }).click();
   await expect(page.getByRole('button', { name: '调整本次计划' })).toBeVisible();
   await page.getByRole('button', { name: '调整本次计划' }).click();
-  await page.getByRole('button', { name: '取消计划' }).click();
+  await (await preparePlanCancellation(page.getByRole('dialog', { name: '安排下一轮' }))).click();
   await expect(page.locator('.marathon-progress-report')).toHaveCount(0);
   await expect(page.getByRole('button', { name: '开始 1 轮' })).toBeVisible();
   expect((await snapshot(page)).focusHistory[0]).toMatchObject({ status: 'interrupted', deferredSettlement: true });
+});
+
+test('cancelling during a later active round records the note and reports only the earned round in place', async ({ page }) => {
+  await page.clock.install({ time: new Date(startAt) });
+  const data = fixture('finite');
+  await seed(page, data.state, data.plan);
+  await page.clock.fastForward(61_000);
+  await page.getByRole('button', { name: '跳过休息' }).click();
+  await page.getByRole('button', { name: '开始下一轮' }).click();
+  // The click handler intentionally starts the application command asynchronously.
+  // Wait until both the IDB-owned focus and its plan context are committed before
+  // advancing mocked time, otherwise the clock jump can precede StartFocus itself.
+  await expect.poll(async () => page.evaluate(async () => {
+    const plan = JSON.parse(localStorage.getItem('blockcolc-round-plan-v1') ?? 'null') as
+      { status?: string; currentSessionId?: string } | null;
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open('blockcolc-v1');
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    try {
+      const state = await new Promise<{ activeFocusSession?: { id: string } | null }>((resolve, reject) => {
+        const request = database.transaction('appState').objectStore('appState').get('current');
+        request.onsuccess = () => resolve(request.result?.state);
+        request.onerror = () => reject(request.error);
+      });
+      return plan?.status === 'focus' && plan.currentSessionId === state.activeFocusSession?.id;
+    } finally { database.close(); }
+  })).toBe(true);
+  await page.clock.fastForward(10_000);
+  await page.locator('.immersive-hint').dblclick();
+  await page.getByRole('button', { name: '结束本次专注' }).click();
+  const dialog = page.getByRole('dialog', { name: '如何结束这次专注？' });
+  await dialog.getByRole('button', { name: /取消整个计划/ }).click();
+  const confirm = page.getByRole('button', { name: '确认取消整个计划', exact: true });
+  await expect(confirm).toBeDisabled();
+  await page.getByRole('button', { name: '优先级变化', exact: true }).click();
+  await expect(confirm).toBeDisabled();
+  await page.getByLabel('补充说明', { exact: true }).fill('测试：改为处理更紧急的工作');
+  await confirm.click();
+  const report = page.locator('.marathon-progress-report');
+  await expect(report).toContainText('1 轮专注已结束');
+  await expect(report).toHaveAttribute('data-focus-report-variant', 'immersive');
+  await expect(report).toContainText('测试：改为处理更紧急的工作');
+  await expect(page.locator('.world-screen')).toHaveClass(/is-focusing/);
+  const cancelled = await snapshot(page);
+  expect(cancelled.activeFocusSession).toBeNull();
+  expect(cancelled.focusHistory.filter(session => session.status === 'interrupted')).toHaveLength(1);
+  const interrupted = cancelled.focusHistory.find(session => session.status === 'interrupted')!;
+  expect(interrupted).toMatchObject({
+    interruptionCategory: 'priority-changed', interruptionNote: '测试：改为处理更紧急的工作',
+  });
+  expect(interrupted.actualDurationMs).toBe(Date.parse(interrupted.interruptedAt) - Date.parse(interrupted.startedAt));
+  expect(interrupted.actualDurationMs).toBeGreaterThanOrEqual(10_000);
+  expect(interrupted.actualDurationMs).toBeLessThan(interrupted.plannedDurationMs);
+  await page.reload();
+  await expect(report).toContainText('测试：改为处理更紧急的工作');
+  await report.getByRole('button', { name: '提交本次推进' }).click();
+  await expect(report).toBeHidden();
+  await expect(page.getByRole('button', { name: '开始 1 轮' })).toBeVisible();
+  expect(await page.evaluate(() => localStorage.getItem('blockcolc-round-plan-v1'))).toBeNull();
 });

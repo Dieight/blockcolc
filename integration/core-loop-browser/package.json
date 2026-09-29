@@ -1,5 +1,5 @@
 {
-  "name": "@tomato-clock/core-loop-browser",
+  "name": "@blockcolc/core-loop-browser",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -8,9 +8,9 @@
     "test:e2e": "playwright test"
   },
   "dependencies": {
-    "@tomato-clock/application": "file:../../packages/application",
-    "@tomato-clock/domain": "file:../../packages/domain",
-    "@tomato-clock/storage-indexeddb": "file:../../packages/storage-indexeddb"
+    "@blockcolc/application": "file:../../packages/application",
+    "@blockcolc/domain": "file:../../packages/domain",
+    "@blockcolc/storage-indexeddb": "file:../../packages/storage-indexeddb"
   },
   "devDependencies": {
     "@playwright/test": "^1.55.1",

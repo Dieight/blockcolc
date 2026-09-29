@@ -78,6 +78,41 @@ describe("BlueprintV1", () => {
     }
   });
 
+  it("closes every interior cell of each starter-building roof gable", () => {
+    const gables: Array<{ blueprint: BlueprintV1; cells: Array<[number, number, number]> }> = [
+      {
+        blueprint: SMALL_WORKSHOP_BLUEPRINT,
+        cells: [-5, 5].flatMap((x) => Array.from({ length: 11 }, (_, index) => {
+          const z = index - 5;
+          return Array.from({ length: Math.max(0, 11 - Math.abs(z) - 6) }, (_, yIndex): [number, number, number] => [x, 6 + yIndex, z]);
+        }).flat()),
+      },
+      {
+        blueprint: TIMBER_HOUSE_BLUEPRINT,
+        cells: [-6, 6].flatMap((x) => Array.from({ length: 11 }, (_, index) => {
+          const z = index - 5;
+          return Array.from({ length: Math.max(0, 14 - Math.abs(z) - 9) }, (_, yIndex): [number, number, number] => [x, 9 + yIndex, z]);
+        }).flat()),
+      },
+      {
+        blueprint: VILLAGE_CHAPEL_BLUEPRINT,
+        cells: [-8, 2].flatMap((z) => Array.from({ length: 11 }, (_, index) => {
+          const x = index - 5;
+          return Array.from({ length: Math.max(0, 12 - Math.abs(x) - 8) }, (_, yIndex): [number, number, number] => [x, 8 + yIndex, z]);
+        }).flat()),
+      },
+    ];
+
+    for (const { blueprint, cells } of gables) {
+      const voxels = voxelMap(blueprint);
+      for (const [x, y, z] of cells) {
+        expect(voxels.get(coordinate(x, y, z)), `${blueprint.id} gable hole at ${x},${y},${z}`).toBeDefined();
+        expect(voxels.get(coordinate(x, y, z))!.materialId).toMatch(/^(stone|wood|plank|glass)$/);
+        expect(y).toBeLessThan(blueprint.voxels.find((voxel) => voxel.x === x && voxel.z === z && voxel.materialId === "roof")!.y);
+      }
+    }
+  });
+
   it("leaves clear entry routes and adds compact interiors after the roof stage", () => {
     const clearRoute = (blueprint: BlueprintV1, cells: Array<[number, number, number]>) => {
       const voxels = voxelMap(blueprint);

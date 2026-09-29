@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { ApplicationService } from '@tomato-clock/application';
+import type { ApplicationService } from '@blockcolc/application';
 import { bindApplicationLifecycle, type RecordedIntegrityNotice } from './application-lifecycle';
 
 export function useApplicationLifecycle(service: Pick<ApplicationService, 'resume'>, refresh: () => void) {

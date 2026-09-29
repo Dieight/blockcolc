@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { projectFocusAttribution, projectMonumentFocus, type ApplicationService, type MonumentFocusProjection, type UnallocatedFocusProjection } from '@tomato-clock/application';
-import { addLocalDays, localDateOf } from '@tomato-clock/domain';
+import { projectFocusAttribution, projectMonumentFocus, type ApplicationService, type MonumentFocusProjection, type UnallocatedFocusProjection } from '@blockcolc/application';
+import { addLocalDays, localDateOf } from '@blockcolc/domain';
 import { effectiveFocusMillisecondsByDate, focusSessionCountByDate, focusWindowSummary, projectFocusAllocation } from './focus-stats';
 import { AchievementUnlockDialog, AchievementsSection, type AchievementEntry } from './ui/AchievementsPanel';
 import { FocusAllocationChart, FocusCalendarChart, formatFocusMinutes, MonumentFocusChart } from './ui/FocusStatsCharts';

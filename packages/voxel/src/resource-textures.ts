@@ -8,9 +8,10 @@ import {
   type ResourcePackManifest,
   type TextureAlphaMode,
   type TextureAtlas,
-} from "@tomato-clock/resource-pack";
+} from "@blockcolc/resource-pack";
 import * as THREE from "three";
 import type { BlueprintVoxel } from "./blueprint";
+import { effectiveEmissionIdentity } from "./lighting";
 import {
   createLocalOcclusionField,
   faceOcclusionLevelsFor,
@@ -129,7 +130,12 @@ const FLUID_METADATA_BASE = 1_000_000;
 const FLUID_METADATA_WATER_BIT = 65_536;
 const FLUID_METADATA_FLOWING_BIT = 32_768;
 const FLUID_METADATA_ANGLE_STEPS = 4096;
+const MAX_TEXTURE_PLAN_CACHE_ENTRIES_PER_ATLAS = 4096;
 let liveResourcePackAtlasResidentBytes = 0;
+const texturePlanManifestByAtlas = new WeakMap<ResourcePackAtlas, ResourcePackManifest>();
+const texturePlanCacheByAtlas = new WeakMap<ResourcePackAtlas, Map<string, readonly Omit<TexturedVoxelPlan, "voxel">[] | null>>();
+const texturePlanCacheStatsByAtlas = new WeakMap<ResourcePackAtlas, { hits: number; misses: number; evictions: number }>();
+const positionWeightedTextureIdsByManifest = new WeakMap<ResourcePackManifest, ReadonlySet<string>>();
 
 /** Four 6-bit corner heights fit exactly in a Float32 integer (24-bit mantissa). */
 export function encodeFluidCornerHeights(corners: ResourceFluidSurface["cornerHeights"]): number {
@@ -171,7 +177,9 @@ export function buildResourcePackAtlas(manifest: ResourcePackManifest, maximumSi
     reservedAtlasBytes: liveResourcePackAtlasResidentBytes,
     additionalWorkingSetBytes: resourcePackColormapWorkingSetBytes(manifest),
   });
-  if (source.pages.length === 0) return disposableAtlas(source, [], new Map(), 0);
+  if (source.pages.length === 0) return bindTexturePlanManifest(
+    disposableAtlas(source, [], new Map(), 0), manifest,
+  );
   const visualBiomePalette = createVisualBiomePalette((manifest.colormaps ?? []).map((colormap) => ({
     kind: colormap.kind,
     width: colormap.width,
@@ -186,9 +194,9 @@ export function buildResourcePackAtlas(manifest: ResourcePackManifest, maximumSi
     texture.name = `blockcolc-resource-pack-atlas-${page.index}`;
     texture.colorSpace = THREE.SRGBColorSpace;
     texture.magFilter = THREE.NearestFilter;
-    texture.minFilter = THREE.NearestMipmapLinearFilter;
+    texture.minFilter = THREE.LinearMipmapLinearFilter;
     texture.mipmaps = createSafeAtlasMipmaps(page.rgba, page.width, page.height, source.safeMipLevels);
-    texture.anisotropy = 2;
+    texture.anisotropy = 4;
     texture.generateMipmaps = false;
     // `page.rgba` and the atlas UV contract both use the decoded PNG's
     // top-row-first coordinates (`v=0` addresses atlas row 0). DataTexture's
@@ -209,7 +217,37 @@ export function buildResourcePackAtlas(manifest: ResourcePackManifest, maximumSi
     pageTextureIndex: entry.pageTextureIndex,
     alphaMode: entry.alphaMode,
   }]));
-  return disposableAtlas(source, pages, tiles, resourcePackAtlasResidentBytes(source));
+  return bindTexturePlanManifest(disposableAtlas(source, pages, tiles, resourcePackAtlasResidentBytes(source)), manifest);
+}
+
+function bindTexturePlanManifest(atlas: ResourcePackAtlas, manifest: ResourcePackManifest): ResourcePackAtlas {
+  texturePlanManifestByAtlas.set(atlas, manifest);
+  texturePlanCacheByAtlas.set(atlas, new Map());
+  texturePlanCacheStatsByAtlas.set(atlas, { hits: 0, misses: 0, evictions: 0 });
+  return atlas;
+}
+
+export interface ResourceTexturePlanCacheDiagnostics {
+  hits: number;
+  misses: number;
+  evictions: number;
+  entries: number;
+  maximumEntries: number;
+  enabled: boolean;
+}
+
+/** Atlas-scoped counters for targeted diagnostics; cache data is never globally retained. */
+export function resourceTexturePlanCacheDiagnostics(atlas: ResourcePackAtlas): ResourceTexturePlanCacheDiagnostics {
+  const cache = texturePlanCacheByAtlas.get(atlas);
+  const stats = texturePlanCacheStatsByAtlas.get(atlas);
+  return {
+    hits: stats?.hits ?? 0,
+    misses: stats?.misses ?? 0,
+    evictions: stats?.evictions ?? 0,
+    entries: cache?.size ?? 0,
+    maximumEntries: MAX_TEXTURE_PLAN_CACHE_ENTRIES_PER_ATLAS,
+    enabled: cache !== undefined,
+  };
 }
 
 function resourcePackColormapWorkingSetBytes(manifest: ResourcePackManifest): number {
@@ -365,6 +403,44 @@ export function planTexturedVoxelPages(
   manifest: ResourcePackManifest,
   atlas: ResourcePackAtlas,
 ): TexturedVoxelPlan[] | undefined {
+  const cache = texturePlanCacheByAtlas.get(atlas);
+  const stats = texturePlanCacheStatsByAtlas.get(atlas);
+  if (!cache || !stats || texturePlanManifestByAtlas.get(atlas) !== manifest) {
+    return planTexturedVoxelPagesUncached(voxel, manifest, atlas);
+  }
+  const cacheKey = texturePlanCacheKey(voxel, manifest);
+  const existing = cache.get(cacheKey);
+  if (existing !== undefined) {
+    stats.hits += 1;
+    // Map insertion order is the LRU order, newest at the end.
+    cache.delete(cacheKey);
+    cache.set(cacheKey, existing);
+    return existing?.map((template) => ({ ...template, voxel }));
+  }
+  stats.misses += 1;
+  const plans = planTexturedVoxelPagesUncached(voxel, manifest, atlas);
+  const template = plans?.map(({ voxel: _voxel, ...plan }) => Object.freeze({
+    ...plan,
+    faceTiles: Object.freeze([...plan.faceTiles]) as unknown as FaceTileIndices,
+    faceUvWordsA: Object.freeze([...plan.faceUvWordsA]) as unknown as FaceUvWords,
+    faceUvWordsB: Object.freeze([...plan.faceUvWordsB]) as unknown as FaceUvWords,
+  })) ?? null;
+  cache.set(cacheKey, template);
+  if (cache.size > MAX_TEXTURE_PLAN_CACHE_ENTRIES_PER_ATLAS) {
+    const oldest = cache.keys().next().value as string | undefined;
+    if (oldest !== undefined) {
+      cache.delete(oldest);
+      stats.evictions += 1;
+    }
+  }
+  return template?.map((plan) => ({ ...plan, voxel }));
+}
+
+function planTexturedVoxelPagesUncached(
+  voxel: BlueprintVoxel,
+  manifest: ResourcePackManifest,
+  atlas: ResourcePackAtlas,
+): TexturedVoxelPlan[] | undefined {
   if (atlas.pages.length === 0) return undefined;
   const sourceBlockId = voxel.sourceBlockId ?? builtinMaterialBlockId(voxel.materialId);
   if (!sourceBlockId) return undefined;
@@ -431,6 +507,28 @@ export function planTexturedVoxelPages(
   });
 }
 
+function texturePlanCacheKey(voxel: BlueprintVoxel, manifest: ResourcePackManifest): string {
+  const sourceBlockId = voxel.sourceBlockId ?? builtinMaterialBlockId(voxel.materialId) ?? "";
+  const state = Object.entries(voxel.sourceBlockState ?? {})
+    .sort(([left], [right]) => compareText(left, right))
+    .map(([key, value]) => `${key.length}:${key}${value.length}:${value};`).join("");
+  let positionWeightedIds = positionWeightedTextureIdsByManifest.get(manifest);
+  if (!positionWeightedIds) {
+    positionWeightedIds = new Set(manifest.blockStates
+      .filter((blockState) => blockState.variants.some((variant) => variant.choices.length > 1)
+        || blockState.multipart?.some((part) => part.apply.length > 1))
+      .map((blockState) => blockState.resourceId));
+    positionWeightedTextureIdsByManifest.set(manifest, positionWeightedIds);
+  }
+  const positionWeighted = positionWeightedIds.has(sourceBlockId);
+  const validPosition = [voxel.x, voxel.y, voxel.z].every((coordinate) => Number.isInteger(coordinate)
+    && coordinate >= -0x80000000 && coordinate <= 0x7fffffff);
+  const positionKey = positionWeighted && validPosition ? `@${voxel.x}:${voxel.y}:${voxel.z}` : "";
+  // Length prefixes keep arbitrary direct-call state records collision-safe
+  // without JSON serialization. The builtin bit preserves legacy axis fallback.
+  return `${voxel.sourceBlockId === undefined ? "builtin" : "source"}|${sourceBlockId}|${state}|${positionKey}`;
+}
+
 export function createTextureBatches(
   voxels: readonly BlueprintVoxel[],
   manifest: ResourcePackManifest,
@@ -450,8 +548,7 @@ export function createTextureBatches(
         ...sourcePlan,
         faceOcclusionWord: packFaceOcclusionLevels(faceOcclusionLevelsFor(voxel, occlusionField)),
       };
-      const emissiveKind = voxel.emissiveKind ?? "";
-      const emissiveLevel = voxel.emissiveLevel ?? 0;
+      const { kind: emissiveKind, level: emissiveLevel } = effectiveEmissionIdentity(voxel);
       const tintKey = planned.stateTintRgb === undefined ? "" : planned.stateTintRgb.toString(16).padStart(6, "0");
       const key = `${planned.page}|${planned.faceMask}|${planned.alphaMode}|${emissiveKind}|${emissiveLevel}|${tintKey}`;
       let batch = groups.get(key);
@@ -846,13 +943,18 @@ function disposableAtlas(
 ): ResourcePackAtlas {
   let disposed = false;
   liveResourcePackAtlasResidentBytes += residentBytes;
-  return {
+  const atlas: ResourcePackAtlas = {
     source,
     pages,
     tiles,
     dispose() {
       if (disposed) return;
       disposed = true;
+      const planCache = texturePlanCacheByAtlas.get(atlas);
+      planCache?.clear();
+      texturePlanCacheByAtlas.delete(atlas);
+      texturePlanCacheStatsByAtlas.delete(atlas);
+      texturePlanManifestByAtlas.delete(atlas);
       liveResourcePackAtlasResidentBytes = Math.max(0, liveResourcePackAtlasResidentBytes - residentBytes);
       for (const page of pages) {
         page.texture.dispose();
@@ -861,6 +963,7 @@ function disposableAtlas(
       }
     },
   };
+  return atlas;
 }
 
 type AnimatedAtlasEntry = TextureAtlas["entries"][number] & {

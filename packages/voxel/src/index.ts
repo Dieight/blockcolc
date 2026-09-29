@@ -1,6 +1,16 @@
 export * from './blueprint';
 export * from './renderer';
-export * from './lighting';
+export {
+  shadowDirectionFromPosition,
+  lightingDirectionFingerprint,
+  sunStateForLocalTime,
+  clusterEmissivePoints,
+  selectEmissiveVisualPoints,
+  type DayPhase,
+  type SunState,
+  type EmissivePoint,
+  type LightingVector,
+} from './lighting';
 export * from './environment';
 export * from './village';
 export * from './terrain';
@@ -17,3 +27,5 @@ export * from './original-materials';
 export * from './lighting-postprocess';
 export * from './input-frame-scheduler';
 export * from './terrain-profile';
+export * from './astronomy';
+export * from './astronomy-visual';

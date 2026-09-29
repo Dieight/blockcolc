@@ -1,4 +1,4 @@
-import type { DomainState, FocusSession, ProgressReport } from '@tomato-clock/domain';
+import type { DomainState, FocusSession, ProgressReport } from '@blockcolc/domain';
 
 export type FocusAttributionKind = 'finite-subtask' | 'habit-building' | 'habit-project' | 'unallocated';
 export type FocusAttributionReason =

@@ -1,5 +1,5 @@
-import type { StateRepository } from "@tomato-clock/application";
-import type { DomainState } from "@tomato-clock/domain";
+import type { StateRepository } from "@blockcolc/application";
+import type { DomainState } from "@blockcolc/domain";
 import { cloneAndParseState, createBackupEnvelope, parseBackup, previewOf, stateSummary } from "./codec.js";
 import type {
   DeleteActiveProjectRollbackReason,

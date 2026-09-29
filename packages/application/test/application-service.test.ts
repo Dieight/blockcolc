@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createInitialState, execute, type Clock, type DomainState } from "@tomato-clock/domain";
+import { createInitialState, execute, type Clock, type DomainState } from "@blockcolc/domain";
 import {
   ApplicationPersistenceError,
   ApplicationService,

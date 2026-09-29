@@ -105,6 +105,9 @@ test('a selected base completes a separate active appearance pack across the ren
 
 test('applies an atlas to a real imported building and restores original rendering', async ({page},testInfo) => {
   test.setTimeout(60_000);
+  // Material restoration compares one stationary scene, not two points of
+  // the newly added opening reveal. Its animation has a separate cold test.
+  await page.emulateMedia({ reducedMotion: 'reduce' });
   const sample=resolve(process.cwd(),'../../litematic/bd29cade-7000-42b7-adc1-0631ce512c30.litematic');
   test.skip(!existsSync(sample), 'The real Litematic compatibility fixture stays local.');
   await page.clock.install({time:new Date('2026-07-26T05:00:00.000Z')});
@@ -121,7 +124,11 @@ test('applies an atlas to a real imported building and restores original renderi
   await page.reload();
   const canvas=page.getByLabel('项目建筑世界');
   await expect(canvas).toBeVisible();
+  await prepareMaterialComparison(page, canvas);
   const original=await canvas.screenshot({path:testInfo.outputPath('original-materials.png')});
+  // Restore normal motion for the existing animated-atlas assertions. Only
+  // the before/after material comparison is stationary.
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
 
   await page.getByRole('button',{name:'设置'}).click();
   await page.getByLabel('导入 Java 资源包 ZIP').setInputFiles({name:'visual-test.zip',mimeType:'application/zip',buffer:Buffer.from(makeVisualPack())});
@@ -155,11 +162,13 @@ test('applies an atlas to a real imported building and restores original renderi
   expect(changed.meanChannelDelta).toBeGreaterThan(0.5);
   await page.clock.fastForward(220);
   await expect.poll(async()=>Number(await canvas.getAttribute('data-animation-frame-update-count'))).toBeGreaterThan(0);
+  await page.emulateMedia({ reducedMotion: 'reduce' });
 
   await page.getByRole('button',{name:'设置'}).click();
   await page.locator('.resource-pack-original').getByRole('button',{name:'使用'}).click();
   await page.getByRole('button',{name:'计时'}).click();
   await expect(canvas).toHaveAttribute('data-active-resource-pack-id','');
+  await prepareMaterialComparison(page, canvas);
   const restored=await canvas.screenshot({path:testInfo.outputPath('restored-original.png')});
   const restoration=await pixelDifference(page,original,restored);
   // V20 ambient cloud drift makes two screenshots taken at different instants
@@ -170,12 +179,15 @@ test('applies an atlas to a real imported building and restores original renderi
 
 test('retextures built-in buildings through vanilla stand-in blocks', async ({ page }, testInfo) => {
   test.setTimeout(60_000);
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.clock.install({ time: new Date('2026-07-26T05:00:00.000Z') });
   await page.goto('/?__atlasPageSize=256');
   await page.getByRole('button', { name: '开始建造' }).click();
   await setActiveProjectProgress(page, 9900);
   await page.reload();
   const canvas = page.getByLabel('项目建筑世界');
   await expect(canvas).toBeVisible();
+  await prepareMaterialComparison(page, canvas);
   const original = await canvas.screenshot({ path: testInfo.outputPath('builtin-original.png') });
 
   await page.getByRole('button', { name: '设置' }).click();
@@ -210,8 +222,8 @@ test('retextures built-in buildings through vanilla stand-in blocks', async ({ p
   await page.getByRole('button', { name: '计时' }).click();
   await expect(canvas).toHaveAttribute('data-active-resource-pack-id', '');
   await expect.poll(async () => canvas.getAttribute('data-terrain-pack-textured'), { timeout: 20_000 }).toBe('false');
+  await prepareMaterialComparison(page, canvas);
   await expect.poll(async () => {
-    await page.getByRole('button', { name: '重置视角' }).click();
     const shot = await canvas.screenshot({ path: testInfo.outputPath('builtin-restored.png') });
     return (await pixelDifference(page, original, shot)).changedPixelRatio;
   }, { timeout: 20_000 }).toBeLessThan(0.02);
@@ -303,6 +315,59 @@ test('a user-owned 26.3 client JAR supplies models beneath all four provided app
   expect(selectedIds.size).toBe(samplePacks.length);
   expect(shaderErrors).toEqual([]);
 });
+
+test('cold bootstrap applies the selected pack with one world rebuild and preserves later switching', async ({ page }, testInfo) => {
+  test.setTimeout(90_000);
+  await page.goto('/');
+  await page.getByRole('button', { name: '开始建造', exact: true }).click();
+  const canvas = page.getByLabel('项目建筑世界');
+  // Readiness and animation are separate boundaries. Software WebGL can take
+  // longer than the default 5s expectation to reach the first usable scene;
+  // this case asserts ownership/rebuild count, not device startup latency.
+  await expect(canvas).toHaveAttribute('data-first-nonempty-frame-ms', /\d/, { timeout: 15_000 });
+  await expect(canvas).toHaveAttribute('data-initial-reveal-started-count', '1', { timeout: 15_000 });
+  await expect(canvas).toHaveAttribute('data-initial-reveal-completed-count', '1', { timeout: 15_000 });
+  await expect(canvas).toHaveAttribute('data-world-rebuild-count', '1');
+  await page.getByRole('button', { name: '设置', exact: true }).click();
+  await page.getByLabel('导入 Java 资源包 ZIP').setInputFiles({
+    name: 'startup-stone.zip', mimeType: 'application/zip', buffer: Buffer.from(makePack()),
+  });
+  await expect(page.locator('.resource-pack-panel .backup-notice')).toContainText('已导入并启用');
+  await page.getByRole('button', { name: '计时', exact: true }).click();
+  await expect(canvas).toHaveAttribute('data-active-resource-pack-id', /^sha256:/);
+  const selectedId = (await canvas.getAttribute('data-active-resource-pack-id'))!;
+  await page.reload();
+  await expect(canvas).toHaveAttribute('data-first-nonempty-frame-ms', /\d/, { timeout: 15_000 });
+  await expect(canvas).toHaveAttribute('data-initial-reveal-completed-count', '1', { timeout: 15_000 });
+  await expect(canvas).toHaveAttribute('data-active-resource-pack-id', selectedId);
+  await expect(canvas).toHaveAttribute('data-world-rebuild-count', '1');
+  await expect.poll(async () => Number(await canvas.getAttribute('data-textured-voxel-count'))).toBeGreaterThan(0);
+  await canvas.screenshot({ path: testInfo.outputPath('selected-pack-single-bootstrap.png') });
+  const generation = (await canvas.getAttribute('data-renderer-generation'))!;
+  await page.getByRole('button', { name: '设置', exact: true }).click();
+  await page.locator('.resource-pack-original').getByRole('button', { name: '使用', exact: true }).click();
+  await page.getByRole('button', { name: '计时', exact: true }).click();
+  await expect.poll(async () => canvas.getAttribute('data-active-resource-pack-id')).not.toBe(selectedId);
+  await expect(canvas).toHaveAttribute('data-world-rebuild-count', '2');
+  await expect(canvas).toHaveAttribute('data-renderer-generation', generation);
+  await page.getByRole('button', { name: '设置', exact: true }).click();
+  await page.locator('.resource-pack-list li').filter({ hasText: 'startup-stone' })
+    .getByRole('button', { name: '使用', exact: true }).click();
+  await page.getByRole('button', { name: '计时', exact: true }).click();
+  await expect(canvas).toHaveAttribute('data-active-resource-pack-id', selectedId);
+  await expect(canvas).toHaveAttribute('data-world-rebuild-count', '3');
+  await expect(canvas).toHaveAttribute('data-renderer-generation', generation);
+});
+
+async function prepareMaterialComparison(page: import('@playwright/test').Page,
+  canvas: import('@playwright/test').Locator): Promise<void> {
+  await expect(canvas).toHaveAttribute('data-first-nonempty-frame-ms', /\d/, { timeout: 15_000 });
+  // Expire the transient weather attribution with the installed clock on
+  // both sides. Reduced motion keeps rain/clouds and the opening stationary.
+  await page.clock.fastForward(10_000);
+  await page.getByRole('button', { name: '重置视角', exact: true }).click();
+  await expect(canvas).toHaveAttribute('data-camera-distance-ratio', '1.0000');
+}
 
 function makePack():Uint8Array{
   return zipSync({

@@ -66,6 +66,26 @@ describe('renderer generation ownership', () => {
     expect(f.ports.ready).toHaveBeenCalledTimes(1);
     f.dispose();
   });
+  it('does not mark a generation ready when initialization has no safe fallback', async () => {
+    const module = Promise.resolve('module');
+    const instance = { dispose: vi.fn() };
+    const ready = vi.fn();
+    const error = vi.fn();
+    const stop = startRendererGeneration({
+      schedule: begin => { begin(); return vi.fn(); },
+      load: async () => module,
+      create: () => instance,
+      initialize: async () => { throw new Error('no safe world'); },
+      ready,
+      readyOnError: false,
+      error,
+      release: vi.fn(),
+    });
+    await flush();
+    expect(error).toHaveBeenCalledTimes(1);
+    expect(ready).not.toHaveBeenCalled();
+    stop();
+  });
   it('ignores rejected initialization after disposal', async () => {
     const f = fixture();
     f.module.resolve('module'); await flush(); f.dispose();

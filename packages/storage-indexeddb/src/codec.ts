@@ -1,4 +1,4 @@
-import { parseDomainState, type DomainState, type ISOInstant } from "@tomato-clock/domain";
+import { parseDomainState, type DomainState, type ISOInstant } from "@blockcolc/domain";
 import type { BackupEnvelopeV1, ImportPreview, StateSummary } from "./model.js";
 
 export class BackupValidationError extends Error {

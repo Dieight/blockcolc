@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { executeAndReloadPersistedCommand, readPersistedDomainState } from "./persisted-domain-state";
+import { preparePlanCancellation } from './focus-plan-controls';
 
 // V22: the end-time (marathon) plan persists independently of the current task.
 // Confirmation moves directly to the shared immersive ready face; canceling
@@ -95,20 +96,30 @@ test("confirming locks the plan on the shared ready face; cancel settles", async
   await expect(page.getByRole("button", { name: "开始下一轮" })).toBeVisible();
   await page.getByRole("button", { name: "调整本次计划" }).click();
   const reopen = page.getByRole("dialog", { name: "安排下一轮" });
-  const cancel = reopen.getByRole("button", { name: "取消计划" });
+  const cancel = await preparePlanCancellation(reopen);
   await expect(cancel).toBeVisible();
   await expect(cancel).toHaveClass(/destructive/);
   await cancel.click();
 
   // Cancelling a locked marathon settles the finished round into the report.
-  // The settlement is a scrollable report surface (has-report layout), so the
-  // bottom content stays reachable on small screens.
+  // Settlement stays immersive in v2.1. Its own scroll surface keeps the
+  // bottom content reachable without returning to the old full-page layout.
   await expect(page.getByRole("heading", { name: "把这次推进汇报给哪些任务？" })).toBeVisible();
-  await expect(page.locator(".world-screen")).toHaveClass(/has-report/);
+  await expect(page.locator(".world-screen")).toHaveClass(/is-focusing/);
+  const report = page.locator('.marathon-progress-report');
+  await expect(report).toHaveAttribute('data-focus-report-variant', 'immersive');
+  expect(await report.evaluate(element => getComputedStyle(element).overflowY)).toBe('auto');
   await page.locator(".marathon-settlement-head").first().click();
   await page.locator(".marathon-report-row").first().getByRole("button", { name: /推进至 25%/ }).click();
   await page.locator(".marathon-report-row").first().getByRole("button", { name: /增加 .*计入轮数/ }).click();
-  await page.getByRole("button", { name: "提交本次推进" }).click();
+  const submit = report.getByRole("button", { name: "提交本次推进" });
+  await submit.scrollIntoViewIfNeeded();
+  expect(await submit.evaluate(element => {
+    const rect = element.getBoundingClientRect();
+    const hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
+    return hit === element || (hit !== null && element.contains(hit));
+  })).toBe(true);
+  await submit.click();
   await expect(page.getByRole("heading", { name: "把这次推进汇报给哪些任务？" })).toBeHidden();
   // Back to the classic lane: project info is visible again.
   await expect(page.getByRole("heading", { name: "我的第一座工坊" })).toBeVisible();
@@ -157,7 +168,7 @@ test("cancelling an unstarted locked plan returns straight to the classic lane",
   await expect(page.locator(".focus-task-context strong")).toHaveText("准备第 1 / 4 轮");
   await expect(page.locator(".workbench-context")).toHaveCount(0);
   await page.getByRole("button", { name: "调整本次计划" }).click();
-  await sheet.getByRole("button", { name: "取消计划" }).click();
+  await (await preparePlanCancellation(sheet)).click();
   await expect(page.getByRole("heading", { name: "我的第一座工坊" })).toBeVisible();
   await expect(page.locator(".timer-label")).toHaveText("每轮时长");
   await expect(page.locator(".timer-value")).toHaveText("01:00");
@@ -228,7 +239,7 @@ test("settlement splits rounds between a habit building and subtasks on another 
   // Cancel into the settlement: both the habit card and the finite project card
   // sit side by side.
   await page.getByRole("button", { name: "调整本次计划" }).click();
-  await sheet.getByRole("button", { name: "取消计划" }).click();
+  await (await preparePlanCancellation(sheet)).click();
   await expect(page.getByRole("heading", { name: "把这次推进汇报给哪些任务？" })).toBeVisible();
   await expect(page.locator(".marathon-settlement-card")).toHaveCount(2);
 

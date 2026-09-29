@@ -1,4 +1,4 @@
-import type { TextureAlphaMode } from "@tomato-clock/resource-pack";
+import type { TextureAlphaMode } from "@blockcolc/resource-pack";
 import * as THREE from "three";
 import { patchAtlasAnimationFragmentShader, patchAtlasUvVertexShader, type ResourcePackAtlasPage } from "./resource-textures";
 

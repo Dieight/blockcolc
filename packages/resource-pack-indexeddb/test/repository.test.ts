@@ -1,5 +1,5 @@
 import { IDBFactory as FakeIDBFactory } from "fake-indexeddb";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   IndexedDbResourcePackRepository,
@@ -15,6 +15,89 @@ beforeEach(() => {
 });
 
 describe("IndexedDbResourcePackRepository", () => {
+  it("persists a fresh selection revision for writes, same-ID replacement, clear, and another repository instance", async () => {
+    const name = databaseName();
+    const first = repository(name);
+    const initial = await first.getSelectionMetadata!();
+    expect(initial).toMatchObject({ activeId: null, baseId: null });
+    await first.save(fixture("stable-pack", "2026-07-26T01:00:00.000Z"));
+    const selected = await first.getSelectionMetadata!();
+    expect(selected.activeId).toBe("stable-pack");
+    expect(selected.revision).not.toBe(initial.revision);
+    expect((await repository(name).getSelectionMetadata!()).revision).toBe(selected.revision);
+
+    await first.selectBase("stable-pack");
+    const based = await first.getSelectionMetadata!();
+    expect(based.baseId).toBe("stable-pack");
+    expect(based.revision).not.toBe(selected.revision);
+
+    await first.save(fixture("stable-pack", "2026-07-27T01:00:00.000Z"));
+    const replaced = await first.getSelectionMetadata!();
+    expect(replaced.revision).not.toBe(based.revision);
+    expect(replaced.activeId).toBe("stable-pack");
+    expect(replaced.baseId).toBe("stable-pack");
+
+    await first.clear();
+    const cleared = await first.getSelectionMetadata!();
+    expect(cleared).toMatchObject({ activeId: null, baseId: null });
+    expect(cleared.revision).not.toBe(replaced.revision);
+  });
+
+  it("repairs missing selected rows and missing legacy revisions without reading pack payloads", async () => {
+    const name = databaseName();
+    const repo = repository(name);
+    await repo.save(fixture("selected", "2026-07-26T01:00:00.000Z"));
+    const beforeRepair = await repo.getSelectionMetadata!();
+    const database = await openRaw(name);
+    const transaction = database.transaction(["metadata", "resourcePacks"], "readwrite");
+    transaction.objectStore("metadata").delete("selection-revision");
+    transaction.objectStore("metadata").put({ key: "active-pack", packId: "missing-row" });
+    await transactionDone(transaction);
+    database.close();
+
+    const repaired = await repository(name).getSelectionMetadata!();
+    expect(repaired.activeId).toBeNull();
+    expect(repaired.revision).not.toBe(beforeRepair.revision);
+    expect((await repository(name).list())[0]?.active).toBe(false);
+  });
+
+  it("does not mint a new identity when a failed selection transaction aborts", async () => {
+    const repo = repository(databaseName());
+    await repo.save(fixture("existing", "2026-07-26T01:00:00.000Z"));
+    const before = await repo.getSelectionMetadata!();
+    await expect(repo.select("missing")).rejects.toThrow(/not found/i);
+    expect((await repo.getSelectionMetadata!()).revision).toBe(before.revision);
+  });
+
+  it("rolls back a queued selection write and token when the transaction aborts after the pointer put", async () => {
+    const name = databaseName();
+    const repo = repository(name);
+    await repo.save(fixture("one", "2026-07-26T01:00:00.000Z"));
+    await repo.save(fixture("two", "2026-07-26T02:00:00.000Z"));
+    const before = await repo.getSelectionMetadata!();
+    const database = await openRaw(name);
+    const storePrototype = Object.getPrototypeOf(
+      database.transaction(["metadata"], "readonly").objectStore("metadata"),
+    ) as { put: IDBObjectStore["put"] };
+    const originalPut = storePrototype.put;
+    database.close();
+    const putSpy = vi.spyOn(storePrototype, "put").mockImplementation(function (this: IDBObjectStore, value: unknown, key?: IDBValidKey) {
+      if (this.name === "metadata" && (value as { key?: string } | null)?.key === "selection-revision") {
+        throw new DOMException("Injected late selection transaction failure", "UnknownError");
+      }
+      return originalPut.call(this, value, key);
+    });
+    try {
+      await expect(repo.select("two")).rejects.toThrow(/injected late selection transaction failure/i);
+    } finally {
+      putSpy.mockRestore();
+    }
+    expect((await repo.getActive())?.id).toBe("one");
+    expect((await repo.getSelectionMetadata!())).toMatchObject({
+      revision: before.revision, activeId: "one", baseId: null,
+    });
+  });
+
   it("saves, lists, gets, and reloads binary packs independently", async () => {
     const name = databaseName();
     const first = repository(name);
@@ -516,6 +599,47 @@ describe("IndexedDbResourcePackRepository", () => {
     expect(await repo.delete("old")).toBeNull();
     expect(await repo.getActive()).toBeUndefined();
     expect((await repo.list()).map((entry) => entry.id)).toEqual(["new", "middle"]);
+  });
+
+  it("invalidates selection identity on delete and strict full-read repair", async () => {
+    const name = databaseName();
+    const repo = repository(name);
+    await repo.save(fixture("one", "2026-07-26T01:00:00.000Z"));
+    const beforeDelete = await repo.getSelectionMetadata!();
+    await repo.delete("one");
+    const afterDelete = await repo.getSelectionMetadata!();
+    expect(afterDelete.revision).not.toBe(beforeDelete.revision);
+    expect(afterDelete.activeId).toBeNull();
+
+    await repo.save(fixture("repair", "2026-07-26T02:00:00.000Z"));
+    const beforeRepair = await repo.getSelectionMetadata!();
+    const database = await openRaw(name);
+    const transaction = database.transaction("metadata", "readwrite");
+    transaction.objectStore("metadata").put({ key: "active-pack", packId: "missing-row" });
+    await transactionDone(transaction);
+    database.close();
+
+    expect(await repo.getActive()).toBeUndefined();
+    const repaired = await repo.getSelectionMetadata!();
+    expect(repaired.activeId).toBeNull();
+    expect(repaired.revision).not.toBe(beforeRepair.revision);
+  });
+
+  it("invalidates selection identity when list performs full selection repair", async () => {
+    const name = databaseName();
+    const repo = repository(name);
+    await repo.save(fixture("listed", "2026-07-26T01:00:00.000Z"));
+    const before = await repo.getSelectionMetadata!();
+    const database = await openRaw(name);
+    const transaction = database.transaction("metadata", "readwrite");
+    transaction.objectStore("metadata").put({ key: "base-pack", packId: "missing-row" });
+    await transactionDone(transaction);
+    database.close();
+
+    await repo.list();
+    const after = await repo.getSelectionMetadata!();
+    expect(after.baseId).toBeNull();
+    expect(after.revision).not.toBe(before.revision);
   });
 
   it("clears a deleted base reference without changing the active pack", async () => {

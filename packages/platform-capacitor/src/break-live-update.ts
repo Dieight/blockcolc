@@ -1,6 +1,6 @@
 import { Capacitor, registerPlugin } from '@capacitor/core';
 import type { Plugin, PluginListenerHandle } from '@capacitor/core';
-import type { BreakCompletionNotification, FocusCompletionNotification } from '@tomato-clock/application';
+import type { BreakCompletionNotification, FocusCompletionNotification } from '@blockcolc/application';
 
 export interface BreakLiveUpdateCapability {
   supported: boolean;
@@ -15,12 +15,30 @@ export interface BreakLiveUpdateCapability {
   deadlineAlarmExact?: boolean;
   /** True when native posted the already-due return reminder immediately. */
   deadlineReminderPosted?: boolean;
+  /** True only when native has a durable user-dismissal tombstone for this break identity. */
+  returnReminderDismissed?: boolean;
 }
 
 export interface AutomaticContinuationDeadlineEvent {
   eventId: string;
   authorizationId: string;
   scheduledAtEpochMs: number;
+  timeline?: AutomaticContinuationTimeline;
+}
+
+export interface AutomaticContinuationTimelinePhase {
+  kind: 'focus' | 'break';
+  startsAtEpochMs: number;
+  endsAtEpochMs: number;
+  round: number;
+  eventId?: string;
+}
+
+export interface AutomaticContinuationTimeline {
+  authorizationId: string;
+  phases: AutomaticContinuationTimelinePhase[];
+  projectTitle: string;
+  taskTitle: string;
 }
 
 export interface AutomaticContinuationDeadlineSchedule {

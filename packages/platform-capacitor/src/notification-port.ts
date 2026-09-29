@@ -1,6 +1,6 @@
 import { Capacitor } from '@capacitor/core';
 import { LocalNotifications, type PermissionStatus } from '@capacitor/local-notifications';
-import type { BreakCompletionNotification, FocusCompletionNotification, NotificationCapability, NotificationPermission, NotificationPort } from '@tomato-clock/application';
+import type { BreakCompletionNotification, FocusCompletionNotification, NotificationCapability, NotificationPermission, NotificationPort } from '@blockcolc/application';
 import { setNativeProductSystemUiOpen } from './lifecycle';
 import { breakNotificationKey, cancelBreakLiveUpdate, cancelFocusLiveUpdate, showBreakLiveUpdate, showFocusLiveUpdate } from './break-live-update';
 
@@ -93,7 +93,8 @@ export class CapacitorNotificationPort implements NotificationPort {
       try {
         const capability = await showBreakLiveUpdate(notification);
         deadlineOwnedByNative = notification.returnToFocus === true
-          && (capability.deadlineAlarmScheduled === true
+          && (capability.returnReminderDismissed === true
+            || capability.deadlineAlarmScheduled === true
             || (deadlineReached && capability.deadlineReminderPosted === true));
       } catch (error) {
         // The standard Capacitor alarm below remains the cross-process fallback.

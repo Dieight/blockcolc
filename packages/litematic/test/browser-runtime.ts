@@ -1,4 +1,4 @@
-import { parseLitematic } from "@tomato-clock/litematic";
+import { parseLitematic } from "@blockcolc/litematic";
 
 const files = [
   "a94f3c5d-b4ad-42e1-ba26-f474b204b0ea.litematic",

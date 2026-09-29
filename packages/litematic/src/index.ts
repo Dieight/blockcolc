@@ -7,7 +7,7 @@ import {
   type BlueprintV1,
   type BlueprintVoxel,
   type MaterialId,
-} from "@tomato-clock/voxel";
+} from "@blockcolc/voxel";
 import {
   JAVA_NBT_TAG_TYPE,
   parseJavaNbtWithPistonNumericTagTypes,

@@ -32,7 +32,7 @@ Promise.all([bootstrap(), loadingPagePainted]).then(([{service,resourcePacks}]) 
 
 if (import.meta.env.PROD && 'serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    void import('@tomato-clock/platform-capacitor').then(({ isCapacitorNative }) => {
+    void import('@blockcolc/platform-capacitor').then(({ isCapacitorNative }) => {
       if (!isCapacitorNative()) return navigator.serviceWorker.register('/sw.js');
     });
   });

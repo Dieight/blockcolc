@@ -81,9 +81,19 @@ test("the finished increment grows block by block and settles fully", async ({ p
   await page.screenshot({ path: testInfo.outputPath("v20-reveal-settled.png"), fullPage: true });
 });
 
-test("moves clouds and trees across idle frames when the ambient gate is open", async ({ page }) => {
+test("moves clouds and trees across idle frames when the ambient gate is open", async ({ page }, testInfo) => {
   await createDefaultProject(page);
   const canvas = page.getByLabel("项目建筑世界");
+  await expect(canvas).toHaveAttribute("data-initial-reveal-completed-count", "1", { timeout: 15_000 });
+  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await page.getByLabel("临时调试世界", { exact: true }).check();
+  await page.getByLabel("指定时间", { exact: true }).check();
+  await page.getByLabel("世界调试时间", { exact: true }).fill("13:00");
+  await page.getByLabel("天气", { exact: true }).selectOption("cloudy");
+  await page.getByRole("button", { name: "计时", exact: true }).click();
+  await expect(canvas).toHaveAttribute("data-weather-kind", "cloudy");
+  await canvas.dispatchEvent("wheel", { deltaY: 2_000, deltaMode: 0 });
+  await expect.poll(async () => Number(await canvas.getAttribute("data-camera-distance-ratio"))).toBeGreaterThan(1);
   await expect
     .poll(async () => await canvas.getAttribute("data-ambient-motion-active"), { timeout: 5_000 })
     .not.toBeNull();
@@ -91,10 +101,18 @@ test("moves clouds and trees across idle frames when the ambient gate is open", 
   // proof there instead of asserting against a gate that is allowed to be closed.
   if (await canvas.getAttribute("data-ambient-motion-active") !== "true") return;
   await page.waitForTimeout(1_400);
-  const first = await canvas.screenshot();
-  await page.waitForTimeout(1_400);
-  const second = await canvas.screenshot();
-  expect(Buffer.compare(first, second)).not.toBe(0);
+  const first = await canvas.screenshot({ path: testInfo.outputPath("ambient-before.png") });
+  const firstDrift = Number(await canvas.getAttribute("data-cloud-drift-ms"));
+  const firstRenderedFrames = Number(await canvas.getAttribute("data-render-frame-count"));
+  const firstCloudPosition = await canvas.getAttribute("data-cloud-first-block-position");
+  await page.waitForTimeout(3_000);
+  await expect.poll(async () => Number(await canvas.getAttribute("data-cloud-drift-ms"))).toBeGreaterThan(firstDrift + 2_000);
+  const second = await canvas.screenshot({ path: testInfo.outputPath("ambient-after.png") });
+  const secondRenderedFrames = Number(await canvas.getAttribute("data-render-frame-count"));
+  expect(secondRenderedFrames).toBeGreaterThan(firstRenderedFrames);
+  expect(await canvas.getAttribute("data-cloud-first-block-position")).not.toBe(firstCloudPosition);
+  expect(first.byteLength).toBeGreaterThan(2_000);
+  expect(second.byteLength).toBeGreaterThan(2_000);
 });
 
 test("leaves the reveal quiet on the initial world load", async ({ page }) => {

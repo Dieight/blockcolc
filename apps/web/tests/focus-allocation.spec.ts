@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { createInitialState, execute, type DomainCommand, type DomainState } from '@tomato-clock/domain';
+import { createInitialState, execute, type DomainCommand, type DomainState } from '@blockcolc/domain';
 
 const startAt = Date.parse('2026-09-12T08:00:00+08:00');
 const viewports = [

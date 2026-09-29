@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef } from 'react';
-import type { ApplicationService } from '@tomato-clock/application';
+import type { ApplicationService } from '@blockcolc/application';
 import type { FocusPreferences } from './app-types';
 import {
   createAutomaticContinuationCoordinator,
@@ -20,27 +20,27 @@ export interface UseAutomaticContinuationOptions {
 
 const nativeDeadlinePort: AutomaticContinuationDeadlinePort = {
   async schedule(event) {
-    const platform = await import('@tomato-clock/platform-capacitor');
+    const platform = await import('@blockcolc/platform-capacitor');
     return platform.scheduleAutomaticContinuation(event);
   },
   async cancel(eventId) {
-    const platform = await import('@tomato-clock/platform-capacitor');
+    const platform = await import('@blockcolc/platform-capacitor');
     await platform.cancelAutomaticContinuation(eventId);
   },
   async cancelAuthorization(authorizationId) {
-    const platform = await import('@tomato-clock/platform-capacitor');
+    const platform = await import('@blockcolc/platform-capacitor');
     await platform.cancelAutomaticContinuations(authorizationId);
   },
   async pending() {
-    const platform = await import('@tomato-clock/platform-capacitor');
+    const platform = await import('@blockcolc/platform-capacitor');
     return platform.getPendingAutomaticContinuations();
   },
   async acknowledge(eventId) {
-    const platform = await import('@tomato-clock/platform-capacitor');
+    const platform = await import('@blockcolc/platform-capacitor');
     await platform.acknowledgeAutomaticContinuation(eventId);
   },
   async listen(listener: (event: AutomaticContinuationDeadlineEvent) => void) {
-    const platform = await import('@tomato-clock/platform-capacitor');
+    const platform = await import('@blockcolc/platform-capacitor');
     const handle = await platform.addAutomaticContinuationListener(listener);
     return () => handle.remove();
   },

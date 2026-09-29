@@ -8,9 +8,10 @@ import {
   type BlockFace,
   type ResourcePackManifest,
   type TextureAlphaMode,
-} from "@tomato-clock/resource-pack";
+} from "@blockcolc/resource-pack";
 import * as THREE from "three";
 import type { BlueprintVoxel } from "./blueprint";
+import { effectiveEmissionIdentity } from "./lighting";
 import {
   createLocalOcclusionField,
   faceOcclusionLevelsFor,
@@ -82,6 +83,14 @@ export interface GeometryVoxelBatch {
 }
 
 const alphaRank: Record<TextureAlphaMode, number> = { opaque: 0, cutout: 1, translucent: 2 };
+const windingDirectionCandidates: readonly (readonly [BlockFace, number, number, number])[] = [
+  ["down", 0, -1, 0],
+  ["up", 0, 1, 0],
+  ["north", 0, 0, -1],
+  ["south", 0, 0, 1],
+  ["west", -1, 0, 0],
+  ["east", 1, 0, 0],
+];
 /** Soft draw-call target for imported geometry; crossing it is diagnostic, not a reason to cube valid models. */
 export const MAX_GEOMETRY_BATCHES = 64;
 
@@ -230,17 +239,20 @@ export function compileMappedGeometryVoxelPages(
         tintValues.push(tintKind);
       }
       const positions = facePositions(face, element.from, element.to);
-      const preserveModelSpaceFace = element.rotation === undefined
-        && element.blockRotation !== undefined
-        && (element.blockRotation.x !== 0 || element.blockRotation.y !== 0);
-      const targetFace = preserveModelSpaceFace ? rotateGeometryFace(face, element.blockRotation!) : face;
-      const localShadeDirection = element.shadeDirectionOverride ?? (element.shade ? face : "up");
-      const shadeDirection = preserveModelSpaceFace && element.shade
-        ? rotateGeometryFace(localShadeDirection, element.blockRotation!)
-        : localShadeDirection;
+      // A deferred blockstate turn owns face identity for both reversed bounds
+      // and element-local rotations. The element-local operation changes the
+      // actual normal, but must not prevent the enclosing blockstate from
+      // remapping the model-space face/occlusion slot.
+      const targetFace = element.blockRotation === undefined ? face : rotateGeometryFace(face, element.blockRotation);
+      const finalPositions = transformGeometryPositions(positions, element.rotation, element.blockRotation);
+      // Explicit 26.3 overrides select a fixed world-cardinal light factor.
+      // Without an override, FaceBakery shades by the closest cardinal to its
+      // final baked winding, which can differ from the nominal face/slot.
+      const shadeDirection = element.shadeDirectionOverride
+        ?? (element.shade ? closestWindingFace(finalPositions) ?? targetFace : "up");
       quads.push({
         face: targetFace,
-        positions: transformGeometryPositions(positions, element.rotation, element.blockRotation),
+        positions: finalPositions,
         normal: transformGeometryNormal(windingNormal(positions, face), element.rotation, element.blockRotation),
         bakedUvs: bakedFaceUvs(face, element.from, element.to, reference),
         slot,
@@ -326,8 +338,7 @@ export function batchGeometryPlans(plans: readonly GeometryVoxelPlan[]): Geometr
 }
 
 function appendGeometryPlan(groups: Map<string, GeometryVoxelBatch>, plan: GeometryVoxelPlan): void {
-  const emissiveKind = plan.voxel.emissiveKind ?? "";
-  const emissiveLevel = plan.voxel.emissiveLevel ?? 0;
+  const { kind: emissiveKind, level: emissiveLevel } = effectiveEmissionIdentity(plan.voxel);
   const key = geometryBatchKey(plan);
   let batch = groups.get(key);
   if (!batch) {
@@ -348,8 +359,7 @@ function appendGeometryPlan(groups: Map<string, GeometryVoxelBatch>, plan: Geome
 }
 
 function geometryBatchKey(plan: GeometryVoxelPlan): string {
-  const emissiveKind = plan.voxel.emissiveKind ?? "";
-  const emissiveLevel = plan.voxel.emissiveLevel ?? 0;
+  const { kind: emissiveKind, level: emissiveLevel } = effectiveEmissionIdentity(plan.voxel);
   const tintKey = plan.stateTintRgb === undefined ? "" : plan.stateTintRgb.toString(16).padStart(6, "0");
   return `${plan.page}|${plan.topology.signature}|${plan.topology.canonicalPayload}|${plan.alphaMode}|${emissiveKind}|${emissiveLevel}|${tintKey}`;
 }
@@ -711,8 +721,10 @@ function rotateBlockVector(
   y: 0 | 90 | 180 | 270,
 ): readonly [number, number, number] {
   let output = vector;
-  for (let turns = 0; turns < x / 90; turns += 1) output = [output[0], -output[2], output[1]];
-  for (let turns = 0; turns < y / 90; turns += 1) output = [output[2], output[1], -output[0]];
+  // Match Minecraft 26.3 Variant model-state quadrants: positive blockstate
+  // X/Y values are negative-axis matrices; apply X before Y as composed there.
+  for (let turns = 0; turns < x / 90; turns += 1) output = [output[0], output[2], -output[1]];
+  for (let turns = 0; turns < y / 90; turns += 1) output = [-output[2], output[1], output[0]];
   return output;
 }
 
@@ -760,6 +772,37 @@ function directionalShadeFactor(face: BlockFace): number {
   return 0.6;
 }
 
+function closestWindingFace(positions: AtlasGeometryQuad["positions"]): BlockFace | undefined {
+  const firstX = positions[3]! - positions[0]!;
+  const firstY = positions[4]! - positions[1]!;
+  const firstZ = positions[5]! - positions[2]!;
+  const secondX = positions[6]! - positions[0]!;
+  const secondY = positions[7]! - positions[1]!;
+  const secondZ = positions[8]! - positions[2]!;
+  const crossX = firstY * secondZ - firstZ * secondY;
+  const crossY = firstZ * secondX - firstX * secondZ;
+  const crossZ = firstX * secondY - firstY * secondX;
+  const length = Math.hypot(crossX, crossY, crossZ);
+  if (!Number.isFinite(length) || length === 0) return undefined;
+  const normalX = Math.fround(crossX / length);
+  const normalY = Math.fround(crossY / length);
+  const normalZ = Math.fround(crossZ / length);
+  if (!Number.isFinite(normalX) || !Number.isFinite(normalY) || !Number.isFinite(normalZ)) return undefined;
+  let closest: BlockFace | undefined;
+  let greatestDot = -Infinity;
+  for (const [face, x, y, z] of windingDirectionCandidates) {
+    const dot = normalX * x + normalY * y + normalZ * z;
+    if (!Number.isFinite(dot)) return undefined;
+    // Strict comparison preserves the official Direction enum's first winner
+    // for equal float32 cardinal dots.
+    if (dot > greatestDot) {
+      greatestDot = dot;
+      closest = face;
+    }
+  }
+  return closest;
+}
+
 function rotateGeometryFace(
   face: BlockFace,
   rotation: NonNullable<AtlasBlockGeometry["elements"][number]["blockRotation"]>,
@@ -770,9 +813,7 @@ function rotateGeometryFace(
         : face === "south" ? [0, 0, 1]
           : face === "west" ? [-1, 0, 0]
             : [1, 0, 0];
-  let [x, y, z] = vector;
-  for (let turn = 0; turn < rotation.x / 90; turn += 1) [x, y, z] = [x, -z, y];
-  for (let turn = 0; turn < rotation.y / 90; turn += 1) [x, y, z] = [z, y, -x];
+  const [x, y, z] = rotateBlockVector(vector, rotation.x, rotation.y);
   if (y < 0) return "down";
   if (y > 0) return "up";
   if (z < 0) return "north";

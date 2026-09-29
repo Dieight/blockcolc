@@ -34,13 +34,21 @@ const DYE_COLORS: Readonly<Record<string, number>> = {
 const WOOD_COLORS: Readonly<Record<string, number>> = {
   pale_oak: 0xd6c6a5, dark_oak: 0x5d402b, mangrove: 0x8e3c50, cherry: 0xd98792,
   spruce: 0x76553c, birch: 0xd8c18b, jungle: 0xa97c55, acacia: 0xa85b36,
-  bamboo: 0xc5a746, crimson: 0x6d2635, warped: 0x2d7d78, oak: 0xb68c55,
+  bamboo: 0xc5a746, crimson: 0x6d2635, warped: 0x2d7d78, oak: 0xb68c55, poplar: 0xa9825f,
 };
 
 export function fallbackVisualStyleForVoxel(
   voxel: Pick<BlueprintVoxel, "materialId" | "sourceBlockId">,
 ): FallbackVisualStyle {
   const path = voxel.sourceBlockId?.toLowerCase().split(":").pop() ?? "";
+  const namespace = voxel.sourceBlockId?.includes(":") ? voxel.sourceBlockId.toLowerCase().split(":")[0] : "minecraft";
+  const componentPath = path === "stone_button" || path === "stone_pressure_plate"
+    || path === "polished_blackstone_button" || path === "polished_blackstone_pressure_plate"
+    || path === "light_weighted_pressure_plate" || path === "heavy_weighted_pressure_plate";
+  const componentColor = path === "stone_button" || path === "stone_pressure_plate" ? 0x7d8581
+    : path === "polished_blackstone_button" || path === "polished_blackstone_pressure_plate" ? 0x4d5655
+      : path === "light_weighted_pressure_plate" ? 0xd6ad3f
+        : path === "heavy_weighted_pressure_plate" ? 0xb7b9b2 : undefined;
   const dyed = Object.entries(DYE_COLORS).find(([name]) => path === name || path.startsWith(`${name}_`));
   const wood = Object.entries(WOOD_COLORS).find(([name]) => path === name || path.startsWith(`${name}_`));
   let color = BASE_COLORS[voxel.materialId] ?? 0xc3b18d;
@@ -49,7 +57,11 @@ export function fallbackVisualStyleForVoxel(
   let transparent = voxel.materialId === "glass";
   let opacity = transparent ? 0.44 : 1;
 
-  if (dyed && /(?:wool|carpet|concrete|terracotta|glazed_terracotta|glass|glass_pane|bed|banner|candle|shulker_box)/.test(path)) {
+  if (componentPath && namespace !== "minecraft") {
+    // Unknown/modded component IDs retain the semantic material fallback.
+  } else if (componentColor !== undefined) {
+    color = componentColor;
+  } else if (dyed && /(?:wool|carpet|concrete|terracotta|glazed_terracotta|glass|glass_pane|bed|banner|candle|cushion|shulker_box)/.test(path)) {
     color = dyed[1];
   } else if (wood && /(?:planks|log|wood|stem|hyphae|bamboo|shelf|bookshelf|door|trapdoor|fence|gate|sign|button|pressure_plate)/.test(path)) {
     color = wood[1];
@@ -66,6 +78,18 @@ export function fallbackVisualStyleForVoxel(
     color = 0xd97845;
   } else if (path.includes("pale_moss")) {
     color = 0x72845d;
+  } else if (/^(?:red|orange|yellow)_poplar_leaves$/.test(path)) {
+    color = path.startsWith("red_") ? 0xb64d49 : path.startsWith("orange_") ? 0xd27b3c : 0xd4b84c;
+  } else if (path === "red_shrub") {
+    color = 0xb74d3e;
+  } else if (path.includes("shelf_mushroom")) {
+    color = 0x9c634a;
+  } else if (path === "red_mushroom" || path === "red_mushroom_block") {
+    color = 0xb94f3f;
+  } else if (path === "brown_mushroom" || path === "brown_mushroom_block") {
+    color = 0x886348;
+  } else if (path === "straw_bed" || path === "hay_block") {
+    color = 0xc4a64c;
   } else if (path.includes("sculk")) {
     color = 0x165c63;
   } else if (path.includes("sulfur")) {
@@ -134,6 +158,57 @@ export function fallbackVisualStyleForVoxel(
     pattern,
     transparent,
     opacity,
+  };
+}
+
+/** Narrow material palette for the private multi-part original shapes. */
+export function fallbackVisualStyleForOriginalComponent(
+  voxel: Pick<BlueprintVoxel, "sourceBlockId" | "sourceBlockState" | "materialId">,
+  componentKey: string,
+): FallbackVisualStyle {
+  const path = voxel.sourceBlockId?.toLowerCase().split(":").pop() ?? "";
+  const namespace = voxel.sourceBlockId?.includes(":") ? voxel.sourceBlockId.toLowerCase().split(":")[0] : "minecraft";
+  if (namespace === "minecraft" && componentKey === "carpet") {
+    const moss = path === "moss_carpet";
+    const dye = Object.entries(DYE_COLORS).find(([name]) => path === `${name}_carpet`);
+    return componentStyle(moss ? 0x74895f : dye?.[1] ?? 0x74895f, "default", moss ? "foliage" : "fabric");
+  }
+  if (namespace === "minecraft" && path === "pale_moss_carpet") {
+    if (componentKey === "pale-moss-base") return componentStyle(0x72845d, "default", "foliage");
+    if (componentKey.startsWith("pale-moss-")) return componentStyle(0x667954, "default", "foliage");
+  }
+  if (namespace === "minecraft" && path === "lever") {
+    if (componentKey === "lever-base") return componentStyle(0x7d8581, "stone", "stone");
+    if (componentKey === "lever-handle") return componentStyle(0x8b6745, "wood", "bark");
+  }
+  if (namespace === "minecraft" && (path === "lantern" || path === "soul_lantern")) {
+    if (componentKey === "lantern-frame") return componentStyle(0x525a57, "metal", "metal");
+    if (componentKey === "lantern-core-warm") return componentStyle(0xffc66a, "default", "emissive");
+    if (componentKey === "lantern-core-soul") return componentStyle(0x65cfe3, "default", "emissive");
+  }
+  if (namespace === "minecraft" && (path === "candle" || Object.keys(DYE_COLORS).some((dye) => path === `${dye}_candle`))) {
+    if (componentKey === "candle-wax") return componentStyle(fallbackVisualStyleForVoxel(voxel).color, "default", "smooth");
+    if (componentKey === "candle-wick") return componentStyle(voxel.sourceBlockState?.lit === "true" ? 0xffbb63 : 0x3d352e,
+      "default", voxel.sourceBlockState?.lit === "true" ? "emissive" : "smooth");
+  }
+  if (namespace === "minecraft" && (path === "straw_bed" || Object.keys(DYE_COLORS).some((dye) => path === `${dye}_bed`))) {
+    if (componentKey === "bed-cover") return componentStyle(fallbackVisualStyleForVoxel(voxel).color, "default", "fabric");
+    if (componentKey === "bed-legs") return componentStyle(0x87643f, "wood", "bark");
+    if (componentKey === "bed-pillow") return componentStyle(0xeae6d8, "default", "fabric");
+    if (componentKey === "bed-straw-base") return componentStyle(0xc4a64c, "default", "straw");
+    if (componentKey === "bed-straw-pillow") return componentStyle(0xe0cf91, "default", "straw");
+  }
+  return fallbackVisualStyleForVoxel(voxel);
+}
+
+function componentStyle(color: number, response: MaterialResponseKind, pattern: OriginalMaterialPattern): FallbackVisualStyle {
+  return {
+    key: `fallback:${color.toString(16).padStart(6, "0")}:${response}:${pattern}:o`,
+    color,
+    response,
+    pattern,
+    transparent: false,
+    opacity: 1,
   };
 }
 

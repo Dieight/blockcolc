@@ -1,11 +1,11 @@
 import { lazy, memo, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
-import type { ApplicationCommand, ApplicationResult, ApplicationService } from '@tomato-clock/application';
-import type { LitematicImportResult } from '@tomato-clock/litematic';
-import { localDateOf, projectProgressBasisPoints } from '@tomato-clock/domain';
+import type { ApplicationCommand, ApplicationResult, ApplicationService } from '@blockcolc/application';
+import type { LitematicImportResult } from '@blockcolc/litematic';
+import { localDateOf, projectProgressBasisPoints } from '@blockcolc/domain';
 import { BarChart3, Clock3, ExternalLink, FileUp, Info, ListTodo, Plus, RefreshCw, Settings, TreePine, Trophy, X } from 'lucide-react';
-import type { BlueprintCatalogEntry, BlueprintV1 } from '@tomato-clock/voxel';
-import type { ResourcePackRepository } from '@tomato-clock/resource-pack-indexeddb';
+import type { BlueprintCatalogEntry, BlueprintV1 } from '@blockcolc/voxel';
+import type { ResourcePackRepository } from '@blockcolc/resource-pack-indexeddb';
 import { LoadingPage } from './LoadingPage';
 import { handleBack, useBackLayer } from './back-layer';
 import { NativeImeTextEntry, isImeCommitKey, type NativeImeInputRef } from './NativeImeTextEntry';
@@ -18,7 +18,9 @@ import { createRoundPlanStore } from './round-plan-store';
 import { createCommandRunner } from './command-runner';
 import releaseVersion from '../../../version.json';
 import { WorldScreenV7 } from './WorldScreenV7';
+import { WorldCanvasV7 } from './WorldCanvasV7';
 import { useWorldWeather } from './use-world-weather';
+import { NORMAL_WORLD_DEBUG, projectWorldDebug, type WorldDebugSettings } from './world-debug';
 import { MarathonProgressReport } from './FocusReports';
 import { BlueprintPicker } from './BlueprintPicker';
 import { shouldPersistBlueprintSnapshot, toImportedBlueprint } from './blueprint-adapter';
@@ -42,8 +44,8 @@ const APP_VERSION = releaseVersion.versionName;
 const REPOSITORY_URL = 'https://github.com/Dieight/blockcolc';
 const INITIAL_PROJECT_SETUP_DRAFT: ProjectSetupDraft = { kind: 'finite', title: '我的第一座工坊', subtasksText: '确定目标\n完成核心工作\n检查并收尾', blueprintId: 'builtin-small-workshop', habitTargetRounds: 10, imported: null, packCompatibility: null, importRole: 'building' };
 const FIRST_PROJECT_SETUP_KEY = 'blockcolc-first-project-setup-v1';
-let litematicModulePromise:Promise<typeof import('@tomato-clock/litematic')>|null=null;
-function loadLitematicModule(){litematicModulePromise??=import('@tomato-clock/litematic');return litematicModulePromise;}
+let litematicModulePromise:Promise<typeof import('@blockcolc/litematic')>|null=null;
+function loadLitematicModule(){litematicModulePromise??=import('@blockcolc/litematic');return litematicModulePromise;}
 function readFirstProjectSetupMarker(): boolean { try { return window.localStorage.getItem(FIRST_PROJECT_SETUP_KEY) === '1'; } catch { return false; } }
 function writeFirstProjectSetupMarker(): void { try { window.localStorage.setItem(FIRST_PROJECT_SETUP_KEY, '1'); } catch { /* persisted state remains authoritative */ } }
 
@@ -65,6 +67,8 @@ export function App({ service, resourcePacks }: { service: ApplicationService; r
   const [minimalTemporarilyExited, setMinimalTemporarilyExited] = useState(false);
   const [minimalPresentation, setMinimalPresentation] = useState(false);
   const [worldImmersive, setWorldImmersive] = useState(false);
+  const [worldDebug, setWorldDebug] = useState<WorldDebugSettings>(NORMAL_WORLD_DEBUG);
+  const worldDebugProjection = useMemo(() => projectWorldDebug(worldDebug, Date.now()), [worldDebug]);
   const [firstProjectSetupDone, setFirstProjectSetupDone] = useState(readFirstProjectSetupMarker);
   const firstRunRequiredRef = useRef(false);
   const navigateTo = useCallback((next: Tab) => {
@@ -160,7 +164,7 @@ export function App({ service, resourcePacks }: { service: ApplicationService; r
   useEffect(() => {
     let disposed = false;
     let unsubscribe: (() => Promise<void>) | null = null;
-    void import('@tomato-clock/platform-capacitor').then(platform => {
+    void import('@blockcolc/platform-capacitor').then(platform => {
       if (disposed) return;
       void platform.subscribeHardwareBack(() => {
         if (handleBack()) return;
@@ -174,14 +178,20 @@ export function App({ service, resourcePacks }: { service: ApplicationService; r
   }, [discardProjectSetup, navigateTo]);
   const minimalWanted = preferences.minimalMode === true && !minimalTemporarilyExited;
   const fullDeferredPresentation = state.activeFocusSession?.deferredSettlement === true && minimalTemporarilyExited;
-  const immersiveFocus = !creatingProject && tab === 'world' && Boolean(active && (worldImmersive || minimalPresentation && minimalWanted || state.activeFocusSession && !fullDeferredPresentation));
+  // A retained deferred report has the same immersive surface even if its host
+  // was deleted. It must not fall back to setup or a disconnected report page.
+  const orphanedDeferredHost = !active
+    ? unsettledMarathonSessions(state).find(session => session.deferredSettlement === true)?.projectId
+    : undefined;
+  const immersiveFocus = !creatingProject && Boolean(orphanedDeferredHost && (tab === 'world' || tab === 'tasks')
+    || tab === 'world' && active && (worldImmersive || minimalPresentation && minimalWanted || state.activeFocusSession && !fullDeferredPresentation));
   const [landscape,setLandscape]=useState(()=>matchMedia('(orientation: landscape)').matches);
   useEffect(()=>{const media=matchMedia('(orientation: landscape)');const change=()=>setLandscape(media.matches);media.addEventListener('change',change);return()=>media.removeEventListener('change',change);},[]);
   useEffect(() => {
     let live = true;
     const sync = (verifyVisibility = false) => {
       if (document.hidden) return;
-      void import('@tomato-clock/platform-capacitor').then(platform => {
+      void import('@blockcolc/platform-capacitor').then(platform => {
         if (live) return platform.setNativeFocusImmersive(immersiveFocus || landscape, verifyVisibility);
       });
     };
@@ -198,25 +208,42 @@ export function App({ service, resourcePacks }: { service: ApplicationService; r
       window.removeEventListener('blockcolc-window-focus', onReturn);
     };
   }, [immersiveFocus, landscape]);
-  const worldVisible = tab === 'world' && !creatingProject;
+  const worldVisible = !creatingProject && (tab === 'world' || Boolean(orphanedDeferredHost && tab === 'tasks'));
   const worldWeather = useWorldWeather(preferences.realWeatherEnabled, worldVisible && Boolean(active));
   // A deleted/sealed host must not hide retained minimal rounds behind setup.
   // Reporting can explicitly discard them even when there are no target tasks.
-  const orphanedDeferredHost = !active
-    ? unsettledMarathonSessions(state).find(session => session.deferredSettlement === true)?.projectId
-    : undefined;
-  const worldPane = active ? <div className={worldVisible?'world-pane':'world-pane is-hidden'} aria-hidden={!worldVisible}><WorldScreenV7 service={service} resourcePacks={resourcePacks} run={run} refresh={refresh} onReconcileFocus={resumeVisibleFocus} preferences={preferences} worldWeather={worldWeather} minimalWanted={minimalWanted} fullDeferredPresentation={fullDeferredPresentation} onMinimalPresentationChange={setMinimalPresentation} onImmersiveLayoutChange={setWorldImmersive} onExitMinimal={()=>setMinimalTemporarilyExited(true)} onEnterMinimal={()=>setMinimalTemporarilyExited(false)} recordedIntegrityNotice={recordedIntegrityNotice} focusedProjectId={worldFocusProjectId} memoryProjectId={worldMemoryProjectId} onFocusWorldProject={selectWorldProject} onClearWorldFocus={clearWorldFocus} onCloseWorldMemory={closeWorldMemory} onOpenTasks={()=>navigateTo('tasks')} visible={worldVisible}/></div> : null;
+  const worldPane = active ? <div className={worldVisible?'world-pane':'world-pane is-hidden'} aria-hidden={!worldVisible}>
+    <WorldScreenV7 service={service} resourcePacks={resourcePacks} run={run} refresh={refresh}
+      onReconcileFocus={resumeVisibleFocus} preferences={preferences} worldWeather={worldWeather}
+      worldDebug={worldDebugProjection}
+      minimalWanted={minimalWanted} fullDeferredPresentation={fullDeferredPresentation}
+      onMinimalPresentationChange={setMinimalPresentation} onImmersiveLayoutChange={setWorldImmersive}
+      onExitMinimal={()=>setMinimalTemporarilyExited(true)} onEnterMinimal={()=>setMinimalTemporarilyExited(false)}
+      recordedIntegrityNotice={recordedIntegrityNotice} focusedProjectId={worldFocusProjectId} memoryProjectId={worldMemoryProjectId}
+      onFocusWorldProject={selectWorldProject} onClearWorldFocus={clearWorldFocus} onCloseWorldMemory={closeWorldMemory}
+      onOpenTasks={()=>navigateTo('tasks')} visible={worldVisible}/>
+  </div> : null;
   const firstRunSetup = <ProjectSetup run={run} resourcePacks={resourcePacks} buildingBlueprints={state.buildingBlueprintResources} existingProjects={state.projects.filter(project=>project.status==='paused')} draft={setupDraft} firstRun={firstRunRequired} onDraftChange={updateSetupDraft} onCreated={()=>{setProjectDraft(null);writeFirstProjectSetupMarker();setFirstProjectSetupDone(true);navigateTo('world');}}/>;
   const creationSetup = <ProjectSetup run={run} resourcePacks={resourcePacks} buildingBlueprints={state.buildingBlueprintResources} existingProjects={[]} draft={setupDraft} onDraftChange={updateSetupDraft} onCancel={discardProjectSetup} onCreated={completeProjectSetup}/>;
   const content = <>
     {worldPane}
     {creatingProject ? creationSetup : <>
       {!active && (tab === 'world' || tab === 'tasks') && (orphanedDeferredHost
-        ? <section className="page"><MarathonProgressReport key={orphanedDeferredHost} state={state} hostProjectId={orphanedDeferredHost} run={run} onSubmitted={() => { createRoundPlanStore(() => window.localStorage).write(null); refresh(); }}/></section>
+        ? <div className="world-screen is-focusing orphaned-focus-report">
+          <div className="world-stage"><WorldCanvasV7 service={service} resourcePacks={resourcePacks}
+            lightingQuality={preferences.lightingQuality} constructionOutlineVisibility={preferences.constructionOutlineVisibility}
+            showWorldCoordinates={preferences.showWorldCoordinates} environmentStyle={state.worldSettings.environmentStyle}
+            worldSeed={state.worldSettings.worldSeed} terrainGenerationVersion={state.worldSettings.terrainGenerationVersion}
+            immersivePresentation externalWeatherOverride={worldWeather.override} astronomyContext={worldWeather.astronomyContext ?? null}
+            worldDebug={worldDebugProjection} focusedProjectId={null} memoryProjectId={null}
+            onSelectProject={()=>{}} onClearWorldFocus={()=>{}} onCloseMemory={()=>{}} onContinueProject={async()=>{}}
+            visible={worldVisible} onPickTerrain={()=>{}} pickedCell={null}/></div>
+          <section className="focus-panel"><MarathonProgressReport variant="immersive" key={orphanedDeferredHost} state={state} hostProjectId={orphanedDeferredHost} run={run} onSubmitted={() => { createRoundPlanStore(() => window.localStorage).write(null); refresh(); }}/></section>
+        </div>
         : firstRunSetup)}
       {active && <RoutePane active={tab === 'tasks'} route="tasks"><Suspense fallback={<LoadingPage status="正在打开任务…"/>}><TasksScreen active={active} state={state} run={run} onCreateProject={beginProjectSetup} onViewProject={viewProjectInWorld}/></Suspense></RoutePane>}
       <RoutePane active={tab === 'stats'} route="stats"><Suspense fallback={<LoadingPage status="正在打开统计…"/>}><StatsScreen state={state} active={tab === 'stats'} achievementEntries={achievementEntries}/></Suspense></RoutePane>
-      <RoutePane active={tab === 'settings'} route="settings"><Suspense fallback={<LoadingPage status="正在打开设置…"/>}><SettingsScreen service={service} resourcePacks={resourcePacks} state={state} run={run} refresh={refreshAfterReplacement} preferences={preferences} onPreferencesChange={changePreferences} worldWeather={worldWeather}/></Suspense></RoutePane>
+      <RoutePane active={tab === 'settings'} route="settings"><Suspense fallback={<LoadingPage status="正在打开设置…"/>}><SettingsScreen active={tab === 'settings'} service={service} resourcePacks={resourcePacks} state={state} run={run} refresh={refreshAfterReplacement} preferences={preferences} onPreferencesChange={changePreferences} worldWeather={worldWeather} worldDebug={worldDebug} onWorldDebugChange={setWorldDebug}/></Suspense></RoutePane>
     </>}
   </>;
   return <div className={immersiveFocus?'app-shell focus-immersive':'app-shell'}>{!immersiveFocus&&<header className="topbar"><div><span className="brand-mark">方块钟</span><span className="brand-en">Blockcolc</span></div><button className="today" type="button" aria-label="关于方块钟" onClick={()=>setAboutOpen(true)}><TreePine size={16}/>{new Intl.DateTimeFormat('zh-CN',{month:'short',day:'numeric'}).format(new Date())}</button></header>}
@@ -234,15 +261,15 @@ function ProjectSetup({run,resourcePacks,buildingBlueprints,existingProjects,dra
   const catalog=useBlueprintCatalog(); const {kind,blueprintId,habitTargetRounds,imported,packCompatibility,importRole}=draft; const [importing,setImporting]=useState(false); const [submitting,setSubmitting]=useState(false); const submittingRef=useRef(false); const [submitError,setSubmitError]=useState(''); const [importError,setImportError]=useState(''); const [importNotice,setImportNotice]=useState(''); const [nativePicker,setNativePicker]=useState(false);
   const titleInput=useRef<HTMLInputElement>(null);
   const readSubtasks=useRef<(()=>string[])|null>(null);
-  useEffect(()=>{let active=true;void import('@tomato-clock/platform-capacitor').then(platform=>{if(active)setNativePicker(platform.isCapacitorNative());});return()=>{active=false;};},[]);
+  useEffect(()=>{let active=true;void import('@blockcolc/platform-capacitor').then(platform=>{if(active)setNativePicker(platform.isCapacitorNative());});return()=>{active=false;};},[]);
   const importedEntry:BlueprintCatalogEntry|undefined=imported?{id:imported.blueprint.id,displayName:imported.preview.name,description:`本地 Litematic · Minecraft 数据版本 ${imported.preview.minecraftDataVersion}`,footprint:{width:imported.preview.dimensions.width,depth:imported.preview.dimensions.depth},complexity:imported.preview.nonAirBlockCount>3000?'detailed':'moderate',blueprint:imported.blueprint}:undefined;
   const libraryEntries:BlueprintCatalogEntry[]=buildingBlueprints.map(resource=>({id:resource.id,displayName:resource.displayName,description:`本地建筑蓝图 · ${new Date(resource.importedAt).toLocaleDateString('zh-CN')} 导入`,footprint:{width:resource.blueprint.bounds.maxX-resource.blueprint.bounds.minX+1,depth:resource.blueprint.bounds.maxZ-resource.blueprint.bounds.minZ+1},complexity:resource.blueprint.voxels.length>3000?'detailed':'moderate',blueprint:resource.blueprint as BlueprintV1}));
   const options=importedEntry?[...catalog,...libraryEntries,importedEntry]:[...catalog,...libraryEntries];
   const selected=options.find(option=>option.id===blueprintId)??options[0];
   const submit=async(e:FormEvent)=>{e.preventDefault();if(submittingRef.current||submitting||importRole==='decoration')return;const currentTitle=titleInput.current?.value??'';const subtasks=(readSubtasks.current?.()??draft.subtasksText.split('\n').map(x=>x.trim()).filter(Boolean)).map(title=>({title}));if(!currentTitle.trim()){setSubmitError('请先填写任务名称。');return;}if(!selected){setSubmitError('请先选择建筑蓝图。');return;}if(!Number.isInteger(habitTargetRounds)||habitTargetRounds<10||habitTargetRounds>30){setSubmitError('习惯建筑轮数必须在 10 到 30 轮之间。');return;}if(kind==='finite'&&subtasks.length===0){setSubmitError('至少保留一个小任务。');return;}const importedBlueprint=shouldPersistBlueprintSnapshot(selected.blueprint.id)?toImportedBlueprint(selected.blueprint):null;const command:ApplicationCommand=kind==='habit'?{type:'CreateHabitProject',title:currentTitle.trim(),blueprintId:selected.blueprint.id,importedBlueprint,targetRounds:habitTargetRounds}:{type:'CreateProject',title:currentTitle.trim(),blueprintId:selected.blueprint.id,importedBlueprint,subtasks};submittingRef.current=true;setSubmitting(true);setSubmitError('');try{const result=await run(command);if(result?.ok)onCreated?.();else setSubmitError(result?.message??'创建失败，请检查输入后重试。');}catch(error){setSubmitError(error instanceof Error?error.message:'创建失败，请重试。');}finally{submittingRef.current=false;setSubmitting(false);}};
-  const parseImportedBytes=async(bytes:Uint8Array)=>{const {parseLitematic}=await loadLitematicModule();const result=await parseLitematic(bytes);const activePack=await resolveSelectedResourcePack(resourcePacks);let nextCompatibility:ProjectSetupDraft['packCompatibility']=null;if(activePack){const {summarizeBlueprintCompatibility}=await import('@tomato-clock/resource-pack');const summary=summarizeBlueprintCompatibility(result.blueprint,activePack.manifest);nextCompatibility={name:activePack.name,textured:summary.texturedVoxelCount,fallback:summary.fallbackVoxelCount,total:summary.totalVoxelCount};}onDraftChange({imported:result,packCompatibility:nextCompatibility,importRole:'building',blueprintId:result.blueprint.id});setImportNotice('');};
+  const parseImportedBytes=async(bytes:Uint8Array)=>{const {parseLitematic}=await loadLitematicModule();const result=await parseLitematic(bytes);const activePack=await resolveSelectedResourcePack(resourcePacks);let nextCompatibility:ProjectSetupDraft['packCompatibility']=null;if(activePack){const {summarizeBlueprintCompatibility}=await import('@blockcolc/resource-pack');const summary=summarizeBlueprintCompatibility(result.blueprint,activePack.manifest);nextCompatibility={name:activePack.name,textured:summary.texturedVoxelCount,fallback:summary.fallbackVoxelCount,total:summary.totalVoxelCount};}onDraftChange({imported:result,packCompatibility:nextCompatibility,importRole:'building',blueprintId:result.blueprint.id});setImportNotice('');};
   const importBrowserLitematic=async(file:File|undefined)=>{if(!file)return;setImporting(true);setImportError('');try{await parseImportedBytes(await readBrowserFileBytes(file));}catch(error){onDraftChange({imported:null,packCompatibility:null});setImportError(litematicErrorMessage(error));}finally{setImporting(false);}};
-  const importNativeLitematic=async()=>{setImporting(true);setImportError('');try{const {pickNativeLitematicFile}=await import('@tomato-clock/platform-capacitor');const selected=await pickNativeLitematicFile(LITEMATIC_MAX_COMPRESSED_BYTES);if(selected)await parseImportedBytes(selected.bytes);}catch(error){onDraftChange({imported:null,packCompatibility:null});setImportError(litematicErrorMessage(error));}finally{setImporting(false);}};
+  const importNativeLitematic=async()=>{setImporting(true);setImportError('');try{const {pickNativeLitematicFile}=await import('@blockcolc/platform-capacitor');const selected=await pickNativeLitematicFile(LITEMATIC_MAX_COMPRESSED_BYTES);if(selected)await parseImportedBytes(selected.bytes);}catch(error){onDraftChange({imported:null,packCompatibility:null});setImportError(litematicErrorMessage(error));}finally{setImporting(false);}};
   const resume=async(projectId:string)=>{const result=await run({type:'SwitchActiveProject',projectId});if(result?.ok)onCreated?.();};
   const decorationLimitError=imported?decorationBlueprintLimitError(imported.blueprint):'';
   const chooseImportRole=(role:ImportRole)=>{onDraftChange({importRole:role,...(role==='building'&&imported?{blueprintId:imported.blueprint.id}:{})});setImportError('');setImportNotice('');};
@@ -320,7 +347,7 @@ function AboutDialog({onClose}:{onClose:()=>void}){
   const [checking,setChecking]=useState(false);const [updateResult,setUpdateResult]=useState('');const closeRef=useRef<HTMLButtonElement>(null);
   useEffect(()=>{closeRef.current?.focus();const onKey=(event:KeyboardEvent)=>{if(event.key==='Escape')onClose();};window.addEventListener('keydown',onKey);return()=>window.removeEventListener('keydown',onKey);},[onClose]);
   const check=async()=>{setChecking(true);setUpdateResult('');try{const response=await fetch(`${REPOSITORY_URL.replace('github.com','api.github.com/repos')}/releases/latest`,{headers:{Accept:'application/vnd.github+json'}});if(!response.ok)throw new Error(String(response.status));const release=await response.json() as {tag_name?:string;html_url?:string};const latest=(release.tag_name??'').replace(/^v/,'');if(!/^\d+\.\d+\.\d+$/.test(latest))throw new Error('invalid release');setUpdateResult(compareVersions(latest,APP_VERSION)>0?`发现新版本 ${latest}，可前往 GitHub 下载。`:`当前已是最新版本 ${APP_VERSION}。`);}catch{setUpdateResult('暂时无法检查更新，请确认网络后重试。');}finally{setChecking(false);}};
-  return <div className="dialog-backdrop" role="presentation"><section className="confirm-dialog about-dialog" role="dialog" aria-modal="true" aria-labelledby="about-title"><button ref={closeRef} className="dialog-close" aria-label="关闭关于页面" onClick={onClose}><X/></button><Info className="about-icon"/><h2 id="about-title">方块钟 Blockcolc</h2><p className="about-version">版本 {APP_VERSION}</p><p>本地优先的专注计时器。任务、专注记录、蓝图和资源包默认只保存在你的设备上。</p><dl><div><dt>项目仓库</dt><dd><a href={REPOSITORY_URL} target="_blank" rel="noreferrer">GitHub <ExternalLink/></a></dd></div><div><dt>隐私</dt><dd>无账号、无云同步、无后台分析</dd></div><div><dt>许可</dt><dd>开源许可与第三方组件信息见项目仓库</dd></div></dl><p className="legal-note">本应用不是 Minecraft 官方产品，未获 Mojang Studios 或 Microsoft 认可或关联。Minecraft 是其权利人的商标。</p><button className="check-update" type="button" disabled={checking} onClick={()=>void check()}><RefreshCw className={checking?'is-spinning':''}/>{checking?'正在检查':'手动检查更新'}</button>{updateResult&&<p className="update-result" role="status">{updateResult}</p>}</section></div>;
+  return <div className="dialog-backdrop" role="presentation"><section className="confirm-dialog about-dialog" role="dialog" aria-modal="true" aria-labelledby="about-title"><button ref={closeRef} className="dialog-close" aria-label="关闭关于页面" onClick={onClose}><X/></button><Info className="about-icon"/><h2 id="about-title">方块钟 Blockcolc</h2><p className="about-version">版本 {APP_VERSION}</p><p>本地优先的专注计时器。任务、专注记录、蓝图和资源包默认只保存在你的设备上。</p><dl><div><dt>项目仓库</dt><dd><a href={REPOSITORY_URL} target="_blank" rel="noreferrer">GitHub <ExternalLink/></a></dd></div><div><dt>隐私</dt><dd>无账号、无云同步、无后台分析</dd></div><div><dt>许可</dt><dd>开源许可见项目仓库 · <a href="licenses/suncalc.txt" target="_blank" rel="noreferrer">SunCalc 许可</a></dd></div></dl><p className="legal-note">本应用不是 Minecraft 官方产品，未获 Mojang Studios 或 Microsoft 认可或关联。Minecraft 是其权利人的商标。</p><button className="check-update" type="button" disabled={checking} onClick={()=>void check()}><RefreshCw className={checking?'is-spinning':''}/>{checking?'正在检查':'手动检查更新'}</button>{updateResult&&<p className="update-result" role="status">{updateResult}</p>}</section></div>;
 }
 
 function CompletionCeremony({title,onClose}:{title:string;onClose:()=>void}){const button=useRef<HTMLButtonElement>(null);useEffect(()=>{button.current?.focus();},[]);return <div className="ceremony-backdrop" role="presentation"><section className="completion-ceremony" role="dialog" aria-modal="true" aria-labelledby="ceremony-title"><div className="ceremony-rays"/><Trophy/><span>主体建筑完成</span><h2 id="ceremony-title">{title}</h2><p>这项长期工作已经在聚落中留下完整建筑。</p><button ref={button} onClick={onClose}>回到聚落</button></section></div>;}

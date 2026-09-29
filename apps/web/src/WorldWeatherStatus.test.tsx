@@ -6,6 +6,8 @@ import type { WorldWeatherView } from './use-world-weather';
 const local: WorldWeatherView = {
   syncState: 'not_synced', override: null, conditionText: null, attributions: [], observedAt: null, locationSource: null,
   source: 'local', fallbackReason: null,
+  visualPrecipitationIntensity: 0,
+  astronomyContext: null, astronomySyncState: 'not_synced', astronomyFailureReason: null,
 };
 
 describe('world weather status and attribution', () => {
@@ -38,6 +40,29 @@ describe('world weather status and attribution', () => {
     expect(invalidResponse).toContain('处理后关闭并重新开启天气同步');
     expect(requestFailed).toContain('当前使用本地天气');
     expect(requestFailed).not.toBe(invalidResponse);
+  });
+
+  it('reports calendar synchronization separately from authorized local ephemeris fallback', () => {
+    const calendar = renderToStaticMarkup(<WorldWeatherSettingsStatus enabled view={{ ...local,
+      astronomySyncState: 'calendar', astronomyContext: {
+        coordinates: { latitude: 39.92, longitude: 116.41 }, locationSource: 'cached', schedule: {
+          coordinates: { latitude: 39.92, longitude: 116.41 }, locationSource: 'cached',
+          fetchedAtMs: 1_800_000_000_000, days: [], attribution: ['https://developer.qweather.com/attribution.html'],
+        },
+      } }}/>);
+    const ephemeris = renderToStaticMarkup(<WorldWeatherSettingsStatus enabled view={{ ...local,
+      astronomySyncState: 'ephemeris_only', astronomyFailureReason: 'network_unavailable', astronomyContext: {
+        coordinates: { latitude: 39.92, longitude: 116.41 }, schedule: null, locationSource: 'fresh',
+      } }}/>);
+    const unavailable = renderToStaticMarkup(<WorldWeatherSettingsStatus enabled view={{ ...local,
+      astronomySyncState: 'unavailable', astronomyFailureReason: 'location_unavailable' }}/>);
+
+    expect(calendar).toContain('天文日历已同步');
+    expect(calendar).toContain('天文数据：');
+    expect(calendar).toContain('href="https://developer.qweather.com/attribution.html"');
+    expect(ephemeris).toContain('按已授权位置本地历算');
+    expect(ephemeris).not.toContain('天文日历已同步');
+    expect(unavailable).toContain('聚落继续使用本地光照');
   });
 
   it('separates a missing native request path from a service restriction response', () => {

@@ -660,6 +660,16 @@ describe("focus completion and goals", () => {
     expect(activeProject(f.state()).subtasks[0]!.progressBasisPoints).toBe(0);
   });
 
+  it("persists a bounded user interruption note while keeping legacy cancellation commands valid", () => {
+    const f = fixture(); f.create("p1", ["a"]);
+    f.run({ type: "StartFocus", sessionId: "noted-interruption", subtaskId: "a", plannedDurationMs: 60_000 });
+    f.clock.advance(3_000);
+    expect(f.run({ type: "CancelFocus", interruptionCategory: "other", interruptionNote: "电话打断" }).ok).toBe(true);
+    expect(f.state().focusHistory[0]).toMatchObject({ status: "interrupted", interruptionCategory: "other", interruptionNote: "电话打断" });
+    f.run({ type: "StartFocus", sessionId: "blank-note", subtaskId: "a", plannedDurationMs: 60_000 });
+    expect(f.run({ type: "CancelFocus", interruptionNote: "   " })).toMatchObject({ ok: false, code: "INVALID_INPUT" });
+  });
+
   it("counts an early task completion toward the daily goal", () => {
     const f = fixture(); f.create();
     f.run({ type: "SetDailyGoal", date: "2026-07-20", targetPomodoros: 1 });

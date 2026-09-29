@@ -1,30 +1,45 @@
-# Workspace Instructions
+# Blockcolc 工作区执行规则
 
-This workspace's active product is Tomato Clock.
+## 任务入口与权限
 
-## Route The Task
+- Blockcolc（方块钟）任务先完整阅读 `BLOCKCOLC.md`，并使用 `blockcolc-product-design` skill。
+- 当前执行入口为 `docs/TODO.md` 指向的工作包；已关闭版本和历史交接不是当前执行指令。
+- 讨论、复盘、诊断和审查默认只读；没有实施要求时不改代码。
+- “继续”延续最近有效范围，不自动恢复被暂停、取代或已完成的任务。
+- 构建、安装、部署、上传、正式发布与用户验收各按明确授权执行；旧检查点不产生新的权限。
+- 本地提交不是推送或发布。保护用户数据、其他代理改动和历史 APK；不动无关项目。
 
-- For Tomato Clock planning, implementation, diagnosis, review, release, or product questions, read `C:\Codex\tomato-clock\Tomato Clock.md` completely first.
-- For product, UX, frontend, 3D progression, or visual QA work, use `$tomato-clock-product-design` and read its `SKILL.md` completely.
-- For unrelated maintenance in another nested repository, follow the closest nested `AGENTS.md`; Tomato Clock context is not required unless the task touches Tomato Clock.
+## 文档职责
 
-## Modes
+- 产品行为归 `BLOCKCOLC.md`；状态和模块契约归 `ARCHITECTURE.md`；视觉与交互归 `DESIGN.md`。
+- 测试、构建和交付归 `docs/TESTING.md`；范围、责任人、需求状态和证据归当前工作包。
+- 已确认决定直接修改其所属规则；被取代内容归档，不继续追加覆盖说明。
+- 文档与代码冲突时核对最新用户决定和实际实现，不静默选择一方。
 
-- Discussion: inspect and answer; do not change files unless the user confirms a decision or asks for implementation.
-- Diagnosis or review: gather evidence and report findings; do not silently implement a fix.
-- Implementation: update the active version work packet, implement the confirmed scope, and verify by risk.
-- Release: run `tools/Prepare-Release.ps1`, `tools/Install-ReleaseCandidate.ps1`, `tools/Accept-ReleaseCandidate.ps1`, then `tools/Publish-Release.ps1` against one immutable candidate; recording acceptance and publishing each require the corresponding explicit user authorization.
+## 开工与切片
 
-## Product Authority
+- 先核对工作树、版本、当前产物和正在运行的任务。
+- 多项需求按已有状态所有权和依赖分组，不按问题编号逐层加补丁。
+- 每片明确用户收益、状态所有者、旧路径删除范围、失败/恢复边界及可观察验收。
+- 影响业务语义的选择先冻结契约；纯实现细节无需反复确认。
+- 已验证且边界清晰的切片可形成可回退的本地提交，不自动推送。
 
-- Treat `Tomato Clock.md` as the canonical source for current goals, settled scope, deferred work, and open decisions.
-- Do not silently resolve `开放问题` when they affect stored data, user expectations, licensing, compatibility, or product scope.
-- When the user confirms a product decision, update `Tomato Clock.md` and the current `docs/versions/V*.md` work packet in the same task unless the request is discussion-only.
-- Keep implementation local-first and inside the documented boundary unless the user explicitly expands it.
+## 代理协作
 
-## Verification
+- 延续已确认分工：主代理负责规划、契约、集成与独立审计，Luna 执行边界明确的工作；模型调整以用户或适用配置为准。
+- 一次性下发完整任务包：目标、可写文件、禁止范围、依赖、验收条件与交回证据。
+- 同一共享文件同时只有一个写入者；同目录代理不是隔离工作树。
+- 测试端口、dist、报告和 Android 输出也需要执行权；不能并发替换彼此使用的产物。
+- 优先等待完成事件，每 20 分钟仅检查子代理异常停滞；正常长任务不反复打断。
+- 审查实际 diff、最终报告与接口接线，不以代理总结代替验收。
 
-- Versioned test source, configuration, and synthetic fixture generators are part of the product source. Real user data, third-party sample files, credentials, build outputs, logs, and reports stay untracked.
-- After significant daily-flow, renderer-performance, or primary-UI changes, check `adb devices -l`. If an authorized Android device is connected, install the current formally signed candidate without clearing data and finish automatable device checks before declaring completion.
-- At every artifact boundary, including build, copy, upload, redownload, install, and handoff, compute SHA-256 and compare it with the previous boundary or controlled manifest. Printing a digest without comparing it is not verification. Any mismatch blocks installation, release, and handoff.
-- Do not bump a version or create a Release for ordinary internal progress. Accumulate related changes and publish only when explicitly requested.
+## 验证与交付
+
+- 按 `docs/TESTING.md` 选择受影响验证，不默认每轮全量。
+- 文档/skill 修改不触发应用构建；修改工具契约时验证对应工具。
+- 每轮应用测试包必须成对构建标准 APK 与含好友服务器私有同步模块的私有 APK；同源码、版本与非空 `DeliveryRoundId`，分别保存证据和摘要。私有 APK 默认仅本机留存；安装、上传和部署仍需本轮明确授权。
+- 测试源、合成生成器和配置进入源码；用户数据、第三方样例、凭据、产物和报告不进入公开源码。
+- APK 支持预期升级路径，核对包名、构建号、签名及 SHA-256；每个交付边界实际比较摘要。
+- 安装后只核对身份与完整性，不默认手机 UI 巡检；用户人工体验，专项设备诊断另按明确请求执行。
+- 不清应用数据，不用卸载重装绕过升级问题；普通代码编辑不增加构建号。
+- 正式发布沿用 Prepare → Install → Accept → Publish；用户验收和发布分别需要明确确认，不重建已验收候选。

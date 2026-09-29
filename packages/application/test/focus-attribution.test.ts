@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createInitialState, type DomainState, type FocusSession, type Project } from "@tomato-clock/domain";
+import { createInitialState, type DomainState, type FocusSession, type Project } from "@blockcolc/domain";
 import { projectFocusAttribution, projectMonumentFocus } from "../src/focus-attribution.js";
 
 function finite(id: string, title: string, subtaskId: string, subtaskTitle: string, status: Project["status"] = "monument"): Project {

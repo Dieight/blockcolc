@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import type { DomainState } from '@tomato-clock/domain';
+import type { DomainState } from '@blockcolc/domain';
 import { projectTodayFocusTimeline, type TodayFocusSeries } from './today-focus-timeline';
 import './styles/minimal-today.css';
 

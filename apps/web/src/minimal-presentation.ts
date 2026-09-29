@@ -1,4 +1,4 @@
-import type { DomainState } from '@tomato-clock/domain';
+import type { DomainState } from '@blockcolc/domain';
 import type { RoundPlan } from './round-plan';
 
 /** Existing ordinary work/reporting always wins over the optional idle shell. */

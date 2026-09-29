@@ -7,13 +7,14 @@ import {
   RESOURCE_PACK_SPECIAL_TEXTURE_LIMITS,
   type ResourcePackColormap,
   type ResourcePackManifest,
-} from "@tomato-clock/resource-pack";
+} from "@blockcolc/resource-pack";
 
 const DB_VERSION = 1;
 const PACK_STORE = "resourcePacks";
 const METADATA_STORE = "metadata";
 const ACTIVE_KEY = "active-pack";
 const BASE_KEY = "base-pack";
+const SELECTION_REVISION_KEY = "selection-revision";
 
 export interface StoredResourcePack {
   schemaVersion: 1;
@@ -50,6 +51,12 @@ export interface ResourcePackListItem {
   base?: boolean;
 }
 
+export interface ResourcePackSelectionMetadata {
+  revision: string;
+  activeId: string | null;
+  baseId: string | null;
+}
+
 export interface ResourcePackRepository {
   save(input: SaveResourcePackInput): Promise<ResourcePackListItem>;
   list(): Promise<ResourcePackListItem[]>;
@@ -58,6 +65,7 @@ export interface ResourcePackRepository {
   selectBase(id: string | null): Promise<StoredResourcePack | undefined>;
   getActive(): Promise<StoredResourcePack | undefined>;
   getBase(): Promise<StoredResourcePack | undefined>;
+  getSelectionMetadata?(): Promise<ResourcePackSelectionMetadata>;
   delete(id: string): Promise<string | null>;
   clear(): Promise<void>;
   close(): void;
@@ -78,6 +86,11 @@ interface BasePackRecord {
   packId: string | null;
 }
 
+interface SelectionRevisionRecord {
+  key: typeof SELECTION_REVISION_KEY;
+  revision: string;
+}
+
 export class IndexedDbResourcePackRepository implements ResourcePackRepository {
   private readonly databaseName: string;
   private readonly indexedDb: IDBFactory;
@@ -91,6 +104,7 @@ export class IndexedDbResourcePackRepository implements ResourcePackRepository {
 
   async save(input: SaveResourcePackInput): Promise<ResourcePackListItem> {
     const record = parseStoredResourcePack({ ...input, schemaVersion: 1 });
+    const selectionRevision = newSelectionRevision();
     const db = await this.database();
     const transaction = db.transaction([PACK_STORE, METADATA_STORE], "readwrite");
     const done = transactionDone(transaction);
@@ -112,6 +126,7 @@ export class IndexedDbResourcePackRepository implements ResourcePackRepository {
       if (selectedId !== activeId || !isActiveRecord(current)) {
         metadataStore.put({ key: ACTIVE_KEY, packId: selectedId } satisfies ActivePackRecord);
       }
+      metadataStore.put(selectionRevision);
       await done;
       return toListItem(record, selectedId, parseBaseId(currentBase));
     } catch (error) {
@@ -137,6 +152,7 @@ export class IndexedDbResourcePackRepository implements ResourcePackRepository {
 
   async select(id: string | null): Promise<StoredResourcePack | undefined> {
     if (id !== null) assertId(id);
+    const selectionRevision = newSelectionRevision();
     const db = await this.database();
     const transaction = db.transaction([PACK_STORE, METADATA_STORE], "readwrite");
     const done = transactionDone(transaction);
@@ -149,6 +165,7 @@ export class IndexedDbResourcePackRepository implements ResourcePackRepository {
         if (!selected) throw new Error(`Resource pack ${id} was not found or is invalid.`);
       }
       transaction.objectStore(METADATA_STORE).put({ key: ACTIVE_KEY, packId: id } satisfies ActivePackRecord);
+      transaction.objectStore(METADATA_STORE).put(selectionRevision);
       await done;
       return selected;
     } catch (error) {
@@ -159,6 +176,7 @@ export class IndexedDbResourcePackRepository implements ResourcePackRepository {
 
   async selectBase(id: string | null): Promise<StoredResourcePack | undefined> {
     if (id !== null) assertId(id);
+    const selectionRevision = newSelectionRevision();
     const db = await this.database();
     const transaction = db.transaction([PACK_STORE, METADATA_STORE], "readwrite");
     const done = transactionDone(transaction);
@@ -171,6 +189,7 @@ export class IndexedDbResourcePackRepository implements ResourcePackRepository {
         if (!selected) throw new Error(`Resource pack ${id} was not found or is invalid.`);
       }
       transaction.objectStore(METADATA_STORE).put({ key: BASE_KEY, packId: id } satisfies BasePackRecord);
+      transaction.objectStore(METADATA_STORE).put(selectionRevision);
       await done;
       return selected;
     } catch (error) {
@@ -187,8 +206,49 @@ export class IndexedDbResourcePackRepository implements ResourcePackRepository {
     return this.readSelected(BASE_KEY);
   }
 
+  async getSelectionMetadata(): Promise<ResourcePackSelectionMetadata> {
+    const db = await this.database();
+    const transaction = db.transaction([PACK_STORE, METADATA_STORE], "readwrite");
+    const done = transactionDone(transaction);
+    try {
+      const packs = transaction.objectStore(PACK_STORE);
+      const metadata = transaction.objectStore(METADATA_STORE);
+      const [rawActive, rawBase, rawRevision] = await Promise.all([
+        requestResult<unknown>(metadata.get(ACTIVE_KEY)),
+        requestResult<unknown>(metadata.get(BASE_KEY)),
+        requestResult<unknown>(metadata.get(SELECTION_REVISION_KEY)),
+      ]);
+      const requestedActiveId = parseActiveId(rawActive);
+      const requestedBaseId = parseBaseId(rawBase);
+      const [activeExists, baseExists] = await Promise.all([
+        requestedActiveId === null ? Promise.resolve(true) : requestResult(packs.getKey(requestedActiveId) as unknown as IDBRequest<unknown>).then(value => value !== undefined),
+        requestedBaseId === null ? Promise.resolve(true) : requestResult(packs.getKey(requestedBaseId) as unknown as IDBRequest<unknown>).then(value => value !== undefined),
+      ]);
+      const activeId = activeExists && isActiveRecord(rawActive) ? requestedActiveId : null;
+      const baseId = baseExists && isBaseRecord(rawBase) ? requestedBaseId : null;
+      const activeNeedsRepair = rawActive !== undefined
+        && (activeId !== requestedActiveId || !isActiveRecord(rawActive));
+      const baseNeedsRepair = rawBase !== undefined
+        && (baseId !== requestedBaseId || !isBaseRecord(rawBase));
+      const selectionRepaired = activeNeedsRepair || baseNeedsRepair;
+      if (selectionRepaired) {
+        if (activeNeedsRepair) metadata.put({ key: ACTIVE_KEY, packId: activeId } satisfies ActivePackRecord);
+        if (baseNeedsRepair) metadata.put({ key: BASE_KEY, packId: baseId } satisfies BasePackRecord);
+      }
+      const validRevision = isSelectionRevisionRecord(rawRevision);
+      const revisionRecord = validRevision && !selectionRepaired ? rawRevision : newSelectionRevision();
+      if (!validRevision || selectionRepaired) metadata.put(revisionRecord);
+      await done;
+      return { revision: revisionRecord.revision, activeId, baseId };
+    } catch (error) {
+      abort(transaction, done);
+      throw error;
+    }
+  }
+
   async delete(id: string): Promise<string | null> {
     assertId(id);
+    const selectionRevision = newSelectionRevision();
     const db = await this.database();
     const transaction = db.transaction([PACK_STORE, METADATA_STORE], "readwrite");
     const done = transactionDone(transaction);
@@ -210,6 +270,7 @@ export class IndexedDbResourcePackRepository implements ResourcePackRepository {
         : null;
       metadataStore.put({ key: ACTIVE_KEY, packId: nextId } satisfies ActivePackRecord);
       metadataStore.put({ key: BASE_KEY, packId: nextBaseId } satisfies BasePackRecord);
+      metadataStore.put(selectionRevision);
       await done;
       return nextId;
     } catch (error) {
@@ -219,11 +280,15 @@ export class IndexedDbResourcePackRepository implements ResourcePackRepository {
   }
 
   async clear(): Promise<void> {
+    const selectionRevision = newSelectionRevision();
     const db = await this.database();
     const transaction = db.transaction([PACK_STORE, METADATA_STORE], "readwrite");
     const done = transactionDone(transaction);
     transaction.objectStore(PACK_STORE).clear();
-    transaction.objectStore(METADATA_STORE).clear();
+    const metadata = transaction.objectStore(METADATA_STORE);
+    metadata.put({ key: ACTIVE_KEY, packId: null } satisfies ActivePackRecord);
+    metadata.put({ key: BASE_KEY, packId: null } satisfies BasePackRecord);
+    metadata.put(selectionRevision);
     await done;
   }
 
@@ -249,6 +314,7 @@ export class IndexedDbResourcePackRepository implements ResourcePackRepository {
       const validSelection = key === ACTIVE_KEY ? isActiveRecord(rawSelection) : isBaseRecord(rawSelection);
       if (!validSelection || (requestedId !== null && !selected)) {
         metadataStore.put({ key, packId: selected?.id ?? null });
+        metadataStore.put(newSelectionRevision());
       }
       await done;
       return selected;
@@ -274,15 +340,18 @@ export class IndexedDbResourcePackRepository implements ResourcePackRepository {
       const rawActive = await requestResult<unknown>(metadataStore.get(ACTIVE_KEY));
       const requestedActiveId = parseActiveId(rawActive);
       const activeId = records.some((record) => record.id === requestedActiveId) ? requestedActiveId : null;
-      if (requestedActiveId !== activeId || !isActiveRecord(rawActive)) {
+      let repaired = requestedActiveId !== activeId || !isActiveRecord(rawActive);
+      if (repaired) {
         metadataStore.put({ key: ACTIVE_KEY, packId: activeId } satisfies ActivePackRecord);
       }
       const rawBase = await requestResult<unknown>(metadataStore.get(BASE_KEY));
       const requestedBaseId = parseBaseId(rawBase);
       const baseId = records.some((record) => record.id === requestedBaseId) ? requestedBaseId : null;
       if (requestedBaseId !== baseId || !isBaseRecord(rawBase)) {
+        repaired = true;
         metadataStore.put({ key: BASE_KEY, packId: baseId } satisfies BasePackRecord);
       }
+      if (repaired) metadataStore.put(newSelectionRevision());
       await done;
       return { records, activeId, baseId };
     } catch (error) {
@@ -301,6 +370,19 @@ export class IndexedDbResourcePackRepository implements ResourcePackRepository {
     }
     return this.databasePromise;
   }
+}
+
+function newSelectionRevision(): SelectionRevisionRecord {
+  const bytes = new Uint8Array(16);
+  const cryptoProvider = globalThis.crypto;
+  if (!cryptoProvider?.getRandomValues) throw new Error("Secure random bytes are unavailable for resource-pack selection identity.");
+  cryptoProvider.getRandomValues(bytes);
+  return { key: SELECTION_REVISION_KEY, revision: Array.from(bytes, value => value.toString(16).padStart(2, "0")).join("") };
+}
+
+function isSelectionRevisionRecord(value: unknown): value is SelectionRevisionRecord {
+  return isRecord(value) && value.key === SELECTION_REVISION_KEY
+    && typeof value.revision === "string" && /^[0-9a-f]{32}$/.test(value.revision);
 }
 
 function validRecords(values: unknown[]): StoredResourcePack[] {
@@ -329,14 +411,18 @@ function parseStoredResourcePack(value: unknown): StoredResourcePack {
     throw new Error("Resource-pack archive must be a non-empty Uint8Array.");
   }
   const manifest = parseManifest(value.manifest);
-  return structuredClone({
+  // parseManifest already returns a validated defensive copy. Cloning the
+  // entire record again copied every PNG byte array a second time on each
+  // active/base-pack read; copy the archive buffer explicitly and retain the
+  // normalized manifest copy instead.
+  return {
     schemaVersion: 1,
     id: value.id,
     name: value.name.trim(),
     importedAt: value.importedAt,
-    archive: value.archive,
+    archive: new Uint8Array(value.archive),
     manifest,
-  });
+  };
 }
 
 function parseManifest(value: unknown): StoredResourcePackManifest {

@@ -61,6 +61,28 @@ export interface TerrainPad {
   groundLevel: number;
 }
 
+/** Only spatial inputs affect generated terrain; task progress and block textures do not. */
+export function terrainGenerationInputKey(
+  placements: readonly VillagePlacement[],
+  roads: readonly RoadCell[],
+  additionalPads: readonly TerrainPad[],
+  minimumRadius: { x: number; z: number } | undefined,
+  options: { environmentStyle?: TerrainEnvironmentStyle; worldSeed?: string; terrainGenerationVersion?: TerrainGenerationVersion; refinedFar?: boolean },
+): string {
+  return JSON.stringify([
+    placements.map(({ worldPosition, footprint }) => [
+      worldPosition.x, worldPosition.y, worldPosition.z, footprint.width, footprint.depth,
+    ]),
+    roads.map(({ x, z }) => [x, z]),
+    additionalPads.map(({ x, z, width, depth, groundLevel }) => [x, z, width, depth, groundLevel]),
+    minimumRadius ? [minimumRadius.x, minimumRadius.z] : null,
+    options.environmentStyle ?? "classic-island",
+    options.worldSeed ?? "world-default",
+    options.terrainGenerationVersion ?? 4,
+    Boolean(options.refinedFar),
+  ]);
+}
+
 export function createSteppedTerrainData(
   placements: readonly VillagePlacement[],
   roads: readonly RoadCell[],

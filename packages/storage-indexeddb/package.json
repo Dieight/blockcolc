@@ -1,5 +1,5 @@
 {
-  "name": "@tomato-clock/storage-indexeddb",
+  "name": "@blockcolc/storage-indexeddb",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -10,8 +10,8 @@
     "test:e2e": "playwright test"
   },
   "dependencies": {
-    "@tomato-clock/application": "file:../application",
-    "@tomato-clock/domain": "file:../domain"
+    "@blockcolc/application": "file:../application",
+    "@blockcolc/domain": "file:../domain"
   },
   "devDependencies": {
     "@playwright/test": "^1.55.1",

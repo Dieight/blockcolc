@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react';
-import type { BlueprintV1, VoxelRenderer, WorldSnapshot } from '@tomato-clock/voxel';
-import type { ResourcePackRepository } from '@tomato-clock/resource-pack-indexeddb';
+import type { BlueprintV1, VoxelRenderer, WorldSnapshot } from '@blockcolc/voxel';
+import type { ResourcePackRepository } from '@blockcolc/resource-pack-indexeddb';
 import { RotateCcw } from 'lucide-react';
 import { loadVoxelModule, resourcePackAtlasMaximumSizeForTest } from './voxel-runtime';
 import { resolveSelectedResourcePack } from './resource-pack-selection';

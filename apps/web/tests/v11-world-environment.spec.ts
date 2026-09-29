@@ -19,6 +19,10 @@ test('switches the derived world environment without moving project data', async
   await environment.getByRole('button', { name: '经典空岛' }).click();
   await expect(environment.getByRole('button', { name: '经典空岛' })).toHaveAttribute('aria-pressed', 'true');
 
+  await page.getByRole('button', { name: '计时', exact: true }).click();
+  await expect(canvas).toHaveAttribute('data-environment-style', 'classic-island');
+  await expect(canvas).toHaveAttribute('data-terrain-generation-cache-hit', 'false');
+
   await page.reload();
   await page.getByRole('button', { name: '计时', exact: true }).click();
   await expect(canvas).toHaveAttribute('data-environment-style', 'classic-island');

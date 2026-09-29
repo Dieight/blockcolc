@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import type { DomainState } from '@tomato-clock/domain';
-import type { ProjectWorldProjection } from '@tomato-clock/application';
+import type { DomainState } from '@blockcolc/domain';
+import type { ProjectWorldProjection } from '@blockcolc/application';
 import { BuildingMemoryPanel, createBuildingMemory } from './BuildingMemoryPanel';
 
 function stateFixture(): DomainState {

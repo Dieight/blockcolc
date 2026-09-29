@@ -1,4 +1,4 @@
-import type { BlockFace, ResourcePackManifest } from "@tomato-clock/resource-pack";
+import type { BlockFace, ResourcePackManifest } from "@blockcolc/resource-pack";
 import { strToU8, zlibSync } from "fflate";
 import * as THREE from "three";
 import { describe, expect, it, vi } from "vitest";
@@ -24,6 +24,7 @@ import {
   LILY_PAD_FACE_TINT,
   REDSTONE_WIRE_FACE_TINT,
   resolveBlockStateTint,
+  resourceTexturePlanCacheDiagnostics,
   WATER_FACE_TINT,
   packFaceUvTransform,
   packFaceTintKinds,
@@ -103,7 +104,7 @@ describe("resource-pack voxel texture planning", () => {
     expect(Object.keys(geometry.attributes)).toHaveLength(12);
     expect(geometry.getAttribute("instanceFaceOcclusion")).toBeDefined();
     expect(Object.keys(geometry.attributes).length + 4).toBeLessThanOrEqual(16);
-    expect(atlas.pages[0]!.texture.minFilter).toBe(THREE.NearestMipmapLinearFilter);
+    expect(atlas.pages[0]!.texture.minFilter).toBe(THREE.LinearMipmapLinearFilter);
     expect(atlas.pages[0]!.texture.flipY).toBe(false);
     expect(atlas.pages[0]!.texture.mipmaps).toHaveLength(atlas.source.safeMipLevels + 1);
     expect(atlas.pages[0]!.texture.mipmaps?.map((mipmap) => [mipmap.width, mipmap.height])).toEqual([
@@ -111,7 +112,7 @@ describe("resource-pack voxel texture planning", () => {
       [atlas.pages[0]!.width / 2, atlas.pages[0]!.height / 2],
       [atlas.pages[0]!.width / 4, atlas.pages[0]!.height / 4],
     ]);
-    expect(atlas.pages[0]!.texture.anisotropy).toBe(2);
+    expect(atlas.pages[0]!.texture.anisotropy).toBe(4);
     geometry.dispose();
     atlas.dispose();
   });
@@ -206,6 +207,27 @@ describe("resource-pack voxel texture planning", () => {
     expect(result.batches).toHaveLength(1);
     expect(result.batches[0]?.entries).toHaveLength(2);
     expect(packFaceTintKinds(tintKinds)).toBe(result.batches[0]!.entries[0]!.faceTintWord);
+    atlas.dispose();
+  });
+
+  it("splits kind-only and explicit-zero textured batches in either input order", () => {
+    const faces = allFaces("minecraft:block/oak_slab_side");
+    const manifest = manifestFor([{ blockId: "minecraft:oak_slab", modelId: "minecraft:block/oak_slab", faces }]);
+    const atlas = buildResourcePackAtlas(manifest);
+    const kindOnly = { ...sourceVoxel("minecraft:oak_slab", 0, { type: "bottom" }), emissiveKind: "torch" };
+    const explicitZero = { ...sourceVoxel("minecraft:oak_slab", 1, { type: "bottom" }), emissiveKind: "torch", emissiveLevel: 0 };
+    const explicitPositive = { ...sourceVoxel("minecraft:oak_slab", 2, { type: "bottom" }), emissiveKind: "torch", emissiveLevel: 7 };
+    const unlit = sourceVoxel("minecraft:oak_slab", 3, { type: "bottom" });
+    for (const voxels of [[kindOnly, explicitZero, explicitPositive, unlit], [unlit, explicitPositive, explicitZero, kindOnly]]) {
+      const result = createTextureBatches(voxels, manifest, atlas);
+      expect(result.fallbackVoxels).toEqual([]);
+      expect(result.batches).toHaveLength(4);
+      expect(result.batches.find(batch => batch.entries.some(entry => entry.voxel === kindOnly))).toMatchObject({ emissiveKind: "torch", emissiveLevel: 15 });
+      expect(result.batches.find(batch => batch.entries.some(entry => entry.voxel === explicitZero))).toMatchObject({ emissiveKind: "torch", emissiveLevel: 0 });
+      expect(result.batches.find(batch => batch.entries.some(entry => entry.voxel === explicitPositive))).toMatchObject({ emissiveKind: "torch", emissiveLevel: 7 });
+      expect(result.batches.find(batch => batch.entries.some(entry => entry.voxel === unlit))).toMatchObject({ emissiveKind: "", emissiveLevel: 0 });
+      expect(result.batches.every(batch => batch.entries.length === 1)).toBe(true);
+    }
     atlas.dispose();
   });
 
@@ -620,6 +642,81 @@ describe("resource-pack voxel texture planning", () => {
     atlas.dispose();
     atlas.dispose();
     expect(pageDisposals.every((dispose) => dispose.mock.calls.length === 1)).toBe(true);
+  });
+
+  it("reuses atlas-bound immutable plans, canonicalizes state, and invalidates on dispose or manifest mismatch", () => {
+    const manifest = manifestFor([{ blockId: "minecraft:cache", modelId: "minecraft:block/cache", faces: allFaces("minecraft:block/cache") }]);
+    const atlas = buildResourcePackAtlas(manifest);
+    const first = sourceVoxel("minecraft:cache", 2, { axis: "y", facing: "north" });
+    const reordered = sourceVoxel("minecraft:cache", 7, { facing: "north", axis: "y" });
+    const firstPlan = planTexturedVoxelPages(first, manifest, atlas)!;
+    const sameTemplate = planTexturedVoxelPages(reordered, manifest, atlas)!;
+    expect(sameTemplate[0]?.voxel).toBe(reordered);
+    expect(sameTemplate[0]?.faceTiles).toEqual(firstPlan[0]?.faceTiles);
+    expect(resourceTexturePlanCacheDiagnostics(atlas)).toMatchObject({ hits: 1, misses: 1, entries: 1, maximumEntries: 4096, enabled: true });
+
+    planTexturedVoxelPages(sourceVoxel("minecraft:cache", 8, { facing: "north", axis: "x" }), manifest, atlas);
+    expect(resourceTexturePlanCacheDiagnostics(atlas).misses).toBe(2);
+    planTexturedVoxelPages(sourceVoxel("minecraft:cache", 8, { a: "b,c=d" }), manifest, atlas);
+    planTexturedVoxelPages(sourceVoxel("minecraft:cache", 8, { a: "b", c: "d" }), manifest, atlas);
+    expect(resourceTexturePlanCacheDiagnostics(atlas).misses).toBe(4);
+    const otherManifest = manifestFor([{ blockId: "minecraft:cache", modelId: "minecraft:block/cache", faces: allFaces("minecraft:block/cache") }]);
+    planTexturedVoxelPages(first, otherManifest, atlas);
+    expect(resourceTexturePlanCacheDiagnostics(atlas).misses).toBe(4);
+
+    atlas.dispose();
+    atlas.dispose();
+    expect(resourceTexturePlanCacheDiagnostics(atlas)).toMatchObject({ entries: 0, enabled: false });
+    const reloaded = buildResourcePackAtlas(manifest);
+    planTexturedVoxelPages(first, manifest, reloaded);
+    expect(resourceTexturePlanCacheDiagnostics(reloaded)).toMatchObject({ hits: 0, misses: 1, entries: 1, enabled: true });
+    reloaded.dispose();
+  });
+
+  it("bounds the per-atlas cache and preserves weighted variant choices across positions", () => {
+    const facesA = allFaces("minecraft:block/a");
+    const facesB = allFaces("minecraft:block/b");
+    const manifest = manifestFor([
+      { blockId: "minecraft:weighted", modelId: "minecraft:block/a", faces: facesA },
+      { blockId: "minecraft:weighted_alt", modelId: "minecraft:block/b", faces: facesB },
+    ]);
+    manifest.blockStates[0]!.variants[0]!.choices.push({ model: "minecraft:block/b", x: 0, y: 0, uvlock: false, weight: 1 });
+    const atlas = buildResourcePackAtlas(manifest);
+    const byPosition = new Map<number, number>();
+    for (let x = 0; x < 24; x += 1) {
+      const plan = planTexturedVoxelPages(sourceVoxel("minecraft:weighted", x), manifest, atlas)!;
+      byPosition.set(x, plan[0]!.faceTiles[0]);
+    }
+    expect(new Set(byPosition.values()).size).toBeGreaterThan(1);
+    for (let state = 0; state <= 4096; state += 1) {
+      planTexturedVoxelPages(sourceVoxel("minecraft:weighted", 0, { test_state: String(state) }), manifest, atlas);
+    }
+    expect(resourceTexturePlanCacheDiagnostics(atlas)).toMatchObject({
+      entries: 4096, maximumEntries: 4096, evictions: 25,
+    });
+    atlas.dispose();
+  });
+
+  it("keys multipart weighted applies by position instead of reusing the first block model", () => {
+    const manifest = manifestFor([
+      { blockId: "minecraft:multipart_cache", modelId: "minecraft:block/a", faces: allFaces("minecraft:block/a") },
+      { blockId: "minecraft:multipart_alt", modelId: "minecraft:block/b", faces: allFaces("minecraft:block/b") },
+    ]);
+    manifest.blockStates[0]!.variants = [];
+    manifest.blockStates[0]!.multipart = [{
+      when: { clauses: [{}] },
+      apply: [
+        { model: "minecraft:block/a", x: 0, y: 0, uvlock: false, weight: 1 },
+        { model: "minecraft:block/b", x: 0, y: 0, uvlock: false, weight: 1 },
+      ],
+    }];
+    const atlas = buildResourcePackAtlas(manifest);
+    const plans = Array.from({ length: 24 }, (_, x) => planTexturedVoxelPages(sourceVoxel("minecraft:multipart_cache", x), manifest, atlas));
+    // The texture-only resolver currently falls back for multipart states, but
+    // the planner must still keep each actual weighted decision coordinate apart.
+    expect(plans.every((plan) => plan === undefined)).toBe(true);
+    expect(resourceTexturePlanCacheDiagnostics(atlas).misses).toBe(24);
+    atlas.dispose();
   });
 });
 

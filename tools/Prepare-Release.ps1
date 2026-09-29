@@ -1,5 +1,5 @@
 [CmdletBinding()]
-param()
+param([string]$DeliveryRoundId)
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Release-Common.ps1')
@@ -9,7 +9,9 @@ $artifactDirectory = Join-Path $context.Root "artifacts\release\v$($context.Vers
 $buildApk = Join-Path $context.Root 'apps\android\android\app\build\outputs\apk\release\app-release.apk'
 $candidateApk = Join-Path $artifactDirectory $context.ApkName
 $evidencePath = Join-Path $artifactDirectory 'release-evidence.json'
+Assert-ReleaseArchiveWritable -EvidencePath $evidencePath
 $gateDurations = [ordered]@{}
+$webGateStartedAt = $null
 
 Push-Location $context.Root
 try {
@@ -24,6 +26,9 @@ try {
     Invoke-TimedReleaseStep -Name 'fixtures' -Durations $gateDurations -Action {
         & (Join-Path $PSScriptRoot 'Test-FixtureHashes.ps1')
     }
+    Invoke-TimedReleaseStep -Name 'uiAssets' -Durations $gateDurations -Action {
+        Invoke-External -FilePath 'node' -Arguments @('tools/check-ui-assets.mjs', '--check')
+    }
     Invoke-TimedReleaseStep -Name 'typecheck' -Durations $gateDurations -Action {
         Invoke-External -FilePath 'npm' -Arguments @('run', 'typecheck')
     }
@@ -34,12 +39,13 @@ try {
         Invoke-External -FilePath 'npm' -Arguments @('run', 'test:extended')
     }
     Invoke-TimedReleaseStep -Name 'storageE2e' -Durations $gateDurations -Action {
-        Invoke-External -FilePath 'npm' -Arguments @('run', 'test:e2e', '-w', '@tomato-clock/storage-indexeddb', '--', '--workers=1')
+        Invoke-External -FilePath 'npm' -Arguments @('run', 'test:e2e', '-w', '@blockcolc/storage-indexeddb', '--', '--workers=1')
     }
     Invoke-TimedReleaseStep -Name 'coreLoopE2e' -Durations $gateDurations -Action {
-        Invoke-External -FilePath 'npm' -Arguments @('run', 'test:e2e', '-w', '@tomato-clock/core-loop-browser', '--', '--workers=1')
+        Invoke-External -FilePath 'npm' -Arguments @('run', 'test:e2e', '-w', '@blockcolc/core-loop-browser', '--', '--workers=1')
     }
     Invoke-TimedReleaseStep -Name 'webE2e' -Durations $gateDurations -Action {
+        $script:webGateStartedAt = [DateTime]::UtcNow
         $previousDeadline = [Environment]::GetEnvironmentVariable('E2E_COMPLETION_DEADLINE_MS', 'Process')
         try {
             # A single-worker release run currently takes about 25 minutes on
@@ -69,14 +75,35 @@ try {
     $stagedTree = (Invoke-External -FilePath 'git' -Arguments @('write-tree') -Capture | Select-Object -First 1).ToString().Trim()
     $stagedDiffSha256 = Get-StagedDiffSha256
     $testFingerprintSha256 = Get-StagedTestFingerprintSha256
+    $webReport = Get-WebReleaseReportIndex -RepositoryRoot $context.Root -StartedAtUtc $webGateStartedAt
+    $gateResults = foreach ($gateName in $gateDurations.Keys) {
+        $gateResult = [ordered]@{
+            name = [string]$gateName
+            status = 'passed'
+            exitCode = 0
+            attempts = 1
+            retries = 0
+        }
+        if ($gateName -eq 'webE2e') {
+            $gateResult.suites = $webReport.SuiteCount
+            $gateResult.retries = $webReport.RetryCount
+            $gateResult.skippedTests = $webReport.SkipCount
+            $gateResult.flakyTests = $webReport.FlakyCount
+            $gateResult.attempts = $webReport.AttemptCount
+            $gateResult.report = $webReport.Path
+            $gateResult.reportSha256 = $webReport.Sha256
+        }
+        [pscustomobject]$gateResult
+    }
     $evidence = [ordered]@{
-        schemaVersion = 2
+        schemaVersion = 4
         phase = 'prepared'
         preparedAt = (Get-Date).ToUniversalTime().ToString('o')
         versionName = $context.VersionName
         versionCode = $context.VersionCode
         packageId = $context.PackageId
         signerSha256 = $context.SignerSha256
+        deliveryRoundId = if ([string]::IsNullOrWhiteSpace($DeliveryRoundId)) { $null } else { $DeliveryRoundId.Trim() }
         stagedTree = $stagedTree
         stagedDiffSha256 = $stagedDiffSha256
         testFingerprintSha256 = $testFingerprintSha256
@@ -87,6 +114,7 @@ try {
             version = 'passed'
             releaseWorkflow = 'passed'
             fixtures = 'passed'
+            uiAssets = 'passed'
             typecheck = 'passed'
             unit = 'passed'
             extendedUnit = 'passed'
@@ -96,6 +124,22 @@ try {
             androidBuild = 'passed'
         }
         gateDurationsSeconds = $gateDurations
+        gateResults = @($gateResults)
+        reportIndex = @([ordered]@{
+            name = $webReport.Name
+            path = $webReport.Path
+            sha256 = $webReport.Sha256
+            status = $webReport.Status
+            exitCode = $webReport.ExitCode
+            skippedTests = $webReport.SkipCount
+            retries = $webReport.RetryCount
+            flakyTests = $webReport.FlakyCount
+            attempts = $webReport.AttemptCount
+            suites = $webReport.SuiteCount
+            suiteReports = @($webReport.SuiteReports)
+            startedAt = $webReport.StartedAt
+            finishedAt = $webReport.FinishedAt
+        })
         installations = @()
         acceptance = $null
     }

@@ -1,4 +1,4 @@
-import { projectFocusAttribution, projectMonumentFocus, type ApplicationService, type ProjectWorldProjection } from '@tomato-clock/application';
+import { projectFocusAttribution, projectMonumentFocus, type ApplicationService, type ProjectWorldProjection } from '@blockcolc/application';
 import { X } from 'lucide-react';
 import { useEffect, useRef } from 'react';
 import { focusSessionLocalDate } from './focus-stats';

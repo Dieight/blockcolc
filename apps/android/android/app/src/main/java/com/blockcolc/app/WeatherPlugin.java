@@ -83,18 +83,18 @@ public class WeatherPlugin extends Plugin {
     private static final String[] PRECIPITATION_TYPES = {"rain", "snow", "ice", "mixed", "none", "unknown"};
 
     private final AtomicLong requestGeneration = new AtomicLong(0);
+    private final AtomicLong astronomyGeneration = new AtomicLong(0);
     private final Object requestLock = new Object();
     private volatile LocationRequestState activeLocationRequest;
-    private volatile HttpURLConnection activeConnection;
+    private volatile HttpURLConnection activeWeatherConnection;
+    private volatile HttpURLConnection activeAstronomyConnection;
     private volatile PluginCall permissionRequestCall;
-    private volatile long permissionRequestGeneration;
+    private final List<RequestTicket> permissionWaiters = new ArrayList<>();
+    private final QWeatherAstronomy.Cache astronomyCache = new QWeatherAstronomy.Cache();
 
     @PluginMethod
     public void getCurrentWeather(PluginCall call) {
-        long generation;
-        synchronized (requestLock) {
-            generation = requestGeneration.incrementAndGet();
-        }
+        long generation = requestGeneration.incrementAndGet();
         if (!BuildConfig.BLOCKCOLC_QWEATHER_CONFIGURED
             || !isValidQWeatherHost(BuildConfig.BLOCKCOLC_QWEATHER_HOST)
             || !isValidApiKey(BuildConfig.BLOCKCOLC_QWEATHER_API_KEY)) {
@@ -102,44 +102,87 @@ public class WeatherPlugin extends Plugin {
             return;
         }
 
-        if (!hasLocationPermission()) {
-            try {
-                permissionRequestCall = call;
-                permissionRequestGeneration = generation;
-                requestPermissionForAlias("weatherLocation", call, "locationPermissionResult");
-            } catch (RuntimeException ignored) {
-                resolveFailure(call, "error", "permission_unavailable");
+        requestLocationForTicket(new RequestTicket(call, generation, RequestKind.WEATHER));
+    }
+
+    @PluginMethod
+    public void getAstronomy(PluginCall call) {
+        long generation = astronomyGeneration.incrementAndGet();
+        requestLocationForTicket(new RequestTicket(call, generation, RequestKind.ASTRONOMY));
+    }
+
+    @PluginMethod
+    public void cancelAstronomy(PluginCall call) {
+        HttpURLConnection connection;
+        LocationRequestState locationRequest;
+        List<RequestTicket> cancelled = new ArrayList<>();
+        synchronized (requestLock) {
+            astronomyGeneration.incrementAndGet();
+            connection = activeAstronomyConnection;
+            activeAstronomyConnection = null;
+            for (int index = permissionWaiters.size() - 1; index >= 0; index--) {
+                RequestTicket ticket = permissionWaiters.get(index);
+                // Capacitor's permission callback retrieves and releases the exact saved owner call.
+                // Keep that stale ticket as a tombstone until the system dialog returns.
+                if (ticket.kind == RequestKind.ASTRONOMY && ticket.call != permissionRequestCall) {
+                    cancelled.add(ticket);
+                    permissionWaiters.remove(index);
+                }
             }
-            return;
+            locationRequest = activeLocationRequest;
+            if (locationRequest != null) locationRequest.removeKind(RequestKind.ASTRONOMY, cancelled);
+            if (locationRequest != null && !hasCurrentTicket(locationRequest)) activeLocationRequest = null;
         }
-        requestCurrentLocation(call, generation);
+        if (connection != null) connection.disconnect();
+        if (locationRequest != null && !hasCurrentTicket(locationRequest)) cancelLocationRequest(locationRequest);
+        for (RequestTicket ticket : cancelled) resolveFailure(ticket.call, "unavailable", "request_cancelled");
+        JSObject result = new JSObject();
+        result.put("status", "ok");
+        call.resolve(result);
     }
 
     /** Called only when the user turns reality weather off. */
     @PluginMethod
     public void clearLocationCache(PluginCall call) {
         LocationRequestState locationRequest;
-        HttpURLConnection connection;
+        HttpURLConnection weatherConnection;
+        HttpURLConnection astronomyConnection;
+        List<RequestTicket> permissionCancelled;
         Context context = getContext();
         boolean cacheCleared = true;
         synchronized (requestLock) {
-            long cancelledGeneration = requestGeneration.incrementAndGet();
+            requestGeneration.incrementAndGet();
+            astronomyGeneration.incrementAndGet();
             locationRequest = activeLocationRequest;
-            connection = activeConnection;
-            activeConnection = null;
+            weatherConnection = activeWeatherConnection;
+            astronomyConnection = activeAstronomyConnection;
+            activeWeatherConnection = null;
+            activeAstronomyConnection = null;
             if (context != null) {
                 File cachedLocation = new File(context.getNoBackupFilesDir(), LOCATION_CACHE_FILE);
                 if (cachedLocation.exists() && !cachedLocation.delete()) {
                     cacheCleared = false;
                 }
             }
-            if (locationRequest != null && locationRequest.generation < cancelledGeneration) {
-                activeLocationRequest = null;
+            activeLocationRequest = null;
+            permissionCancelled = new ArrayList<>();
+            for (int index = permissionWaiters.size() - 1; index >= 0; index--) {
+                RequestTicket ticket = permissionWaiters.get(index);
+                // Keep the saved permission call alive; Capacitor consumes it when Android
+                // returns from the dialog. New requests can join this outstanding flight.
+                if (ticket.call != permissionRequestCall) {
+                    permissionCancelled.add(ticket);
+                    permissionWaiters.remove(index);
+                }
             }
+            astronomyCache.clear();
         }
         if (locationRequest != null) cancelLocationRequest(locationRequest);
-        if (connection != null) connection.disconnect();
-        permissionRequestCall = null;
+        for (RequestTicket ticket : permissionCancelled) {
+            resolveFailure(ticket.call, "unavailable", "request_cancelled");
+        }
+        if (weatherConnection != null) weatherConnection.disconnect();
+        if (astronomyConnection != null) astronomyConnection.disconnect();
         if (!cacheCleared) {
             resolveFailure(call, "error", "cache_clear_failed");
             return;
@@ -152,17 +195,22 @@ public class WeatherPlugin extends Plugin {
     @PermissionCallback
     private void locationPermissionResult(PluginCall call) {
         if (call == null) return;
-        long generation = permissionRequestGeneration;
-        if (permissionRequestCall != call || generation != requestGeneration.get()) {
-            resolveFailure(call, "unavailable", "request_cancelled");
-            return;
+        List<RequestTicket> waiters;
+        synchronized (requestLock) {
+            if (permissionRequestCall != call) return;
+            permissionRequestCall = null;
+            waiters = new ArrayList<>(permissionWaiters);
+            permissionWaiters.clear();
         }
-        permissionRequestCall = null;
-        if (!hasLocationPermission()) {
-            resolveFailure(call, "permission_denied", "location_permission_denied");
-            return;
+        for (RequestTicket waiter : waiters) {
+            if (!isTicketCurrent(waiter)) {
+                resolveFailure(waiter.call, "unavailable", "request_cancelled");
+            } else if (!hasLocationPermission()) {
+                resolveFailure(waiter.call, "unavailable", "location_permission_denied");
+            } else {
+                requestLocationForTicket(waiter);
+            }
         }
-        requestCurrentLocation(call, generation);
     }
 
     private boolean hasLocationPermission() {
@@ -180,43 +228,89 @@ public class WeatherPlugin extends Plugin {
 
     @SuppressLint("MissingPermission")
     private void requestCurrentLocation(PluginCall call, long generation) {
-        if (!isRequestCurrent(generation)) {
-            resolveFailure(call, "unavailable", "request_cancelled");
+        requestLocationForTicket(new RequestTicket(call, generation, RequestKind.WEATHER));
+    }
+
+    @SuppressLint("MissingPermission")
+    private void requestLocationForTicket(RequestTicket ticket) {
+        if (!isTicketCurrent(ticket)) {
+            resolveFailure(ticket.call, "unavailable", "request_cancelled");
+            return;
+        }
+        if (!hasLocationPermission()) {
+            requestSharedLocationPermission(ticket);
             return;
         }
         Context context = getContext();
         LocationManager locationManager = context == null
             ? null
             : (LocationManager) context.getSystemService(Context.LOCATION_SERVICE);
-        if (locationManager == null) {
-            tryCachedLocationOrResolve(call, generation, "location_unavailable");
-            return;
-        }
-
-        List<String> providers = enabledProviders(locationManager);
-        if (providers.isEmpty()) {
-            tryCachedLocationOrResolve(call, generation, "location_unavailable");
-            return;
-        }
-
         Handler mainHandler = new Handler(Looper.getMainLooper());
         LocationRequestState state = new LocationRequestState(
-            call, locationManager, mainHandler, generation, readCachedCoordinates()
+            locationManager, mainHandler, readCachedCoordinates(), ticket
         );
+        LocationRequestState staleRequest = null;
         synchronized (requestLock) {
-            if (requestGeneration.get() != generation) {
-                resolveFailure(call, "unavailable", "request_cancelled");
+            LocationRequestState active = activeLocationRequest;
+            if (active != null && !active.finished.get() && hasCurrentTicket(active)) {
+                active.add(ticket);
+                return;
+            }
+            if (active != null && !active.finished.get()) staleRequest = active;
+            if (!isTicketCurrent(ticket)) {
+                resolveFailure(ticket.call, "unavailable", "request_cancelled");
                 return;
             }
             activeLocationRequest = state;
         }
+        if (staleRequest != null) cancelLocationRequest(staleRequest);
         state.timeout = () -> finishLocationRequest(state, null, "location_timeout");
         mainHandler.postDelayed(state.timeout, LOCATION_TIMEOUT_MS);
+
+        if (locationManager == null) {
+            finishLocationRequest(state, null, "location_unavailable");
+            return;
+        }
+        List<String> providers = enabledProviders(locationManager);
+        if (providers.isEmpty()) {
+            finishLocationRequest(state, null, "location_unavailable");
+            return;
+        }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             requestModernLocation(state, providers);
         } else {
             requestLegacyLocation(state, providers);
+        }
+    }
+
+    private void requestSharedLocationPermission(RequestTicket ticket) {
+        boolean startPermissionRequest = false;
+        synchronized (requestLock) {
+            if (!isTicketCurrent(ticket)) {
+                resolveFailure(ticket.call, "unavailable", "request_cancelled");
+                return;
+            }
+            permissionWaiters.add(ticket);
+            if (permissionRequestCall == null) {
+                permissionRequestCall = ticket.call;
+                startPermissionRequest = true;
+            }
+        }
+        if (!startPermissionRequest) return;
+        try {
+            requestPermissionForAlias("weatherLocation", ticket.call, "locationPermissionResult");
+        } catch (RuntimeException ignored) {
+            List<RequestTicket> failed;
+            synchronized (requestLock) {
+                permissionRequestCall = null;
+                failed = new ArrayList<>(permissionWaiters);
+                permissionWaiters.clear();
+            }
+            for (RequestTicket waiter : failed) {
+                if (isTicketCurrent(waiter)) resolveFailure(waiter.call, "error", "permission_unavailable");
+                else resolveFailure(waiter.call, "unavailable", "request_cancelled");
+            }
         }
     }
 
@@ -245,7 +339,7 @@ public class WeatherPlugin extends Plugin {
             state.cancellations.add(cancellation);
             try {
                 state.locationManager.getCurrentLocation(provider, cancellation, mainExecutor, location -> {
-                    if (!isRequestCurrent(state.generation)) {
+                    if (!hasCurrentTicket(state)) {
                         finishLocationRequest(state, null, "request_cancelled");
                         return;
                     }
@@ -269,7 +363,7 @@ public class WeatherPlugin extends Plugin {
         state.legacyListener = new LocationListener() {
             @Override
             public void onLocationChanged(Location location) {
-                if (!isRequestCurrent(state.generation)) {
+                if (!hasCurrentTicket(state)) {
                     finishLocationRequest(state, null, "request_cancelled");
                     return;
                 }
@@ -299,48 +393,176 @@ public class WeatherPlugin extends Plugin {
         if (activeLocationRequest == state) activeLocationRequest = null;
         state.mainHandler.removeCallbacks(state.timeout);
         stopLocationUpdates(state);
-
-        if (!isRequestCurrent(state.generation)) {
-            resolveFailure(state.call, "unavailable", "request_cancelled");
-            return;
+        List<RequestTicket> tickets = state.snapshotTickets();
+        Coordinates coordinates = null;
+        boolean usedCachedCoordinates = false;
+        if (location != null && hasLocationPermission()) {
+            coordinates = new Coordinates(location.getLatitude(), location.getLongitude());
+            cacheCoordinates(coordinates.latitude, coordinates.longitude, state);
+        } else if (hasLocationPermission() && shouldUseCachedCoordinates(true, state.cachedCoordinates)) {
+            coordinates = state.cachedCoordinates;
+            usedCachedCoordinates = true;
         }
-
-        if (location == null) {
-            if (!hasLocationPermission()) {
-                resolveFailure(state.call, "permission_denied", "location_permission_denied");
-                return;
-            }
-            if (shouldUseCachedCoordinates(true, state.cachedCoordinates)) {
-                fetchCurrentWeather(state.call, state.cachedCoordinates, true, state.generation);
+        for (RequestTicket ticket : tickets) {
+            if (!isTicketCurrent(ticket)) {
+                resolveFailure(ticket.call, "unavailable", "request_cancelled");
+            } else if (!hasLocationPermission()) {
+                resolveFailure(ticket.call, "unavailable", "location_permission_denied");
+            } else if (coordinates == null) {
+                resolveFailure(ticket.call, "unavailable", failureReason == null ? "location_unavailable" : failureReason);
             } else {
-                resolveFailure(state.call, "unavailable", failureReason == null ? "location_unavailable" : failureReason);
+                dispatchRequest(ticket, coordinates, usedCachedCoordinates);
             }
-            return;
-        }
-        cacheCoordinates(location.getLatitude(), location.getLongitude(), state.generation);
-        try {
-            Coordinates coordinates = new Coordinates(location.getLatitude(), location.getLongitude());
-            bridge.execute(() -> fetchCurrentWeather(state.call, coordinates, false, state.generation));
-        } catch (RuntimeException ignored) {
-            resolveFailure(state.call, "error", "request_failed");
         }
     }
 
-    private void tryCachedLocationOrResolve(PluginCall call, long generation, String failureReason) {
-        if (!isRequestCurrent(generation)) {
-            resolveFailure(call, "unavailable", "request_cancelled");
+    private void dispatchRequest(RequestTicket ticket, Coordinates coordinates, boolean usedCachedCoordinates) {
+        try {
+            if (ticket.kind == RequestKind.WEATHER) {
+                bridge.execute(() -> fetchCurrentWeather(ticket.call, coordinates, usedCachedCoordinates, ticket.generation));
+            } else {
+                bridge.execute(() -> fetchAstronomy(ticket.call, coordinates, usedCachedCoordinates, ticket.generation));
+            }
+        } catch (RuntimeException ignored) {
+            if (isTicketCurrent(ticket)) resolveFailure(ticket.call, "error", "request_failed");
+            else resolveFailure(ticket.call, "unavailable", "request_cancelled");
+        }
+    }
+
+    private void fetchAstronomy(PluginCall call, Coordinates coordinates, boolean usedCachedLocation, long generation) {
+        String earlyFailure = astronomyRequestFailure(generation);
+        if (earlyFailure != null) { resolveFailure(call, "unavailable", earlyFailure); return; }
+        if (!QWeatherAstronomy.isUsableCoordinates(coordinates.latitude, coordinates.longitude)) {
+            resolveFailure(call, "unavailable", "location_unavailable");
             return;
         }
-        if (!hasLocationPermission()) {
-            resolveFailure(call, "permission_denied", "location_permission_denied");
+
+        if (!BuildConfig.BLOCKCOLC_QWEATHER_CONFIGURED
+            || !isValidQWeatherHost(BuildConfig.BLOCKCOLC_QWEATHER_HOST)
+            || !isValidApiKey(BuildConfig.BLOCKCOLC_QWEATHER_API_KEY)) {
+            resolveEphemerisOnly(call, coordinates, usedCachedLocation, generation, "not_configured");
             return;
         }
-        Coordinates cachedCoordinates = readCachedCoordinates();
-        if (shouldUseCachedCoordinates(hasLocationPermission(), cachedCoordinates)) {
-            fetchCurrentWeather(call, cachedCoordinates, true, generation);
-        } else {
-            resolveFailure(call, "unavailable", failureReason);
+
+        long now = System.currentTimeMillis();
+        synchronized (requestLock) {
+            earlyFailure = astronomyRequestFailureLocked(generation);
+            if (earlyFailure == null) {
+                JSObject cached = astronomyCache.get(coordinates.latitude, coordinates.longitude, now);
+                if (cached != null) {
+                    cached.put("locationSource", usedCachedLocation ? "cached" : "fresh");
+                    call.resolve(cached);
+                    return;
+                }
+            }
         }
+        if (earlyFailure != null) { resolveFailure(call, "unavailable", earlyFailure); return; }
+
+        String packageName = getContext() == null ? "" : getContext().getPackageName();
+        String certificateSha1 = currentSigningCertificateSha1();
+        if (packageName.isEmpty() || certificateSha1 == null) {
+            resolveEphemerisOnly(call, coordinates, usedCachedLocation, generation, "signing_identity_unavailable");
+            return;
+        }
+
+        HttpURLConnection connection = null;
+        try {
+            String path = String.format(
+                Locale.US,
+                "https://%s/weather/v1/daily/%s/%s?days=7&localTime=false",
+                BuildConfig.BLOCKCOLC_QWEATHER_HOST,
+                formatCoordinate(coordinates.latitude),
+                formatCoordinate(coordinates.longitude)
+            );
+            connection = (HttpURLConnection) new URL(path).openConnection();
+            synchronized (requestLock) {
+                earlyFailure = astronomyRequestFailureLocked(generation);
+                if (earlyFailure != null) {
+                    connection.disconnect();
+                } else {
+                    activeAstronomyConnection = connection;
+                }
+            }
+            if (earlyFailure != null) { resolveFailure(call, "unavailable", earlyFailure); return; }
+            connection.setRequestMethod("GET");
+            connection.setConnectTimeout(CONNECT_TIMEOUT_MS);
+            connection.setReadTimeout(READ_TIMEOUT_MS);
+            connection.setInstanceFollowRedirects(false);
+            connection.setRequestProperty("Accept", "application/json");
+            connection.setRequestProperty("Accept-Encoding", "gzip");
+            connection.setRequestProperty("X-QW-Api-Key", BuildConfig.BLOCKCOLC_QWEATHER_API_KEY);
+            connection.setRequestProperty("X-Android-Package-Name", packageName);
+            connection.setRequestProperty("X-Android-Cert", certificateSha1);
+
+            int responseCode = connection.getResponseCode();
+            if (responseCode < 200 || responseCode >= 300) {
+                String reason = mapHttpFailure(responseCode, readErrorResponse(connection));
+                resolveEphemerisOnly(call, coordinates, usedCachedLocation, generation, reason);
+                return;
+            }
+            String body = decodeWeatherResponse(connection.getInputStream(), connection.getContentEncoding());
+            JSObject result = QWeatherAstronomy.mapResponse(body, coordinates.latitude, coordinates.longitude,
+                usedCachedLocation ? "cached" : "fresh", System.currentTimeMillis());
+            if (result == null) {
+                resolveEphemerisOnly(call, coordinates, usedCachedLocation, generation, "invalid_response");
+            } else {
+                synchronized (requestLock) {
+                    earlyFailure = astronomyRequestFailureLocked(generation);
+                    if (earlyFailure == null) {
+                        astronomyCache.put(result);
+                        call.resolve(result);
+                    }
+                }
+                if (earlyFailure != null) resolveFailure(call, "unavailable", earlyFailure);
+            }
+        } catch (ResponseTooLargeException ignored) {
+            resolveEphemerisOnly(call, coordinates, usedCachedLocation, generation, "response_too_large");
+        } catch (UnsupportedResponseEncodingException ignored) {
+            resolveEphemerisOnly(call, coordinates, usedCachedLocation, generation, "unsupported_response_encoding");
+        } catch (UnknownHostException | ConnectException ignored) {
+            resolveEphemerisOnly(call, coordinates, usedCachedLocation, generation, "network_unavailable");
+        } catch (SocketTimeoutException ignored) {
+            resolveEphemerisOnly(call, coordinates, usedCachedLocation, generation, "request_timeout");
+        } catch (Exception ignored) {
+            if (!isAstronomyRequestCurrent(generation)) resolveFailure(call, "unavailable", "request_cancelled");
+            else resolveEphemerisOnly(call, coordinates, usedCachedLocation, generation, "request_failed");
+        } finally {
+            if (connection != null) {
+                connection.disconnect();
+                synchronized (requestLock) {
+                    if (activeAstronomyConnection == connection) activeAstronomyConnection = null;
+                }
+            }
+        }
+    }
+
+    private void resolveEphemerisOnly(PluginCall call, Coordinates coordinates, boolean usedCachedLocation,
+                                      long generation, String reason) {
+        JSObject coordinate = new JSObject();
+        coordinate.put("latitude", coordinates.latitude);
+        coordinate.put("longitude", coordinates.longitude);
+        JSObject result = new JSObject();
+        result.put("status", "ephemeris_only");
+        result.put("reason", reason);
+        result.put("coordinate", coordinate);
+        result.put("locationSource", usedCachedLocation ? "cached" : "fresh");
+        result.put("fetchedAtMs", System.currentTimeMillis());
+        String failure;
+        synchronized (requestLock) {
+            failure = astronomyRequestFailureLocked(generation);
+            if (failure == null) call.resolve(result);
+        }
+        if (failure != null) resolveFailure(call, "unavailable", failure);
+    }
+
+    private String astronomyRequestFailure(long generation) {
+        synchronized (requestLock) { return astronomyRequestFailureLocked(generation); }
+    }
+
+    /** Must be called under requestLock so authorization and cache adoption are atomic with close/cancel. */
+    private String astronomyRequestFailureLocked(long generation) {
+        if (astronomyGeneration.get() != generation) return "request_cancelled";
+        return hasLocationPermission() ? null : "location_permission_denied";
     }
 
     private void fetchCurrentWeather(PluginCall call, Coordinates coordinates, boolean usedCachedLocation, long generation) {
@@ -380,7 +602,7 @@ public class WeatherPlugin extends Plugin {
                     resolveFailure(call, "unavailable", "request_cancelled");
                     return;
                 }
-                activeConnection = connection;
+                activeWeatherConnection = connection;
             }
             connection.setRequestMethod("GET");
             connection.setConnectTimeout(CONNECT_TIMEOUT_MS);
@@ -423,7 +645,7 @@ public class WeatherPlugin extends Plugin {
         } finally {
             if (connection != null) {
                 connection.disconnect();
-                if (activeConnection == connection) activeConnection = null;
+                if (activeWeatherConnection == connection) activeWeatherConnection = null;
             }
         }
     }
@@ -579,13 +801,13 @@ public class WeatherPlugin extends Plugin {
         }
     }
 
-    private void cacheCoordinates(double latitude, double longitude, long generation) {
+    private void cacheCoordinates(double latitude, double longitude, LocationRequestState state) {
         Context context = getContext();
         if (context == null || !isUsableCoordinates(latitude, longitude)) return;
         File cacheFile = new File(context.getNoBackupFilesDir(), LOCATION_CACHE_FILE);
         byte[] content = encodeCachedCoordinates(latitude, longitude).getBytes(StandardCharsets.UTF_8);
         synchronized (requestLock) {
-            if (requestGeneration.get() != generation) return;
+            if (!hasCurrentTicket(state)) return;
             try (FileOutputStream output = new FileOutputStream(cacheFile, false)) {
                 output.write(content);
                 output.getFD().sync();
@@ -614,12 +836,29 @@ public class WeatherPlugin extends Plugin {
         return requestGeneration.get() == generation;
     }
 
+    private boolean isAstronomyRequestCurrent(long generation) {
+        return astronomyGeneration.get() == generation;
+    }
+
+    private boolean isTicketCurrent(RequestTicket ticket) {
+        return ticket.kind == RequestKind.WEATHER
+            ? isRequestCurrent(ticket.generation)
+            : isAstronomyRequestCurrent(ticket.generation);
+    }
+
+    private boolean hasCurrentTicket(LocationRequestState state) {
+        for (RequestTicket ticket : state.snapshotTickets()) if (isTicketCurrent(ticket)) return true;
+        return false;
+    }
+
     private void cancelLocationRequest(LocationRequestState state) {
         if (!state.finished.compareAndSet(false, true)) return;
         state.mainHandler.removeCallbacks(state.timeout);
         stopLocationUpdates(state);
         if (activeLocationRequest == state) activeLocationRequest = null;
-        resolveFailure(state.call, "unavailable", "request_cancelled");
+        for (RequestTicket ticket : state.snapshotTickets()) {
+            resolveFailure(ticket.call, "unavailable", "request_cancelled");
+        }
     }
 
     private static void stopLocationUpdates(LocationRequestState state) {
@@ -726,7 +965,7 @@ public class WeatherPlugin extends Plugin {
         Object raw = object.opt(key);
         if (!(raw instanceof Number)) return null;
         double value = ((Number) raw).doubleValue();
-        return Double.isFinite(value) ? value : null;
+        return isFiniteNumber(value) ? value : null;
     }
 
     private static boolean isPrecipitationType(String type) {
@@ -742,7 +981,7 @@ public class WeatherPlugin extends Plugin {
     }
 
     private static boolean isUsableCoordinates(double latitude, double longitude) {
-        return Double.isFinite(latitude) && Double.isFinite(longitude)
+        return isFiniteNumber(latitude) && isFiniteNumber(longitude)
             && latitude >= -90.0 && latitude <= 90.0
             && longitude >= -180.0 && longitude <= 180.0;
     }
@@ -786,10 +1025,14 @@ public class WeatherPlugin extends Plugin {
     }
 
     static String formatCoordinate(double coordinate) {
-        if (!Double.isFinite(coordinate) || coordinate < -180.0 || coordinate > 180.0) {
+        if (!isFiniteNumber(coordinate) || coordinate < -180.0 || coordinate > 180.0) {
             throw new IllegalArgumentException("Coordinate is out of range");
         }
         return String.format(Locale.US, "%.2f", coordinate);
+    }
+
+    private static boolean isFiniteNumber(double value) {
+        return !Double.isNaN(value) && !Double.isInfinite(value);
     }
 
     static String formatSha1Fingerprint(byte[] digest) {
@@ -812,24 +1055,54 @@ public class WeatherPlugin extends Plugin {
     }
 
     private static final class LocationRequestState {
-        final PluginCall call;
         final LocationManager locationManager;
         final Handler mainHandler;
-        final long generation;
         final Coordinates cachedCoordinates;
         final AtomicBoolean finished = new AtomicBoolean(false);
         final AtomicInteger pendingProviders = new AtomicInteger(0);
         final List<CancellationSignal> cancellations = new ArrayList<>();
+        private final List<RequestTicket> tickets = new ArrayList<>();
         Runnable timeout;
         LocationListener legacyListener;
 
-        LocationRequestState(PluginCall call, LocationManager locationManager, Handler mainHandler,
-                             long generation, Coordinates cachedCoordinates) {
-            this.call = call;
+        LocationRequestState(LocationManager locationManager, Handler mainHandler,
+                             Coordinates cachedCoordinates, RequestTicket firstTicket) {
             this.locationManager = locationManager;
             this.mainHandler = mainHandler;
-            this.generation = generation;
             this.cachedCoordinates = cachedCoordinates;
+            tickets.add(firstTicket);
+        }
+
+        synchronized void add(RequestTicket ticket) {
+            tickets.add(ticket);
+        }
+
+        synchronized List<RequestTicket> snapshotTickets() {
+            return new ArrayList<>(tickets);
+        }
+
+        synchronized void removeKind(RequestKind kind, List<RequestTicket> removed) {
+            for (int index = tickets.size() - 1; index >= 0; index--) {
+                RequestTicket ticket = tickets.get(index);
+                if (ticket.kind == kind) {
+                    removed.add(ticket);
+                    tickets.remove(index);
+                }
+            }
+        }
+    }
+
+    private enum RequestKind { WEATHER, ASTRONOMY }
+
+    private static final class RequestTicket {
+        final PluginCall call;
+        final long generation;
+        final RequestKind kind;
+
+        RequestTicket(PluginCall call, long generation, RequestKind kind) {
+            this.call = call;
+            this.generation = generation;
+            this.kind = kind;
         }
     }
 

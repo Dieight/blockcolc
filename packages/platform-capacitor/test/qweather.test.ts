@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { normalizeQWeatherResult } from '../src/qweather';
+import { normalizeQWeatherAstronomyResult, normalizeQWeatherResult } from '../src/qweather';
 
 describe('QWeather native result boundary', () => {
   it('preserves the provider attribution and typed current weather values', () => {
@@ -128,6 +128,64 @@ describe('QWeather native result boundary', () => {
       locationSource: 'cached',
     });
     expect(normalizeQWeatherResult({ ...result, locationSource: 'raw coordinates' }))
+      .toEqual({ status: 'error', reason: 'native_result_invalid' });
+  });
+});
+
+describe('QWeather astronomy DTO boundary', () => {
+  const day = {
+    intervalStartMs: 1_800_000_000_000,
+    intervalEndMs: 1_800_082_800_000,
+    solar: {
+      astronomicalDawnMs: null, nauticalDawnMs: null, civilDawnMs: 1_800_010_000_000,
+      sunriseMs: 1_800_020_000_000, solarNoonMs: 1_800_040_000_000, sunsetMs: 1_800_060_000_000,
+      civilDuskMs: 1_800_070_000_000, nauticalDuskMs: null, astronomicalDuskMs: null, solarMidnightMs: null,
+    },
+    lunar: {
+      moonriseMs: null, moonsetMs: 1_800_050_000_000, moonTransitMs: null,
+      moonUnderfootMs: null, phase: 'waning-gibbous',
+    },
+  };
+
+  it('normalizes a bounded schedule and preserves nullable polar events', () => {
+    expect(normalizeQWeatherAstronomyResult({
+      status: 'ok', coordinate: { latitude: 90, longitude: 180 }, locationSource: 'cached',
+      fetchedAtMs: 1_800_000_000_000, days: [day], attributions: ['QWeather attribution'],
+      providerResponse: 'discarded',
+    })).toEqual({
+      status: 'ok', coordinate: { latitude: 90, longitude: 180 }, locationSource: 'cached',
+      fetchedAtMs: 1_800_000_000_000, days: [day], attributions: ['QWeather attribution'],
+    });
+  });
+
+  it('accepts ephemeris-only fallback only with an authorized bounded coordinate', () => {
+    expect(normalizeQWeatherAstronomyResult({
+      status: 'ephemeris_only', reason: 'network_unavailable',
+      coordinate: { latitude: 39.92, longitude: 116.41 }, locationSource: 'fresh', fetchedAtMs: 1_800_000_000_000,
+    })).toEqual({
+      status: 'ephemeris_only', reason: 'network_unavailable',
+      coordinate: { latitude: 39.92, longitude: 116.41 }, locationSource: 'fresh', fetchedAtMs: 1_800_000_000_000,
+    });
+    expect(normalizeQWeatherAstronomyResult({
+      status: 'ephemeris_only', reason: 'network_unavailable',
+      coordinate: { latitude: 91, longitude: 0 }, locationSource: 'fresh', fetchedAtMs: 1_800_000_000_000,
+    })).toEqual({ status: 'error', reason: 'native_result_invalid' });
+  });
+
+  it('rejects overlong, overlapping, malformed and unbounded native schedules', () => {
+    const base = {
+      status: 'ok', coordinate: { latitude: 0, longitude: 0 }, locationSource: 'fresh',
+      fetchedAtMs: 1_800_000_000_000, days: [day], attributions: ['QWeather attribution'],
+    };
+    expect(normalizeQWeatherAstronomyResult({ ...base, days: Array.from({ length: 8 }, (_, index) => ({
+      ...day, intervalStartMs: day.intervalStartMs + index * (day.intervalEndMs - day.intervalStartMs),
+      intervalEndMs: day.intervalEndMs + index * (day.intervalEndMs - day.intervalStartMs),
+    })) })).toEqual({ status: 'error', reason: 'native_result_invalid' });
+    expect(normalizeQWeatherAstronomyResult({ ...base, days: [day, { ...day, intervalStartMs: day.intervalStartMs + 1 }] }))
+      .toEqual({ status: 'error', reason: 'native_result_invalid' });
+    expect(normalizeQWeatherAstronomyResult({ ...base, days: [{ ...day, solar: { ...day.solar, sunriseMs: Number.NaN } }] }))
+      .toEqual({ status: 'error', reason: 'native_result_invalid' });
+    expect(normalizeQWeatherAstronomyResult({ ...base, attributions: [] }))
       .toEqual({ status: 'error', reason: 'native_result_invalid' });
   });
 });

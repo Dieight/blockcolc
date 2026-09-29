@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createInitialState, type DomainState, type FocusSession, type Project } from '@tomato-clock/domain';
+import { createInitialState, type DomainState, type FocusSession, type Project } from '@blockcolc/domain';
 import { ACHIEVEMENTS, newlyUnlockedAchievements, projectAchievements } from '../src/achievements.js';
 
 function session(id: string, at: string, duration = 30 * 60_000, status: FocusSession['status'] = 'completed'): FocusSession {

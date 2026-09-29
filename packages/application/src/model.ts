@@ -5,8 +5,8 @@ import type {
   DomainState,
   Project,
   ProjectCondition,
-} from "@tomato-clock/domain";
-import { projectProgressBasisPoints } from "@tomato-clock/domain";
+} from "@blockcolc/domain";
+import { projectProgressBasisPoints } from "@blockcolc/domain";
 
 type GeneratedCommandType = "CreateProject" | "CreateHabitProject" | "AddSubtask" | "StartFocus" | "ReportSubtaskProgress" | "CompleteFocusEarly";
 

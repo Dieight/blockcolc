@@ -6,7 +6,7 @@ import type { AfterReloadEvidence, BeforeReloadEvidence } from "../src/harness.j
 
 test("persists and recovers the complete first backend vertical slice", async ({ page }) => {
   await page.goto("/");
-  const beforeReload = await page.evaluate(() => window.tomatoClockHarness.runBeforeReload());
+  const beforeReload = await page.evaluate(() => window.blockcolcHarness.runBeforeReload());
 
   expect(beforeReload.completedAt).toBe(beforeReload.endsAt);
   expect(beforeReload.completedLocalDate).toBe("2026-07-23");
@@ -20,7 +20,7 @@ test("persists and recovers the complete first backend vertical slice", async ({
 
   await page.reload();
   const afterReload = await page.evaluate(
-    (evidence) => window.tomatoClockHarness.runAfterReload(evidence),
+    (evidence) => window.blockcolcHarness.runAfterReload(evidence),
     beforeReload,
   );
 

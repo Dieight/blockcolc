@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { readPersistedDomainState } from './persisted-domain-state';
+import { preparePlanCancellation } from './focus-plan-controls';
 
 // Temporary V23 reproduction/regression probes (remove before release).
 
@@ -67,7 +68,7 @@ test("habit-settled rounds are never re-offered by a later plan cancel", async (
   await page.clock.fastForward(61_000);
   await expect(page.getByRole("button", { name: "开始下一轮" })).toBeVisible();
   await page.getByRole("button", { name: "调整本次计划" }).click();
-  await sheet.getByRole("button", { name: "取消计划" }).click();
+  await (await preparePlanCancellation(sheet)).click();
   await expect(page.getByRole("heading", { name: "把这次推进汇报给哪些任务？" })).toBeVisible();
   await page.locator(".marathon-settlement-head").first().click();
   await expect(page.locator(".habit-round-stepper")).toBeVisible();
@@ -85,7 +86,7 @@ test("habit-settled rounds are never re-offered by a later plan cancel", async (
   await page.clock.fastForward(61_000);
   await expect(page.getByRole("button", { name: "开始下一轮" })).toBeVisible();
   await page.getByRole("button", { name: "调整本次计划" }).click();
-  await sheet2.getByRole("button", { name: "取消计划" }).click();
+  await (await preparePlanCancellation(sheet2)).click();
   await expect(page.getByRole("heading", { name: "把这次推进汇报给哪些任务？" })).toBeVisible();
   await expect(page.locator(".marathon-progress-report .eyebrow")).toContainText("1 轮专注已结束");
   await page.getByRole("button", { name: "提交本次推进" }).click();

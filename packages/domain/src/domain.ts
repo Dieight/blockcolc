@@ -414,9 +414,14 @@ function handle(state: DomainState, command: DomainCommand, clock: Clock): Comma
       if (interruptionCategory !== null && !["external-interruption", "task-blocked", "fatigue", "priority-changed", "device-or-app", "other"].includes(interruptionCategory)) {
         throw new Error("Invalid interruption category");
       }
+      const interruptionNote = command.interruptionNote;
+      if (interruptionNote !== undefined && (typeof interruptionNote !== "string" || !interruptionNote.trim() || interruptionNote.trim().length > 200)) {
+        throw new Error("interruptionNote must contain 1 through 200 characters");
+      }
       state.focusHistory.push({
         ...focusSessionBase(active), status: "interrupted", interruptedAt: now,
         interruptionReason: "user-cancelled", interruptionCategory,
+        ...(interruptionNote === undefined ? {} : { interruptionNote: interruptionNote.trim() }),
         actualDurationMs: Math.max(0, Date.parse(now) - Date.parse(active.startedAt)),
       });
       state.activeFocusSession = null;

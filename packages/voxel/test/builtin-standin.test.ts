@@ -1,4 +1,4 @@
-import { parseJava16xResourcePack } from "@tomato-clock/resource-pack";
+import { parseJava16xResourcePack } from "@blockcolc/resource-pack";
 import { strToU8, zipSync, zlibSync } from "fflate";
 import { expect, it } from "vitest";
 import { builtinMaterialBlockId } from "../src/original-materials";

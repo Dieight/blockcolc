@@ -1,5 +1,5 @@
-import { projectFocusAttribution } from '@tomato-clock/application';
-import { completedPomodorosOn, dailyGoalForDate, type DomainState } from '@tomato-clock/domain';
+import { projectFocusAttribution } from '@blockcolc/application';
+import { completedPomodorosOn, dailyGoalForDate, type DomainState } from '@blockcolc/domain';
 
 export interface TodayFocusSeries {
   key: string;

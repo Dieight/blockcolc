@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { constructionRevealPlans, constructionWaveSchedule } from "../src/construction-reveal";
+import { constructionRevealPlans, constructionRevealScale, constructionWaveSchedule } from "../src/construction-reveal";
 
 const world = (projectId: string, blueprintId: string, buildingCompletionBasisPoints: number) => ({
   projectId,
@@ -67,5 +67,15 @@ describe("constructionWaveSchedule", () => {
     const schedule = constructionWaveSchedule(0);
     expect(schedule.waveSize).toBe(1);
     expect(schedule.waveIntervalMs).toBe(0);
+  });
+});
+
+describe("constructionRevealScale", () => {
+  it("settles to the exact target for legacy cubes and full-cell geometry", () => {
+    expect(constructionRevealScale(1, 0.97)).toBe(0.97);
+    expect(constructionRevealScale(1, 1)).toBe(1);
+    expect(constructionRevealScale(0.5, 1)).toBeCloseTo(constructionRevealScale(0.5, 0.97) / 0.97, 10);
+    expect(constructionRevealScale(0, 1)).toBeGreaterThan(0);
+    expect(constructionRevealScale(1.5, 1)).toBe(1);
   });
 });

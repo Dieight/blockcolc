@@ -1,12 +1,13 @@
-import { ApplicationService } from '@tomato-clock/application';
+import { ApplicationService } from '@blockcolc/application';
 import { attachFocusExport } from './focus-export-coordinator';
-import { IndexedDbStateRepository } from '@tomato-clock/storage-indexeddb';
-import { IndexedDbResourcePackRepository } from '@tomato-clock/resource-pack-indexeddb';
+import { IndexedDbStateRepository } from '@blockcolc/storage-indexeddb';
+import { IndexedDbResourcePackRepository } from '@blockcolc/resource-pack-indexeddb';
 import { BrowserFocusLifecyclePort, BrowserNotificationPort, CryptoIdGenerator, DateClock } from './browser-adapters';
-import { CapacitorFocusLifecyclePort, CapacitorNotificationPort, configureNativeSystemBars, isCapacitorNative } from '@tomato-clock/platform-capacitor';
+import { CapacitorFocusLifecyclePort, CapacitorNotificationPort, configureNativeSystemBars, isCapacitorNative } from '@blockcolc/platform-capacitor';
 
 import { APPLICATION_STATE_CHANGED_EVENT, shouldPublishLifecycleRefresh, type ApplicationStateChangedDetail } from './application-lifecycle';
 import { registerBuiltinDailyRewardBlueprints } from './builtin-daily-rewards';
+import { installResourcePackColdStartProbe } from './resource-pack-cold-start-performance';
 export { APPLICATION_STATE_CHANGED_EVENT, type ApplicationStateChangedDetail } from './application-lifecycle';
 
 export async function bootstrap() {
@@ -18,7 +19,7 @@ export async function bootstrap() {
   // bundle load or invalid optional asset must not prevent the local clock from
   // opening; the domain command remains the persistence/validation boundary.
   try {
-    const { BUILTIN_DAILY_REWARD_BLUEPRINTS } = await import('@tomato-clock/voxel');
+    const { BUILTIN_DAILY_REWARD_BLUEPRINTS } = await import('@blockcolc/voxel');
     await registerBuiltinDailyRewardBlueprints(service, BUILTIN_DAILY_REWARD_BLUEPRINTS);
   } catch {
     // Optional packaged decorations are an enhancement, never a bootstrap gate.
@@ -54,8 +55,11 @@ export async function bootstrap() {
     };
     window.dispatchEvent(new CustomEvent<ApplicationStateChangedDetail>(APPLICATION_STATE_CHANGED_EVENT, { detail }));
   });
+  const resourcePacks = installResourcePackColdStartProbe(
+    new IndexedDbResourcePackRepository({ databaseName: 'blockcolc-resource-packs-v1' }),
+  );
   return {
     service,
-    resourcePacks: new IndexedDbResourcePackRepository({ databaseName: 'blockcolc-resource-packs-v1' }),
+    resourcePacks,
   };
 }

@@ -1,10 +1,13 @@
-import type { AtlasBlockGeometry, AtlasGeometryFaceReference, BlockFace, ResourcePackManifest } from "@tomato-clock/resource-pack";
+import type { AtlasBlockGeometry, AtlasGeometryFaceReference, BlockFace, ResourcePackManifest } from "@blockcolc/resource-pack";
+import { strToU8, zipSync } from "fflate";
 import * as THREE from "three";
 import { describe, expect, it, vi } from "vitest";
+import { mapBlockGeometryToAtlas, parseJava16xResourcePack, resolveBlockGeometry } from "@blockcolc/resource-pack";
 import type { BlueprintVoxel } from "../src/blueprint";
 import {
   batchGeometryPlans,
   applyGeometryMeshRenderPolicy,
+  type AtlasGeometryQuad,
   compileMappedGeometryVoxel,
   compileMappedGeometryVoxelPages,
   createAtlasGeometry,
@@ -254,10 +257,12 @@ describe("P1/P2 geometry signature planning", () => {
 
   it("rotates the vault's 26.3 inverted cage through Y facings and preserves winding under X rotation", () => {
     const rotations = [
-      { x: 0 as const, y: 90 as const, face: "west" as const, normal: [1, 0, 0] as const, faceSlot: 4, shadeFactor: 0.6 },
+      { x: 0 as const, y: 90 as const, face: "east" as const, normal: [-1, 0, 0] as const, faceSlot: 5, shadeFactor: 0.6 },
       { x: 0 as const, y: 180 as const, face: "south" as const, normal: [0, 0, -1] as const, faceSlot: 3, shadeFactor: 0.8 },
-      { x: 0 as const, y: 270 as const, face: "east" as const, normal: [-1, 0, 0] as const, faceSlot: 5, shadeFactor: 0.6 },
-      { x: 90 as const, y: 0 as const, face: "up" as const, normal: [0, -1, 0] as const, faceSlot: 1, shadeFactor: 1 },
+      { x: 0 as const, y: 270 as const, face: "west" as const, normal: [1, 0, 0] as const, faceSlot: 4, shadeFactor: 0.6 },
+      // Reversed X bounds make this face's baked winding point up even though
+      // its model-space face/occlusion slot is down after the X quarter-turn.
+      { x: 90 as const, y: 0 as const, face: "down" as const, normal: [0, 1, 0] as const, faceSlot: 0, shadeFactor: 1 },
     ];
     const from = [15.998, 3.002, 0.002] as const;
     const to = [0.002, 15.998, 15.998] as const;
@@ -279,6 +284,215 @@ describe("P1/P2 geometry signature planning", () => {
       expect(quad.faceOcclusionSlot).toBe(rotation.faceSlot);
       expect(quad.shadeFactor).toBe(rotation.shadeFactor);
       expect(quad.bakedUvs).toEqual(unrotated.bakedUvs);
+    }
+  });
+
+  it("matches 26.3 blockstate quarter turns for deferred faces, winding normals, shade and occlusion slots", () => {
+    const cases = [
+      { x: 0 as const, y: 0 as const, face: "down" as const, normal: [0, -1, 0] as const, slot: 0, shade: 0.8, first: [5, 0, 6] as const, cull: "down" as const },
+      { x: 90 as const, y: 0 as const, face: "south" as const, normal: [0, 0, 1] as const, slot: 3, shade: 0.5, first: [5, 6, 16] as const, cull: "south" as const },
+      { x: 180 as const, y: 0 as const, face: "up" as const, normal: [0, 1, 0] as const, slot: 1, shade: 0.8, first: [5, 16, 10] as const, cull: "up" as const },
+      { x: 270 as const, y: 0 as const, face: "north" as const, normal: [0, 0, -1] as const, slot: 2, shade: 1, first: [5, 10, 0] as const, cull: "north" as const },
+      { x: 0 as const, y: 90 as const, face: "down" as const, normal: [0, -1, 0] as const, slot: 0, shade: 0.6, first: [10, 0, 5] as const, cull: "down" as const },
+      { x: 0 as const, y: 180 as const, face: "down" as const, normal: [0, -1, 0] as const, slot: 0, shade: 0.8, first: [11, 0, 10] as const, cull: "down" as const },
+      { x: 0 as const, y: 270 as const, face: "down" as const, normal: [0, -1, 0] as const, slot: 0, shade: 0.6, first: [6, 0, 11] as const, cull: "down" as const },
+      { x: 90 as const, y: 90 as const, face: "west" as const, normal: [-1, 0, 0] as const, slot: 4, shade: 0.5, first: [0, 6, 5] as const, cull: "west" as const },
+      { x: 90 as const, y: 270 as const, face: "east" as const, normal: [1, 0, 0] as const, slot: 5, shade: 0.5, first: [16, 6, 11] as const, cull: "east" as const },
+    ];
+
+    for (const expected of cases) {
+      const geometry: AtlasBlockGeometry = {
+        status: "resolved_geometry",
+        modelId: "test:block/asymmetric-button",
+        elements: [{
+          from: [5, 0, 6],
+          to: [11, 2, 10],
+          shade: true,
+          shadeDirectionOverride: "north",
+          blockRotation: { x: expected.x, y: expected.y },
+          faces: { down: { ...face(1), cullFace: expected.cull } },
+        }],
+      };
+      const quad = compileMappedGeometryVoxel(voxel("test:asymmetric-button"), geometry)!.topology.quads[0]!;
+      expect.soft(quad.face).toBe(expected.face);
+      quad.normal.forEach((component, index) => expect.soft(component).toBeCloseTo(expected.normal[index]!, 10));
+      expect.soft(quad.positions.slice(0, 3)).toEqual(expected.first);
+      expect.soft(quad.faceOcclusionSlot).toBe(expected.slot);
+      // Explicit shade direction is world-cardinal, unlike the geometric face.
+      expect.soft(quad.shadeFactor).toBe(0.8);
+      expect.soft(quad.cullFace).toBe(expected.cull);
+      const derivedGeometry: AtlasBlockGeometry = {
+        ...geometry,
+        elements: geometry.elements.map(({ shadeDirectionOverride: _override, ...element }) => element),
+      };
+      const derivedQuad = compileMappedGeometryVoxel(voxel("test:asymmetric-button"), derivedGeometry)!.topology.quads[0]!;
+      const worldFaceShade = { down: 0.5, up: 1, north: 0.8, south: 0.8, west: 0.6, east: 0.6 };
+      expect.soft(derivedQuad.shadeFactor).toBe(worldFaceShade[expected.face]);
+    }
+  });
+
+  it("keeps a zero-angle local rotation seam equivalent to ordinary parser geometry", () => {
+    for (const { x, y, uvlock } of [
+      { x: 90 as const, y: 0 as const, uvlock: false },
+      { x: 90 as const, y: 0 as const, uvlock: true },
+      { x: 90 as const, y: 90 as const, uvlock: false },
+      { x: 90 as const, y: 90 as const, uvlock: true },
+    ]) {
+      const manifest = zeroAngleSeamManifest(x, y, uvlock);
+      const ordinary = compileResolvedFixture(manifest, "rotation=ordinary");
+      const deferred = compileResolvedFixture(manifest, "rotation=zero");
+      const ordinaryQuad = ordinary.quad;
+      const deferredQuad = deferred.quad;
+      const ordinaryByPosition = uvByPosition(ordinaryQuad);
+      const deferredByPosition = uvByPosition(deferredQuad);
+
+      // Compare the same spatial corners because face vertex order differs between
+      // parser-normalized ordinary bounds and deferred source-space bounds.
+      expect.soft(deferredByPosition).toEqual(ordinaryByPosition);
+      expect.soft(deferredQuad.normal).toEqual(ordinaryQuad.normal);
+      expect.soft(deferredQuad.face).toBe(ordinaryQuad.face);
+      expect.soft(deferredQuad.faceOcclusionSlot).toBe(ordinaryQuad.faceOcclusionSlot);
+      expect.soft(deferredQuad.shadeFactor).toBe(ordinaryQuad.shadeFactor);
+      expect.soft(deferredQuad.shade).toBe(ordinaryQuad.shade);
+      expect(ordinaryQuad.face).toBe(x === 90 && y === 0 ? "south" : "west");
+      expect(ordinaryQuad.shadeFactor).toBe(1);
+      // An explicit cullface is conservatively omitted when any local rotation
+      // metadata exists; do not treat this alone as a semantic failure.
+      expect(deferredQuad.cullFace).toBeUndefined();
+      expect(ordinaryQuad.cullFace).toBe(x === 90 && y === 0 ? "south" : "west");
+    }
+
+    const page = atlasPage();
+    const material = createAtlasGeometryMaterial(page, "opaque");
+    const shader = {
+      uniforms: {},
+      vertexShader: "#include <common>\nvoid main(){\n#include <uv_vertex>\n}",
+      fragmentShader: "#include <common>\nvoid main(){\n#include <map_fragment>\n#include <roughnessmap_fragment>\n#include <metalnessmap_fragment>\n}",
+    };
+    material.onBeforeCompile(shader as THREE.WebGLProgramParametersWithUniforms, {} as THREE.WebGLRenderer);
+    expect(shader.vertexShader).toContain("vBlockcolcDirectionalShade = faceShadeFactor;");
+    expect(shader.fragmentShader).toContain("diffuseColor.rgb *= vBlockcolcDirectionalShade;");
+    material.dispose();
+    page.animationLookup!.texture.dispose();
+    page.animationLookup!.blendTexture.dispose();
+    page.texture.dispose();
+  });
+
+  it("keeps a 22.5-degree local rotation's directional UV basis while applying global X90 once", () => {
+    const manifest = zeroAngleSeamManifest(90, 0, false);
+    const resolved = resolveBlockGeometry(manifest, "test:shape", { rotation: "angled" });
+    expect(resolved.status).toBe("resolved_geometry");
+    if (resolved.status !== "resolved_geometry") return;
+    expect(resolved.elements[0]?.rotation).toEqual({ origin: [8, 8, 8], axis: "y", angle: 22.5, rescale: false });
+    expect(resolved.elements[0]?.blockRotation).toEqual({ x: 90, y: 0 });
+    const mapped = mapBlockGeometryToAtlas(resolved, { entries: [{
+      resourceId: "test:block/directional", index: 0, page: 0, pageTextureIndex: 0,
+      x: 0, y: 0, width: 16, height: 16, uv: { u0: 0, v0: 0, u1: 1, v1: 1 }, alphaMode: "opaque",
+    }] });
+    expect(mapped.status).toBe("resolved_geometry");
+    if (mapped.status !== "resolved_geometry") return;
+    const quad = compileMappedGeometryVoxel(voxel("test:shape"), mapped)!.topology.quads[0]!;
+
+    expect(quad.face).toBe("south");
+    expect(quad.normal).toEqual([0, 0, 1]);
+    expect(quad.shadeFactor).toBe(1);
+    expect(quad.positions[0]).toBeCloseTo(4.46299, 4);
+    expect(quad.positions[1]).toBeCloseTo(7.30029, 4);
+    expect(quad.positions[2]).toBeCloseTo(16, 8);
+    expect(quad.bakedUvs).toEqual([
+      12.5 / 16, 13.5 / 16,
+      12.5 / 16, 2.5 / 16,
+      1.5 / 16, 2.5 / 16,
+      1.5 / 16, 13.5 / 16,
+    ]);
+  });
+
+  it("keeps arbitrary local element rotation separate from discrete blockstate rotation and finite", () => {
+    const geometry: AtlasBlockGeometry = {
+      status: "resolved_geometry",
+      modelId: "test:block/local-angle",
+      elements: [{
+        from: [7, 6, 7],
+        to: [9, 10, 9],
+        shade: true,
+        rotation: { origin: [8, 8, 8], axis: "y", angle: 22.5, rescale: true },
+        blockRotation: { x: 90, y: 0 },
+        faces: { down: face(1) },
+      }],
+    };
+    const quad = compileMappedGeometryVoxel(voxel("test:local-angle"), geometry)!.topology.quads[0]!;
+
+    expect(geometry.elements[0]?.rotation).toEqual({ origin: [8, 8, 8], axis: "y", angle: 22.5, rescale: true });
+    expect(quad.positions.every(Number.isFinite)).toBe(true);
+    expect(quad.normal.every(Number.isFinite)).toBe(true);
+    expect(quad.positions[0]).toBeCloseTo(6.5857864376, 8);
+    expect(quad.positions[1]).toBeCloseTo(7.4142135624, 8);
+    expect(quad.positions[2]).toBeCloseTo(10, 8);
+  });
+
+  it("derives implicit shade from final winding after local, global, reversed and rescaled transforms", () => {
+    const cases = [
+      {
+        name: "local quarter-turn then mixed blockstate quarter-turn",
+        element: {
+          from: [5, 2, 3] as const,
+          to: [13, 9, 10] as const,
+          shade: true,
+          rotation: { origin: [8, 8, 8] as const, axis: "y" as const, angle: 90, rescale: false },
+          blockRotation: { x: 90 as const, y: 90 as const },
+          faces: { north: face(1) },
+        },
+        finalFace: "down" as const,
+        normal: [0, 0, -1] as const,
+        faceOcclusionSlot: 0,
+        shadeFactor: 0.8,
+      },
+      {
+        name: "45-degree local rotation, world Y turn, rescale, and official up/east tie",
+        element: {
+          from: [4, 4, 5] as const,
+          to: [12, 12, 13] as const,
+          shade: true,
+          rotation: { origin: [8, 8, 8] as const, axis: "x" as const, angle: 45, rescale: true },
+          blockRotation: { x: 0 as const, y: 90 as const },
+          faces: { north: face(1) },
+        },
+        finalFace: "east" as const,
+        normal: [Math.SQRT1_2, Math.SQRT1_2, 0] as const,
+        faceOcclusionSlot: 5,
+        // FaceBakery compares cardinal dots in enum order down/up/north/south/west/east.
+        // The exact tie chooses up before east; expected shade is not from finalFace.
+        shadeFactor: 1,
+      },
+      {
+        name: "22.5-degree rescaled local turn followed by mixed blockstate turn",
+        element: {
+          from: [4, 3, 5] as const,
+          to: [12, 11, 13] as const,
+          shade: true,
+          rotation: { origin: [8, 8, 8] as const, axis: "y" as const, angle: 22.5, rescale: true },
+          blockRotation: { x: 90 as const, y: 90 as const },
+          faces: { north: face(1) },
+        },
+        finalFace: "down" as const,
+        normal: [0, -Math.cos(Math.PI / 8), -Math.sin(Math.PI / 8)] as const,
+        faceOcclusionSlot: 0,
+        shadeFactor: 0.5,
+      },
+    ];
+
+    for (const expected of cases) {
+      const geometry: AtlasBlockGeometry = {
+        status: "resolved_geometry",
+        modelId: "test:block/final-facing-shade",
+        elements: [expected.element],
+      };
+      const quad = compileMappedGeometryVoxel(voxel("test:final-facing-shade"), geometry)!.topology.quads[0]!;
+
+      expect.soft(quad.face, expected.name).toBe(expected.finalFace);
+      expect.soft(quad.faceOcclusionSlot, expected.name).toBe(expected.faceOcclusionSlot);
+      quad.normal.forEach((component, index) => expect.soft(component, expected.name).toBeCloseTo(expected.normal[index]!, 6));
+      expect.soft(quad.shadeFactor, expected.name).toBe(expected.shadeFactor);
     }
   });
 
@@ -338,6 +552,22 @@ describe("P1/P2 geometry signature planning", () => {
     expect(batches.find((batch) => batch.entries.includes(lit))?.emissiveLevel).toBe(12);
     expect(batches.find((batch) => batch.entries.includes(door))?.alphaMode).toBe("cutout");
     expect(batches.find((batch) => batch.entries.includes(translucent))?.alphaMode).toBe("translucent");
+  });
+
+  it("splits kind-only and explicit-zero geometry batches in either input order", () => {
+    const kindOnly = compileMappedGeometryVoxel({ ...voxel("minecraft:oak_slab", 0, { type: "bottom" }), emissiveKind: "torch" }, slabGeometry(1, 2))!;
+    const explicitZero = compileMappedGeometryVoxel({ ...voxel("minecraft:oak_slab", 1, { type: "bottom" }), emissiveKind: "torch", emissiveLevel: 0 }, slabGeometry(1, 2))!;
+    const explicitPositive = compileMappedGeometryVoxel({ ...voxel("minecraft:oak_slab", 2, { type: "bottom" }), emissiveKind: "torch", emissiveLevel: 7 }, slabGeometry(1, 2))!;
+    const unlit = compileMappedGeometryVoxel(voxel("minecraft:oak_slab", 3, { type: "bottom" }), slabGeometry(1, 2))!;
+    for (const plans of [[kindOnly, explicitZero, explicitPositive, unlit], [unlit, explicitPositive, explicitZero, kindOnly]]) {
+      const batches = batchGeometryPlans(plans);
+      expect(batches).toHaveLength(4);
+      expect(batches.find(batch => batch.entries.includes(kindOnly))).toMatchObject({ emissiveKind: "torch", emissiveLevel: 15 });
+      expect(batches.find(batch => batch.entries.includes(explicitZero))).toMatchObject({ emissiveKind: "torch", emissiveLevel: 0 });
+      expect(batches.find(batch => batch.entries.includes(explicitPositive))).toMatchObject({ emissiveKind: "torch", emissiveLevel: 7 });
+      expect(batches.find(batch => batch.entries.includes(unlit))).toMatchObject({ emissiveKind: "", emissiveLevel: 0 });
+      expect(batches.every(batch => batch.entries.length === 1)).toBe(true);
+    }
   });
 
   it.each([65, 128, 256])("keeps %i distinct valid shapes in real geometry batches and reports the soft target", (shapeCount) => {
@@ -501,6 +731,104 @@ function voxel(sourceBlockId: string, x = 0, sourceBlockState: Record<string, st
   return { x, y: 0, z: 0, materialId: "wood", buildOrder: 10_000, sourceBlockId, sourceBlockState };
 }
 
+function zeroAngleSeamManifest(x: 90 | 180 | 270, y: 0 | 90 | 180 | 270, uvlock: boolean): ResourcePackManifest {
+  const reference = (model: string) => ({ model: `test:block/${model}`, x, y, uvlock, weight: 1 });
+  const json = (value: unknown) => strToU8(JSON.stringify(value));
+  const signature = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
+  const ihdr = new Uint8Array(13);
+  const view = new DataView(ihdr.buffer);
+  view.setUint32(0, 16, false);
+  view.setUint32(4, 16, false);
+  ihdr.set([8, 6, 0, 0, 0], 8);
+  const png = joinBytes(signature, pngChunk("IHDR", ihdr), pngChunk("IDAT", new Uint8Array([0])), pngChunk("IEND", new Uint8Array()));
+  return parseJava16xResourcePack(zipSync({
+    "pack.mcmeta": json({ pack: { pack_format: 34, description: "zero-angle rotation seam" } }),
+    "assets/test/blockstates/shape.json": json({ variants: {
+      "rotation=ordinary": reference("ordinary"),
+      "rotation=zero": reference("zero"),
+      "rotation=angled": reference("angled"),
+    } }),
+    "assets/test/models/block/ordinary.json": json({
+      textures: { face: "test:block/directional" },
+      elements: [{
+        from: [5, 0, 6], to: [11, 2, 10], shade: false, shade_direction_override: "up",
+        faces: { down: { texture: "#face", uv: [1, 2, 13, 14], rotation: 90, cullface: "down" } },
+      }],
+    }),
+    "assets/test/models/block/zero.json": json({
+      textures: { face: "test:block/directional" },
+      elements: [{
+        from: [5, 0, 6], to: [11, 2, 10], shade: false, shade_direction_override: "up",
+        rotation: { origin: [8, 8, 8], axis: "y", angle: 0 },
+        faces: { down: { texture: "#face", uv: [1, 2, 13, 14], rotation: 90, cullface: "down" } },
+      }],
+    }),
+    "assets/test/models/block/angled.json": json({
+      textures: { face: "test:block/directional" },
+      elements: [{
+        from: [5, 0, 6], to: [11, 2, 10], shade: false, shade_direction_override: "up",
+        rotation: { origin: [8, 8, 8], axis: "y", angle: 22.5 },
+        faces: { down: { texture: "#face", uv: [1, 2, 13, 14], rotation: 90, cullface: "down" } },
+      }],
+    }),
+    "assets/test/textures/block/directional.png": png,
+  }));
+}
+
+function compileResolvedFixture(manifest: ResourcePackManifest, state: "rotation=ordinary" | "rotation=zero") {
+  const resolved = resolveBlockGeometry(manifest, "test:shape", { rotation: state.slice("rotation=".length) });
+  if (resolved.status !== "resolved_geometry") throw new Error(`Expected geometry, got ${JSON.stringify(resolved)}`);
+  const mapped = mapBlockGeometryToAtlas(resolved, { entries: [{
+    resourceId: "test:block/directional", index: 0, page: 0, pageTextureIndex: 0,
+    x: 0, y: 0, width: 16, height: 16, uv: { u0: 0, v0: 0, u1: 1, v1: 1 }, alphaMode: "opaque",
+  }] });
+  if (mapped.status !== "resolved_geometry") throw new Error(`Expected atlas geometry, got ${mapped.status}`);
+  const plan = compileMappedGeometryVoxel(voxel("test:shape"), mapped);
+  if (!plan) throw new Error("Expected compiled geometry plan");
+  const quad = plan.topology.quads[0];
+  if (!quad) throw new Error("Expected one compiled quad");
+  return { quad, element: resolved.elements[0]! };
+}
+
+function uvByPosition(quad: AtlasGeometryQuad): Record<string, readonly [number, number]> {
+  const byPosition: Record<string, readonly [number, number]> = {};
+  for (let index = 0; index < 4; index += 1) {
+    const point = quad.positions.slice(index * 3, index * 3 + 3).map((component) => Number(component.toFixed(8)));
+    byPosition[point.join(",")] = [quad.bakedUvs[index * 2]!, quad.bakedUvs[index * 2 + 1]!];
+  }
+  return Object.fromEntries(Object.entries(byPosition).sort(([left], [right]) => left.localeCompare(right)));
+}
+
+function pngChunk(type: string, data: Uint8Array): Uint8Array {
+  const typeBytes = strToU8(type);
+  const chunk = new Uint8Array(12 + data.length);
+  const view = new DataView(chunk.buffer);
+  view.setUint32(0, data.length, false);
+  chunk.set(typeBytes, 4);
+  chunk.set(data, 8);
+  view.setUint32(8 + data.length, pngCrc32(joinBytes(typeBytes, data)), false);
+  return chunk;
+}
+
+function pngCrc32(bytes: Uint8Array): number {
+  let crc = 0xffffffff;
+  for (const byte of bytes) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function joinBytes(...parts: readonly Uint8Array[]): Uint8Array {
+  const result = new Uint8Array(parts.reduce((total, part) => total + part.length, 0));
+  let offset = 0;
+  for (const part of parts) {
+    result.set(part, offset);
+    offset += part.length;
+  }
+  return result;
+}
+
 function rotateQuadBlock(
   positions: readonly [number, number, number, number, number, number, number, number, number, number, number, number],
   xDegrees: 0 | 90 | 180 | 270,
@@ -509,8 +837,8 @@ function rotateQuadBlock(
   const output: number[] = [];
   for (let index = 0; index < positions.length; index += 3) {
     let [x, y, z] = positions.slice(index, index + 3) as [number, number, number];
-    for (let turn = 0; turn < xDegrees / 90; turn += 1) [y, z] = [16 - z, y];
-    for (let turn = 0; turn < yDegrees / 90; turn += 1) [x, z] = [z, 16 - x];
+    for (let turn = 0; turn < xDegrees / 90; turn += 1) [y, z] = [z, 16 - y];
+    for (let turn = 0; turn < yDegrees / 90; turn += 1) [x, z] = [16 - z, x];
     output.push(x, y, z);
   }
   return output as unknown as typeof positions;

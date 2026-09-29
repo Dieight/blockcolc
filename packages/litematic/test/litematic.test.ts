@@ -152,6 +152,17 @@ describe("Litematic decoding boundaries", () => {
     expect(stone).not.toHaveProperty("sourceBlockState");
   });
 
+  it("imports property-free carpets without inventing an explicit empty state map", async () => {
+    const input = makeLitematic({ regions: { carpets: makeRegion({
+      position: { x: 0, y: 0, z: 0 }, size: { x: 2, y: 1, z: 1 },
+      palette: ["minecraft:red_carpet", "minecraft:moss_carpet"],
+      values: [0, 1],
+    }) } });
+    const voxels = (await parseLitematic(input)).blueprint.voxels;
+    expect(voxels.map(({ sourceBlockId }) => sourceBlockId)).toEqual(["minecraft:red_carpet", "minecraft:moss_carpet"]);
+    expect(voxels.every((voxel) => !Object.hasOwn(voxel, "sourceBlockState"))).toBe(true);
+  });
+
   it("extracts only a moving piston entity's moved block ID and state", async () => {
     const input = makeLitematic({ regions: { piston: makeRegion({
       position: { x: 10, y: 4, z: 8 }, size: { x: 3, y: 1, z: 1 },

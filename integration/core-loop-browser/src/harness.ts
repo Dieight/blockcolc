@@ -6,10 +6,10 @@ import {
   type IdGenerator,
   type NotificationCapability,
   type NotificationPort,
-} from "@tomato-clock/application";
-import { IndexedDbStateRepository, StorageConflictError } from "@tomato-clock/storage-indexeddb";
+} from "@blockcolc/application";
+import { IndexedDbStateRepository, StorageConflictError } from "@blockcolc/storage-indexeddb";
 
-const DATABASE_NAME = "tomato-clock-core-loop-e2e";
+const DATABASE_NAME = "blockcolc-core-loop-e2e";
 const INITIAL_NOW = "2026-07-23T01:00:00.000Z";
 const FOCUS_DURATION_MS = 25 * 60 * 1000;
 
@@ -243,11 +243,11 @@ async function runAfterReload(expected: BeforeReloadEvidence): Promise<AfterRelo
 
 declare global {
   interface Window {
-    tomatoClockHarness: {
+    blockcolcHarness: {
       runBeforeReload(): Promise<BeforeReloadEvidence>;
       runAfterReload(expected: BeforeReloadEvidence): Promise<AfterReloadEvidence>;
     };
   }
 }
 
-window.tomatoClockHarness = { runBeforeReload, runAfterReload };
+window.blockcolcHarness = { runBeforeReload, runAfterReload };

@@ -4,7 +4,7 @@ import {
   type DomainCommand,
   type DomainEvent,
   type DomainState,
-} from "@tomato-clock/domain";
+} from "@blockcolc/domain";
 import type { ApplicationCommand, ApplicationResult, ApplicationWarning } from "./model.js";
 import { projectAchievements, type AchievementProgress } from './achievements.js';
 import {

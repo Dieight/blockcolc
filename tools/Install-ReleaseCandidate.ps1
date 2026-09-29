@@ -20,12 +20,32 @@ try {
     Assert-ReleaseEvidenceVersion -Evidence $evidence -Context $context
     Assert-ReleaseEvidenceMatchesStagedState -Evidence $evidence
     $candidate = Assert-ReleaseCandidateEvidence -Evidence $evidence -Context $context -Boundary 'prepared candidate before device install'
-
     $authorized = @(Get-AuthorizedAndroidDevices)
     $targets = if (@($Serial).Count -gt 0) { @($Serial) } else { $authorized }
     if (@($targets).Count -eq 0) { throw 'No connected authorized Android device is available for release-candidate installation.' }
     foreach ($target in $targets) {
         if ($authorized -notcontains $target) { throw "Android device is not connected and authorized: $target" }
+    }
+
+    $deliveryHistory = @(Get-DeliveredApkHistory -Context $context -Channel all)
+    $candidateMetadata = Assert-ApkMetadata -Path $candidate.Path -Context $context
+    foreach ($target in $(if (@($Serial).Count -gt 0) { @($Serial) } else { @(Get-AuthorizedAndroidDevices) })) {
+        $installedMetadata = Get-InstalledApkMetadata -Serial $target -PackageId $context.PackageId
+        if (-not $installedMetadata) { continue }
+        if ($installedMetadata.SignerSha256 -ne $context.SignerSha256) { throw "Installed app signer identity does not match release config on $target." }
+        $knownDelivery = @($deliveryHistory | Where-Object { $_.PackageId -eq $installedMetadata.PackageId -and $_.VersionCode -eq $installedMetadata.VersionCode -and $_.Sha256 -eq $installedMetadata.Sha256 })
+        if ($knownDelivery.Count -eq 0) {
+            $deliveryHistory += [pscustomobject]@{
+                Channel = $installedMetadata.BuildChannel; PackageId = $installedMetadata.PackageId
+                VersionName = $installedMetadata.VersionName; VersionCode = $installedMetadata.VersionCode
+                SignerSha256 = $installedMetadata.SignerSha256; Sha256 = $installedMetadata.Sha256
+                EvidencePath = "device:$target"; Kind = 'installed-device'
+            }
+        }
+    }
+    Assert-NextDeliveredApkVersion -Metadata $candidateMetadata -Context $context -Channel standard -History $deliveryHistory -DeliveryRoundId ([string](Get-OptionalEvidenceProperty -Object $evidence -Name 'deliveryRoundId'))
+
+    foreach ($target in $targets) {
         # Check every target before mutating any of them so a busy device leaves
         # the prepared candidate and its full-gate evidence safely resumable.
         Assert-DeviceNotBusy -Serial $target -Context $context -AllowBusyDevice:$AllowBusyDevice

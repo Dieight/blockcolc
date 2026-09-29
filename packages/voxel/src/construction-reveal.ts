@@ -69,3 +69,12 @@ export function constructionWaveSchedule(blockCount: number): ConstructionWaveSc
     },
   };
 }
+
+/** Per-instance settling scale; the terminal frame is exactly the mesh's intended size. */
+export function constructionRevealScale(progress: number, targetScale: number): number {
+  const normalizedProgress = Number.isFinite(progress) ? Math.min(1, Math.max(0, progress)) : progress > 0 ? 1 : 0;
+  const safeTarget = Number.isFinite(targetScale) && targetScale > 0 ? targetScale : 0.97;
+  if (normalizedProgress >= 1) return safeTarget;
+  const settle = 1 - Math.exp(-7 * normalizedProgress) * Math.cos(6 * normalizedProgress);
+  return Math.max(0.0001, safeTarget * settle);
+}

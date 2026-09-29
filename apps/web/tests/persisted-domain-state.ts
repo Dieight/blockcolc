@@ -1,5 +1,5 @@
 import type { Page } from '@playwright/test';
-import { execute, type DomainCommand, type DomainState } from '@tomato-clock/domain';
+import { execute, type DomainCommand, type DomainState } from '@blockcolc/domain';
 
 type CurrentRecord = { revision?: number; state?: DomainState };
 

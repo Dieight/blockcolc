@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState, type CSSProperties } from 'react';
-import { addLocalDays } from '@tomato-clock/domain';
+import { addLocalDays } from '@blockcolc/domain';
 
 export interface CalendarDay { date:string; minutes:number; sessions:number; future:boolean }
 export interface AllocationRow { projectId:string; title:string; minutes:number; unallocated?:boolean }

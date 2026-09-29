@@ -1,5 +1,5 @@
-import { focusExportDate, projectFocusExportDays, projectFocusExportSnapshot, type ApplicationService, type FocusExportDay } from '@tomato-clock/application';
-import { nativeFocusExport } from '@tomato-clock/platform-capacitor';
+import { focusExportDate, projectFocusExportDays, projectFocusExportSnapshot, type ApplicationService, type FocusExportDay } from '@blockcolc/application';
+import { nativeFocusExport } from '@blockcolc/platform-capacitor';
 import { parseRoundPlan } from './round-plan';
 import { ROUND_PLAN_KEY, subscribeSavedRoundPlan } from './round-plan-store';
 

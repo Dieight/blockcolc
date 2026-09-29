@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { ApplicationCommand, ApplicationResult, ApplicationService } from '@tomato-clock/application';
-import { completedPomodorosOn, dailyGoalForDate, localDateOf, projectProgressBasisPoints } from '@tomato-clock/domain';
+import type { ApplicationCommand, ApplicationResult, ApplicationService } from '@blockcolc/application';
+import { completedPomodorosOn, dailyGoalForDate, localDateOf, projectProgressBasisPoints } from '@blockcolc/domain';
 import { Check, ChevronDown, GripVertical, LockKeyhole, MapPinned, Minus, Pencil, Plus, Repeat2, Trash2, X } from 'lucide-react';
 import { ChoiceMenu } from './ChoiceMenu';
 import { NativeImeTextEntry, isImeCommitKey } from './NativeImeTextEntry';

@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
-import type { ApplicationCommand, ApplicationService, NotificationCapability } from '@tomato-clock/application';
-import type { ImportedBlueprintStage, ImportedBlueprintV1 } from '@tomato-clock/domain';
-import type { LitematicImportResult } from '@tomato-clock/litematic';
-import type { BlueprintV1 } from '@tomato-clock/voxel';
-import type { ResourcePackRepository } from '@tomato-clock/resource-pack-indexeddb';
-import type { BreakLiveUpdateCapability } from '@tomato-clock/platform-capacitor';
-import { MAX_BACKUP_BYTES } from '@tomato-clock/storage-indexeddb';
+import type { ApplicationCommand, ApplicationService, NotificationCapability } from '@blockcolc/application';
+import type { ImportedBlueprintStage, ImportedBlueprintV1 } from '@blockcolc/domain';
+import type { LitematicImportResult } from '@blockcolc/litematic';
+import type { BlueprintV1 } from '@blockcolc/voxel';
+import type { ResourcePackRepository } from '@blockcolc/resource-pack-indexeddb';
+import type { BreakLiveUpdateCapability } from '@blockcolc/platform-capacitor';
+import { MAX_BACKUP_BYTES } from '@blockcolc/storage-indexeddb';
 import { AlertTriangle, Check, Download, FileUp, History, Pencil, RefreshCw, Upload, X } from 'lucide-react';
 import { LITEMATIC_MAX_COMPRESSED_BYTES, readBackupFileText, readBrowserFileBytes, saveBackupFile } from './browser-adapters';
 import { ResourcePackPanel } from './ResourcePackPanel';
@@ -16,12 +16,14 @@ import { MinimalModeSettingRow } from './ui/MinimalModeSettingRow';
 import { BlueprintPreview } from './BlueprintPreview';
 import { WorldWeatherSettingsStatus } from './WorldWeatherStatus';
 import type { WorldWeatherView } from './use-world-weather';
+import { WorldDebugSettingsPanel } from './WorldDebugSettings';
+import type { WorldDebugSettings } from './world-debug';
 
 type ImportRole = 'building' | 'decoration';
-let litematicModulePromise: Promise<typeof import('@tomato-clock/litematic')> | null = null;
-function loadLitematicModule() { litematicModulePromise ??= import('@tomato-clock/litematic'); return litematicModulePromise; }
+let litematicModulePromise: Promise<typeof import('@blockcolc/litematic')> | null = null;
+function loadLitematicModule() { litematicModulePromise ??= import('@blockcolc/litematic'); return litematicModulePromise; }
 
-export function SettingsScreen({service,resourcePacks,state,run,refresh,preferences,onPreferencesChange,worldWeather}:{service:ApplicationService;resourcePacks:ResourcePackRepository;state:ReturnType<ApplicationService['snapshot']>;run:(c:ApplicationCommand)=>Promise<unknown>;refresh:()=>void;preferences:FocusPreferences;onPreferencesChange:(value:FocusPreferences)=>void;worldWeather:WorldWeatherView}) {
+export function SettingsScreen({active,service,resourcePacks,state,run,refresh,preferences,onPreferencesChange,worldWeather,worldDebug,onWorldDebugChange}:{active:boolean;service:ApplicationService;resourcePacks:ResourcePackRepository;state:ReturnType<ApplicationService['snapshot']>;run:(c:ApplicationCommand)=>Promise<unknown>;refresh:()=>void;preferences:FocusPreferences;onPreferencesChange:(value:FocusPreferences)=>void;worldWeather:WorldWeatherView;worldDebug?:WorldDebugSettings;onWorldDebugChange?:(value:WorldDebugSettings)=>void}) {
   const update=(key:'focusMinutes'|'habitFocusMinutes'|'habitTargetRounds'|'breakMinutes',value:number)=>onPreferencesChange({...preferences,[key]:value});
   return <section className="page settings-page">
     <header className="settings-head"><h1>设置</h1><p>专注节奏、聚落外观与本地数据。</p></header>
@@ -93,7 +95,7 @@ export function SettingsScreen({service,resourcePacks,state,run,refresh,preferen
           <TextToggle ariaLabel="聚落环境" value={state.worldSettings.environmentStyle} options={[{value:'natural-valley',label:'自然山谷'},{value:'classic-island',label:'经典空岛'},{value:'ocean-island',label:'海洋小岛'}]} onChange={value=>void run({type:'ConfigureWorldEnvironment',environmentStyle:value})}/>
         </div>
         <div className="setting-row">
-          <div className="setting-name"><span>同步现实天气</span><small>开启后获取位置；上次坐标仅存本机，定位暂失时使用；关闭时清除</small><WorldWeatherSettingsStatus enabled={preferences.realWeatherEnabled} view={worldWeather}/></div>
+          <div className="setting-name"><span>同步现实天气</span><small>位置仅存本机；定位暂失时使用缓存，关闭即清除</small><WorldWeatherSettingsStatus enabled={preferences.realWeatherEnabled} view={worldWeather}/></div>
           <label className="switch-control ios-switch"><input aria-label="同步现实天气" type="checkbox" checked={preferences.realWeatherEnabled} onChange={()=>onPreferencesChange({...preferences,realWeatherEnabled:!preferences.realWeatherEnabled})}/></label>
         </div>
         <div className="setting-row toggle-row">
@@ -121,8 +123,9 @@ export function SettingsScreen({service,resourcePacks,state,run,refresh,preferen
         </div>
       </div>
     </section>
+    {worldDebug && onWorldDebugChange && <WorldDebugSettingsPanel value={worldDebug} onChange={onWorldDebugChange}/>}
     <BuildingBlueprintPanel resources={state.buildingBlueprintResources} resourcePacks={resourcePacks} run={run}/>
-    <ResourcePackPanel repository={resourcePacks}/>
+    <ResourcePackPanel active={active} repository={resourcePacks}/>
     <BackupPanel service={service} onChanged={refresh} changeToken={state}/>
   </section>;
 }
@@ -131,18 +134,18 @@ function NotificationHealthSetting({service}:{service:ApplicationService}) {
   const [capability,setCapability]=useState<NotificationCapability|null>(null);const [failed,setFailed]=useState(false);const [loading,setLoading]=useState(true);const [native,setNative]=useState(false);
   const refresh=useCallback(()=>{setLoading(true);setFailed(false);void service.notificationCapability().then(setCapability).catch(()=>setFailed(true)).finally(()=>setLoading(false));},[service]);
   useEffect(refresh,[refresh]);
-  useEffect(()=>{void import('@tomato-clock/platform-capacitor').then(platform=>setNative(platform.isCapacitorNative())).catch(()=>{});},[]);
-  const openSystemSettings=()=>{void import('@tomato-clock/platform-capacitor').then(async platform=>{const opened=await platform.openSystemNotificationSettings();if(opened)window.setTimeout(refresh,1500);}).catch(()=>{});};
+  useEffect(()=>{void import('@blockcolc/platform-capacitor').then(platform=>setNative(platform.isCapacitorNative())).catch(()=>{});},[]);
+  const openSystemSettings=()=>{void import('@blockcolc/platform-capacitor').then(async platform=>{const opened=await platform.openSystemNotificationSettings();if(opened)window.setTimeout(refresh,1500);}).catch(()=>{});};
   const status=failed?'暂时无法读取系统提醒状态':loading?'正在读取系统提醒状态':capability?.permission==='granted'?(capability.precision==='exact'?'提醒可用 · 精准提醒已开启':'提醒可用 · 锁屏时可能略有延迟'):capability?.permission==='prompt'?'首次开始专注时请求通知权限':capability?.permission==='denied'?'系统通知已关闭':'当前平台不提供系统通知';
   return <div className="setting-row notification-health"><div className="setting-name"><span>专注结束提醒</span><small>{status}</small></div><div className="notification-actions">{native&&capability?.permission==='denied'&&<button type="button" className="settings-text-action" onClick={openSystemSettings}>打开系统设置</button>}<button type="button" className="settings-text-action" aria-label="刷新通知状态" title="刷新通知状态" disabled={loading} onClick={refresh}><RefreshCw className={loading?'is-spinning':''}/></button></div></div>;
 }
 
 function BreakLiveUpdateSetting() {
   const [native,setNative]=useState(false);const [capability,setCapability]=useState<BreakLiveUpdateCapability|null>(null);const [loading,setLoading]=useState(false);const [failed,setFailed]=useState(false);
-  const refresh=useCallback(()=>{void import('@tomato-clock/platform-capacitor').then(async platform=>{const isNative=platform.isCapacitorNative();setNative(isNative);if(!isNative)return;setLoading(true);setFailed(false);try{setCapability(await platform.getBreakLiveUpdateCapability());}catch{setFailed(true);}finally{setLoading(false);}}).catch(()=>setFailed(true));},[]);
+  const refresh=useCallback(()=>{void import('@blockcolc/platform-capacitor').then(async platform=>{const isNative=platform.isCapacitorNative();setNative(isNative);if(!isNative)return;setLoading(true);setFailed(false);try{setCapability(await platform.getBreakLiveUpdateCapability());}catch{setFailed(true);}finally{setLoading(false);}}).catch(()=>setFailed(true));},[]);
   useEffect(refresh,[refresh]);
   if(!native)return null;
-  const openSettings=()=>{void import('@tomato-clock/platform-capacitor').then(async platform=>{const opened=await platform.openBreakLiveUpdateSettings();if(opened)window.setTimeout(refresh,1500);}).catch(()=>setFailed(true));};
+  const openSettings=()=>{void import('@blockcolc/platform-capacitor').then(async platform=>{const opened=await platform.openBreakLiveUpdateSettings();if(opened)window.setTimeout(refresh,1500);}).catch(()=>setFailed(true));};
   const status=failed?'暂时无法读取系统实时通知状态':loading?'正在读取系统实时通知状态':!capability?.supported?'当前系统仅提供普通持续通知':capability.allowed?'已开启 · 专注与休息会显示在流体云、锁屏和通知抽屉':'系统未允许实时通知，专注与休息倒计时会退化到通知栏';
   return <div className="setting-row notification-health live-update-health"><div className="setting-name"><span>专注与休息实时状态</span><small>{status}</small></div><div className="notification-actions">{capability?.supported&&capability.settingsAvailable&&!capability.allowed&&<button type="button" className="settings-text-action" onClick={openSettings}>开启实时通知</button>}<button type="button" className="settings-text-action" aria-label="刷新实时通知状态" title="刷新实时通知状态" disabled={loading} onClick={refresh}><RefreshCw className={loading?'is-spinning':''}/></button></div></div>;
 }
@@ -150,9 +153,9 @@ function BreakLiveUpdateSetting() {
 function BuildingBlueprintPanel({resources,resourcePacks,run}:{resources:ReturnType<ApplicationService['snapshot']>['buildingBlueprintResources'];resourcePacks:ResourcePackRepository;run:(c:ApplicationCommand)=>Promise<unknown>}) {
   const [busy,setBusy]=useState(false);const [error,setError]=useState('');const [nativePicker,setNativePicker]=useState(false);const [remove,setRemove]=useState<string|null>(null);const [candidate,setCandidate]=useState<LitematicImportResult|null>(null);const [role,setRole]=useState<ImportRole>('building');const [renaming,setRenaming]=useState<string|null>(null);const renameInput=useRef<HTMLInputElement>(null);
   const previewSource=useMemo(()=>candidate?{id:candidate.blueprint.id,displayName:candidate.preview.name,blueprint:candidate.blueprint}:null,[candidate]);
-  useEffect(()=>{void import('@tomato-clock/platform-capacitor').then(platform=>setNativePicker(platform.isCapacitorNative()));},[]);
+  useEffect(()=>{void import('@blockcolc/platform-capacitor').then(platform=>setNativePicker(platform.isCapacitorNative()));},[]);
   const parse=async(bytes:Uint8Array)=>{setBusy(true);setError('');try{const {parseLitematic}=await loadLitematicModule();setCandidate(await parseLitematic(bytes));setRole('building');}catch(cause){setError(litematicErrorMessage(cause));}finally{setBusy(false);}};
-  const nativeImport=async()=>{try{const {pickNativeLitematicFile}=await import('@tomato-clock/platform-capacitor');const file=await pickNativeLitematicFile(LITEMATIC_MAX_COMPRESSED_BYTES);if(file)await parse(file.bytes);}catch(cause){setError(litematicErrorMessage(cause));}};
+  const nativeImport=async()=>{try{const {pickNativeLitematicFile}=await import('@blockcolc/platform-capacitor');const file=await pickNativeLitematicFile(LITEMATIC_MAX_COMPRESSED_BYTES);if(file)await parse(file.bytes);}catch(cause){setError(litematicErrorMessage(cause));}};
   const save=async()=>{if(!candidate)return;const blueprint=toImportedBlueprint(candidate.blueprint);const limit=role==='decoration'?decorationBlueprintLimitError(blueprint):resources.length>=12?'建筑蓝图库最多保存 12 份，请先删除一份。':'';if(limit){setError(limit);return;}setBusy(true);setError('');try{const result=await run(role==='building'?{type:'ImportBuildingBlueprint',blueprint}:{type:'ImportDecorationBlueprint',blueprint});if(!(typeof result==='object'&&result!==null&&'ok' in result&&result.ok===true)){setError('无法保存这份蓝图。');return;}setCandidate(null);}catch(cause){setError(cause instanceof Error?cause.message:'无法保存这份蓝图。');}finally{setBusy(false);}};
   const beginRename=(id:string)=>{setRenaming(id);setError('');};
   const rename=async()=>{if(!renaming)return;const displayName=(renameInput.current?.value??'').trim();if(!displayName){setError('蓝图名称不能为空。');return;}setBusy(true);setError('');try{const result=await run({type:'RenameBuildingBlueprint',blueprintId:renaming,displayName});if(typeof result==='object'&&result!==null&&'ok' in result&&result.ok===true)setRenaming(null);else setError('无法修改蓝图名称。');}catch(cause){setError(cause instanceof Error?cause.message:'无法修改蓝图名称。');}finally{setBusy(false);}};

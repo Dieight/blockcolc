@@ -19,5 +19,7 @@ describe('QWeather visual projection', () => {
   it('distinguishes provider-confirmed thunderstorms from ordinary showers', () => {
     expect(['302', '303', '304'].map(qweatherIsThunderstorm)).toEqual([true, true, true]);
     expect(['300', '301', '305', '400', '999'].some(qweatherIsThunderstorm)).toBe(false);
+    expect(qweatherVisual({ conditionCode: '302' })?.thunderstorm).toBe(true);
+    expect(qweatherVisual({ conditionCode: '305' })?.thunderstorm).toBeUndefined();
   });
 });
