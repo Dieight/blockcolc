@@ -3,6 +3,7 @@
 当前执行范围只从 [docs/TODO.md](../TODO.md)进入。
 当前产品规则在 [BLOCKCOLC.md](../../BLOCKCOLC.md)，不从历史日志推导。
 
+- [v2.1.0 / 43 正式交付](V43.md)：已关闭。
 - [v2.0.0 / 41 正式交付](V41.md)：已关闭。
 - [2.0.0 开发原始记录](../archive/v2.0.0/README.md)：历史证据。
 - [更早版本](../archive/pre-2.0/README.md)：历史证据。

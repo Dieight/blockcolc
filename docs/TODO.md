@@ -1,16 +1,19 @@
 # Blockcolc 当前工作入口
 
-正式基线：v2.0.0 / 41，已发布。
-当前阶段：用户已体验 v2.1.0 (43) 私人测试包并授权进入正式发布；天气小优化留待下一版。用户明确接受本轮私人包体验作为公开标准版验收，免重复全量和第二轮人工体验；发布前仍核对标准包身份与摘要，目前未正式发布。
-当前工作包：[v2.1.0 开发](versions/2.1.0-development.md)。
+正式基线：v2.1.0 / 43，已发布：[GitHub Release](https://github.com/Dieight/blockcolc/releases/tag/v2.1.0)。
+当前阶段：v2.1.0 工作包已关闭；下一版尚未立项。用户认可本版天气表现，较小的天气打磨留待下一版，不作为当前紧急修复自动开工。
+本版记录：[正式交付工作包](versions/V43.md)、[开发工作包](versions/2.1.0-development.md)。
+V43 按用户明确要求，以同轮私人包体验作为公开标准版验收，免重复全量与第二次人工体验。公开标准 APK 已重建并与上轮标准验证包逐字节一致，发布资产回读摘要一致；正式 Prepare/Install/Accept 流程没有伪称完成，例外证据保存在本地 `artifacts/release/v2.1.0/release-evidence.json`。
+
+以下是 v2.1.0 已关闭的开发与验证记录，仅供追溯，不构成当前待办或新的执行授权。
 历史中央检查点：[小构件首轮冻结](../artifacts/v2.1.0/integration/small-components-evidence.json)类型检查、定点纯测试456/456、稳定浏览器38/38、材质组7/7通过；诊断14/17的三例失败保留。独立反例证实测试canvas漏了正式宿主已有的touch-action:none；只修测试宿主后的[最终冻结](../artifacts/v2.1.0/integration/small-components-native-touch-evidence.json)类型检查与整组诊断17/17通过，真实半圈输入无取消/页面缩放，三建筑另一侧、原创板近景及雨线已目视。两轮生产代码相同，但测试树不同，不合成全版门禁。后续R旋转及Q准备收口保留于[前包](../artifacts/v2.1.0/integration/next-lifecycle-rotation-package.md)，当前执行权见下文与版本工作包。JVM/OEM/完整版本门禁不由局部证据替代。
-本轮应用测试包仅构建并本机留存：未安装、上传或正式发布。好友服务器持久会话另经用户当轮明确授权部署并完成线上验收。
+原双通道验证 APK 构建时仅留在本机、未由代理安装或上传；随后正式标准 APK 已单独发布。好友服务器持久会话另经用户当轮明确授权部署并完成线上验收。
 
 最新本机测试候选：[v2.1.0 (43) 标准 APK](../artifacts/verification/v2.1.0/build-43-f6538ae0b1924872b7c50cb38ac8e6b5/Blockcolc-v2.1.0-verification.apk)，SHA-256 `a17500125f3f39f5ee18d2a181614bfb5b2483df0f7a1948ce517a3216957951`；[构建证据](../artifacts/verification/v2.1.0/build-43-f6538ae0b1924872b7c50cb38ac8e6b5/verification-evidence.json)。同轮私人包仅保存在私有工作区，SHA-256 `beba006c7a6513f7bb7e90d979580d213073a62f6a63ed7447591653876dba17`；两包同为 `com.blockcolc.app`、2.1.0 (43)、同一签名和交付轮次 `v2.1.0-build43-20260930-paired-user-test`。生产 Web 三组193项中190通过、3条件跳过，零重试；本机JAR四包组合补跑通过，诊断41/41，扩展25/25，工具/fixture/存储/核心循环、Android JVM/lint/release assemble通过。跳过项及OEM/真机边界未由自动化代签。旧(42)包保留为历史，不再作为本轮候选。
 
 最新验收：R [独立补跑](../artifacts/v2.1.0/integration/2026-09-28-r-independent-02/evidence.json)原始报告1/1、六帧/恢复已审。Q implementation-02 [最终原始后测审计](../artifacts/v2.1.0/integration/quality-hot-switch-final-independent-audit.json)及[类型/73纯测/3例能力/六帧审计](../artifacts/v2.1.0/integration/quality-final-validation-independent-audit.json)限域通过：5对/10action、零FULL read/atlas/world重建，636现存文件前后相同且root核过live；median110.75ms/p95 320.4ms是native click→当前世界帧，不是纯渲染或Android冷启动结论。[独立验收边界](../artifacts/v2.1.0/integration/quality-hot-switch-independent-review.md)保留真实GPU分配失败/context恢复/设备/旧夜景对照未测、历史352报告缺口与所有原失败。Q和只读冷审代理已完成释放，不保留旧执行权；本页后续更新不继承旧冻结。
 
-## 当前范围
+## v2.1.0 已关闭实施范围
 
 最新原创片 [final06 独立验收](../artifacts/v2.1.0/integration/original-components-final06-independent-review.md)限域接受：20 ID/49 state，run19的112定点纯测与类型、run23生产诊断1/1；root核过679候选/639现存/40删除冻结、19 dist文件、22原图/3同图附件副本/2原像素裁切及三路混合发光反例。不是全版门禁、原版像素等价或设备验收。公共文档更新与两份可恢复临时指针归档发生在该冻结审计之后，原失败全部保留。
 默认冷测 run13 的逐页 revision 漂移已找到实际原因：内置奖励 raw/规范化字段顺序不同，每次重启多保存三次。注册入口幂等及实际 wrapper/pagehide 回归已修复；[postbuild01 独立验收](../artifacts/v2.1.0/integration/builtin-reward-postbuild01-independent-review.md)限域接受：19纯测/types0、单例五页固定完整事实、六附件逐字节匹配，680候选/640现存+40删除及19 dist构建后前后/live一致。root实际三次重启均零重复保存。原run01–13及所有失败保留，不宣称提速、全版或Android冷启动验收。
