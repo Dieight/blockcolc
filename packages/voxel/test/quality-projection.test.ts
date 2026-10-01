@@ -1,9 +1,17 @@
 import { describe, expect, it, vi } from "vitest";
-import { attemptQualityProjection, resolveCappedQualityTier } from "../src/quality-projection";
+import { attemptQualityProjection, resolveCappedQualityTier, shouldDowngradeQuality } from "../src/quality-projection";
 
 const strongDevice = { devicePixelRatio: 1, hardwareConcurrency: 8, deviceMemoryGb: 8, maxTextureSize: 8192 };
 
 describe("quality projection request semantics", () => {
+  it("does not permanently cap a preset because an occasional depth refresh doubles scene totals", () => {
+    const frame = { calls: 271, triangles: 462130, interactionSamples: 0, interactionP95Ms: null };
+    expect(shouldDowngradeQuality({ ...frame, refreshedShadow: true })).toBe(false);
+    expect(shouldDowngradeQuality({ ...frame, refreshedShadow: false })).toBe(true);
+    expect(shouldDowngradeQuality({ ...frame, refreshedShadow: true, interactionSamples: 24, interactionP95Ms: 30 })).toBe(true);
+    expect(shouldDowngradeQuality({ calls: 135, triangles: 231065, refreshedShadow: false,
+      interactionSamples: 23, interactionP95Ms: 30 })).toBe(false);
+  });
   it("keeps the selected preference separate from an adaptive ceiling", () => {
     expect(resolveCappedQualityTier(strongDevice, "cinematic", "balanced")).toBe("balanced");
     expect(resolveCappedQualityTier(strongDevice, "performance", "high")).toBe("low");

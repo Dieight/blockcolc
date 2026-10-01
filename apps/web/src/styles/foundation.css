@@ -154,10 +154,6 @@
   .focus-workbench-panel{padding-bottom:12px}
   .compact-plan-summary{display:none}
   .focus-workbench-panel>.current-work+.plan-summary{display:flex}
-  .task-section-heading{grid-template-columns:minmax(0,1fr) auto;align-items:start;gap:8px}
-  .task-section-actions{display:contents}
-  .task-section-actions>.icon-action{grid-column:2;grid-row:1}
-  .task-section-actions .structure-lock{grid-column:1/-1;grid-row:2;margin-top:0}
   .structure-lock{max-width:none}
   .task-drag-handle{height:44px}
   .subtask-group-toggle{min-height:46px}

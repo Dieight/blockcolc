@@ -192,7 +192,7 @@ export function rainCrossSectionScaleForView(input: RainCrossSectionScaleInput):
   return { scale, projectedCssPx: baseWidth * scale * pixelsPerWorldUnit };
 }
 
-/** Freezes hidden/reduced/interactive time and resumes without a large catch-up delta. */
+/** Freezes hidden/reduced time and resumes without a large catch-up delta. Dragging is not a pause. */
 export function stepPrecipitationClock(
   state: PrecipitationClockState,
   nowMs: number,

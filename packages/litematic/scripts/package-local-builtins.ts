@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { resolve } from "node:path";
 import { validateBlueprint } from "@blockcolc/voxel";
 import { parseLitematic } from "../src/index.js";
+import { selectLocalBuiltinInput } from "./local-builtin-input.js";
 
 type LocalBuiltinCategory = "building" | "daily-reward";
 
@@ -10,7 +11,7 @@ interface LocalBuiltinSource {
   id: string;
 }
 
-const INPUT_DIRECTORY = process.argv[2] ?? "D:/Litematic";
+const INPUT_DIRECTORY = selectLocalBuiltinInput(process.argv[2]);
 const OUTPUT_DIRECTORY = resolve(import.meta.dirname, "../../voxel/src/local-blueprints");
 const SOURCES: Readonly<Record<string, LocalBuiltinSource>> = Object.freeze({
   "Dieight的高级火柴盒.litematic": { category: "building", id: "builtin-local-advanced-matchbox" },
@@ -26,11 +27,7 @@ const SOURCES: Readonly<Record<string, LocalBuiltinSource>> = Object.freeze({
 });
 
 if (!existsSync(INPUT_DIRECTORY)) {
-  console.log(JSON.stringify({
-    status: "skipped-no-local-input",
-    inputDirectory: INPUT_DIRECTORY,
-    note: "No local blueprints generated; checked-in built-ins remain available.",
-  }));
+  throw new Error(`Configured local blueprint input directory is missing: ${INPUT_DIRECTORY}`);
 } else {
   const inputFiles = readdirSync(INPUT_DIRECTORY)
     .filter((name) => name.toLowerCase().endsWith(".litematic"))

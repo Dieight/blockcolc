@@ -59,6 +59,9 @@
         "settings-layout.spec.ts",
         "daily-goal-sheet.spec.ts",
         "focus-allocation.spec.ts",
+        "minimal-report.spec.ts",
+        "glass-edge-refraction.spec.ts",
+        "task-editor-layout.spec.ts",
         "v23-appearance.spec.ts",
         "v5-focus-flow.spec.ts"
       ]
@@ -69,6 +72,7 @@
       "specs": [
         "litematic-csp.spec.ts",
         "resource-pack.spec.ts",
+        "world-scenery.spec.ts",
         "v11-world-environment.spec.ts",
         "v15-lighting-quality.spec.ts",
         "v16-terrain-clip.spec.ts",
@@ -81,7 +85,9 @@
         "world-coordinate-setting.spec.ts",
         "world-followup-f05-f07.spec.ts",
         "world-presentation.spec.ts",
-        "world-weather-lifecycle.spec.ts"
+        "world-shadow-cache.spec.ts",
+        "world-weather-lifecycle.spec.ts",
+        "world-precipitation-motion.spec.ts"
       ]
     }
   ]

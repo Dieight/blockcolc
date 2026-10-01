@@ -16,6 +16,7 @@ import { resolveSelectedResourcePackState } from './resource-pack-selection';
 import type { WorldDebugProjection } from './world-debug';
 import { closeFocusSubmissionObservation, commitFocusSubmissionProjection, isFocusSubmissionDiagnosticsEnabled, observeFocusSubmissionFrame, peekFocusSubmissionProjection } from './submission-performance';
 import { finishQualityLifecycleBoot, recordQualityLifecyclePhase } from './quality-lifecycle-performance';
+import { publishGlassWorldFrame } from './glass-refraction';
 
 export const WorldCanvasV7 = memo(function WorldCanvasV7({service,resourcePacks,lightingQuality,constructionOutlineVisibility,showWorldCoordinates,environmentStyle,worldSeed,terrainGenerationVersion,constructionFeedback=0,sessionActive=false,immersivePresentation=sessionActive,immersiveBand={bottom:0,right:0},externalWeatherOverride=null,astronomyContext=null,worldDebug=null,openingProjectId=null,focusedProjectId,memoryProjectId,onSelectProject,onClearWorldFocus,onCloseMemory,onContinueProject,switchBlockedReason,visible,onPickTerrain,pickedCell}:{service:ApplicationService;resourcePacks:ResourcePackRepository;lightingQuality:VoxelLightingQuality;constructionOutlineVisibility:ConstructionOutlineVisibility;showWorldCoordinates:boolean;environmentStyle:WorldEnvironmentStyle;worldSeed:string;terrainGenerationVersion:4;constructionFeedback?:number;sessionActive?:boolean;immersivePresentation?:boolean;immersiveBand?:{bottom:number;right:number};externalWeatherOverride?:ExternalWeatherVisualOverride|null;astronomyContext?:AstronomyContext|null;worldDebug?:WorldDebugProjection|null;openingProjectId?:string|null;focusedProjectId:string|null;memoryProjectId:string|null;onSelectProject:(projectId:string)=>void;onClearWorldFocus:()=>void;onCloseMemory:()=>void;onContinueProject:(projectId:string)=>Promise<void>;switchBlockedReason?:string;visible:boolean;onPickTerrain:(position:{x:number;y:number;z:number})=>void;pickedCell:{x:number;y:number;z:number}|null}) {
   const projectionToken=peekFocusSubmissionProjection();
@@ -161,6 +162,7 @@ export const WorldCanvasV7 = memo(function WorldCanvasV7({service,resourcePacks,
           lightingQuality, constructionOutlineVisibility, environmentStyle, worldSeed, terrainGenerationVersion,
           onSelectProject: projectId => selectRef.current(projectId),
           onPickTerrain: position => { if (pickEnabledRef.current) pickTerrainRef.current(position); },
+          onFrameRendered: publishGlassWorldFrame,
           debugFlatColors: new URLSearchParams(location.search).has('flat'),
           debugVoidScan: new URLSearchParams(location.search).has('voidscan'),
         });

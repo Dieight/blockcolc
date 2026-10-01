@@ -58,7 +58,7 @@ describe('world weather status and attribution', () => {
       astronomySyncState: 'unavailable', astronomyFailureReason: 'location_unavailable' }}/>);
 
     expect(calendar).toContain('天文日历已同步');
-    expect(calendar).toContain('天文数据：');
+    expect(calendar).toContain('数据来源：');
     expect(calendar).toContain('href="https://developer.qweather.com/attribution.html"');
     expect(ephemeris).toContain('按已授权位置本地历算');
     expect(ephemeris).not.toContain('天文日历已同步');
@@ -90,6 +90,29 @@ describe('world weather status and attribution', () => {
     expect(html).toContain('href="https://developer.qweather.com/attribution.html"');
     expect(html).toContain('合作数据仅供展示');
     expect(html).not.toContain('javascript:alert');
+  });
+
+  it('merges weather and astronomy sources without losing distinct status or unique attribution', () => {
+    const attribution = 'https://developer.qweather.com/attribution.html';
+    const html = renderToStaticMarkup(<WorldWeatherSettingsStatus enabled view={{ ...local,
+      syncState: 'available', source: 'real', conditionText: '小雨', attributions: [attribution, '合作数据仅供展示'],
+      astronomySyncState: 'calendar', astronomyContext: {
+        coordinates: { latitude: 39.92, longitude: 116.41 }, locationSource: 'fresh', schedule: {
+          coordinates: { latitude: 39.92, longitude: 116.41 }, locationSource: 'fresh',
+          fetchedAtMs: 1_800_000_000_000, days: [], attribution: [attribution,
+            'https://example.com/astronomy-attribution', '合作数据仅供展示', 'javascript:alert(1)'],
+        },
+      } }}/>);
+    expect(html.match(/class="weather-setting-attribution"/g)).toHaveLength(1);
+    expect(html.match(/href="https:\/\/developer.qweather.com\/attribution.html"/g)).toHaveLength(1);
+    expect(html.match(/合作数据仅供展示/g)).toHaveLength(1);
+    expect(html).toContain('href="https://example.com/astronomy-attribution"');
+    expect(html).toContain('当前显示 小雨');
+    expect(html).toContain('天文日历已同步');
+    expect(html).not.toContain('javascript:alert');
+    const disabled = renderToStaticMarkup(<WorldWeatherSettingsStatus enabled={false} view={{ ...local,
+      source: 'real', attributions: [attribution], astronomySyncState: 'calendar' }}/>);
+    expect(disabled).not.toContain('class="weather-setting-attribution"');
   });
 
   it('shows the current local or real weather in the world notice', () => {

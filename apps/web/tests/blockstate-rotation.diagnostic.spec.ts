@@ -692,8 +692,12 @@ test('compares fixed 26.3 blockstate rotation on the production renderer with re
     });
     observations.buttonOnlyFullManifestDiagnostics = buttonOnlyFullManifestDiagnostics;
     expect(buttonOnlyFullManifestDiagnostics.activeResourcePackId).toBe(selectedPack.id);
-    expect(buttonOnlyFullManifestDiagnostics.geometryVoxelCount).toBe(fixture.buttons.length + 12);
-    expect(buttonOnlyFullManifestDiagnostics.naturalFlowerPackPlacementCount).toBe(12);
+    // Small blueprint previews deliberately exclude main-world biome scenery.
+    // The complete manifest must route every button, without ambient flowers
+    // contaminating the route count of this isolated fixture.
+    expect(buttonOnlyFullManifestDiagnostics.geometryVoxelCount).toBe(fixture.buttons.length);
+    expect(buttonOnlyFullManifestDiagnostics.naturalFlowerPackPlacementCount).toBe(0);
+    expect(buttonOnlyFullManifestDiagnostics.naturalFlowerOriginalFallbackCount).toBe(0);
     expect(buttonOnlyFullManifestDiagnostics.geometryVoxelCount - buttonOnlyFullManifestDiagnostics.naturalFlowerPackPlacementCount)
       .toBe(fixture.buttons.length);
 
@@ -769,7 +773,7 @@ test('compares fixed 26.3 blockstate rotation on the production renderer with re
     expect(buttonOnlyDiagnostics.originalStaticShapeVoxelCount).toBe(0);
     expect(buttonOnlyDiagnostics.fallbackVoxelCount).toBe(buttonOnlySupportVoxelCount);
     expect(buttonOnlyDiagnostics.naturalFlowerPackPlacementCount).toBe(0);
-    expect(buttonOnlyDiagnostics.naturalFlowerOriginalFallbackCount).toBe(12);
+    expect(buttonOnlyDiagnostics.naturalFlowerOriginalFallbackCount).toBe(0);
     expect(buttonOnlyDiagnostics.atlasPageCount).toBeGreaterThan(0);
 
     const packedDiagnostics = await page.evaluate(async ({ packId, databaseName }) => {
@@ -836,7 +840,8 @@ test('compares fixed 26.3 blockstate rotation on the production renderer with re
     expect(packedDiagnostics.worldRebuildCount).toBeGreaterThan(packedDiagnostics.beforeWorldRebuildCount);
     expect(packedCommittedDiagnostics.renderedWorldRebuildCount).toBe(packedCommittedDiagnostics.worldRebuildCount);
     expect(packedCommittedDiagnostics.activeResourcePackId).toBe(selectedPack.id);
-    expect(packedCommittedDiagnostics.naturalFlowerPackPlacementCount).toBe(10);
+    expect(packedCommittedDiagnostics.naturalFlowerPackPlacementCount).toBe(0);
+    expect(packedCommittedDiagnostics.naturalFlowerOriginalFallbackCount).toBe(0);
     expect(packedCommittedDiagnostics.geometryVoxelCount).toBe(originalShapeSamples.length
       + packedCommittedDiagnostics.naturalFlowerPackPlacementCount);
     expect(packedCommittedDiagnostics.geometryVoxelCount - packedCommittedDiagnostics.naturalFlowerPackPlacementCount)
@@ -912,7 +917,7 @@ test('compares fixed 26.3 blockstate rotation on the production renderer with re
     expect(limitedPackedDiagnostics.geometryVoxelCount).toBe(originalShapeSamples.length);
     expect(limitedPackedDiagnostics.texturedVoxelCount).toBe(originalShapeSamples.length + fullCubeTextureSamples.length);
     expect(limitedPackedDiagnostics.naturalFlowerPackPlacementCount).toBe(0);
-    expect(limitedPackedDiagnostics.naturalFlowerOriginalFallbackCount).toBe(10);
+    expect(limitedPackedDiagnostics.naturalFlowerOriginalFallbackCount).toBe(0);
     expect(limitedPackedDiagnostics.originalStaticShapeVoxelCount).toBe(0);
     expect(limitedPackedDiagnostics.fallbackVoxelCount).toBe(buttonOnlySupportVoxelCount);
     expect(limitedPackedDiagnostics.atlasPageCount).toBeGreaterThan(0);

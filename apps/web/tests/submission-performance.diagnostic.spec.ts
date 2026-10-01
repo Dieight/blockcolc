@@ -81,7 +81,14 @@ async function seed(page: Page, marathon = false, minimal = false) {
   }, { state: reportFixture(marathon), marathon, minimal });
   await page.reload();
   expect(await page.evaluate(() => /\[native code\]/.test(performance.now.toString()))).toBe(true);
-  await expect(page.getByRole('heading', { name: marathon ? '把这次推进汇报给哪些任务？' : '这次工作推进到哪里？' })).toBeVisible();
+  if (minimal && marathon) {
+    const report = page.locator('.focus-report-surface--minimal');
+    await expect(report).toBeVisible();
+    await expect(report.getByRole('heading', { name: '1 分钟', exact: true })).toBeVisible();
+    await expect(report).toContainText('1 轮专注已结束');
+  } else {
+    await expect(page.getByRole('heading', { name: marathon ? '把这次推进汇报给哪些任务？' : '这次工作推进到哪里？' })).toBeVisible();
+  }
   const canvas = page.getByLabel('项目建筑世界');
   await expect(canvas).toHaveAttribute('data-first-nonempty-frame-ms', /\d/, { timeout: 20_000 });
   const count = (await canvas.getAttribute('data-world-rebuild-count'))!;

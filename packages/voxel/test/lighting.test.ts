@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   clusterEmissivePoints,
+  directionalLightingForState,
   emissiveColorForPoint,
   lightingDirectionFingerprint,
   registerEmissivePoint,
@@ -12,6 +13,35 @@ import {
 } from '../src/lighting';
 
 describe('local sun path', () => {
+  it('uses the existing solar source by day and the visible moon for night shadows', () => {
+    const day = sunStateForLocalTime(new Date(2026, 6, 24, 12));
+    const noon = directionalLightingForState(day);
+    expect(noon.source).toBe('sun');
+    expect(noon.position).toBe(day.position);
+    expect(noon.intensity).toBe(day.intensity * day.sunVisibility);
+    const night = sunStateForLocalTime(new Date(2026, 6, 24, 2));
+    const lunar = directionalLightingForState(night);
+    expect(lunar.source).toBe('moon');
+    expect(lunar.position).toBe(night.moonPosition);
+    expect(lunar.intensity).toBeGreaterThan(0);
+    expect(lunar.intensity).toBeLessThan(noon.intensity);
+    expect(shadowDirectionFromPosition(lunar.position)).toEqual(shadowDirectionFromPosition(night.moonPosition));
+  });
+
+  it('keeps phase-dependent lunar intensity bounded and does not invent hidden/new moon shadows', () => {
+    const night = sunStateForLocalTime(new Date(2026, 6, 24, 2));
+    const phases = [0, 0.05, 0.25, 0.5, 1].map(moonIllumination =>
+      directionalLightingForState({ ...night, moonIllumination }));
+    expect(phases[0]!.source).toBe('none');
+    expect(phases[0]!.intensity).toBe(0);
+    expect(phases[4]!.intensity).toBeCloseTo(0.55, 6);
+    for (let index = 1; index < phases.length; index += 1) expect(phases[index]!.intensity).toBeGreaterThan(phases[index - 1]!.intensity);
+    const hidden = directionalLightingForState({ ...night, moonPosition: [5, -1, 7], moonVisibility: 1 });
+    expect(hidden.source).toBe('none');
+    expect(hidden.intensity).toBe(0);
+    expect(directionalLightingForState({ ...night, moonVisibility: 0 }).intensity).toBe(0);
+    expect(directionalLightingForState({ ...night, moonIllumination: Number.NaN }).intensity).toBe(0);
+  });
   it('keeps the astronomical shadow direction while placing its depth camera behind large settlements', () => {
     const source = sunStateForLocalTime(new Date(2026, 6, 24, 10)).position;
     const near = shadowLightPositionForExtent(source, 10);

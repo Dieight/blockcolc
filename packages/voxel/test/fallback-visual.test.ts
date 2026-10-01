@@ -8,6 +8,14 @@ import {
 } from "../src/fallback-visual";
 
 describe("runtime fallback visuals", () => {
+  it('keeps wooden stairs/slabs in their wood species palette and farmland in soil colors', () => {
+    for (const shape of ['stairs', 'slab']) {
+      const oak = fallbackVisualStyleForVoxel({ materialId: 'roof', sourceBlockId: `minecraft:oak_${shape}` });
+      const spruce = fallbackVisualStyleForVoxel({ materialId: 'roof', sourceBlockId: `minecraft:spruce_${shape}` });
+      expect(oak.color).toBe(0xb68c55); expect(spruce.color).toBe(0x76553c);
+    }
+    expect(fallbackVisualStyleForVoxel({ materialId: 'accent', sourceBlockId: 'minecraft:farmland' }).color).toBe(0x79634e);
+  });
   it("keeps the new component families narrowly separated by color and surface role", () => {
     const carpet = fallbackVisualStyleForOriginalComponent({ materialId: "accent", sourceBlockId: "minecraft:red_carpet" }, "carpet");
     const moss = fallbackVisualStyleForOriginalComponent({ materialId: "accent", sourceBlockId: "minecraft:moss_carpet" }, "carpet");

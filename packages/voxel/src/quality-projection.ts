@@ -11,6 +11,18 @@ export interface QualityProjectionAttempt {
   noOp: boolean;
 }
 
+/** Shadow refreshes add a second scene traversal to Three's frame totals. They
+ * are occasional cache work, not the steady color-pass budget. Measured sustained
+ * interaction cost still protects slow devices, including slow shadow work. */
+export function shouldDowngradeQuality(sample: {
+  calls: number; triangles: number; refreshedShadow: boolean;
+  interactionSamples: number; interactionP95Ms: number | null;
+}): boolean {
+  const sustainedSlow = sample.interactionSamples >= 24 && sample.interactionP95Ms !== null && sample.interactionP95Ms > 22;
+  const sceneHeavy = !sample.refreshedShadow && (sample.calls > 180 || sample.triangles > 340_000);
+  return sustainedSlow || sceneHeavy;
+}
+
 /** Keep the accepted preference separate from a conservative adaptive ceiling. */
 export function resolveCappedQualityTier(
   signals: QualitySignals,

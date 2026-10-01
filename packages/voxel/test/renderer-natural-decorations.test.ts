@@ -25,7 +25,7 @@ function terrainWithTrees(trees: MergedGeometryData["naturalTrees"]): MergedGeom
   };
 }
 
-describe("production natural-decoration candidate planner", () => {
+describe("legacy natural-decoration planner retained for comparison, not current world generation", () => {
   const trees = [
     { x: -24, y: 2, z: -20, scale: 1.1 },
     { x: 0, y: 4, z: 0, scale: 0.8 },
@@ -34,7 +34,7 @@ describe("production natural-decoration candidate planner", () => {
     { x: 55, y: 1, z: 44, scale: 1.3 },
   ];
 
-  it("uses actual terrain-tree positions, scale and the same quality prefix used by production culling", () => {
+  it("uses actual terrain-tree positions and the legacy quality prefix", () => {
     const low = naturalDecorationPlacementsForScene({
       worlds: [], roads: [], importedDecorations: [], environmentStyle: "natural-valley",
       terrain: terrainWithTrees(trees), worldSeed: "production-tree-test", qualityTier: "low",

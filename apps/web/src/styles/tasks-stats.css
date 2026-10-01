@@ -15,7 +15,10 @@
 .tasks-page .task-project-title{margin:0 0 18px;align-items:center;gap:12px}
 .tasks-page .task-project-title h2{margin:0;min-width:0;flex:1;font-size:var(--task-section-size);font-weight:650;line-height:1.4;overflow-wrap:anywhere}
 .tasks-page .task-project-title input{flex:1;min-width:0}
-.tasks-page .task-section-heading{margin-bottom:14px;align-items:center;display:flex;flex-wrap:wrap;gap:8px;justify-content:space-between}
+.tasks-page .task-section-heading{margin-bottom:14px;align-items:center;display:flex;flex-wrap:nowrap;gap:12px;justify-content:space-between}
+.tasks-page .task-section-heading>div:first-child{min-width:0;flex:1}
+.tasks-page .task-section-actions{display:flex;flex:0 0 auto}
+.tasks-page .task-structure-note{margin:-4px 0 14px;max-width:none}
 .tasks-page .task-section-heading h2{font-size:var(--task-body-size);font-weight:600;color:var(--muted)}
 .tasks-page .task-section-heading p{font-size:var(--task-meta-size);color:var(--muted)}
 .tasks-page .task-editor-row{border:1px solid var(--line);border-radius:10px;padding:12px;gap:10px;background:var(--surface-subtle);min-height:72px}

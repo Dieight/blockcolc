@@ -1,0 +1,36 @@
+/* The minimal report is part of the existing edge-attached glass band, not a sheet on a sheet. */
+.focus-report-surface--immersive{width:min(100%,680px);max-height:calc(100dvh - 40px);margin-inline:auto;overflow-y:auto;overscroll-behavior:contain}
+.focus-immersive .is-focusing .focus-panel:has(.focus-report-surface--minimal){padding-top:24px;justify-content:start;max-height:76dvh}
+.report.focus-report-surface--minimal{position:relative;padding:0;border:0;border-radius:0;background:transparent;box-shadow:none;text-align:left;max-height:calc(76dvh - 48px - var(--safe-bottom));scrollbar-width:thin;color:var(--ink);touch-action:pan-y}
+.focus-report-surface--minimal .eyebrow{margin:0;font-size:12px;color:var(--muted);letter-spacing:.06em}
+.focus-report-surface--minimal h2{margin:4px 0;font-size:32px;font-weight:650;letter-spacing:-.04em;font-variant-numeric:tabular-nums}
+.focus-report-surface--minimal .minimal-report-caption{color:var(--ink);font-size:14px;margin:0 0 8px}
+.minimal-report-help{font-size:12px;color:var(--muted);margin:0 0 14px}
+.minimal-report-help summary{width:max-content;max-width:100%;min-height:44px;display:flex;align-items:center;cursor:pointer;list-style:none}
+.minimal-report-help summary::after{content:' +';margin-left:6px}
+.minimal-report-help[open] summary::after{content:' −'}
+.minimal-report-help summary::-webkit-details-marker{display:none}
+.minimal-report-help p{padding-bottom:12px}
+.focus-report-surface--minimal .marathon-settlement-list{gap:0}
+.focus-report-surface--minimal .marathon-settlement-card{border:0;border-top:1px solid var(--line);border-radius:0;background:transparent;box-shadow:none}
+.focus-report-surface--minimal .marathon-settlement-head{padding:8px 0;min-height:64px;color:var(--ink)}
+.focus-report-surface--minimal .marathon-settlement-copy strong{font-size:15px;font-weight:650}
+.focus-report-surface--minimal .marathon-settlement-copy small{color:var(--muted);font-size:12px}
+.focus-report-surface--minimal .marathon-settlement-toggle{border:0;background:transparent;padding:0 4px;min-height:44px;display:grid;place-items:center;font-size:12px;color:var(--focus)}
+.focus-report-surface--minimal .marathon-settlement-body{padding:0 0 12px;gap:10px}
+.focus-report-surface--minimal .marathon-report-row{padding:12px 0;border:0;border-top:1px solid var(--line)}
+.focus-report-surface--minimal .marathon-report-copy strong{font-size:14px}
+.focus-report-surface--minimal .marathon-report-copy small{color:var(--muted)}
+.focus-report-surface--minimal .marathon-report-options{display:flex;flex-wrap:wrap;gap:4px}
+.focus-report-surface--minimal .marathon-report-options button{flex:1 1 72px;min-height:44px;border:0;border-radius:7px;background:var(--settings-field);color:var(--ink);font-size:12px;padding:6px}
+.focus-report-surface--minimal .marathon-report-options button[aria-pressed='true']{background:var(--surface-active);color:var(--focus);box-shadow:inset 0 -2px 0 var(--focus)}
+.focus-report-surface--minimal .round-allocation-control{display:flex;flex-wrap:wrap;gap:4px;min-height:44px;border:0;border-radius:0;padding:0;background:transparent}
+.focus-report-surface--minimal .round-allocation-control .round-allocation-label{margin-right:auto}
+.focus-report-surface--minimal .round-allocation-control button{border:0;background:var(--settings-field);border-radius:50%}
+.focus-report-surface--minimal .round-allocation-meta{flex-basis:100%;text-align:right;margin-top:3px}
+.focus-report-surface--minimal .plan-sheet-note{font-size:12px;line-height:1.5;margin:10px 0}
+.focus-report-surface--minimal .marathon-report-footer{position:sticky;bottom:-1px;padding:12px 0 1px;background:var(--reading-glass-background);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);margin-top:12px}
+.report.focus-report-surface--minimal .minimal-report-allocation{display:flex;justify-content:space-between;gap:10px;font-size:12px;color:var(--muted)}
+.focus-report-surface--minimal .marathon-report-submit{margin:10px 0 0;width:100%;min-height:48px;border-radius:10px;background:var(--minimal-start-glass);color:var(--minimal-start-ink);border:1px solid var(--minimal-start-border);font-size:14px}
+@media(min-width:700px){.focus-immersive .is-focusing .focus-panel:has(.focus-report-surface--minimal){max-height:100dvh;justify-content:center}.focus-report-surface--minimal{max-height:calc(100dvh - 48px - var(--safe-top) - var(--safe-bottom))}}
+@media(prefers-reduced-transparency:reduce){.focus-report-surface--minimal .marathon-report-footer{background:var(--surface);backdrop-filter:none;-webkit-backdrop-filter:none}}

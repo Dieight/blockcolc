@@ -64,6 +64,18 @@ export function panelRainVisualProfile(value: number): PanelRainVisualProfile {
   };
 }
 
+export type PanelSnowTier = 'thin' | 'low' | 'medium' | 'high';
+
+/** Snowfall facts select a stepped, non-linear depth; the shared perceptual
+ * intensity still owns particle visibility. This is not another weather remap. */
+export function panelSnowAccumulationProfile(value: number): { tier: PanelSnowTier; depthCssPx: number } {
+  const intensity = boundedIntensity(value);
+  if (intensity < 0.12) return { tier: 'thin', depthCssPx: 3 };
+  if (intensity < 0.34) return { tier: 'low', depthCssPx: 7 };
+  if (intensity < 0.68) return { tier: 'medium', depthCssPx: 12 };
+  return { tier: 'high', depthCssPx: 20 };
+}
+
 export function shouldRenderMinimalPanelWeather(active: boolean, weather: MinimalPanelWeather | null): boolean {
   return active && (weather?.kind === 'rain' || weather?.kind === 'snow')
     && boundedIntensity(weather.visualPrecipitationIntensity) > 0;
@@ -144,61 +156,34 @@ function seedFor(weather: MinimalPanelWeather): number {
 }
 
 function drawDrop(context: CanvasRenderingContext2D, drop: GlassRaindrop, alpha: number, still: boolean, trailScale: number): void {
-  const speedStretch = still ? 0 : Math.min(0.62, Math.max(0, drop.vy) / 34);
-  const width = drop.radius * (0.8 - speedStretch * 0.08);
-  const beadHeight = drop.radius * (1.02 + speedStretch * 0.72);
-  const trail = still ? 0 : Math.min(8, drop.vy * 0.24 * trailScale);
+  // Keep continuous physics, but rasterize the silhouette/highlight on a pixel
+  // lattice. Smaller, softer beads sit behind the heavier foreground droplets.
+  const grain = drop.radius > 3.2 ? 3 : 2;
+  const x = Math.round(drop.x / grain) * grain;
+  const y = Math.round(drop.y / grain) * grain;
+  const width = drop.radius > 2.8 ? grain * 2 : grain;
+  const trail = still ? 0 : Math.round(Math.min(18, drop.vy * 0.55 * trailScale) / grain) * grain;
   const lifetimeFade = Math.max(0, 1 - Math.max(0, drop.age - 14) / 8);
   const formationFade = still ? 1 : Math.min(1, drop.age / 0.34);
-  const priorAlpha = context.globalAlpha;
   context.save();
-  context.globalAlpha = priorAlpha * alpha * lifetimeFade * formationFade;
-  context.lineCap = 'round';
+  context.globalAlpha *= alpha * lifetimeFade * formationFade * (drop.radius < 2 ? 0.58 : 1);
+  context.fillStyle = 'rgba(66, 112, 128, .16)';
+  if (trail > 0) context.fillRect(x, y - trail, grain, trail);
+  context.fillStyle = 'rgba(53, 97, 117, .48)';
+  context.fillRect(x - grain, y, width + grain, grain * 2);
+  context.fillRect(x, y - grain, width, grain);
+  context.fillStyle = 'rgba(203, 229, 241, .6)';
+  context.fillRect(x, y, width, grain);
+  context.fillRect(x + grain, y + grain, grain, grain);
+  context.fillStyle = 'rgba(249, 253, 255, .88)';
+  context.fillRect(x, y, grain, grain);
   if (!still && drop.age < 0.32) {
     const impact = 1 - drop.age / 0.32;
-    context.strokeStyle = `rgba(226, 242, 250, ${0.25 * impact})`;
-    context.lineWidth = 0.7;
-    context.beginPath();
-    context.arc(drop.x, drop.y, drop.radius * (1.4 + (1 - impact) * 1.2), 0, Math.PI * 2);
-    context.stroke();
+    const reach = grain * (1 + Math.floor((1 - impact) * 2));
+    context.fillStyle = `rgba(226, 242, 250, ${0.45 * impact})`;
+    context.fillRect(x - reach, y, grain, grain);
+    context.fillRect(x + width + reach, y - grain, grain, grain);
   }
-  if (trail > 0.35) {
-    context.strokeStyle = 'rgba(185, 214, 226, .27)';
-    context.lineWidth = Math.max(0.55, drop.radius * 0.22);
-    context.beginPath();
-    context.moveTo(drop.x, drop.y - beadHeight * 0.55 - trail);
-    context.lineTo(drop.x, drop.y - beadHeight * 0.48);
-    context.stroke();
-  }
-  const height = beadHeight;
-  context.shadowColor = 'rgba(35, 70, 84, .48)';
-  context.shadowBlur = 2;
-  context.shadowOffsetX = 0.9;
-  context.shadowOffsetY = 1.1;
-  const gradient = context.createRadialGradient(
-    drop.x - width * 0.34, drop.y - height * 0.38, 0.15,
-    drop.x, drop.y, Math.max(width, height),
-  );
-  gradient.addColorStop(0, 'rgba(249, 253, 255, .58)');
-  gradient.addColorStop(0.3, 'rgba(216, 235, 244, .23)');
-  gradient.addColorStop(0.72, 'rgba(164, 196, 210, .09)');
-  gradient.addColorStop(1, 'rgba(108, 147, 166, .018)');
-  context.fillStyle = gradient;
-  context.beginPath();
-  context.ellipse(drop.x, drop.y, width, height, 0, 0, Math.PI * 2);
-  context.fill();
-  context.shadowBlur = 0;
-  context.shadowOffsetX = 0;
-  context.shadowOffsetY = 0;
-  context.strokeStyle = 'rgba(41, 83, 102, .82)';
-  context.lineWidth = Math.max(0.42, drop.radius * 0.14);
-  context.stroke();
-  context.globalAlpha *= 0.72;
-  context.fillStyle = 'rgba(255, 255, 255, .48)';
-  context.beginPath();
-  context.ellipse(drop.x - width * 0.25, drop.y - height * 0.3,
-    Math.max(0.18, width * 0.15), Math.max(0.12, height * 0.09), -0.45, 0, Math.PI * 2);
-  context.fill();
   context.restore();
 }
 
@@ -262,39 +247,39 @@ interface PanelSnowflake {
 }
 
 function drawSnowflake(context: CanvasRenderingContext2D, flake: PanelSnowflake, opacity: number): void {
+  const foreground = flake.radius > 1.5;
+  const x = Math.round(flake.x), y = Math.round(flake.y);
   context.save();
-  context.globalAlpha *= opacity;
+  context.globalAlpha *= opacity * (foreground ? 0.94 : 0.48);
   context.fillStyle = 'rgba(248, 253, 255, .94)';
-  context.shadowColor = 'rgba(220, 240, 255, .8)';
-  context.shadowBlur = flake.radius * 2.5;
-  context.beginPath();
-  context.arc(flake.x, flake.y, flake.radius, 0, Math.PI * 2);
-  context.fill();
-  context.shadowBlur = 0;
-  context.strokeStyle = 'rgba(82, 119, 143, .48)';
-  context.lineWidth = 0.55;
-  context.stroke();
+  if (!foreground) context.fillRect(x, y, 2, 2);
+  else {
+    // Fine pixels form readable flakes; depth comes from speed/opacity, not blur.
+    context.fillRect(x - 2, y, 5, 1);
+    context.fillRect(x, y - 2, 1, 5);
+    if (flake.radius > 1.9) {
+      for (const [dx, dy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]] as const) context.fillRect(x + dx, y + dy, 1, 1);
+    }
+  }
   context.restore();
 }
 
 function drawSnowbank(context: CanvasRenderingContext2D, width: number, height: number, intensity: number): void {
-  const depth = 4 + intensity * 8;
-  const gradient = context.createLinearGradient(0, height - depth - 5, 0, height);
-  gradient.addColorStop(0, 'rgba(238, 248, 255, .05)');
-  gradient.addColorStop(0.58, 'rgba(236, 246, 255, .54)');
-  gradient.addColorStop(1, 'rgba(241, 249, 255, .85)');
-  context.fillStyle = gradient;
-  context.beginPath();
-  context.moveTo(0, height);
-  context.lineTo(0, height - depth * 0.8);
-  context.quadraticCurveTo(width * 0.24, height - depth * 1.2, width * 0.51, height - depth * 0.78);
-  context.quadraticCurveTo(width * 0.76, height - depth * 1.25, width, height - depth * 0.9);
-  context.lineTo(width, height);
-  context.closePath();
-  context.fill();
-  context.strokeStyle = 'rgba(125, 164, 189, .48)';
-  context.lineWidth = 0.8;
-  context.stroke();
+  // Scale all four tiers together on a short panel, rather than clipping only
+  // the high tier until it becomes indistinguishable from medium.
+  const depth = panelSnowAccumulationProfile(intensity).depthCssPx * Math.min(1, height * 0.075 / 20);
+  const bottom = Math.floor(height);
+  context.save();
+  // Uneven pixel steps sit on the lower sill, bounded away from controls/text.
+  for (let x = 0; x < width; x += 4) {
+    const variation = (Math.sin(x * 0.037) + Math.cos(x * 0.079) + 2) / 4;
+    const localDepth = Math.max(1, Math.round(depth * (0.78 + variation * 0.22)));
+    context.fillStyle = 'rgba(242, 249, 252, .94)';
+    context.fillRect(x, bottom - localDepth, Math.min(4, width - x), localDepth);
+    context.fillStyle = 'rgba(138, 173, 190, .32)';
+    context.fillRect(x, bottom - 1, Math.min(4, width - x), 1);
+  }
+  context.restore();
 }
 
 function staticRaindrops(width: number, height: number, seed: number, profile: PanelRainVisualProfile): GlassRaindrop[] {
@@ -325,6 +310,7 @@ export function MinimalPanelWeatherOverlay({
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const intensity = boundedIntensity(weather?.visualPrecipitationIntensity);
+  const snowfall = boundedIntensity(weather?.precipitationIntensity ?? intensity);
   const rainProfile = panelRainVisualProfile(intensity);
   const showWeather = shouldRenderMinimalPanelWeather(active, weather);
   const isSnow = weather?.kind === 'snow';
@@ -361,7 +347,7 @@ export function MinimalPanelWeatherOverlay({
       x: width * (0.04 + random() * 0.92),
       y: initial ? height * (0.04 + random() * 0.86) : -4,
       radius: 0.8 + random() * 1.4,
-      speed: 13 + random() * 15,
+      speed: 10 + random() * 20,
       drift: (random() - 0.5) * 7,
       phase: random() * Math.PI * 2,
     });
@@ -373,11 +359,14 @@ export function MinimalPanelWeatherOverlay({
       if (isSnow && snowflakes.length === 0 && width > 0 && height > 0) {
         snowflakes = Array.from({ length: Math.round(8 + intensity * 16) }, () => makeSnowflake(true));
       }
-      pixelRatio = Math.min(1.5, window.devicePixelRatio || 1,
+      // One canvas pixel per CSS pixel keeps the approved square highlights
+      // crisp even on fractional-DPR WebViews. Backing storage stays bounded.
+      pixelRatio = Math.min(1,
         Math.sqrt(MAX_CANVAS_PIXELS / Math.max(1, width * height)));
       canvas.width = Math.max(1, Math.round(width * pixelRatio));
       canvas.height = Math.max(1, Math.round(height * pixelRatio));
       context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+      context.imageSmoothingEnabled = false;
       paintStatic();
     };
 
@@ -391,7 +380,7 @@ export function MinimalPanelWeatherOverlay({
       if (width <= 0 || height <= 0) return;
       paintBase();
       if (isSnow) {
-        drawSnowbank(context, width, height, intensity);
+        drawSnowbank(context, width, height, snowfall);
         for (let index = 0; index < 9; index += 1) {
           drawSnowflake(context, { x: width * ((index * 0.113 + 0.08) % 1), y: height * ((index * 0.19 + 0.13) % 0.9),
             radius: 0.8 + (index % 3) * 0.4, speed: 0, drift: 0, phase: 0 }, 0.65);
@@ -438,7 +427,7 @@ export function MinimalPanelWeatherOverlay({
       if (isSnow) {
         snowflakes = snowflakes.flatMap(flake => {
           const phase = flake.phase + delta * 1.4;
-          const y = flake.y + flake.speed * delta;
+          const y = flake.y + flake.speed * (flake.radius > 1.5 ? 1 : 0.62) * delta;
           return y > height - 5 ? [] : [{ ...flake, x: flake.x + (flake.drift + Math.sin(phase) * 4) * delta, y, phase }];
         });
       } else {
@@ -447,7 +436,7 @@ export function MinimalPanelWeatherOverlay({
       paintBase();
       if (isSnow) {
         snowflakes.forEach(flake => drawSnowflake(context, flake, 0.76));
-        drawSnowbank(context, width, height, intensity);
+        drawSnowbank(context, width, height, snowfall);
       } else {
         drops.forEach(drop => drawDrop(context, drop, rainProfile.opacity, false, rainProfile.trailScale));
       }
@@ -521,10 +510,11 @@ export function MinimalPanelWeatherOverlay({
     };
   }, [intensity, rainProfile.holdSecondsMax, rainProfile.holdSecondsMin, rainProfile.maxDrops, rainProfile.opacity,
     rainProfile.radiusMax, rainProfile.radiusMin, rainProfile.spawnIntervalMs, rainProfile.staticDrops,
-    rainProfile.terminalSpeed, rainProfile.trailScale, seed, showWeather, thunderstorm, isSnow]);
+    rainProfile.terminalSpeed, rainProfile.trailScale, seed, showWeather, thunderstorm, isSnow, snowfall]);
 
   if (!showWeather) return null;
   return <div className="minimal-panel-weather-overlay" aria-hidden="true" data-weather-kind={weather?.kind}
+    data-weather-style="pixel-layered" data-snow-tier={isSnow ? panelSnowAccumulationProfile(snowfall).tier : undefined}
     data-rain-intensity={intensity.toFixed(3)}
     data-thunderstorm={thunderstorm ? 'true' : 'false'}>
     <canvas ref={canvasRef}/>

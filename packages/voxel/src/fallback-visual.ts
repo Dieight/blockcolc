@@ -63,7 +63,7 @@ export function fallbackVisualStyleForVoxel(
     color = componentColor;
   } else if (dyed && /(?:wool|carpet|concrete|terracotta|glazed_terracotta|glass|glass_pane|bed|banner|candle|cushion|shulker_box)/.test(path)) {
     color = dyed[1];
-  } else if (wood && /(?:planks|log|wood|stem|hyphae|bamboo|shelf|bookshelf|door|trapdoor|fence|gate|sign|button|pressure_plate)/.test(path)) {
+  } else if (wood && /(?:planks|log|wood|stem|hyphae|bamboo|shelf|bookshelf|door|trapdoor|fence|gate|sign|button|pressure_plate|stairs|slab)/.test(path)) {
     color = wood[1];
     response = "wood";
   } else if (/(?:^|_)ore(?:_|$)/.test(path)) {
@@ -138,7 +138,7 @@ export function fallbackVisualStyleForVoxel(
     color = 0x3f6b3f;
   } else if (/(?:grass|moss|leaves|vine|azalea|fern)/.test(path)) {
     color = 0x638453;
-  } else if (/(?:dirt|podzol|mycelium|soul_soil)/.test(path)) {
+  } else if (/(?:dirt|podzol|mycelium|soul_soil|farmland)/.test(path)) {
     color = 0x79634e;
   } else if (/(?:sand|gravel)/.test(path)) {
     color = path.includes("red_") ? 0xb66c42 : 0xc7b88b;

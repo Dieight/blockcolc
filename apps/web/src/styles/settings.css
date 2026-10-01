@@ -27,10 +27,11 @@
 .setting-name small{color:#58635d;font-size:0.75rem;line-height:1.4}
 .setting-row-end{flex:0 0 auto;display:flex;align-items:center;gap:12px}
 .setting-value{color:#17211c;font-size:1rem;font-weight:750;font-variant-numeric:tabular-nums}
-.number-field{flex:0 0 64px;width:64px;display:block;min-height:44px;margin:0;color:var(--muted);font-size:0.8125rem}
-.number-field input{display:block;width:64px;min-width:64px;height:44px;padding:8px;border:1px solid var(--control-border);border-radius:10px;background:var(--settings-field);color:var(--ink);text-align:right;font-size:1rem;font-weight:600;font-variant-numeric:tabular-nums;appearance:textfield;-moz-appearance:textfield}
+.number-field{flex:0 0 max(64px,3rem);width:max(64px,3rem);display:block;min-height:44px;margin:0;color:var(--muted);font-size:0.8125rem}
+.number-field input{display:block;width:100%;min-width:0;height:max(44px,calc(1.25rem + 16px));padding:8px 0 8px 8px;border:1px solid transparent;border-radius:8px;background:transparent;color:var(--focus);text-align:right;font-size:1rem;font-weight:600;font-variant-numeric:tabular-nums;appearance:textfield;-moz-appearance:textfield;cursor:text}
 .number-field input::-webkit-inner-spin-button,.number-field input::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
-.number-field input:focus-visible{background:var(--surface);outline:3px solid #c25844;outline-offset:2px}
+.number-field input:focus{background:var(--settings-field);border-color:var(--control-border)}
+.number-field input:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
 .number-field input:disabled{opacity:.5}
 .settings-text-action{min-height:44px;padding:8px 2px;border:0;background:none;color:#276749;font-weight:700;display:inline-flex;align-items:center;gap:6px}
 .settings-text-action svg{width:16px}
@@ -60,7 +61,15 @@
 .ios-switch input:focus-visible{outline:3px solid #c25844;outline-offset:2px}
 @media(prefers-reduced-motion:reduce){.ios-switch input,.ios-switch input::after{transition:none}}
 
-.glass-transparency-control{flex:0 0 min(300px,46vw);min-height:44px;display:grid;grid-template-columns:minmax(150px,1fr) 42px;align-items:center;gap:10px;color:#17211c;font-size:0.8125rem;font-weight:700;font-variant-numeric:tabular-nums}
+.settings-list>.glass-transparency-setting{border-top:1px solid var(--settings-separator)}
+.glass-transparency-setting>summary{padding:8px 16px;list-style:none;cursor:pointer}
+.glass-transparency-setting>summary::-webkit-details-marker{display:none}
+.glass-transparency-value{display:flex;align-items:center;gap:8px;flex:0 0 auto;color:var(--ink);font-size:1rem;font-weight:600;font-variant-numeric:tabular-nums}
+.glass-transparency-value svg{width:16px;height:16px;color:var(--muted);transition:transform .18s ease}
+.glass-transparency-setting[open] .glass-transparency-value svg{transform:rotate(180deg)}
+@media(prefers-reduced-motion:reduce){.glass-transparency-value svg{transition:none}}
+.glass-transparency-expanded{padding:0 16px 10px}
+.glass-transparency-control{min-height:44px;display:grid;grid-template-columns:minmax(0,1fr) 42px;align-items:center;gap:10px;color:var(--ink);font-size:0.8125rem;font-weight:600;font-variant-numeric:tabular-nums}
 .glass-transparency-control input[type="range"]{--range-track:#cbd5cd;--range-progress:50%;width:100%;height:44px;margin:0;padding:0;border:0;border-radius:0;background:transparent;color:var(--focus);cursor:pointer;-webkit-appearance:none;appearance:none;outline:none;box-shadow:none;-webkit-tap-highlight-color:transparent;-webkit-user-select:none;user-select:none;touch-action:pan-y}
 .glass-transparency-control input[type="range"]::-webkit-slider-runnable-track{height:4px;border:0;border-radius:999px;background:linear-gradient(to right,var(--focus) 0 var(--range-progress),var(--range-track) var(--range-progress) 100%);box-shadow:none}
 .glass-transparency-control input[type="range"]::-webkit-slider-thumb{width:20px;height:20px;margin-top:-8px;border:2px solid #fff;border-radius:50%;background:var(--focus);box-shadow:0 1px 4px rgba(23,33,28,.28);-webkit-appearance:none;appearance:none}
@@ -117,9 +126,6 @@
   .toggle-row .text-toggle{width:100%;flex:0 0 100%;max-width:100%;min-width:0;justify-content:flex-start}
   .toggle-row .text-toggle button{min-width:0;padding-inline:10px;white-space:normal}
   .toggle-row .planned-days{width:100%;flex:0 0 100%;max-width:100%;justify-content:flex-start}
-  .glass-transparency-row{align-items:flex-start;flex-wrap:wrap}
-  .glass-transparency-row .setting-name{width:100%;flex:0 0 100%;max-width:100%}
-  .glass-transparency-control{width:100%;flex:0 0 100%;max-width:100%;min-width:0}
 }
 
 /* Reduced transparency: declared last so it wins the final cascade over every

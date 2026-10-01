@@ -1,4 +1,5 @@
 import {expect,test,type Page,type Locator} from '@playwright/test';
+import {expandGlassSetting} from './expand-glass-setting';
 import {gzipSync} from 'node:zlib';
 import {testNbt as nbt,writeJavaNbt} from '../../../packages/litematic/test/nbt-fixture.js';
 
@@ -40,6 +41,7 @@ test('glass adjustment affects only immersive clocks, not reading surfaces',asyn
  await page.getByRole('checkbox',{name:'开启极简模式'}).check();
  const samples=[];
  for(const key of ['Home','End']){
+  await expandGlassSetting(page);
   await page.getByLabel('液态玻璃通透程度').press(key);
   const settings=await material(page.locator('.settings-list').first());
   await page.getByRole('button',{name:'计时',exact:true}).click();

@@ -135,6 +135,35 @@ export function sourceCandleEmissionForVoxel(
 
 export type LightingVector = readonly [number, number, number];
 
+export interface DirectionalLightingProjection {
+  source: "sun" | "moon" | "none";
+  position: LightingVector;
+  intensity: number;
+  color: number;
+}
+
+/** Reuse one shadow map for the dominant visible celestial light. Ambient
+ * readability is separate: a hidden/new moon must not invent a night sun. */
+export function directionalLightingForState(state: SunState): DirectionalLightingProjection {
+  const unit = (value: number): number => Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 0;
+  // sunVisibility already includes apparent-disc direct strength, and is the
+  // shared interpolated value when switching synthetic/astronomical sources.
+  const sunlight = unit(state.sunVisibility);
+  const solarIntensity = (Number.isFinite(state.intensity) ? Math.max(0, state.intensity) : 0) * sunlight;
+  const moonAboveHorizon = state.moonPosition.every(Number.isFinite) && state.moonPosition[1] > 0;
+  // A perceptual lift makes lunar relief legible in the brightened voxel night;
+  // phase/visibility still own whether moonlight exists. Synthetic nights use
+  // the same full-disc convention as the existing moon sprite.
+  const lunarIntensity = moonAboveHorizon
+    ? 0.55 * unit(state.moonVisibility) * Math.sqrt(unit(state.moonIllumination ?? 1)) * (1 - sunlight)
+    : 0;
+  if (lunarIntensity > solarIntensity) return {
+    source: "moon", position: state.moonPosition, intensity: lunarIntensity, color: 0xb3c7e3,
+  };
+  return { source: solarIntensity > 0 ? "sun" : "none", position: state.position,
+    intensity: solarIntensity, color: state.color };
+}
+
 /**
  * Returns the direction a directional shadow ray travels from the light source
  * toward the world. Keeping this derived from the same source position used by

@@ -233,8 +233,9 @@ export function TasksScreen({ active, state, run, onCreateProject, onViewProject
     </section> : <>
       <div className="task-section-heading">
         <div><h2>施工清单</h2><p>已完成 {completedSubtasks.length} / {active.project.subtasks.length} 项</p></div>
-        <div className="task-section-actions">{locked && <div className="structure-lock"><LockKeyhole/><span>已有进度后不能增删，可继续改名和排序。</span></div>}<IconButton label={managingTasks ? '结束编辑施工清单' : '编辑施工清单'} disabled={pending} onClick={() => setManagingTasks(value => !value)}>{managingTasks ? <Check/> : <Pencil/>}</IconButton></div>
+        <div className="task-section-actions"><IconButton label={managingTasks ? '结束编辑施工清单' : '编辑施工清单'} disabled={pending} onClick={() => setManagingTasks(value => !value)}>{managingTasks ? <Check/> : <Pencil/>}</IconButton></div>
       </div>
+      {locked && <div className="structure-lock task-structure-note"><LockKeyhole/><span>已有进度后不能增删，可继续改名和排序。</span></div>}
 
       <div className="task-editor-list">
         {managingTasks ? active.project.subtasks.map(renderSubtask) : <>

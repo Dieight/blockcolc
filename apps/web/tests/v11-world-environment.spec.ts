@@ -26,7 +26,8 @@ test('switches the derived world environment without moving project data', async
   await page.reload();
   await page.getByRole('button', { name: '计时', exact: true }).click();
   await expect(canvas).toHaveAttribute('data-environment-style', 'classic-island');
-  await expect(canvas).toHaveAttribute('data-natural-tree-count', '0');
+  await expect(canvas).toHaveAttribute('data-scenery-village', 'null');
+  expect(Number(await canvas.getAttribute('data-natural-tree-count'))).toBeLessThanOrEqual(3);
   // The sky rebuilds with the environment: clouds must match the small island,
   // not keep the natural valley's wide envelope.
   await expect.poll(async () => Number(await canvas.getAttribute('data-cloud-span-x'))).toBeLessThan(naturalSpan / 2);

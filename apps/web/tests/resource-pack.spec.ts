@@ -3,6 +3,7 @@ import { strToU8, zipSync } from 'fflate';
 import { existsSync } from 'node:fs';
 import { deflateSync } from 'node:zlib';
 import { basename, resolve } from 'node:path';
+import { readPersistedDomainState } from './persisted-domain-state';
 
 test('imports, persists, switches and safely deletes a local Java resource pack', async ({page}) => {
   const archive=Buffer.from(makePack());
@@ -92,13 +93,21 @@ test('a selected base completes a separate active appearance pack across the ren
   const appearancePackId = layeredId?.match(/^layer:sha256:[a-f0-9]{64}:(sha256:[a-f0-9]{64})$/)?.[1];
   expect(appearancePackId).toBeDefined();
   await expect.poll(async () => Number(await canvas.getAttribute('data-textured-voxel-count')), {timeout:20_000}).toBeGreaterThan(0);
+  const layeredTexturedCount = Number(await canvas.getAttribute('data-textured-voxel-count'));
+  const layeredFallbackCount = Number(await canvas.getAttribute('data-fallback-voxel-count'));
 
   await page.getByRole('button', {name:'设置'}).click();
   await base.getByRole('button', {name:'取消基础'}).click();
   await page.getByRole('button', {name:'计时'}).click();
   await expect(canvas).toHaveAttribute('data-active-resource-pack-id', appearancePackId!);
-  await expect.poll(async () => Number(await canvas.getAttribute('data-textured-voxel-count')), {timeout:20_000}).toBe(0);
-  await expect.poll(async () => Number(await canvas.getAttribute('data-fallback-voxel-count')), {timeout:20_000}).toBeGreaterThan(0);
+  // The base supplies only stone, while the appearance pack independently
+  // textures the new biome scenery. Removing the base must remove its real
+  // renderer contribution, not remove the unrelated appearance textures.
+  await expect.poll(async () => Number(await canvas.getAttribute('data-textured-voxel-count')), {timeout:20_000})
+    .toBeLessThan(layeredTexturedCount);
+  expect(Number(await canvas.getAttribute('data-textured-voxel-count'))).toBeGreaterThan(0);
+  await expect.poll(async () => Number(await canvas.getAttribute('data-fallback-voxel-count')), {timeout:20_000})
+    .toBeGreaterThan(layeredFallbackCount);
   await canvas.screenshot();
   expect(shaderErrors).toEqual([]);
 });
@@ -229,10 +238,18 @@ test('retextures built-in buildings through vanilla stand-in blocks', async ({ p
   }, { timeout: 20_000 }).toBeLessThan(0.02);
 });
 
-test('renders translucent multipart panes and zero-thickness iron bars from a real imported building',async({page},testInfo)=>{
+for (const projectSeed of [null, '20c94b43-1756-47c7-8bf6-03b12c778bdb']) {
+test(`renders translucent multipart panes and zero-thickness iron bars from a real imported building${projectSeed ? ' with the high-batch regression seed' : ''}`,async({page},testInfo)=>{
   test.setTimeout(90_000);
   const sample=resolve(process.cwd(),'../../litematic/a94f3c5d-b4ad-42e1-ba26-f474b204b0ea.litematic');
   test.skip(!existsSync(sample), 'The real Litematic compatibility fixture stays local.');
+  if (projectSeed) await page.addInitScript(seed => {
+    let counter = 0;
+    // Five task/blueprint IDs precede the project in this import fixture.
+    // The active-project assertion below guards against a changed call order.
+    Object.defineProperty(crypto, 'randomUUID', { configurable: true, value: () => ++counter === 6 ? seed
+      : `00000000-0000-4000-8000-${counter.toString(16).padStart(12, '0')}` });
+  }, projectSeed);
   await page.clock.install({time:new Date('2026-07-26T05:00:00.000Z')});
   await page.goto('/?__atlasPageSize=256');
   await page.getByLabel('导入 .litematic').setInputFiles(sample);
@@ -243,6 +260,7 @@ test('renders translucent multipart panes and zero-thickness iron bars from a re
   await page.getByLabel('新增小任务').fill('验证玻璃板与铁栏杆');
   await page.getByLabel('新增小任务').press('Enter');
   await page.getByRole('button',{name:'开始建造'}).click();
+  if (projectSeed) expect((await readPersistedDomainState(page)).state.activeProjectId).toBe(`project-${projectSeed}`);
   await page.getByRole('button',{name:'设置'}).click();
   await page.getByLabel('导入 Java 资源包 ZIP').setInputFiles({name:'p2-visual-test.zip',mimeType:'application/zip',buffer:Buffer.from(makeVisualPack())});
   await expect(page.locator('.resource-pack-panel .backup-notice')).toContainText('已导入并启用');
@@ -250,6 +268,7 @@ test('renders translucent multipart panes and zero-thickness iron bars from a re
   await page.reload();
   const canvas=page.getByLabel('项目建筑世界');
   await expect(canvas).toBeVisible();
+  await expect(canvas).toHaveAttribute('data-initial-reveal-completed-count', '1', { timeout: 20_000 });
   await expect.poll(async()=>Number(await canvas.getAttribute('data-atlas-page-count')),{timeout:30_000}).toBeGreaterThan(1);
   await expect.poll(async()=>Number(await canvas.getAttribute('data-multipart-geometry-voxel-count'))).toBeGreaterThan(150);
   await expect.poll(async()=>Number(await canvas.getAttribute('data-translucent-geometry-voxel-count'))).toBeGreaterThan(50);
@@ -261,8 +280,18 @@ test('renders translucent multipart panes and zero-thickness iron bars from a re
   }).toBeLessThanOrEqual(120);
   expect(Number(await canvas.getAttribute('data-render-triangles'))).toBeLessThanOrEqual(350_000); // V23 refined far-fine tier adds terrain triangles on purpose
   await expect(canvas).toHaveAttribute('data-continuous-rendering','false');
+  const metrics = await canvas.evaluate(element => {
+    const d = (element as HTMLCanvasElement).dataset;
+    return { calls: Number(d.renderCalls), triangles: Number(d.renderTriangles), frame: Number(d.renderFrameCount),
+      quality: d.activeLightingQuality, geometryBatches: Number(d.geometrySignatureBatchCount),
+      sceneryCalls: Number(d.ambientDecorationDrawCalls), village: d.sceneryVillage, lods: d.sceneryLods };
+  });
+  await testInfo.attach('real-building-render-budget', { contentType: 'application/json',
+    body: JSON.stringify({ projectSeed: projectSeed ?? 'random', metrics,
+      limits: { colorCalls: 120, triangles: 350_000, geometryBatches: 64 } }) });
   await canvas.screenshot({path:testInfo.outputPath('p2-multipart-pane-bars.png')});
 });
+}
 
 test('a user-owned 26.3 client JAR supplies models beneath all four provided appearance packs', async ({page}) => {
   test.setTimeout(360_000);

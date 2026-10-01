@@ -1,10 +1,41 @@
 import { expect, test } from '@playwright/test';
+import { expandGlassSetting } from './expand-glass-setting';
 
 async function openSettings(page: import('@playwright/test').Page) {
   await page.goto('/');
   await page.getByRole('button', { name: '开始建造' }).click();
   await page.getByRole('button', { name: '设置' }).click();
 }
+
+test('glass adjustment is collapsed until requested, keyboard-accessible, and preserves its saved value', async ({ page }, testInfo) => {
+  await openSettings(page);
+  const range = page.getByLabel('液态玻璃通透程度', { exact: true });
+  const summary = page.locator('.glass-transparency-setting > summary');
+  await expect(range).toBeHidden();
+  await expect(summary).toContainText('50%');
+  await summary.focus();
+  await page.keyboard.press('Enter');
+  await expect(range).toBeVisible();
+  await range.focus();
+  await page.keyboard.press('End');
+  await expect(range).toHaveValue('100');
+  await expect(summary).toContainText('100%');
+  await summary.click();
+  await expect(range).toBeHidden();
+  await page.reload();
+  await page.getByRole('button', { name: '设置', exact: true }).click();
+  await expect(range).toBeHidden();
+  await expect(summary).toContainText('100%');
+  await expandGlassSetting(page);
+  await expect(range).toHaveValue('100');
+  for (const width of [320, 780]) {
+    await page.setViewportSize({ width, height: 820 });
+    const bounds = await range.boundingBox();
+    expect(bounds!.width).toBeGreaterThanOrEqual(180);
+    expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(width);
+    await range.screenshot({ path: testInfo.outputPath(`glass-range-${width}.png`) });
+  }
+});
 
 test('real-weather availability stays in Settings while Web keeps the local simulation', async ({ page }) => {
   await openSettings(page);
@@ -270,8 +301,8 @@ test('settings stays readable at five viewports in both themes and under large t
     }
   }
 
-  // 20px root text approximates a large Android WebView font scale while
-  // retaining the product's fixed touch-control dimensions.
+  // Exercise both a common larger font and the 200% text-only boundary.
+  // This is browser layout evidence, not an Android system-font claim.
   await page.setViewportSize({ width: 360, height: 800 });
   // Recreate the page after crossing the desktop breakpoint. Chromium's
   // emulated mobile context can retain the previous breakpoint's shell inset
@@ -281,7 +312,8 @@ test('settings stays readable at five viewports in both themes and under large t
   await expect(page.getByRole('button', { name: '设置', exact: true })).toBeVisible();
   await page.getByRole('button', { name: '设置', exact: true }).click();
   await page.emulateMedia({ reducedMotion: 'reduce' });
-  await page.evaluate(() => { document.documentElement.style.fontSize = '20px'; });
+  for (const fontSize of [20, 32]) {
+  await page.evaluate(size => { document.documentElement.style.fontSize = `${size}px`; }, fontSize);
   const largeTextLayout = await page.evaluate(() => {
     const width = document.documentElement.clientWidth;
     const offenderDetails = [...document.querySelectorAll('body *')]
@@ -300,12 +332,20 @@ test('settings stays readable at five viewports in both themes and under large t
       offenders: offenderDetails.length,
       offenderDetails,
       numberHeights: [...document.querySelectorAll('.number-field input')].map((input) => input.getBoundingClientRect().height),
+      numberCapacity: [...document.querySelectorAll<HTMLInputElement>('.number-field input')].map(input => {
+        const style = getComputedStyle(input), ctx = document.createElement('canvas').getContext('2d')!;
+        ctx.font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+        return { available: input.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight),
+          required: ctx.measureText(input.max || input.value).width };
+      }),
     };
   });
   expect(largeTextLayout.overflow, JSON.stringify(largeTextLayout)).toBeLessThanOrEqual(1);
   expect(largeTextLayout.offenders, JSON.stringify(largeTextLayout)).toBe(0);
   for (const height of largeTextLayout.numberHeights) expect(height).toBeGreaterThanOrEqual(43.5);
-  await page.screenshot({ path: testInfo.outputPath('settings-large-text.png'), fullPage: true });
+  for (const number of largeTextLayout.numberCapacity) expect(number.available, JSON.stringify(number)).toBeGreaterThanOrEqual(number.required);
+  await page.screenshot({ path: testInfo.outputPath(`settings-large-text-${fontSize}.png`), fullPage: true });
+  }
 });
 
 test('reduced transparency falls back to solid settings surfaces', async ({ page }) => {

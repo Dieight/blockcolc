@@ -37,9 +37,18 @@ async function routeSnapshot(canvas: Locator) {
   return canvas.evaluate(element => {
     const d = (element as HTMLCanvasElement).dataset;
     return { pack: Number(d.naturalFlowerPackPlacementCount), fallback: Number(d.naturalFlowerOriginalFallbackCount),
-      visibleBatches: Number(d.naturalFlowerVisibleBatchCount), lod: d.naturalDecorationLod,
+      visibleBatches: Number(d.naturalFlowerVisibleBatchCount),
+      lods: JSON.parse(d.sceneryLods ?? '[]') as { id: string; lod: string; projectedWidth: number }[],
       rebuilds: Number(d.worldRebuildCount) };
   });
+}
+
+async function expectProjectedLods(canvas: Locator) {
+  await expect.poll(async () => {
+    const { lods } = await routeSnapshot(canvas);
+    return lods.length > 0 && lods.every(o => o.projectedWidth < 30 ? o.lod === 'distant'
+      : o.projectedWidth > 42 ? o.lod === 'full' : true);
+  }).toBe(true);
 }
 
 test('captures WebGL link, error, and context state at natural flower routing stages', async ({ page }, testInfo) => {
@@ -224,12 +233,12 @@ test('captures WebGL link, error, and context state at natural flower routing st
   observations.push({ stage: 'no-pack-no-gesture', route: await routeSnapshot(canvas) });
   await mark('world-without-pack-full-distance');
   await pinch(page, canvas, true);
-  await expect(canvas).toHaveAttribute('data-natural-decoration-lod', 'full');
+  await expectProjectedLods(canvas);
   await page.waitForTimeout(250);
   observations.push({ stage: 'no-pack-full', route: await routeSnapshot(canvas) });
   await mark('world-without-pack-far-distance');
   await pinch(page, canvas, false);
-  await expect(canvas).toHaveAttribute('data-natural-decoration-lod', 'silhouette');
+  await expectProjectedLods(canvas);
   await page.waitForTimeout(250);
   observations.push({ stage: 'no-pack-far', route: await routeSnapshot(canvas) });
   for (const partial of [false, true]) {
@@ -244,14 +253,14 @@ test('captures WebGL link, error, and context state at natural flower routing st
     await expect(canvas).toHaveAttribute('data-active-resource-pack-id', /^sha256:/);
     await expect.poll(() => canvas.getAttribute('data-natural-flower-pack-placement-count'), { timeout: 20_000 }).not.toBe('0');
     await pinch(page, canvas, true);
-    await expect(canvas).toHaveAttribute('data-natural-decoration-lod', 'full');
+    await expectProjectedLods(canvas);
     observations.push({ stage: `${packStage}-full`, route: await routeSnapshot(canvas) });
     await mark(`${packStage}-far`);
     await pinch(page, canvas, false);
-    await expect(canvas).toHaveAttribute('data-natural-decoration-lod', 'silhouette');
+    await expectProjectedLods(canvas);
     observations.push({ stage: `${packStage}-far`, route: await routeSnapshot(canvas) });
     await pinch(page, canvas, true);
-    await expect(canvas).toHaveAttribute('data-natural-decoration-lod', 'full');
+    await expectProjectedLods(canvas);
   }
   await mark('restore-original-pack');
   await page.getByRole('button', { name: '设置', exact: true }).click();

@@ -86,6 +86,7 @@ describe('MarathonProgressReport submission boundary', () => {
   it('offers the same report surface with an explicit immersive presentation variant', () => {
     expect(focusReportSurfaceClass('embedded')).toBe('focus-report-surface');
     expect(focusReportSurfaceClass('immersive')).toBe('focus-report-surface focus-report-surface--immersive');
+    expect(focusReportSurfaceClass('minimal')).toBe('focus-report-surface focus-report-surface--immersive focus-report-surface--minimal');
   });
   it('treats unchanged progress as an explicit choice and clears it only on a second click', () => {
     const selected = applyTaskProgressSelection({}, {}, 'subtask-1', 2500);

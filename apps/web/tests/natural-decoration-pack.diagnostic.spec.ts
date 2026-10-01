@@ -35,9 +35,17 @@ async function routeSnapshot(canvas: Locator) {
     const d = (element as HTMLCanvasElement).dataset;
     return { pack: Number(d.naturalFlowerPackPlacementCount), fallback: Number(d.naturalFlowerOriginalFallbackCount),
       visibleFlowerBatches: Number(d.naturalFlowerVisibleBatchCount), treeMushrooms: Number(d.treeSideMushroomCount),
-      lod: d.naturalDecorationLod, rebuilds: Number(d.worldRebuildCount),
+      lods: JSON.parse(d.sceneryLods ?? '[]') as { id: string; lod: string; projectedWidth: number }[], rebuilds: Number(d.worldRebuildCount),
       requested: d.requestedLightingQuality, active: d.activeLightingQuality };
   });
+}
+
+async function expectProjectedLods(canvas: Locator) {
+  await expect.poll(async () => {
+    const { lods } = await routeSnapshot(canvas);
+    return lods.length > 0 && lods.every(o => o.projectedWidth < 30 ? o.lod === 'distant'
+      : o.projectedWidth > 42 ? o.lod === 'full' : true);
+  }).toBe(true);
 }
 
 for (const environment of [
@@ -72,7 +80,7 @@ for (const environment of [
     await expect(canvas).toHaveAttribute('data-environment-style', environment.value);
     await expect(canvas).toHaveAttribute('data-first-nonempty-frame-ms', /\d/, { timeout: 20_000 });
     await pinch(page, canvas, true);
-    await expect(canvas).toHaveAttribute('data-natural-decoration-lod', 'full');
+    await expectProjectedLods(canvas);
     await expect.poll(async () => (await routeSnapshot(canvas)).fallback).toBeGreaterThan(0);
     const initial = await routeSnapshot(canvas);
     const before = await readPersistedDomainState(page);
@@ -90,7 +98,7 @@ for (const environment of [
       await expect(canvas).toHaveAttribute('data-active-resource-pack-id', /^sha256:/);
       await expect.poll(async () => (await routeSnapshot(canvas)).pack, { timeout: 20_000 }).toBeGreaterThan(0);
       await pinch(page, canvas, true);
-      await expect(canvas).toHaveAttribute('data-natural-decoration-lod', 'full');
+      await expectProjectedLods(canvas);
       const full = await routeSnapshot(canvas);
       expect(full.pack + full.fallback).toBe(initial.fallback);
       if (partial) expect(full.fallback).toBeGreaterThan(0);
@@ -99,16 +107,19 @@ for (const environment of [
       observations.push({ stage: partial ? 'partial-full' : 'pack-full', ...full });
       const rebuilds = full.rebuilds;
       await pinch(page, canvas, false);
-      await expect(canvas).toHaveAttribute('data-natural-decoration-lod', 'silhouette');
+      await expectProjectedLods(canvas);
       const far = await routeSnapshot(canvas);
-      expect(far.visibleFlowerBatches).toBe(1);
+      // Mixed gardens retain actual low flower models, not one world-wide color blob.
+      expect(far.visibleFlowerBatches).toBeGreaterThan(0);
+      expect(far.lods.map(o => o.id)).toEqual(full.lods.map(o => o.id));
+      expect(far.lods.some(o => o.projectedWidth < full.lods.find(n => n.id === o.id)!.projectedWidth)).toBe(true);
       expect(far.rebuilds).toBe(rebuilds);
       expect(far.pack).toBe(full.pack);
       expect(far.fallback).toBe(full.fallback);
       await canvas.screenshot({ path: testInfo.outputPath(partial ? 'partial-flower-far.png' : 'pack-flower-far.png') });
       observations.push({ stage: partial ? 'partial-far' : 'pack-far', ...far });
       await pinch(page, canvas, true);
-      await expect(canvas).toHaveAttribute('data-natural-decoration-lod', 'full');
+      await expectProjectedLods(canvas);
       expect((await routeSnapshot(canvas)).rebuilds).toBe(rebuilds);
     }
     await page.getByRole('button', { name: '设置', exact: true }).click();

@@ -15,10 +15,10 @@ describe('minimal presentation priority',()=>{
  });
  it('lets pending reporting and existing ordinary plans win',()=>{
   expect(canPresentMinimalFocus(state,null,true,true)).toBe(false);
-  expect(canPresentMinimalFocus(state,{...plan,status:'report'},true,false)).toBe(false);
+  expect(canPresentMinimalFocus(state,{...plan,status:'report',deferredSettlement:undefined},true,false)).toBe(false);
   expect(canPresentMinimalFocus(state,{...plan,deferredSettlement:undefined,subtaskId:'s'},true,false)).toBe(false);
  });
- it.each(['ready','break','focus'] as const)('keeps deferred %s immersive',status=>{
+ it.each(['ready','break','focus','report'] as const)('keeps deferred %s immersive',status=>{
   expect(canPresentMinimalFocus(state,{...plan,status},true,false)).toBe(true);
  });
  it('does not relabel an ordinary active session as minimal',()=>{

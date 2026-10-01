@@ -83,6 +83,12 @@ export function WorldWeatherSettingsStatus({ enabled, view }: { enabled: boolean
     .filter((value): value is NonNullable<typeof value> => value !== null);
   const astronomyAttributions = (view.astronomyContext?.schedule?.attribution ?? []).map(safeAttribution)
     .filter((value): value is NonNullable<typeof value> => value !== null);
+  const hasWeatherSource = enabled && view.source === 'real';
+  const hasAstronomySource = enabled && view.astronomySyncState === 'calendar';
+  const sourceAttributions = [...(hasWeatherSource ? attributions : []),
+    ...(hasAstronomySource ? astronomyAttributions : [])]
+    .filter((item, index, items) => items.findIndex(other =>
+      (other.href ?? other.text) === (item.href ?? item.text)) === index);
   const observedAt = formatObservedAt(view.observedAt);
   const manualRetry = view.fallbackReason !== null && !isWorldWeatherFailureRetryable(view.fallbackReason);
   const status = !enabled
@@ -111,17 +117,11 @@ export function WorldWeatherSettingsStatus({ enabled, view }: { enabled: boolean
   return <div className="weather-setting-status" role="status" aria-live="polite">
     <small>{status}</small>
     <small className="weather-astronomy-status">{astronomyStatus}</small>
-    {enabled && view.source === 'real' && <div className="weather-setting-attribution">
-      <span>来源：</span>
+    {(hasWeatherSource || hasAstronomySource) && <div className="weather-setting-attribution">
+      <span>数据来源：</span>
       <a href="https://www.qweather.com" target="_blank" rel="noopener noreferrer">和风天气</a>
-      {attributions.map((item, index) => item.href
-        ? <a key={`${item.text}-${index}`} href={item.href} target="_blank" rel="noopener noreferrer" aria-label={`查看天气数据归因 ${index + 1}`}>数据归因 ↗</a>
-        : <span key={`${item.text}-${index}`}>{item.text}</span>)}
-    </div>}
-    {enabled && view.astronomySyncState === 'calendar' && astronomyAttributions.length > 0 && <div className="weather-setting-attribution">
-      <span>天文数据：</span>
-      {astronomyAttributions.map((item, index) => item.href
-        ? <a key={`${item.text}-${index}`} href={item.href} target="_blank" rel="noopener noreferrer" aria-label={`查看天文数据归因 ${index + 1}`}>数据归因 ↗</a>
+      {sourceAttributions.map((item, index) => item.href
+        ? <a key={`${item.text}-${index}`} href={item.href} target="_blank" rel="noopener noreferrer" aria-label={`查看天气与天文数据归因 ${index + 1}`}>数据归因 ↗</a>
         : <span key={`${item.text}-${index}`}>{item.text}</span>)}
     </div>}
   </div>;

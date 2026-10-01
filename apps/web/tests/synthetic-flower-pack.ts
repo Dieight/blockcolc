@@ -6,7 +6,7 @@ export function syntheticFlowerPack(partial = false): Buffer {
   const files: Record<string, Uint8Array> = {
     'pack.mcmeta': strToU8(JSON.stringify({ pack: { pack_format: 34, description: 'Synthetic flower routing audit' } })),
   };
-  const species = ['poppy', 'dandelion', 'azure_bluet', 'oxeye_daisy'];
+  const species = ['poppy', 'dandelion', 'cornflower', 'oxeye_daisy'];
   for (const [index, id] of species.entries()) {
     files[`assets/minecraft/blockstates/${id}.json`] = strToU8(JSON.stringify({ variants: { '': { model: `minecraft:block/${id}` } } }));
     const broken = partial && id !== 'poppy';

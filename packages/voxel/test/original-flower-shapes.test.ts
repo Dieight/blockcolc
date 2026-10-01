@@ -8,6 +8,21 @@ const voxel = (sourceBlockId: string, x = 0): BlueprintVoxel => ({
 });
 
 describe("original pack-free flower shapes", () => {
+  it('renders wheat growth as thin stalks rather than a solid cube', () => {
+    const root = new THREE.Group();
+    const plants = [0, 7].map(age => ({ ...voxel('minecraft:wheat', age), sourceBlockState: { age: String(age) } }));
+    expect(addOriginalFlowerShapes(root, plants)).toEqual(new Set(plants));
+    expect(addOriginalFlowerShapes(root, [voxel('example:wheat')])).toEqual(new Set());
+    expect(root.children).toHaveLength(2);
+    const heights = root.children.map(child => {
+      const mesh = child as THREE.InstancedMesh;
+      expect(mesh.userData.originalShape).toBe('original-crop-approximation');
+      expect(mesh.geometry.boundingBox!.getSize(new THREE.Vector3()).x).toBeLessThan(.7);
+      const height = mesh.geometry.boundingBox!.getSize(new THREE.Vector3()).y;
+      mesh.geometry.dispose(); (mesh.userData.ownedMaterial as THREE.Material).dispose(); return height;
+    });
+    expect(heights[0]).toBeLessThan(.2); expect(heights[1]).toBeGreaterThan(.8);
+  });
   it("uses a fixed legal species registration with a matching whole-flower fallback for every variant", () => {
     expect(NATURAL_FLOWER_SOURCE_BLOCK_IDS).toEqual([
       "minecraft:poppy", "minecraft:dandelion", "minecraft:azure_bluet", "minecraft:oxeye_daisy",

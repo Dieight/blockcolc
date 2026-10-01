@@ -11,35 +11,9 @@ type ProbePhase = {
 };
 type ProbeSnapshot = { operations: Array<{ result: string; phases: ProbePhase[] }> };
 
-test('keeps the resident world while quality projections reverse across day, night, visibility, and reduced motion', async ({ page }, testInfo) => {
+test('keeps the resident world while quality projections reverse across day and night', async ({ page }, testInfo) => {
   test.setTimeout(120_000);
-  await page.addInitScript(() => {
-    const useNight = sessionStorage.getItem('blockcolc-quality-night-document') === '1';
-    const epoch = new Date(useNight ? '2026-09-28T23:00:00+08:00' : '2026-09-28T12:00:00+08:00').getTime();
-    const scope = window as typeof window & { __qualityBusinessEpoch?: number };
-    scope.__qualityBusinessEpoch = epoch;
-    const NativeDate = Date;
-    globalThis.Date = new Proxy(NativeDate, {
-      construct(target, args, newTarget) {
-        return Reflect.construct(target, args.length === 0 ? [scope.__qualityBusinessEpoch!] : args, newTarget);
-      },
-      apply() { return new NativeDate(scope.__qualityBusinessEpoch!).toString(); },
-      get(target, property, receiver) {
-        return property === 'now' ? () => scope.__qualityBusinessEpoch! : Reflect.get(target, property, receiver);
-      },
-    });
-    let uuid = 0;
-    Object.defineProperty(crypto, 'randomUUID', { configurable: true, value: () => {
-      uuid += 1;
-      return `00000000-0000-4000-8000-${uuid.toString(16).padStart(12, '0')}`;
-    } });
-    localStorage.setItem('blockcolc-focus-preferences-v1', JSON.stringify({
-      focusMinutes: 45, breakMinutes: 5, lightingQuality: 'performance', constructionOutlineVisibility: 'current',
-      showWorldCoordinates: false, focusGlassTransparency: 50, themeMode: 'light', returnToFocusReminders: true,
-      autoContinueFocus: false, realWeatherEnabled: false, minimalMode: false,
-    }));
-    (window as typeof window & { __blockcolcQualityLifecyclePageStartAt?: number }).__blockcolcQualityLifecyclePageStartAt = performance.now();
-  });
+  await configureQualityScene(page);
   await page.goto('/');
   await page.getByRole('button', { name: '开始建造' }).click();
   const canvas = page.getByLabel('项目建筑世界');
@@ -129,6 +103,23 @@ test('keeps the resident world while quality projections reverse across day, nig
   expect(Number(await nightCanvas.getAttribute('data-world-rebuild-count'))).toBe(nightRebuilds);
 
   await switchQuality(page, nightCanvas, 'performance', '流畅');
+});
+
+test('preserves the hot-switched resident world across visibility and reduced motion within one bounded probe', async ({ page }) => {
+  test.setTimeout(60_000);
+  await configureQualityScene(page, true);
+  await page.goto('/');
+  await page.getByRole('button', { name: '开始建造' }).click();
+  const nightCanvas = page.getByLabel('项目建筑世界');
+  await waitForStableWorld(nightCanvas);
+  await waitForInitialReveal(page, nightCanvas);
+  await setDebugScene(page, '23:00');
+  await expect(nightCanvas).toHaveAttribute('data-day-phase', 'night');
+  await expect(nightCanvas).toHaveAttribute('data-weather-kind', 'rain');
+  await switchQuality(page, nightCanvas, 'cinematic', '精致');
+  await switchQuality(page, nightCanvas, 'performance', '流畅');
+  const nightGeneration = Number(await nightCanvas.getAttribute('data-renderer-generation'));
+  const nightRebuilds = Number(await nightCanvas.getAttribute('data-world-rebuild-count'));
   await beginPair(page);
   const readsBeforeResume = await qualityReadCounts(page);
   await page.evaluate(() => {
@@ -148,6 +139,7 @@ test('keeps the resident world while quality projections reverse across day, nig
   expect(readsAfterResume.metadata).toBeGreaterThan(readsBeforeResume.metadata);
   expect(readsAfterResume.full).toBe(readsBeforeResume.full);
   expect(Number(await nightCanvas.getAttribute('data-renderer-generation'))).toBe(nightGeneration);
+  expect(Number(await nightCanvas.getAttribute('data-world-rebuild-count'))).toBe(nightRebuilds);
   await page.evaluate(() => (window as typeof window & { __blockcolcQualityLifecycle?: { endOperation(result: 'completed'): void } })
     .__blockcolcQualityLifecycle?.endOperation('completed'));
 
@@ -157,9 +149,11 @@ test('keeps the resident world while quality projections reverse across day, nig
   await page.emulateMedia({ reducedMotion: 'no-preference' });
   await expect(nightCanvas).toHaveAttribute('data-requested-lighting-quality', 'performance');
   expect(Number(await nightCanvas.getAttribute('data-renderer-generation'))).toBe(nightGeneration);
+  expect(Number(await nightCanvas.getAttribute('data-world-rebuild-count'))).toBe(nightRebuilds);
 });
 
 test('reports a lost WebGL context as a failed quality request without publishing a new tier', async ({ page }) => {
+  test.setTimeout(60_000);
   await page.addInitScript(() => {
     (window as typeof window & { __blockcolcQualityLifecyclePageStartAt?: number }).__blockcolcQualityLifecyclePageStartAt = performance.now();
   });
@@ -167,7 +161,7 @@ test('reports a lost WebGL context as a failed quality request without publishin
   await page.getByRole('button', { name: '开始建造' }).click();
   const canvas = page.getByLabel('项目建筑世界');
   await expect(canvas).toHaveAttribute('data-quality-tier', /^(low|balanced|high)$/);
-  await expect.poll(async () => (await qualitySnapshot(page))?.operations[0]?.result).toBe('completed');
+  await waitForInitialReveal(page, canvas);
   const previousTier = await canvas.getAttribute('data-quality-tier');
   const previousPreference = await canvas.getAttribute('data-requested-lighting-quality');
   const operation = await beginPair(page);
@@ -289,6 +283,36 @@ test('host refresh cancellation clears only its own loading state and explicit r
   await expect(page.getByText('正在更新世界材质…')).toHaveCount(0);
 });
 
+async function configureQualityScene(page: Page, initialNight = false): Promise<void> {
+  await page.addInitScript(({ initialNight }) => {
+    const useNight = initialNight || sessionStorage.getItem('blockcolc-quality-night-document') === '1';
+    const epoch = new Date(useNight ? '2026-09-28T23:00:00+08:00' : '2026-09-28T12:00:00+08:00').getTime();
+    const scope = window as typeof window & { __qualityBusinessEpoch?: number };
+    scope.__qualityBusinessEpoch = epoch;
+    const NativeDate = Date;
+    globalThis.Date = new Proxy(NativeDate, {
+      construct(target, args, newTarget) {
+        return Reflect.construct(target, args.length === 0 ? [scope.__qualityBusinessEpoch!] : args, newTarget);
+      },
+      apply() { return new NativeDate(scope.__qualityBusinessEpoch!).toString(); },
+      get(target, property, receiver) {
+        return property === 'now' ? () => scope.__qualityBusinessEpoch! : Reflect.get(target, property, receiver);
+      },
+    });
+    let uuid = 0;
+    Object.defineProperty(crypto, 'randomUUID', { configurable: true, value: () => {
+      uuid += 1;
+      return `00000000-0000-4000-8000-${uuid.toString(16).padStart(12, '0')}`;
+    } });
+    localStorage.setItem('blockcolc-focus-preferences-v1', JSON.stringify({
+      focusMinutes: 45, breakMinutes: 5, lightingQuality: 'performance', constructionOutlineVisibility: 'current',
+      showWorldCoordinates: false, focusGlassTransparency: 50, themeMode: 'light', returnToFocusReminders: true,
+      autoContinueFocus: false, realWeatherEnabled: false, minimalMode: false,
+    }));
+    (window as typeof window & { __blockcolcQualityLifecyclePageStartAt?: number }).__blockcolcQualityLifecyclePageStartAt = performance.now();
+  }, { initialNight });
+}
+
 async function waitForStableWorld(canvas: import('@playwright/test').Locator): Promise<void> {
   await expect.poll(async () => {
     const rebuilds = Number(await canvas.getAttribute('data-world-rebuild-count'));
@@ -299,11 +323,17 @@ async function waitForStableWorld(canvas: import('@playwright/test').Locator): P
 }
 
 async function beginPair(page: Page): Promise<number> {
-  const index = await page.evaluate(() => (window as typeof window & {
-    __blockcolcQualityLifecycle?: { beginOperation(kind: 'quality-pair'): number | null };
-  }).__blockcolcQualityLifecycle?.beginOperation('quality-pair') ?? null);
-  expect(index).not.toBeNull();
-  return index!;
+  const result = await page.evaluate(() => {
+    const probe = (window as typeof window & { __blockcolcQualityLifecycle?: QualityLifecycleBrowserApi }).__blockcolcQualityLifecycle;
+    return { index: probe?.beginOperation('quality-pair') ?? null, snapshot: probe?.read() ?? null };
+  });
+  expect(result.index, JSON.stringify(result.snapshot)).not.toBeNull();
+  return result.index!;
+}
+
+async function waitForInitialReveal(page: Page, canvas: import('@playwright/test').Locator): Promise<void> {
+  await expect(canvas).toHaveAttribute('data-initial-reveal-completed-count', '1', { timeout: 20_000 });
+  await expect.poll(async () => (await qualitySnapshot(page))?.operations[0]?.result, { timeout: 20_000 }).toBe('completed');
 }
 
 async function switchQuality(page: Page, canvas: import('@playwright/test').Locator, preference: Preference, label: string): Promise<void> {

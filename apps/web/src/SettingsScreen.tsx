@@ -7,7 +7,7 @@ import type { BlueprintV1 } from '@blockcolc/voxel';
 import type { ResourcePackRepository } from '@blockcolc/resource-pack-indexeddb';
 import type { BreakLiveUpdateCapability } from '@blockcolc/platform-capacitor';
 import { MAX_BACKUP_BYTES } from '@blockcolc/storage-indexeddb';
-import { AlertTriangle, Check, Download, FileUp, History, Pencil, RefreshCw, Upload, X } from 'lucide-react';
+import { AlertTriangle, Check, ChevronDown, Download, FileUp, History, Pencil, RefreshCw, Upload, X } from 'lucide-react';
 import { LITEMATIC_MAX_COMPRESSED_BYTES, readBackupFileText, readBrowserFileBytes, saveBackupFile } from './browser-adapters';
 import { ResourcePackPanel } from './ResourcePackPanel';
 import { TextToggle } from './ui/TextToggle';
@@ -78,13 +78,18 @@ export function SettingsScreen({active,service,resourcePacks,state,run,refresh,p
           <div className="setting-name"><span>深色模式</span><small>跟随系统或手动指定</small></div>
           <TextToggle ariaLabel="深色模式" value={preferences.themeMode} options={[{value:'light',label:'浅色'},{value:'dark',label:'深色'},{value:'system',label:'跟随系统'}]} onChange={value=>onPreferencesChange({...preferences,themeMode:value})}/>
         </div>
-        <div className="setting-row glass-transparency-row">
-          <div className="setting-name"><span>沉浸计时玻璃</span><small>只调节专注与极简计时面板；计划单、任务列表、设置及世界提示保持固定清晰度</small></div>
+        <details className="glass-transparency-setting">
+          <summary className="setting-row glass-transparency-row" aria-label={`沉浸计时玻璃，通透度 ${preferences.focusGlassTransparency}%`}>
+            <div className="setting-name"><span>沉浸计时玻璃</span><small>仅调整计时面板，点击调节</small></div>
+            <span className="glass-transparency-value">{preferences.focusGlassTransparency}%<ChevronDown aria-hidden="true"/></span>
+          </summary>
+          <div className="glass-transparency-expanded">
           <label className="glass-transparency-control">
             <input aria-label="液态玻璃通透程度" type="range" min="0" max="100" step="5" value={preferences.focusGlassTransparency} style={{'--range-progress':`${preferences.focusGlassTransparency}%`} as CSSProperties} onChange={event=>onPreferencesChange({...preferences,focusGlassTransparency:Number(event.target.value)})}/>
             <span>{preferences.focusGlassTransparency}%</span>
           </label>
-        </div>
+          </div>
+        </details>
       </div>
     </section>
     <section className="settings-group" aria-labelledby="settings-group-world">

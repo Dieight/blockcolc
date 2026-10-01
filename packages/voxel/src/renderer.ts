@@ -13,6 +13,7 @@ import {
   effectiveEmissionIdentity,
   shadowDirectionFromPosition,
   shadowLightPositionForExtent,
+  directionalLightingForState,
   lightingDirectionFingerprint,
   sunStateForLocalTime,
   type EmissivePoint,
@@ -64,7 +65,7 @@ import {
   type QualityTier,
   type VoxelLightingQuality,
 } from "./quality";
-import { attemptQualityProjection, resolveCappedQualityTier } from "./quality-projection";
+import { attemptQualityProjection, resolveCappedQualityTier, shouldDowngradeQuality } from "./quality-projection";
 import {
   buildResourcePackAtlas,
   createAtlasMaterial,
@@ -124,9 +125,7 @@ import {
 } from "./original-materials";
 import { LightingPostProcessor } from "./lighting-postprocess";
 import { cloneEnvironmentRevealMaterial } from "./environment-reveal-material";
-import { addOriginalFlowerShapes, naturalFlowerSourceBlockId } from "./original-flower-shapes";
-import { disableNaturalFlowerShadowCasting } from "./natural-flower-shadow";
-import { planNaturalFlowerPackBatches } from "./natural-flower-pack";
+import { addOriginalFlowerShapes } from "./original-flower-shapes";
 import {
   emptyPrecipitationViewCache,
   invalidatePrecipitationViewCache,
@@ -143,9 +142,10 @@ import {
   planOriginalStaticShapeBatches,
 } from "./original-static-shapes";
 import { initializeWorldConfiguration } from "./initial-world-configuration";
-import { ambientEnvironmentDecorations, naturalDecorationBatchDiagnostics, naturalDecorationLodForCamera, naturalDecorationParts, naturalDecorationVariantVisible, naturalTreeMushroomCandidates, NATURAL_SHELF_MUSHROOM_RENDER_SCALE, visibleNaturalTreeCount, type NaturalDecorationKind, type NaturalDecorationLod, type NaturalDecorationPart, type NaturalDecorationPlacement } from "./natural-decorations";
-import { naturalTreeAttachmentMatrix } from "./natural-tree-attachment";
+import { ambientEnvironmentDecorations, naturalDecorationParts, naturalTreeMushroomCandidates, NATURAL_SHELF_MUSHROOM_RENDER_SCALE, visibleNaturalTreeCount, type NaturalDecorationKind, type NaturalDecorationLod, type NaturalDecorationPart } from "./natural-decorations";
+import { planWorldScenery, sceneryLod, sceneryTreeBlocks, sceneryGeometryLayers, type SceneryObject } from './scenery';
 import { precipitationFieldForView, precipitationPositionForOffset, rainCrossSectionScaleForView, stepPrecipitationClock, type PrecipitationField } from "./precipitation-field";
+import { patchPrecipitationMaterial, precipitationFrameIntervalMs, precipitationMotion, type PrecipitationUniforms } from './precipitation-motion';
 import { commitRenderedWorldFrame, emptyWorldFrameCommitDiagnostics } from "./world-frame-commit";
 import { qualityLifecycleAtlasInstance, qualityLifecycleProbe, qualityLifecycleProbeEnabled, qualityLifecycleSampleVisibleFrameError } from "./quality-lifecycle-probe";
 import { qualityLifecycleWorldIdentity } from "./quality-lifecycle-world-identity";
@@ -210,6 +210,7 @@ interface PrecipitationAnimation {
   lastUpdateMs: number;
   paused: boolean;
   field: PrecipitationField;
+  uniforms: PrecipitationUniforms;
 }
 
 interface RainAnimation extends PrecipitationAnimation {
@@ -345,7 +346,10 @@ export interface RendererDiagnostics {
   snowCameraFrustumCount: number;
   precipitationMotionPaused: boolean;
   rainElapsedMs: number;
+  precipitationFrameIntervalMs: number;
   snowElapsedMs: number;
+  rainMatrixUploadCount: number;
+  snowMatrixUploadCount: number;
   rainStreakProjectedCssPx: number;
   fogNear: number;
   fogFar: number;
@@ -519,7 +523,8 @@ export function alignWorldsToEnvironment(
     : { ...world, worldPosition: { ...world.worldPosition, y: 4 } });
 }
 
-/** Terrain-owned placements shared by production meshes and geometry regressions. */
+/** Legacy candidate planner retained for old geometry comparisons. The active
+ * world uses planWorldScenery, never these scattered props or scaled trees. */
 export function naturalDecorationPlacementsForScene(input: {
   worlds: readonly PositionedWorldSnapshot[];
   roads: readonly RoadCell[];
@@ -597,7 +602,7 @@ function ambientNearRoad(x: number, z: number, roads: ReadonlySet<string>): bool
   return false;
 }
 
-function terrainSurfaceRectangles(terrain: MergedGeometryData): Array<{ minX: number; maxX: number; minZ: number; maxZ: number; supportY: number; water: boolean }> {
+export function terrainSurfaceRectangles(terrain: MergedGeometryData): Array<{ minX: number; maxX: number; minZ: number; maxZ: number; supportY: number; water: boolean }> {
   const rectangles: Array<{ minX: number; maxX: number; minZ: number; maxZ: number; supportY: number; water: boolean }> = [];
   for (const material of ["grass", "dirt", "stone", "water"] as const) {
     const indices = terrain.indicesByMaterial[material];
@@ -654,10 +659,15 @@ export function createVoxelRenderer(
     debugFlatColors?: boolean;
     /** Diagnostic mode: real materials against a pure-black backdrop with fog off, so geometric holes read as black pixels and fog-faded faces keep their material color. */
     debugVoidScan?: boolean;
+    /** Background biome scenery. Small blueprint previews do not generate it. */
+    scenery?: boolean;
+    /** Synchronous presentation tap after drawing, before WebGL discards the back buffer. */
+    onFrameRendered?: (canvas: HTMLCanvasElement) => void;
     readNativeInput?: () => NativeInputSample | null;
     subscribeNativeInput?: (listener: (sample: NativeInputSample) => void) => Promise<() => Promise<void>>;
   } = {},
 ): VoxelRenderer {
+  const sceneryEnabled = options.previewMode !== true && options.scenery !== false;
   const previewBlueprint = options.blueprint ? validateBlueprint(options.blueprint) : null;
   const resolveBlueprint = options.resolveBlueprint ?? ((id: string) => (
     previewBlueprint && previewBlueprint.id === id ? previewBlueprint : resolveBuiltinBlueprint(id)
@@ -680,6 +690,11 @@ export function createVoxelRenderer(
     alpha: false,
     powerPreference: "high-performance",
   });
+  // Environment changes recreate the renderer on the resident canvas. Three's
+  // constructor assumes a fresh context; explicitly take ownership of its GL
+  // state so transparent/post-process draws from the retired renderer cannot
+  // leave the first cached shadow sample with stale masks or bindings.
+  renderer.resetState();
   renderer.info.autoReset = false;
   const webGlContext = renderer.getContext();
   // Software rasterizers (SwiftShader/llvmpipe — headless gate machines, low-end
@@ -828,6 +843,8 @@ export function createVoxelRenderer(
   let localLights: TrackedLocalLight[] = [];
   let glowSprites: TrackedGlowSprite[] = [];
   let reducedMotion = false;
+  let weatherFrameIntervalMs = precipitationFrameIntervalMs(0, softwareRendererName);
+  let lastWeatherFrameStartedMs = Number.NEGATIVE_INFINITY;
   let disposed = false;
   /** False while the canvas pane is hidden (tab switch); frame rendering pauses until setVisible(true). */
   let paneVisible = true;
@@ -1120,7 +1137,7 @@ export function createVoxelRenderer(
   let cloudsBuiltSpanZ = 0;
   let cloudsBuiltBaseY = 0;
   const previewMode = options.previewMode === true;
-  let naturalTreeMeshes: { trunks: THREE.InstancedMesh; crowns: THREE.InstancedMesh; total: number } | null = null;
+  let sceneryTreeCount = 0;
   let rainAnimation: RainAnimation | null = null;
   let snowAnimation: SnowAnimation | null = null;
   const stormFlash = new THREE.PointLight(0xd9e7ff, 0, 28, 2);
@@ -1152,14 +1169,6 @@ export function createVoxelRenderer(
     basePositions: Float32Array;
     spanX: number;
     spanZ: number;
-    elapsedMs: number;
-    lastUpdateMs: number;
-  } | null = null;
-  let naturalTreeSway: {
-    trunks: THREE.InstancedMesh;
-    crowns: THREE.InstancedMesh;
-    trees: Array<{ pivotX: number; pivotY: number; pivotZ: number; trunkY: number; crownY: number; scale: number; phase: number; periodMs: number; amp: number; axisAngle: number }>;
-    attachments: Array<{ mesh: THREE.InstancedMesh; index: number; treeIndex: number; baseMatrix: THREE.Matrix4 }>;
     elapsedMs: number;
     lastUpdateMs: number;
   } | null = null;
@@ -1292,6 +1301,8 @@ export function createVoxelRenderer(
 
   let totalRenderedFrames = 0;
   function renderFrame(frameStarted: number): boolean {
+    lastWeatherFrameStartedMs = frameStarted;
+    if (rainAnimation !== null || snowAnimation !== null) lastAmbientFrameStartedMs = frameStarted;
     pollNativeInput();
     if ((options.readNativeInput || options.subscribeNativeInput) && (nativeInputDeltaX !== 0 || nativeInputDeltaY !== 0)) {
       targetCameraAzimuth += nativeInputDeltaX * 0.011;
@@ -1305,6 +1316,8 @@ export function createVoxelRenderer(
     // Also catch a changed parent/root transform on a request-driven frame,
     // without tying precipitation synchronization to a world rebuild.
     syncPrecipitationField();
+    updateRainAnimation(frameStarted);
+    updateSnowAnimation(frameStarted);
     const pulseActive = frameStarted < constructionPulseUntilMs;
     let pulseGlow = 0;
     if (pulseActive) {
@@ -1318,6 +1331,7 @@ export function createVoxelRenderer(
     beginGpuTimer();
     const started = performance.now();
     renderer.info.reset();
+    const refreshedShadow = renderer.shadowMap.enabled && (renderer.shadowMap.autoUpdate || renderer.shadowMap.needsUpdate);
     const postProcessEnabled = lightingPostProcessor.getDiagnostics().enabled;
     try {
       if (postProcessEnabled) {
@@ -1332,6 +1346,7 @@ export function createVoxelRenderer(
     }
     totalRenderedFrames += 1;
     canvas.dataset.renderFrameCount = String(totalRenderedFrames);
+    options.onFrameRendered?.(canvas);
     canvas.dataset.renderCalls = String(renderer.info.render.calls);
     canvas.dataset.renderTriangles = String(renderer.info.render.triangles);
     canvas.dataset.pixelRatio = renderer.getPixelRatio().toFixed(2);
@@ -1378,6 +1393,11 @@ export function createVoxelRenderer(
       logNativeRenderDiagnostic(`[blockcolc-first-nonempty-frame] ${JSON.stringify({ durationMs: Number(firstNonemptyFrameMs.toFixed(2)), triangles: renderer.info.render.triangles, rebuildCount: worldRebuildCount })}`);
     }
     const elapsed = performance.now() - started;
+    if ((rainAnimation !== null || snowAnimation !== null) && !interacting && !nativeInputActive
+      && !cameraStillMoving && !refreshedShadow) {
+      weatherFrameIntervalMs = precipitationFrameIntervalMs(elapsed, softwareRendererName);
+      canvas.dataset.precipitationFrameIntervalMs = String(weatherFrameIntervalMs);
+    }
     if (ambientFrameInFlight) {
       // Adapt the ambient cadence to the measured frame cost so a slow
       // environment never turns the living world into a render-hogging loop.
@@ -1401,7 +1421,7 @@ export function createVoxelRenderer(
       if (interactionTotalDurations.length > 60) interactionTotalDurations.shift();
       interactionTotalMaxMs = Math.max(interactionTotalMaxMs, totalElapsed);
     } else lastInteractionAnimationFrameMs = null;
-    maybeDowngradeQuality();
+    maybeDowngradeQuality(refreshedShadow);
     if (pulseActive) {
       renderer.toneMappingExposure /= 1 + pulseGlow * 0.35;
       for (const entry of emissiveMaterials) entry.material.emissiveIntensity /= 1 + pulseGlow * 0.8;
@@ -1424,6 +1444,10 @@ export function createVoxelRenderer(
       // single frame. Recheck after rendering so a stolen pointer cannot keep
       // scheduling expensive interaction frames while interval tasks starve.
       releaseStaleInteraction(performance.now());
+      // Weather-only frames come from the existing adaptive motion pump. Letting
+      // precipitation recursively request every rAF floods software GPUs and
+      // can starve compositor captures. Interaction frames still update the
+      // same weather uniforms, so dragging never pauses rain or snow.
       return interacting || nativeInputActive || cameraStillMoving || openingReveal !== null || performance.now() < constructionPulseUntilMs;
     },
   });
@@ -1510,11 +1534,10 @@ export function createVoxelRenderer(
     // disposed: stale reveal entries must never write into freed instanced meshes.
     constructionReveals = [];
     cloudDrift = null;
-    naturalTreeSway = null;
     for (const texture of terrainPackTextures) texture.dispose();
     terrainPackTextures.length = 0;
     clearGroup(roadGroup);
-    naturalTreeMeshes = null;
+    sceneryTreeCount = 0;
     clearLights();
     emissiveMaterials = [];
     texturedBatchCount = 0;
@@ -1680,7 +1703,7 @@ export function createVoxelRenderer(
     for (const world of positioned) addBuilding(world, emissivePoints, revealPlans.get(world.projectId) ?? null);
     for (const decoration of importedDecorations) addImportedDecoration(decoration, emissivePoints);
     finishRebuildStage("buildings");
-    addNaturalEnvironmentDecorations(positioned, roads, importedDecorations, environmentStyle, terrainData);
+    if (sceneryEnabled) addWorldScenery(positioned, roads, importedDecorations, environmentStyle, terrainData);
     finishRebuildStage("naturalDecorations");
     activeResourcePack?.atlas.pages.forEach((page, pageIndex) => {
       const controller = atlasAnimationControllers[pageIndex];
@@ -1813,7 +1836,6 @@ export function createVoxelRenderer(
     terrainGroup.add(mesh);
     terrainMeshForPicking = mesh;
     addNaturalBackdrop(data);
-    addNaturalTrees(data);
   }
 
   /**
@@ -1877,97 +1899,6 @@ export function createVoxelRenderer(
     backdrop.castShadow = false;
     backdrop.renderOrder = -2;
     terrainGroup.add(backdrop);
-  }
-
-  function addNaturalTrees(data: MergedGeometryData): void {
-    if (data.naturalTrees.length === 0) return;
-    const trunksMaterial = packTileMaterial("minecraft:oak_log", "north") ?? material("wood");
-    const crownsMaterial = packTileMaterial("minecraft:oak_leaves", "up") ?? material("leaves");
-    const trunks = new THREE.InstancedMesh(new THREE.BoxGeometry(0.72, 2.4, 0.72), trunksMaterial, data.naturalTrees.length);
-    const crowns = new THREE.InstancedMesh(new THREE.BoxGeometry(2.55, 2.35, 2.55), crownsMaterial, data.naturalTrees.length);
-    const matrix = new THREE.Matrix4();
-    const rotation = new THREE.Quaternion();
-    data.naturalTrees.forEach((tree, index) => {
-      matrix.compose(
-        new THREE.Vector3(tree.x, tree.y + 1.2 * tree.scale, tree.z),
-        rotation,
-        new THREE.Vector3(tree.scale, tree.scale, tree.scale),
-      );
-      trunks.setMatrixAt(index, matrix);
-      matrix.compose(
-        new THREE.Vector3(tree.x, tree.y + 2.8 * tree.scale, tree.z),
-        rotation,
-        new THREE.Vector3(tree.scale, tree.scale, tree.scale),
-      );
-      crowns.setMatrixAt(index, matrix);
-    });
-    trunks.instanceMatrix.needsUpdate = true;
-    crowns.instanceMatrix.needsUpdate = true;
-    crowns.castShadow = false;
-    trunks.receiveShadow = true;
-    crowns.receiveShadow = true;
-    naturalTreeMeshes = { trunks, crowns, total: data.naturalTrees.length };
-    // V20 WX-01: trunk-pivot sway. Each tree rocks a fraction of a degree around
-    // a horizontal axis through its planted base, trunk and crown together, so the
-    // base stays rooted. Phases and periods are deterministic per tree index, which
-    // keeps repeated rebuilds stable while the motion itself stays alive.
-    naturalTreeSway = {
-      trunks,
-      crowns,
-      trees: data.naturalTrees.map((tree, index) => ({
-        pivotX: tree.x,
-        pivotY: tree.y,
-        pivotZ: tree.z,
-        trunkY: tree.y + 1.2 * tree.scale,
-        crownY: tree.y + 2.8 * tree.scale,
-        scale: tree.scale,
-        phase: (index * 0.6180339887) % 1,
-        periodMs: 5_000 + ((index * 137) % 4_000),
-        amp: 0.06 + ((index * 97) % 12) / 12 * 0.04,
-        axisAngle: ((index * 53) % 360) * (Math.PI / 180),
-      })),
-      attachments: [],
-      elapsedMs: 0,
-      lastUpdateMs: performance.now(),
-    };
-    updateNaturalTreeDensity();
-    terrainGroup.add(trunks, crowns);
-  }
-
-  function updateNaturalTreeDensity(): void {
-    if (!naturalTreeMeshes) return;
-    const visible = visibleNaturalTreeCount(naturalTreeMeshes.total, qualityTier);
-    naturalTreeMeshes.trunks.count = visible;
-    naturalTreeMeshes.crowns.count = visible;
-    naturalTreeMeshes.trunks.castShadow = qualityTier === "high";
-    syncNaturalTreeAttachments();
-  }
-
-  function syncNaturalTreeAttachments(): void {
-    const sway = naturalTreeSway;
-    const visibleCount = naturalTreeMeshes?.trunks.count ?? 0;
-    if (!sway) {
-      treeSideMushroomCount = 0;
-      return;
-    }
-    for (const attachment of sway.attachments) {
-      const tree = sway.trees[attachment.treeIndex];
-      if (!tree) continue;
-      const swayAngle = sway.elapsedMs > 0
-        ? tree.amp * Math.sin((sway.elapsedMs / tree.periodMs) * Math.PI * 2 + tree.phase * Math.PI * 2)
-        : 0;
-      attachment.mesh.setMatrixAt(attachment.index, naturalTreeAttachmentMatrix({
-        baseMatrix: attachment.baseMatrix,
-        pivot: [tree.pivotX, tree.pivotY, tree.pivotZ],
-        axisAngle: tree.axisAngle,
-        swayAngle,
-        hostVisible: attachment.treeIndex < visibleCount,
-      }));
-    }
-    for (const mesh of new Set(sway.attachments.map(attachment => attachment.mesh))) {
-      mesh.instanceMatrix.needsUpdate = true;
-    }
-    treeSideMushroomCount = sway.attachments.filter(attachment => attachment.treeIndex < visibleCount).length;
   }
 
   type TerrainMaterialKey = "grass" | "dirt" | "stone" | "water";
@@ -2168,7 +2099,6 @@ export function createVoxelRenderer(
     root.add(structure);
     buildingGroup.add(root);
     const renderVoxels = planMovingPistonRenderVoxels(decoration.blueprint.voxels).displayVoxels;
-    const occlusionField = createLocalOcclusionField(renderVoxels);
     for (const voxel of renderVoxels) {
       const sourceEmission = sourceLanternEmissionForVoxel(voxel) ?? sourceCandleEmissionForVoxel(voxel);
       if (sourceEmission) {
@@ -2185,6 +2115,12 @@ export function createVoxelRenderer(
         if (sourceEmission.kind === "lantern" || sourceEmission.kind === "soul-lantern") sourceLanternPointLightCount += 1;
       }
     }
+    addStaticVoxelStructure(structure, renderVoxels);
+  }
+
+  /** Shared with read-only scenery: no reward/project identity or construction state. */
+  function addStaticVoxelStructure(structure: THREE.Group, renderVoxels: readonly BlueprintVoxel[]): { packed: number; fallback: number } {
+    const occlusionField = createLocalOcclusionField(renderVoxels);
     const staticShapeCandidates = renderVoxels.filter((voxel) => isOriginalStaticShapeBlockId(voxel.sourceBlockId));
     const genericTextureCandidates = renderVoxels.filter((voxel) => !isOriginalStaticShapeBlockId(voxel.sourceBlockId));
     const texturePlan = activeResourcePack
@@ -2237,6 +2173,7 @@ export function createVoxelRenderer(
       if (owned) mesh.userData.ownedMaterial = meshMaterial;
       structure.add(mesh);
     }
+    return { packed: renderVoxels.length - visibleFallbackVoxels.length, fallback: visibleFallbackVoxels.length };
   }
 
   function addTexturedBatches(root: THREE.Group, batches: readonly TexturedVoxelBatch[], weathering: number): void {
@@ -2619,231 +2556,102 @@ export function createVoxelRenderer(
       || !occupied.has(`${voxel.x}:${voxel.y}:${voxel.z + 1}`);
   }
 
-  function addNaturalEnvironmentDecorations(
-    worlds: readonly PositionedWorldSnapshot[],
-    roads: readonly ReturnType<typeof roadCellsForVillage>[number][],
-    importedDecorations: readonly ImportedDecorationPlacement[],
-    environmentStyle: TerrainEnvironmentStyle,
+  function addWorldScenery(
+    worlds: readonly PositionedWorldSnapshot[], roads: readonly RoadCell[],
+    importedDecorations: readonly ImportedDecorationPlacement[], environmentStyle: TerrainEnvironmentStyle,
     terrain: MergedGeometryData,
   ): void {
-    const placements = naturalDecorationPlacementsForScene({
-      worlds, roads, importedDecorations, environmentStyle, terrain, worldSeed: options.worldSeed, qualityTier,
-    });
-    const lod = naturalDecorationLodForCamera(cameraDistance, maximumCameraDistance);
-    for (const kind of [...new Set(placements.map(entry => entry.kind))]) {
-      const entries = placements.filter(entry => entry.kind === kind);
-      if (kind === "flower") {
-        addNaturalFlowerBatches(entries, lod);
-        continue;
-      }
-      const fullGeometry = naturalDecorationGeometry(kind, "full");
-      const silhouetteGeometry = naturalDecorationGeometry(kind, "silhouette");
-      const geometry = lod === "full" ? fullGeometry : silhouetteGeometry;
-      const alternateGeometry = lod === "full" ? silhouetteGeometry : fullGeometry;
-      const material = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.92, metalness: 0 });
-      const mesh = new THREE.InstancedMesh(geometry, material, entries.length);
-      const kindScale = naturalDecorationRenderScale(kind);
-      const matrix = new THREE.Matrix4();
-      entries.forEach((entry, index) => {
-        const scale = kindScale * entry.scale;
-        const y = naturalDecorationOriginY(kind, entry.support, entry.y!, geometry.boundingBox!.min.y, scale);
-        matrix.compose(new THREE.Vector3(entry.x, y, entry.z),
-          new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), entry.rotationY),
-          new THREE.Vector3(scale, scale, scale));
-        mesh.setMatrixAt(index, matrix);
-      });
-      mesh.instanceMatrix.needsUpdate = true;
-      mesh.name = `natural-environment-${kind}-${lod}`;
-      mesh.castShadow = false;
-      mesh.receiveShadow = false;
-      mesh.frustumCulled = false;
-      mesh.userData.naturalDecorationKind = kind;
-      mesh.userData.naturalDecorationIds = entries.map(entry => entry.id);
-      mesh.userData.naturalDecorationLod = lod;
-      mesh.userData.ownedMaterial = material;
-      mesh.userData.naturalDecorationAlternateGeometry = alternateGeometry;
-      mesh.userData.naturalDecorationPlacements = entries;
-      mesh.userData.naturalDecorationKindScale = kindScale;
-      if (kind === "shelf-mushroom" && naturalTreeSway) {
-        entries.forEach((entry, index) => {
-          if (entry.supportTreeIndex === undefined) return;
-          const baseMatrix = new THREE.Matrix4();
-          mesh.getMatrixAt(index, baseMatrix);
-          naturalTreeSway!.attachments.push({ mesh, index, treeIndex: entry.supportTreeIndex, baseMatrix });
-        });
-      }
-      buildingGroup.add(mesh);
+    const plan = planWorldScenery({ environmentStyle, worldSeed: options.worldSeed ?? 'world-default',
+      surfaces: terrainSurfaceRectangles(terrain), trees: terrain.naturalTrees, roads,
+      protectedRects: [...worlds, ...importedDecorations].map(item => ({ x: item.worldPosition.x, z: item.worldPosition.z,
+        width: item.footprint.width + 5, depth: item.footprint.depth + 5 })) });
+    const root = new THREE.Group(); root.name = 'world-scenery';
+    root.userData.sceneryVillage = plan.village;
+    buildingGroup.add(root);
+    const trees = plan.objects.filter(o => o.role === 'tree');
+    sceneryTreeCount = trees.length;
+    // Unit blocks are instanced together, not one draw-call set per tree.
+    if (trees.length) {
+      const grove = new THREE.Group(); grove.name = 'scenery-block-grove'; root.add(grove);
+      addStaticVoxelStructure(grove, trees.flatMap(tree => tree.voxels.map(voxel => ({ ...voxel,
+        x: voxel.x + tree.x, y: voxel.y + tree.y, z: voxel.z + tree.z }))));
     }
-    ambientDecorationCount = placements.length;
-    treeSideMushroomCount = placements.filter(entry => entry.kind === "shelf-mushroom" && entry.supportTreeIndex !== undefined
-      && entry.supportTreeIndex < visibleNaturalTreeCount(terrain.naturalTrees.length, qualityTier)).length;
-    syncNaturalTreeAttachments();
-    syncNaturalDecorationBatchDiagnostics();
-    canvas.dataset.naturalDecorationCount = String(placements.length);
-    canvas.dataset.naturalDecorationLod = lod;
+    // A flower garden has the same block silhouette at both distances. Batch
+    // those static cells across sites, preserving world positions and the pack
+    // route instead of paying a separate material/draw-call set for each patch.
+    // A future garden with a genuinely different far model keeps its own LOD.
+    const gardens = plan.objects.filter(o => o.role === 'garden'
+      && o.voxels.length === o.distantVoxels.length
+      && o.voxels.every((voxel, index) => voxel === o.distantVoxels[index]));
+    const batchedGardens = new Set(gardens);
+    if (gardens.length) {
+      const flowers = new THREE.Group(); flowers.name = 'scenery-mixed-gardens';
+      flowers.userData.sceneryRole = 'garden'; root.add(flowers);
+      const route = addStaticVoxelStructure(flowers, gardens.flatMap(garden => garden.voxels.map(voxel => ({ ...voxel,
+        x: voxel.x + garden.x, y: voxel.y + garden.y, z: voxel.z + garden.z }))));
+      naturalFlowerPackPlacementCount += route.packed;
+      naturalFlowerOriginalFallbackCount += route.fallback;
+    }
+    // Roofs, walls, hulls and foundations do not change with LOD. Instance
+    // their shared silhouettes together, rather than duplicating the same
+    // material batches for each house and for both detail levels. The small
+    // near-only parts below still follow each object's projected-size LOD.
+    const landmarks = plan.objects.filter(o => o.role !== 'tree' && o.role !== 'garden');
+    const landmarkLayers = new Map(landmarks.map(object => [object, sceneryGeometryLayers(object)]));
+    const silhouetteVoxels = landmarks.flatMap(object => (landmarkLayers.get(object)?.silhouette ?? [])
+      .map(voxel => ({ ...voxel, x: voxel.x + object.x, y: voxel.y + object.y, z: voxel.z + object.z })));
+    if (silhouetteVoxels.length) {
+      const silhouettes = new THREE.Group(); silhouettes.name = 'scenery-landmark-silhouettes'; root.add(silhouettes);
+      addStaticVoxelStructure(silhouettes, silhouetteVoxels);
+    }
+    for (const object of plan.objects.filter(o => o.role !== 'tree' && !batchedGardens.has(o))) {
+      const group = new THREE.Group(); group.name = object.id;
+      group.position.set(object.x, object.y, object.z);
+      group.userData.sceneryObject = object;
+      group.userData.sceneryLod = 'full';
+      const full = new THREE.Group(); full.name = 'full';
+      const distant = new THREE.Group(); distant.name = 'distant'; distant.visible = false;
+      group.add(full, distant); root.add(group);
+      const layers = landmarkLayers.get(object);
+      const route = addStaticVoxelStructure(full, layers?.detail ?? object.voxels);
+      if (object.role === 'garden') { naturalFlowerPackPlacementCount += route.packed; naturalFlowerOriginalFallbackCount += route.fallback; }
+      if (!layers) addStaticVoxelStructure(distant, object.distantVoxels);
+    }
+    canvas.dataset.sceneryVillage = JSON.stringify(plan.village);
+    canvas.dataset.sceneryObjectCount = String(plan.objects.length);
+    canvas.dataset.sceneryTreeCount = String(trees.length);
+    canvas.dataset.naturalTreeCount = String(trees.length);
+    ambientDecorationCount = plan.objects.length;
+    ambientDecorationKindCount = new Set(plan.objects.map(o => o.role)).size;
+    root.traverse(o => { if (o instanceof THREE.Mesh) {
+      ambientDecorationAllocatedBatchCount++;
+      if (o.castShadow) ambientDecorationShadowCasters++;
+    } });
+    canvas.dataset.naturalDecorationCount = String(plan.objects.length);
   }
 
-  function syncNaturalDecorationBatchDiagnostics(): void {
-    const batches = buildingGroup.children.filter((child): child is THREE.InstancedMesh =>
-      child instanceof THREE.InstancedMesh && typeof child.userData.naturalDecorationKind === "string");
-    const diagnostics = naturalDecorationBatchDiagnostics(batches.map(child => ({
-      kind: String(child.userData.naturalDecorationKind), visible: child.visible, castsShadow: child.castShadow,
-    })));
-    // Kind count represents currently visible kinds; allocation includes alternate LODs.
-    ambientDecorationKindCount = diagnostics.kindCount;
-    ambientDecorationDrawCalls = diagnostics.drawCalls;
-    ambientDecorationAllocatedBatchCount = diagnostics.allocatedBatchCount;
-    ambientDecorationShadowCasters = diagnostics.shadowCasters;
-    canvas.dataset.ambientDecorationKindCount = String(ambientDecorationKindCount);
-    canvas.dataset.ambientDecorationDrawCalls = String(ambientDecorationDrawCalls);
-    canvas.dataset.ambientDecorationAllocatedBatchCount = String(ambientDecorationAllocatedBatchCount);
-    canvas.dataset.ambientDecorationShadowCasters = String(ambientDecorationShadowCasters);
-    canvas.dataset.naturalDecorationDrawCalls = String(ambientDecorationDrawCalls);
-    canvas.dataset.naturalDecorationAllocatedBatchCount = String(ambientDecorationAllocatedBatchCount);
-  }
-
-  function addNaturalFlowerBatches(entries: readonly NaturalDecorationPlacement[], lod: NaturalDecorationLod): void {
-    const voxelPlacements = new Map<BlueprintVoxel, NaturalDecorationPlacement>();
-    const bySource = new Map<string, BlueprintVoxel[]>();
-    for (const entry of entries) {
-      const sourceBlockId = naturalFlowerSourceBlockId(entry.variant);
-      const voxel: BlueprintVoxel = {
-        x: entry.x,
-        y: entry.y!,
-        z: entry.z,
-        materialId: "accent",
-        buildOrder: 0,
-        sourceBlockId,
-      };
-      voxelPlacements.set(voxel, entry);
-      const group = bySource.get(sourceBlockId) ?? [];
-      group.push(voxel);
-      bySource.set(sourceBlockId, group);
+  function updateSceneryLod(): void {
+    const root = buildingGroup.getObjectByName('world-scenery');
+    if (!root) return;
+    const viewportHeight = Math.max(1, canvas.clientHeight);
+    const focal = viewportHeight / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2));
+    for (const group of root.children) {
+      const object = group.userData.sceneryObject as SceneryObject | undefined;
+      if (!object) continue;
+      const position = new THREE.Vector3(object.x, object.y + 3, object.z).applyMatrix4(rotatableWorldRoot.matrixWorld)
+        .applyMatrix4(camera.matrixWorldInverse);
+      const widthPx = Math.max(object.width, object.depth) * focal / Math.max(1, -position.z);
+      const lod = sceneryLod(widthPx, group.userData.sceneryLod as 'full' | 'distant');
+      group.getObjectByName('full')!.visible = lod === 'full';
+      group.getObjectByName('distant')!.visible = lod === 'distant';
+      group.userData.sceneryLod = lod;
+      group.userData.sceneryProjectedWidth = widthPx;
     }
-
-    const originalChildren = new Set(buildingGroup.children);
-    const packSuccess = new Set<BlueprintVoxel>();
-    for (const voxels of bySource.values()) {
-      const plan = planNaturalFlowerPackBatches(voxels, activeResourcePack?.manifest, activeResourcePack?.atlas);
-      plan.packVoxels.forEach(voxel => packSuccess.add(voxel));
-      if (activeResourcePack) {
-        const transform = (voxel: BlueprintVoxel): THREE.Matrix4 | undefined => {
-          const placement = voxelPlacements.get(voxel);
-          if (!placement) return undefined;
-          const scale = naturalDecorationRenderScale("flower") * placement.scale;
-          const y = naturalDecorationOriginY("flower", "ground", placement.y!, -0.5, scale);
-          return new THREE.Matrix4().compose(
-            new THREE.Vector3(placement.x, y, placement.z),
-            new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), placement.rotationY),
-            new THREE.Vector3(scale, scale, scale),
-          );
-        };
-        addGeometryBatches(buildingGroup, plan.batches, 0, null, null, transform);
-      }
-    }
-
-    const newlyAddedFull = buildingGroup.children.filter((child): child is THREE.InstancedMesh =>
-      child instanceof THREE.InstancedMesh && !originalChildren.has(child));
-    for (const mesh of newlyAddedFull) {
-      mesh.userData.naturalDecorationKind = "flower";
-      mesh.userData.naturalDecorationVariant = "full";
-      mesh.userData.naturalDecorationLod = lod;
-      mesh.visible = naturalDecorationVariantVisible(lod, "full");
-      mesh.frustumCulled = false;
-      // Ambient flowers intentionally do not cast shadows. Resource-pack cutout
-      // geometry is otherwise registered for atlas depth passes by the generic batcher.
-      disableNaturalFlowerShadowCasting(mesh, cutoutShadowMeshes);
-    }
-
-    const fallback = [...voxelPlacements.keys()].filter(voxel => !packSuccess.has(voxel));
-    const fallbackChildren = new Set(buildingGroup.children);
-    addOriginalFlowerShapes(buildingGroup, fallback, (voxel) => {
-      const placement = voxelPlacements.get(voxel);
-      if (!placement) return undefined;
-      const scale = naturalDecorationRenderScale("flower") * placement.scale;
-      const y = naturalDecorationOriginY("flower", "ground", placement.y!, -0.45, scale);
-      return new THREE.Matrix4().compose(
-        new THREE.Vector3(placement.x, y, placement.z),
-        new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), placement.rotationY),
-        new THREE.Vector3(scale, scale, scale),
-      );
-    });
-    for (const child of buildingGroup.children) {
-      if (child instanceof THREE.InstancedMesh && !fallbackChildren.has(child)) {
-        child.userData.naturalDecorationKind = "flower";
-        child.userData.naturalDecorationVariant = "full";
-        child.userData.naturalDecorationLod = lod;
-        child.visible = naturalDecorationVariantVisible(lod, "full");
-        child.frustumCulled = false;
-      }
-    }
-    const silhouette = naturalDecorationGeometry("flower", "silhouette");
-    const silhouetteMaterial = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.92, metalness: 0 });
-    const silhouetteMesh = new THREE.InstancedMesh(silhouette, silhouetteMaterial, entries.length);
-    const kindScale = naturalDecorationRenderScale("flower");
-    const matrix = new THREE.Matrix4();
-    entries.forEach((entry, index) => {
-      const scale = kindScale * entry.scale;
-      const y = naturalDecorationOriginY("flower", entry.support, entry.y!, silhouette.boundingBox!.min.y, scale);
-      matrix.compose(new THREE.Vector3(entry.x, y, entry.z),
-        new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), entry.rotationY),
-        new THREE.Vector3(scale, scale, scale));
-      silhouetteMesh.setMatrixAt(index, matrix);
-    });
-    silhouetteMesh.instanceMatrix.needsUpdate = true;
-    silhouetteMesh.name = `natural-environment-flower-silhouette`;
-    silhouetteMesh.castShadow = false;
-    silhouetteMesh.receiveShadow = false;
-    silhouetteMesh.frustumCulled = false;
-    silhouetteMesh.userData.naturalDecorationKind = "flower";
-    silhouetteMesh.userData.naturalDecorationVariant = "silhouette";
-    silhouetteMesh.userData.naturalDecorationLod = lod;
-    silhouetteMesh.userData.naturalDecorationIds = entries.map(entry => entry.id);
-    silhouetteMesh.userData.ownedMaterial = silhouetteMaterial;
-    silhouetteMesh.visible = naturalDecorationVariantVisible(lod, "silhouette");
-    buildingGroup.add(silhouetteMesh);
-    naturalFlowerPackPlacementCount = packSuccess.size;
-    naturalFlowerOriginalFallbackCount = fallback.length;
-  }
-
-  function updateNaturalDecorationLod(): void {
-    const observedLods = new Set<NaturalDecorationLod>();
-    for (const child of buildingGroup.children) {
-      if (!(child instanceof THREE.InstancedMesh) || !String(child.userData.naturalDecorationKind ?? "").length) continue;
-      const currentLod = child.userData.naturalDecorationLod as NaturalDecorationLod;
-      const targetLod = naturalDecorationLodForCamera(cameraDistance, maximumCameraDistance, currentLod);
-      observedLods.add(targetLod);
-      const variant = child.userData.naturalDecorationVariant as "full" | "silhouette" | undefined;
-      if (variant) {
-        child.visible = naturalDecorationVariantVisible(targetLod, variant);
-        child.userData.naturalDecorationLod = targetLod;
-        continue;
-      }
-      if (child.userData.naturalDecorationLod === targetLod) continue;
-      const alternate = child.userData.naturalDecorationAlternateGeometry as THREE.BufferGeometry | undefined;
-      const placements = child.userData.naturalDecorationPlacements as readonly NaturalDecorationPlacement[] | undefined;
-      if (!alternate || !placements || !alternate.boundingBox) continue;
-      const current = child.geometry;
-      child.geometry = alternate;
-      child.userData.naturalDecorationAlternateGeometry = current;
-      child.userData.naturalDecorationLod = targetLod;
-      const kind = child.userData.naturalDecorationKind as NaturalDecorationKind;
-      const kindScale = child.userData.naturalDecorationKindScale as number;
-      const matrix = new THREE.Matrix4();
-      placements.forEach((entry, index) => {
-        const scale = kindScale * entry.scale;
-        const y = naturalDecorationOriginY(kind, entry.support, entry.y!, alternate.boundingBox!.min.y, scale);
-        matrix.compose(new THREE.Vector3(entry.x, y, entry.z),
-          new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), entry.rotationY),
-          new THREE.Vector3(scale, scale, scale));
-        child.setMatrixAt(index, matrix);
-      });
-      child.instanceMatrix.needsUpdate = true;
-    }
-    syncNaturalTreeAttachments();
-    syncNaturalDecorationBatchDiagnostics();
-    canvas.dataset.naturalDecorationLod = observedLods.size > 1 ? "mixed"
-      : observedLods.values().next().value ?? "none";
+    ambientDecorationDrawCalls = 0;
+    root.traverseVisible(o => { if (o instanceof THREE.Mesh) ambientDecorationDrawCalls += Array.isArray(o.material) ? o.material.length : 1; });
+    canvas.dataset.sceneryLods = JSON.stringify(root.children.filter(o => o.userData.sceneryObject).map(o => ({
+      id: o.name, role: o.userData.sceneryObject.role, lod: o.userData.sceneryLod,
+      projectedWidth: o.userData.sceneryProjectedWidth })));
   }
 
   function addDecorations(root: THREE.Group, world: PositionedWorldSnapshot, emissivePoints: EmissivePoint[]): void {
@@ -2853,9 +2661,7 @@ export function createVoxelRenderer(
       decoration.userData.decorationId = placement.id;
       decoration.userData.decorationKind = placement.kind;
       if (placement.kind === "tree") {
-        addBox(decoration, "wood", [0.72, 2.7, 0.72], [0, 1.35, 0]);
-        addBox(decoration, "leaves", [2.3, 1.8, 2.3], [0, 3.05, 0]);
-        if (placement.variant % 2 === 1) addBox(decoration, "leaves", [1.5, 1.1, 1.5], [0, 4.15, 0]);
+        addStaticVoxelStructure(decoration, sceneryTreeBlocks(placement.variant % 2 ? 'birch' : 'oak', placement.variant).voxels);
       } else if (placement.kind === "road") addBox(decoration, "path", [1.8, 0.18, 1.8], [0, -0.05, 0]);
       else if (placement.kind === "lamp") {
         addBox(decoration, "wood", [0.28, 2.5, 0.28], [0, 1.25, 0]);
@@ -2924,35 +2730,37 @@ export function createVoxelRenderer(
       if (progress >= 1) {
         lightingTransition = null;
         environmentTransitionCompletedCount += 1;
+        forceShadowRefresh = true;
       }
     } else {
       currentLighting = targetLighting;
       if (lightingTransition && (reducedMotion || !paneVisible || document.hidden)) {
         lightingTransition = null;
         environmentTransitionCancelledCount += 1;
+        forceShadowRefresh = true;
       }
     }
     const state = currentLighting;
+    const directional = directionalLightingForState(state);
     lightingUpdateCount += 1;
     lightingSampledAtMs = projectedNow.getTime();
     if (astronomyContext) astronomyUpdateCount += 1;
     const snappedTarget = snappedShadowTarget();
     sun.target.position.copy(snappedTarget);
-    const shadowSource = shadowLightPositionForExtent(state.position, shadowExtent);
+    const shadowSource = shadowLightPositionForExtent(directional.position, shadowExtent);
     sun.position.set(
       snappedTarget.x + shadowSource[0],
       snappedTarget.y + shadowSource[1],
       snappedTarget.z + shadowSource[2],
     );
-    // Shadow auto-update is intentionally disabled for mobile cost. Explicitly
-    // flush the dynamic light rig before requesting the next depth sample so a
-    // time-of-day update cannot render one frame with the previous light matrix.
+    // Flush the moving light, but leave shadow.matrix owned by Three's depth
+    // pass. With auto-update disabled, changing that matrix without redrawing
+    // the cached depth texture samples a different projection and loses shadows.
     lightRig.updateMatrixWorld(true);
-    sun.shadow.updateMatrices(sun);
-    // Night readability comes from hemisphere/exposure, not a below-horizon
-    // directional source that would keep casting a false daytime shadow.
-    sun.intensity = state.intensity * state.sunVisibility * sunlightScaleForWeather(currentWeather);
-    sun.color.setHex(state.color);
+    // Hemisphere/exposure provide the no-moon floor. Only the dominant visible
+    // sun or moon supplies directional relief; no below-horizon fake sunlight.
+    sun.intensity = directional.intensity * sunlightScaleForWeather(currentWeather);
+    sun.color.setHex(directional.color);
     hemisphere.color.setHex(state.hemisphereSkyColor);
     hemisphere.groundColor.setHex(state.hemisphereGroundColor);
     const sunlightScale = sunlightScaleForWeather(currentWeather);
@@ -2985,7 +2793,9 @@ export function createVoxelRenderer(
     canvas.dataset.lightingFingerprint = lightingDirectionFingerprint(state);
     canvas.dataset.sunPosition = state.sunPosition.map((value) => value.toFixed(4)).join(",");
     canvas.dataset.moonPosition = state.moonPosition.map((value) => value.toFixed(4)).join(",");
-    canvas.dataset.shadowDirection = shadowDirectionFromPosition(state.position).map((value) => value.toFixed(4)).join(",");
+    canvas.dataset.shadowDirection = shadowDirectionFromPosition(directional.position).map((value) => value.toFixed(4)).join(",");
+    canvas.dataset.directionalLightSource = directional.source;
+    canvas.dataset.directionalLightIntensity = sun.intensity.toFixed(3);
     canvas.dataset.astronomySampleTime = String(lightingSampledAtMs);
     canvas.dataset.astronomyPhase = state.phase;
     canvas.dataset.environmentTransitionTarget = astronomyContext ? "astronomy" : "synthetic";
@@ -2996,7 +2806,9 @@ export function createVoxelRenderer(
   function beginLightingTransition(): void {
     if (reducedMotion || !paneVisible || document.hidden || disposed) {
       lightingTransition = null;
-      updateLighting(new Date(), false);
+      // Provider/debug changes can jump backwards or freeze presentation time.
+      // They must not depend on the periodic shadow scheduler's elapsed time.
+      updateLighting(new Date(), true);
       return;
     }
     lightingTransition = { from: currentLighting, startedAtMs: performance.now(), durationMs: 1_500 };
@@ -3075,10 +2887,11 @@ export function createVoxelRenderer(
 
   function trackMaterialEffects(meshMaterial: THREE.MeshStandardMaterial, edgeStrength = 0): void {
     const profile = LIGHTWEIGHT_SHADING_PROFILES[qualityTier];
+    const directional = directionalLightingForState(currentLighting);
     materialEdgeStrengths.set(meshMaterial, edgeStrength);
     materialEffectPatches.set(meshMaterial, applyMaterialEffects(meshMaterial, {
-      lightDirection: currentLighting.position,
-      lightTint: currentLighting.color,
+      lightDirection: directional.position,
+      lightTint: directional.color,
       shadowTint: profile.coolColor,
       strength: profile.faceContrast,
       edgeStrength: edgeStrength * (0.35 + nearDetailFactor * 0.65),
@@ -3087,10 +2900,11 @@ export function createVoxelRenderer(
 
   function updateMaterialEffects(state: SunState): void {
     const profile = LIGHTWEIGHT_SHADING_PROFILES[qualityTier];
+    const directional = directionalLightingForState(state);
     for (const patch of materialEffectPatches.values()) {
       patch.update({
-        lightDirection: state.position,
-        lightTint: state.color,
+        lightDirection: directional.position,
+        lightTint: directional.color,
         shadowTint: profile.coolColor,
         strength: profile.faceContrast,
       });
@@ -3162,7 +2976,7 @@ export function createVoxelRenderer(
   function requestShadowRefresh(now: Date, force = false): void {
     const candidate = {
       sampledAtMs: now.getTime(),
-      lightDirection: currentLighting.position,
+      lightDirection: directionalLightingForState(currentLighting).position,
       cameraAnchor: [cameraTarget.x, cameraTarget.y, cameraTarget.z] as const,
       sceneRevision,
       force,
@@ -3224,10 +3038,7 @@ export function createVoxelRenderer(
 
   function particleY(animation: PrecipitationAnimation, particle: PrecipitationParticle): number {
     const rain = animation === rainAnimation ? rainAnimation : null;
-    const fall = rain
-      ? animation.elapsedMs * 0.00078 * rain.speedScale
-      : animation.elapsedMs * 0.00022;
-    return animation.baseY + (((particle.phase - fall + 1) % 1 + 1) % 1) * animation.spanY;
+    return animation.baseY + precipitationMotion(particle.phase, animation.elapsedMs, !rain, rain?.speedScale).phase * animation.spanY;
   }
 
   function projectedParticleCount(animation: PrecipitationAnimation): number {
@@ -3254,22 +3065,22 @@ export function createVoxelRenderer(
     const snow = isRain ? null : animation as SnowAnimation;
     const matrix = new THREE.Matrix4();
     const scaleXz = rain ? rain.mesh.scale.x : 1;
-    const flutter = snow ? snow.elapsedMs * 0.00055 : 0;
     animation.particles.forEach((particle, index) => {
       const position = precipitationPositionForOffset(animation.field, particle.offsetX, particle.offsetZ);
       particle.x = position.x;
       particle.z = position.z;
-      const drift = snow ? particle.phase * Math.PI * 2 + flutter : 0;
       const instanceX = rain ? rainParticleInstanceCoordinate(particle.x, scaleXz) : particle.x;
       const instanceZ = rain ? rainParticleInstanceCoordinate(particle.z, scaleXz) : particle.z;
       matrix.makeTranslation(
-        instanceX + (snow ? Math.sin(drift) * 1.35 : 0),
-        particleY(animation, particle),
-        instanceZ + (snow ? Math.cos(drift * 0.72) * 0.8 : 0),
+        instanceX,
+        animation.baseY + particle.phase * animation.spanY,
+        instanceZ,
       );
       animation.mesh.setMatrixAt(index, matrix);
     });
     animation.mesh.instanceMatrix.needsUpdate = true;
+    animation.mesh.userData.weatherMatrixUploads = (animation.mesh.userData.weatherMatrixUploads ?? 0) + 1;
+    canvas.dataset[animation.mesh.name === 'world-rain' ? 'rainMatrixUploadCount' : 'snowMatrixUploadCount'] = String(animation.mesh.userData.weatherMatrixUploads);
     if (rain) rainCameraFrustumCount = projectedParticleCount(rain);
     if (snow) snowCameraFrustumCount = projectedParticleCount(snow);
   }
@@ -3321,6 +3132,7 @@ export function createVoxelRenderer(
       maximumCrossSectionScale: 3,
     });
     precipitationViewCache = viewDecision.cache;
+    if (!force && !viewDecision.changed && precipitationField !== null) return;
     const maxY = Math.max(rain ? rain.baseY + rain.spanY : -2, snow ? snow.baseY + snow.spanY : -2);
     const next = precipitationFieldForCamera(maxY);
     const current = precipitationField;
@@ -3358,6 +3170,8 @@ export function createVoxelRenderer(
       else if (viewDecision.projectionChanged) rainCameraFrustumCount = projectedParticleCount(rain);
     }
     if (snow) {
+      snow.uniforms.size.value = rainCrossSectionScaleForView({ baseCrossSection: .36, cameraDistance,
+        fovDegrees: camera.fov, viewportHeightCss: cssHeight, targetProjectedCssPx: 1.8, maximumScale: 2.8 }).scale;
       snow.field = activeField;
       if (fieldChanged) writePrecipitationMatrices(snow, false);
       else if (viewDecision.projectionChanged) snowCameraFrustumCount = projectedParticleCount(snow);
@@ -3374,11 +3188,11 @@ export function createVoxelRenderer(
     canvas.dataset.snowCameraFrustumCount = String(snowCameraFrustumCount);
     canvas.dataset.rainElapsedMs = String(Math.round(rain?.elapsedMs ?? 0));
     canvas.dataset.snowElapsedMs = String(Math.round(snow?.elapsedMs ?? 0));
-    canvas.dataset.precipitationMotionPaused = String(!paneVisible || interacting || reducedMotion || document.hidden);
+    canvas.dataset.precipitationMotionPaused = String(!paneVisible || reducedMotion || document.hidden);
   }
 
   function syncPrecipitationMotionGate(nowMs: number): void {
-    const shouldPause = !paneVisible || interacting || reducedMotion || document.hidden;
+    const shouldPause = !paneVisible || reducedMotion || document.hidden;
     let resumed = false;
     for (const animation of [rainAnimation, snowAnimation]) {
       if (!animation) continue;
@@ -3443,7 +3257,8 @@ export function createVoxelRenderer(
       ? performance.now() + 1_600 + stormRandom() * 1_600
       : Number.POSITIVE_INFINITY;
     const sunlightScale = sunlightScaleForWeather(currentWeather);
-    sun.intensity = currentLighting.intensity * currentLighting.sunVisibility * sunlightScale;
+    sun.intensity = directionalLightingForState(currentLighting).intensity * sunlightScale;
+    canvas.dataset.directionalLightIntensity = sun.intensity.toFixed(3);
     hemisphere.intensity = currentLighting.hemisphereIntensity * ambientScaleForWeather(currentWeather, currentLighting.nightFactor);
     const cloudBudget = nextCloudBudget;
     const spanX = cloudBudget.spanX;
@@ -3509,6 +3324,7 @@ export function createVoxelRenderer(
       fog: currentWeather.kind === "mist",
     });
     const clouds = new THREE.InstancedMesh(cloudGeometry, cloudMaterial, totalInstances);
+    clouds.name = 'world-clouds';
     const quaternion = new THREE.Quaternion();
     // V20 WX-02: every cloud remembers its block positions and its own drift
     // rhythm so the ambient pump can move each one along a slow sine path.
@@ -3601,21 +3417,24 @@ export function createVoxelRenderer(
         rain.setMatrixAt(index, matrix);
       }
       rain.instanceMatrix.needsUpdate = true;
+      rain.name = 'world-rain';
+      rain.geometry.setAttribute('weatherPhase', new THREE.InstancedBufferAttribute(Float32Array.from(drops.map(drop => drop.phase)), 1));
       rain.userData.ownedMaterial = rainMaterial;
       atmosphereGroup.add(rain);
       // Rain falls from the storm base all the way to the ground so it stays
       // visually connected to the clouds above the camera.
       rainAnimation = { mesh: rain, particles: drops, baseY: -2, spanY: rainSpanY,
         field: precipitationFieldForCamera(rainSpanY), speedScale: 0.72 + visualIntensity * 0.58,
-        elapsedMs: 0, lastUpdateMs: performance.now(), paused: !paneVisible || interacting || reducedMotion || document.hidden,
+        elapsedMs: 0, lastUpdateMs: performance.now(), paused: !paneVisible || reducedMotion || document.hidden,
+        uniforms: patchPrecipitationMaterial(rainMaterial, false, -2, rainSpanY, 0.72 + visualIntensity * 0.58),
         baseCrossSection, projectedCssPx: 0 };
       canvas.dataset.rainPhaseMs = "0";
     }
     const snowCount = precipitationParticleCount(currentWeather.snowFlakeCount, QUALITY_PROFILES.high.weatherDensity,
       precipitationAreaMultiplier, previewMode ? 80 : 800, previewMode ? 4 : 8);
     if (snowCount > 0) {
-      const snowMaterial = new THREE.MeshBasicMaterial({ color: 0xe6f0f5, transparent: true, opacity: 0.86, depthWrite: false });
-      const snow = new THREE.InstancedMesh(new THREE.SphereGeometry(0.13, 5, 4), snowMaterial, snowCount);
+      const snowMaterial = new THREE.MeshBasicMaterial({ color: 0xf3f7ff, transparent: true, opacity: .96, depthWrite: false, fog: false });
+      const snow = new THREE.InstancedMesh(new THREE.BoxGeometry(.36, .22, .36), snowMaterial, snowCount);
       snow.frustumCulled = false;
       const flakes = Array.from({ length: snowCount }, () => ({ x: 0, z: 0, offsetX: random() - 0.5, offsetZ: random() - 0.5, phase: random() }));
       const snowSpanY = cloudBase + 8;
@@ -3625,11 +3444,14 @@ export function createVoxelRenderer(
         snow.setMatrixAt(index, matrix);
       }
       snow.instanceMatrix.needsUpdate = true;
+      snow.name = 'world-snow';
+      snow.geometry.setAttribute('weatherPhase', new THREE.InstancedBufferAttribute(Float32Array.from(flakes.map(flake => flake.phase)), 1));
       snow.userData.ownedMaterial = snowMaterial;
       atmosphereGroup.add(snow);
       snowAnimation = { mesh: snow, particles: flakes, baseY: -2, spanY: snowSpanY,
         field: precipitationFieldForCamera(snowSpanY), elapsedMs: 0, lastUpdateMs: performance.now(),
-        paused: !paneVisible || interacting || reducedMotion || document.hidden };
+        paused: !paneVisible || reducedMotion || document.hidden,
+        uniforms: patchPrecipitationMaterial(snowMaterial, true, -2, snowSpanY) };
       canvas.dataset.snowPhaseMs = "0";
     }
     syncPrecipitationField(true);
@@ -3651,43 +3473,42 @@ export function createVoxelRenderer(
   }
 
   function updateRainAnimation(nowMs: number): void {
+    // Called inside renderFrame: uniforms are consumed by this same draw.
+    // Requesting another frame here would keep the scheduler's dirty flag set
+    // forever and bypass the weather pump, even when render() returns false.
     const rain = rainAnimation;
     if (!rain) return;
-    const step = stepPrecipitationClock(rain, nowMs, !paneVisible || interacting || reducedMotion || document.hidden, 30);
+    const step = stepPrecipitationClock(rain, nowMs, !paneVisible || reducedMotion || document.hidden, 0);
     rain.elapsedMs = step.elapsedMs;
     rain.lastUpdateMs = step.lastUpdateMs;
     rain.paused = step.paused;
     if (step.resumed) {
       canvas.dataset.precipitationMotionPaused = "false";
-      requestRender();
       return;
     }
     if (!step.advanced) return;
-    writePrecipitationMatrices(rain, true);
+    rain.uniforms.elapsed.value = rain.elapsedMs;
     canvas.dataset.rainPhaseMs = String(Math.round(rain.elapsedMs));
     canvas.dataset.rainElapsedMs = String(Math.round(rain.elapsedMs));
     canvas.dataset.rainCameraFrustumCount = String(rainCameraFrustumCount);
-    requestRender();
   }
 
   function updateSnowAnimation(nowMs: number): void {
     const snow = snowAnimation;
     if (!snow) return;
-    const step = stepPrecipitationClock(snow, nowMs, !paneVisible || interacting || reducedMotion || document.hidden, 30);
+    const step = stepPrecipitationClock(snow, nowMs, !paneVisible || reducedMotion || document.hidden, 0);
     snow.elapsedMs = step.elapsedMs;
     snow.lastUpdateMs = step.lastUpdateMs;
     snow.paused = step.paused;
     if (step.resumed) {
       canvas.dataset.precipitationMotionPaused = "false";
-      requestRender();
       return;
     }
     if (!step.advanced) return;
-    writePrecipitationMatrices(snow, false);
+    snow.uniforms.elapsed.value = snow.elapsedMs;
     canvas.dataset.snowPhaseMs = String(Math.round(snow.elapsedMs));
     canvas.dataset.snowElapsedMs = String(Math.round(snow.elapsedMs));
     canvas.dataset.snowCameraFrustumCount = String(snowCameraFrustumCount);
-    requestRender();
   }
 
   function clearLightning(): void {
@@ -3814,43 +3635,6 @@ export function createVoxelRenderer(
     requestAmbientRender(nowMs);
   }
 
-  function updateTreeSway(nowMs: number): void {
-    const sway = naturalTreeSway;
-    if (!sway || !ambientMotionAllowed() || interacting || nowMs - sway.lastUpdateMs < 100) return;
-    sway.elapsedMs += nowMs - sway.lastUpdateMs;
-    const visible = Math.min(sway.trees.length, sway.trunks.count);
-    const axis = new THREE.Vector3();
-    const quaternionSway = new THREE.Quaternion();
-    const rotation = new THREE.Matrix4();
-    const pivotTo = new THREE.Matrix4();
-    const pivotBack = new THREE.Matrix4();
-    const place = new THREE.Matrix4();
-    const size = new THREE.Matrix4();
-    const composed = new THREE.Matrix4();
-    for (let index = 0; index < visible; index += 1) {
-      const tree = sway.trees[index];
-      if (!tree) break;
-      const angle = tree.amp * Math.sin((sway.elapsedMs / tree.periodMs) * Math.PI * 2 + tree.phase * Math.PI * 2);
-      axis.set(Math.cos(tree.axisAngle), 0, Math.sin(tree.axisAngle));
-      quaternionSway.setFromAxisAngle(axis, angle);
-      rotation.makeRotationFromQuaternion(quaternionSway);
-      pivotTo.makeTranslation(tree.pivotX, tree.pivotY, tree.pivotZ);
-      pivotBack.makeTranslation(-tree.pivotX, -tree.pivotY, -tree.pivotZ);
-      place.makeTranslation(tree.pivotX, tree.trunkY, tree.pivotZ);
-      size.makeScale(tree.scale, tree.scale, tree.scale);
-      composed.multiplyMatrices(pivotTo, rotation).multiply(pivotBack).multiply(place).multiply(size);
-      sway.trunks.setMatrixAt(index, composed);
-      place.makeTranslation(tree.pivotX, tree.crownY, tree.pivotZ);
-      composed.multiplyMatrices(pivotTo, rotation).multiply(pivotBack).multiply(place).multiply(size);
-      sway.crowns.setMatrixAt(index, composed);
-    }
-    sway.trunks.instanceMatrix.needsUpdate = true;
-    sway.crowns.instanceMatrix.needsUpdate = true;
-    syncNaturalTreeAttachments();
-    sway.lastUpdateMs = nowMs;
-    requestAmbientRender(nowMs);
-  }
-
   function updateConstructionReveals(nowMs: number): void {
     if (disposed) return;
     if (constructionReveals.length === 0) {
@@ -3905,7 +3689,6 @@ export function createVoxelRenderer(
     for (const [index, entry] of localLights.entries()) entry.light.visible = index < qualityProfile.maxLocalLights;
     for (const [index, entry] of glowSprites.entries()) entry.sprite.visible = index < qualityProfile.maxGlowSprites
       && glowMaterial.opacity > 0.015;
-    updateNaturalTreeDensity();
     for (const animation of [rainAnimation, snowAnimation]) {
       if (!animation) continue;
       animation.mesh.count = Math.min(animation.mesh.instanceMatrix.count,
@@ -4016,12 +3799,11 @@ export function createVoxelRenderer(
   function updateAmbientMotion(nowMs: number): void {
     if (disposed) return;
     releaseStaleInteraction(nowMs);
+    if (paneVisible && !document.hidden && !reducedMotion && (rainAnimation !== null || snowAnimation !== null)
+      && nowMs - lastWeatherFrameStartedMs >= weatherFrameIntervalMs) requestRender();
     if (lightingTransition && paneVisible && !document.hidden && !reducedMotion) updateLighting(new Date());
-    updateRainAnimation(nowMs);
-    updateSnowAnimation(nowMs);
     updateStormLightning(nowMs);
     updateCloudDrift(nowMs);
-    updateTreeSway(nowMs);
     updateConstructionReveals(nowMs);
     canvas.dataset.ambientMotionActive = String(ambientMotionAllowed());
   }
@@ -4148,8 +3930,21 @@ export function createVoxelRenderer(
       new THREE.Vector3(terrain.bounds.minX, terrain.bounds.minY, terrain.bounds.minZ),
       new THREE.Vector3(terrain.bounds.maxX, terrain.bounds.maxY, terrain.bounds.maxZ),
     ).union(contentBounds);
+    const scenery = buildingGroup.getObjectByName('world-scenery');
+    const shadowBounds = contentBounds.clone();
+    if (scenery) {
+      const sceneryBounds = new THREE.Box3().setFromObject(scenery);
+      visibilityBounds.union(sceneryBounds);
+      for (const child of scenery.children) {
+        const object = child.userData.sceneryObject as SceneryObject | undefined;
+        if (object && object.role !== 'garden' && object.role !== 'path') shadowBounds.union(new THREE.Box3().setFromObject(child));
+      }
+    }
     const size = contentBounds.getSize(new THREE.Vector3());
-    shadowExtent = Math.max(18, size.x / 2, size.z / 2, size.y);
+    const center = contentBounds.getCenter(new THREE.Vector3());
+    // Cover background landmarks, never the entire far-mountain envelope.
+    shadowExtent = Math.max(18, size.x / 2, size.z / 2, size.y,
+      center.distanceTo(shadowBounds.min), center.distanceTo(shadowBounds.max));
     sun.shadow.camera.left = -shadowExtent;
     sun.shadow.camera.right = shadowExtent;
     sun.shadow.camera.top = shadowExtent;
@@ -4270,7 +4065,7 @@ export function createVoxelRenderer(
     skyGroup.updateMatrixWorld(true);
     updateFogDistances();
     updateNearDetailEffects();
-    updateNaturalDecorationLod();
+    updateSceneryLod();
     // Keep interaction diagnostics truthful while the camera eases after a drag.
     canvas.dataset.cameraAzimuth = cameraAzimuth.toFixed(4);
     canvas.dataset.cameraPitchDegrees = THREE.MathUtils.radToDeg(cameraPitch).toFixed(2);
@@ -4516,6 +4311,7 @@ export function createVoxelRenderer(
       ...lifecycleIdentityMetrics(), requestedPreference: requestedLightingQuality, effectiveTier: tier, status: "ok",
     });
     let preparedPostProcess: ReturnType<typeof lightingPostProcessor.prepareConfiguration> | null = null;
+    let stagedShadowMap: THREE.WebGLRenderTarget | null = null;
     let projectionCommitted = false;
     try {
       const nextProfile = QUALITY_PROFILES[tier];
@@ -4527,6 +4323,15 @@ export function createVoxelRenderer(
         tier === "high" ? 0.32 : 0,
         Math.max(1, viewport.width), Math.max(1, viewport.height), nextPixelRatio,
       );
+      const nextShadowMapSize = Math.min(nextProfile.shadowMapSize, renderer.capabilities.maxTextureSize);
+      if (previousShadowMap && (previousShadowMap.width !== nextShadowMapSize
+        || previousShadowMap.height !== nextShadowMapSize)) {
+        // Three only creates a target when shadow.map is null; disposing a
+        // still-attached old target does not resize it. Stage a separate target
+        // so rollback retains the old depth texture until this apply commits.
+        stagedShadowMap = previousShadowMap.clone();
+        stagedShadowMap.setSize(nextShadowMapSize, nextShadowMapSize);
+      }
       renderer.setPixelRatio(nextPixelRatio);
       qualityTier = tier;
       qualityProfile = nextProfile;
@@ -4534,9 +4339,8 @@ export function createVoxelRenderer(
       sun.shadow.intensity = 0.62 + LIGHTWEIGHT_SHADING_PROFILES[tier].shadowStrength * 0.25;
       sun.shadow.bias = -0.00035;
       sun.shadow.normalBias = tier === "low" ? 0.024 : tier === "balanced" ? 0.018 : 0.013;
-      if (sun.shadow.mapSize.x !== qualityProfile.shadowMapSize) {
-        sun.shadow.mapSize.set(qualityProfile.shadowMapSize, qualityProfile.shadowMapSize);
-      }
+      sun.shadow.mapSize.set(nextShadowMapSize, nextShadowMapSize);
+      sun.shadow.map = stagedShadowMap ?? previousShadowMap;
       updateMaterialEffects(currentLighting);
       updateReflectiveMaterials(currentLighting);
       setGlowMaterialsOpacity(currentLighting.nightFactor * (tier === "high" ? 0.62 : 0.48));
@@ -4550,6 +4354,9 @@ export function createVoxelRenderer(
       updateDiagnosticsDataset();
       projectionCommitted = true;
     } catch {
+      sun.shadow.map = previousShadowMap;
+      try { stagedShadowMap?.dispose(); }
+      catch (error) { console.error("Lighting quality rollback retained the old shadow, but staged target cleanup failed", error); }
       preparedPostProcess?.rollback();
       preparedPostProcess?.discard();
       qualityTier = previousTier;
@@ -4589,7 +4396,7 @@ export function createVoxelRenderer(
     if (!projectionCommitted) return false;
     try {
       preparedPostProcess?.finalize();
-      if (previousShadowMap && previousShadowMapSize !== qualityProfile.shadowMapSize) previousShadowMap.dispose();
+      if (stagedShadowMap && previousShadowMap) previousShadowMap.dispose();
     } catch (error) {
       console.error("Lighting quality committed, but retired GPU target cleanup failed", error);
     }
@@ -4608,7 +4415,7 @@ export function createVoxelRenderer(
           localLightCreatedCount: localLights.length,
           glowSpriteCount: glowSprites.filter(entry => entry.sprite.visible).length,
           glowSpriteCreatedCount: glowSprites.length,
-          naturalTreeCount: naturalTreeMeshes?.trunks.count ?? 0,
+          naturalTreeCount: sceneryTreeCount,
           ambientDecorationCount,
           weatherParticleCount: (rainAnimation?.mesh.count ?? 0) + (snowAnimation?.mesh.count ?? 0),
           starCount: starField.visible ? qualityProfile.starCount : 0,
@@ -4626,13 +4433,12 @@ export function createVoxelRenderer(
     return true;
   }
 
-  function maybeDowngradeQuality(): void {
+  function maybeDowngradeQuality(refreshedShadow: boolean): void {
     if (qualityTier === "low") return;
     const p95 = interactionP95();
     const render = renderer.info.render;
-    const sustainedSlow = interactionFrameDurations.length >= 24 && p95 !== null && p95 > 22;
-    const sceneHeavy = render.calls > 180 || render.triangles > 340_000;
-    if (!sustainedSlow && !sceneHeavy) return;
+    if (!shouldDowngradeQuality({ calls: render.calls, triangles: render.triangles, refreshedShadow,
+      interactionSamples: interactionFrameDurations.length, interactionP95Ms: p95 })) return;
     const next = lowerQualityTier(qualityTier);
     if (applyQuality(next, true)) adaptiveQualityCap = next;
     interactionFrameDurations = [];
@@ -4660,8 +4466,7 @@ export function createVoxelRenderer(
       lastWorldFrameCommittedAtMs: worldFrameCommit.lastWorldFrameCommittedAtMs,
       naturalFlowerPackPlacementCount,
       naturalFlowerOriginalFallbackCount,
-      naturalFlowerVisibleBatchCount: buildingGroup.children.filter(child =>
-        child instanceof THREE.InstancedMesh && child.userData.naturalDecorationKind === "flower" && child.visible && child.count > 0).length,
+      naturalFlowerVisibleBatchCount: visibleSceneryFlowerBatches(),
       treeSideMushroomCount,
       worldRebuildLastMs,
       worldRebuildTotalMs,
@@ -4739,7 +4544,7 @@ export function createVoxelRenderer(
       lightingFingerprint: lightingDirectionFingerprint(currentLighting),
       sunPosition: currentLighting.sunPosition,
       moonPosition: currentLighting.moonPosition,
-      shadowDirection: shadowDirectionFromPosition(currentLighting.position),
+      shadowDirection: shadowDirectionFromPosition(directionalLightingForState(currentLighting).position),
       skyLayerCount: 3,
       sunVisibility: currentLighting.sunVisibility,
       moonVisibility: currentLighting.moonVisibility,
@@ -4770,9 +4575,12 @@ export function createVoxelRenderer(
       rainCameraFrustumCount,
       snowCameraFrustumCount,
       precipitationMotionPaused: (rainAnimation?.paused ?? false) || (snowAnimation?.paused ?? false)
-        || !paneVisible || interacting || reducedMotion || document.hidden,
+        || !paneVisible || reducedMotion || document.hidden,
       rainElapsedMs: rainAnimation?.elapsedMs ?? 0,
+      precipitationFrameIntervalMs: weatherFrameIntervalMs,
       snowElapsedMs: snowAnimation?.elapsedMs ?? 0,
+      rainMatrixUploadCount: rainAnimation?.mesh.userData.weatherMatrixUploads ?? 0,
+      snowMatrixUploadCount: snowAnimation?.mesh.userData.weatherMatrixUploads ?? 0,
       rainStreakProjectedCssPx,
       fogNear: scene.fog instanceof THREE.Fog ? scene.fog.near : 0,
       fogFar: scene.fog instanceof THREE.Fog ? scene.fog.far : 0,
@@ -4827,6 +4635,16 @@ export function createVoxelRenderer(
     };
   }
 
+  function visibleSceneryFlowerBatches(): number {
+    let count = 0;
+    const root = buildingGroup.getObjectByName('world-scenery');
+    for (const garden of root?.children ?? []) {
+      if (garden.userData.sceneryObject?.role !== 'garden' && garden.userData.sceneryRole !== 'garden') continue;
+      garden.traverseVisible(o => { if (o instanceof THREE.InstancedMesh && o.count > 0) count++; });
+    }
+    return count;
+  }
+
   function updateDiagnosticsDataset(): void {
     const diagnostics = getDiagnostics();
     canvas.dataset.interacting = String(interacting);
@@ -4866,7 +4684,10 @@ export function createVoxelRenderer(
     canvas.dataset.snowCameraFrustumCount = String(diagnostics.snowCameraFrustumCount);
     canvas.dataset.precipitationMotionPaused = String(diagnostics.precipitationMotionPaused);
     canvas.dataset.rainElapsedMs = String(Math.round(diagnostics.rainElapsedMs));
+    canvas.dataset.precipitationFrameIntervalMs = String(diagnostics.precipitationFrameIntervalMs);
     canvas.dataset.snowElapsedMs = String(Math.round(diagnostics.snowElapsedMs));
+    canvas.dataset.rainMatrixUploadCount = String(diagnostics.rainMatrixUploadCount);
+    canvas.dataset.snowMatrixUploadCount = String(diagnostics.snowMatrixUploadCount);
     canvas.dataset.rainStreakProjectedCssPx = diagnostics.rainStreakProjectedCssPx.toFixed(2);
     canvas.dataset.skyCameraWorldOffset = new THREE.Vector3().setFromMatrixPosition(skyGroup.matrixWorld).distanceTo(camera.position).toFixed(4);
     canvas.dataset.worldRootMembers = rotatableWorldRoot.children.map((child) => child.name).join(",");
@@ -5134,12 +4955,16 @@ export function createVoxelRenderer(
   }
 
   const contextLost = (event: Event): void => { event.preventDefault(); };
-  const contextRestored = (): void => { resize(); };
+  const contextRestored = (): void => {
+    renderer.shadowMap.autoUpdate = false;
+    updateLighting(new Date(), true);
+    resize();
+  };
   const visibilityChange = (): void => {
     if (document.hidden) precipitationViewCache = invalidatePrecipitationViewCache(precipitationViewCache);
     for (const controller of atlasAnimationControllers) controller?.setVisible(!document.hidden && paneVisible);
     syncPrecipitationMotionGate(performance.now());
-    if (!document.hidden) { updateLighting(new Date()); updateWeather(localDateForDate(new Date())); }
+    if (!document.hidden) { updateLighting(new Date(), true); updateWeather(localDateForDate(new Date())); }
     else if (lightingTransition) {
       lightingTransition = null;
       environmentTransitionCancelledCount += 1;
@@ -5389,7 +5214,7 @@ export function createVoxelRenderer(
       if (value && lightingTransition) {
         lightingTransition = null;
         environmentTransitionCancelledCount += 1;
-        updateLighting(new Date());
+        updateLighting(new Date(), true);
       }
       if (value && environmentReveal) finishEnvironmentReveal(true);
       if (value) finishOpeningReveal("cancelled");
@@ -5410,7 +5235,7 @@ export function createVoxelRenderer(
       }
       for (const controller of atlasAnimationControllers) controller?.setVisible(!document.hidden && value);
       if (value) {
-        updateLighting(new Date());
+        updateLighting(new Date(), true);
         updateWeather(localDateForDate(new Date()));
         resize();
       }
@@ -5473,6 +5298,7 @@ export function createVoxelRenderer(
       clearGroup(roadGroup);
       clearGroup(atmosphereGroup, true);
       lightingPostProcessor.dispose();
+      sun.shadow.dispose();
       skyGeometry.dispose();
       skyMaterial.dispose();
       starGeometry.dispose();

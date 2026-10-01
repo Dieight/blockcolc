@@ -29,6 +29,7 @@ import { FocusTimer } from './FocusTimer';
 import { FocusPlanSheet, HabitFocusPlanSheet } from './FocusPlanSheets';
 import { HabitBuildingSelection } from './HabitBuildingSelection';
 import { ProgressReportV7, MarathonProgressReport } from './FocusReports';
+import { GlassEdgeRefraction } from './GlassEdgeRefraction';
 import { EndFocusDialog } from './EndFocusDialog';
 import { formatClockDuration, formatDurationSummary, formatClockTime } from './focus-format';
 
@@ -500,6 +501,7 @@ export function WorldScreenV7({ service, resourcePacks, run, refresh, onReconcil
       <WorldWeatherAttribution view={worldWeather} localConditionText={localWeatherConditionLabel(localWeather.kind)}/>
     </div>
     {visible && <section ref={focusPanelRef} className="focus-panel focus-workbench-panel" onPointerUp={(event) => handlePanelTap({ target: event.target, clientX: event.clientX, clientY: event.clientY })}>
+      <GlassEdgeRefraction active={isImmersiveLayout}/>
       <MinimalPanelWeatherOverlay active={minimalIdle} weather={panelWeather ? { kind: panelWeather.kind,
         precipitationIntensity: panelWeather.precipitationIntensity, visualPrecipitationIntensity: panelWeather.visualPrecipitationIntensity, seed: panelWeather.seed,
         thunderstorm: panelWeather.thunderstorm } : null}/>
@@ -526,7 +528,7 @@ export function WorldScreenV7({ service, resourcePacks, run, refresh, onReconcil
           clock={<MinimalClockGesture clockText={minimalFlow.clockText} busy={minimalFlow.busy} focusMinutes={preferences.focusMinutes} breakMinutes={preferences.breakMinutes} onConfirm={endMs => void minimalFlow.startAt(endMs)}/>}
           exit={<button type="button" className={`minimal-exit${idleExitRevealed ? '' : ' is-veiled'}`} disabled={minimalFlow.busy} onClick={onExitMinimal}>返回完整模式</button>}/>
         : activeHabitAwaitingBlocksWorkbench ? <HabitBuildingSelection state={state} active={active} resourcePacks={resourcePacks} run={run} targetRounds={preferences.habitTargetRounds}/>
-        : marathonReportPhase ? <MarathonProgressReport variant="immersive" state={state} hostProjectId={reconciledPlan!.projectId} run={run} cancellationReason={reconciledPlan?.cancellationReason} cancellationNote={reconciledPlan?.cancellationNote} onSubmitted={flow.afterMarathonReport}/>
+        : marathonReportPhase ? <MarathonProgressReport variant={minimal ? 'minimal' : 'immersive'} state={state} hostProjectId={reconciledPlan!.projectId} run={run} cancellationReason={reconciledPlan?.cancellationReason} cancellationNote={reconciledPlan?.cancellationNote} onSubmitted={flow.afterMarathonReport}/>
          : pending.length > 0 && !marathonPlan ? <ProgressReportV7 variant="immersive" active={active} run={run} cancellationReason={reconciledPlan?.cancellationReason} cancellationNote={reconciledPlan?.cancellationNote} onSubmitted={afterReport}/> : <>
          {(session && state.focusIntegrityPolicy.enabled && integrityNotice?.sessionId === session.id) && <div className={`${integrityNotice.count > 0 ? 'focus-integrity-warning flash active' : 'focus-integrity-warning flash'}${integrityLeaving ? ' is-leaving' : ''}`} role="status"><AlertTriangle/>有效离开 {integrityNotice.count} / {integrityNotice.max} 次</div>}
          {integrityFailure && !integrityEndedHidden && <div className={`focus-integrity-ended${integrityEndedLeaving ? ' is-leaving' : ''}`} role="alert"><AlertTriangle/>本轮专注因达到离开应用次数上限而结束。下次可以从这里继续。</div>}

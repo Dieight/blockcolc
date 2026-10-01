@@ -6,9 +6,9 @@ import { unsettledMarathonSessions } from './marathon-settlement';
 import type { CommandRunnerOptions } from './command-runner';
 import { beginFocusSubmission } from './submission-performance';
 
-export type FocusReportVariant = 'embedded' | 'immersive';
+export type FocusReportVariant = 'embedded' | 'immersive' | 'minimal';
 export function focusReportSurfaceClass(variant: FocusReportVariant = 'embedded'): string {
-  return `focus-report-surface${variant === 'immersive' ? ' focus-report-surface--immersive' : ''}`;
+  return `focus-report-surface${variant !== 'embedded' ? ' focus-report-surface--immersive' : ''}${variant === 'minimal' ? ' focus-report-surface--minimal' : ''}`;
 }
 
 export async function submitFocusProgressReport({command,run,onSubmitted}:{command:Extract<ApplicationCommand,{type:'ReportSubtaskProgress'}>;run:(command:ApplicationCommand,options?:CommandRunnerOptions)=>Promise<ApplicationResult>;onSubmitted:()=>void}):Promise<ApplicationResult>{
@@ -267,13 +267,17 @@ export function MarathonProgressReport({ state, hostProjectId, run, onSubmitted,
     });
   };
   const reasonLabel = cancellationReason ? focusInterruptionCategoryLabel(cancellationReason) : null;
+  const minimal = variant === 'minimal';
+  const totalTime = formatMinutes(sessions.reduce((sum, session) => sum + session.actualDurationMs, 0));
   return <div className={`report progress-report-panel marathon-progress-report ${focusReportSurfaceClass(variant)}`} data-focus-report-variant={variant}>
-    <Check/>
+    {!minimal && <Check/>}
     <span className="eyebrow">{totalRounds} 轮专注已结束</span>
-    <h2>把这次推进汇报给哪些任务？</h2>
+    <h2>{minimal ? totalTime : '把这次推进汇报给哪些任务？'}</h2>
+    {minimal && <p className="minimal-report-caption">把专注留在做过的事上</p>}
     {reasonLabel && <p className="plan-sheet-note">本次结束原因：{reasonLabel}</p>}
     {cancellationNote && <p className="plan-sheet-note">补充说明：{cancellationNote}</p>}
-    <p>展开任务选择要推进的小任务，并为每个目标明确计入轮数；每轮只归属一个目标。习惯与普通任务共用同一轮次池，按最早完成顺序分配；没有分配的轮次会明确记为未分配。</p>
+    {minimal ? <details className="minimal-report-help"><summary>轮次如何记录</summary><p>每轮只归属一个目标，按完成顺序计入实际时长；未选择的轮次记为未分配。保持原进度也可记录投入。</p></details>
+      : <p>展开任务选择要推进的小任务，并为每个目标明确计入轮数；每轮只归属一个目标。习惯与普通任务共用同一轮次池，按最早完成顺序分配；没有分配的轮次会明确记为未分配。</p>}
     {totalRounds === 0
       ? <p className="plan-sheet-note">这次没有需要汇报的轮次，直接结束计划即可。</p>
       : !hasTargets
@@ -319,7 +323,10 @@ export function MarathonProgressReport({ state, hostProjectId, run, onSubmitted,
     {missingTaskRounds > 0 && <p className="plan-sheet-note" role="alert">已选择推进的小任务还没有计入轮数；请为每个目标至少增加 1 轮，或取消推进选择。</p>}
     {totalRounds > 0 && allocatedRounds === totalRounds && <p className="plan-sheet-note">全部轮次已明确分配，仍会一次性提交。</p>}
     {totalRounds > 0 && hasTargets && allocatedRounds < totalRounds && entries.length === 0 && <p className="plan-sheet-note">还有 {totalRounds - allocatedRounds} 轮未分配，可直接提交并明确记为未分配。</p>}
-    <button type="button" className="primary marathon-report-submit" disabled={busy || (totalRounds > 0 && hasTargets && !canSubmit)} onClick={() => void submit()}>{totalRounds > 0 && hasTargets ? '一次提交本次推进' : '直接结束计划'}</button>
+    <div className="marathon-report-footer">
+      {minimal && totalRounds > 0 && <p className="minimal-report-allocation" aria-live="polite"><span>已分配 {allocatedRounds} / {totalRounds} 轮</span><span>{totalRounds - allocatedRounds} 轮未分配</span></p>}
+      <button type="button" className="primary marathon-report-submit" disabled={busy || (totalRounds > 0 && hasTargets && !canSubmit)} onClick={() => void submit()}>{totalRounds > 0 && hasTargets ? '一次提交本次推进' : '直接结束计划'}</button>
+    </div>
   </div>;
 }
 

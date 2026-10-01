@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { expandGlassSetting } from './expand-glass-setting';
 
 // V23 ③④: appearance settings (light/dark/system) and heatmap day detail on click.
 
@@ -34,16 +35,19 @@ test("immersive glass transparency persists and keeps an adaptive dark material"
   expect(worldHudMaterial.backgroundImage).toContain("linear-gradient");
   await page.getByRole("button", { name: "设置", exact: true }).click();
   const transparency = page.getByLabel("液态玻璃通透程度");
+  await expandGlassSetting(page);
   await transparency.fill("0");
   await page.getByRole("button", { name: "计时", exact: true }).click();
   const maxBlur = await page.locator(".world-hud span").first().evaluate((element) => getComputedStyle(element).backdropFilter);
   expect(maxBlur).toContain("blur(14px)");
   await page.getByRole("button", { name: "设置", exact: true }).click();
+  await expandGlassSetting(page);
   await transparency.fill("100");
   await page.getByRole("button", { name: "计时", exact: true }).click();
   const minBlur = await page.locator(".world-hud span").first().evaluate((element) => getComputedStyle(element).backdropFilter);
   expect(minBlur).toBe(maxBlur);
   await page.getByRole("button", { name: "设置", exact: true }).click();
+  await expandGlassSetting(page);
   await transparency.fill("50");
   await transparency.fill("0");
   const frosted = await page.locator("html").evaluate(() => {

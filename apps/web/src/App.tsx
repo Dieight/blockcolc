@@ -22,6 +22,7 @@ import { WorldCanvasV7 } from './WorldCanvasV7';
 import { useWorldWeather } from './use-world-weather';
 import { NORMAL_WORLD_DEBUG, projectWorldDebug, type WorldDebugSettings } from './world-debug';
 import { MarathonProgressReport } from './FocusReports';
+import { GlassEdgeRefraction } from './GlassEdgeRefraction';
 import { BlueprintPicker } from './BlueprintPicker';
 import { shouldPersistBlueprintSnapshot, toImportedBlueprint } from './blueprint-adapter';
 import { useBlueprintCatalog } from './voxel-runtime';
@@ -238,7 +239,7 @@ export function App({ service, resourcePacks }: { service: ApplicationService; r
             worldDebug={worldDebugProjection} focusedProjectId={null} memoryProjectId={null}
             onSelectProject={()=>{}} onClearWorldFocus={()=>{}} onCloseMemory={()=>{}} onContinueProject={async()=>{}}
             visible={worldVisible} onPickTerrain={()=>{}} pickedCell={null}/></div>
-          <section className="focus-panel"><MarathonProgressReport variant="immersive" key={orphanedDeferredHost} state={state} hostProjectId={orphanedDeferredHost} run={run} onSubmitted={() => { createRoundPlanStore(() => window.localStorage).write(null); refresh(); }}/></section>
+          <section className="focus-panel"><GlassEdgeRefraction active={worldVisible}/><MarathonProgressReport variant={minimalWanted ? 'minimal' : 'immersive'} key={orphanedDeferredHost} state={state} hostProjectId={orphanedDeferredHost} run={run} onSubmitted={() => { createRoundPlanStore(() => window.localStorage).write(null); refresh(); }}/></section>
         </div>
         : firstRunSetup)}
       {active && <RoutePane active={tab === 'tasks'} route="tasks"><Suspense fallback={<LoadingPage status="正在打开任务…"/>}><TasksScreen active={active} state={state} run={run} onCreateProject={beginProjectSetup} onViewProject={viewProjectInWorld}/></Suspense></RoutePane>}

@@ -49,6 +49,13 @@ describe('focus view ownership', () => {
   it('keeps ordinary pending reporting ahead of minimal idle', () => {
     expect(deriveFocusViewState({ ...input, hasPendingReport: true })).toMatchObject({ phase: 'report', minimal: false, isImmersiveLayout: true, activePendingBlocksWorkbench: true });
   });
+  it('keeps completed deferred rounds on the minimal report, without reclassifying an ordinary report', () => {
+    const finished = apply(deferred, { type: 'CompleteFocus' }, nowMs + 60000);
+    expect(deriveFocusViewState({ ...input, state: finished, nowMs: nowMs + 61000 }))
+      .toMatchObject({ phase: 'report', minimal: true, isImmersiveLayout: true, marathonReportPhase: true });
+    expect(deriveFocusViewState({ ...input, hasPendingReport: true }))
+      .toMatchObject({ phase: 'report', minimal: false, activePendingBlocksWorkbench: true });
+  });
   it('recovers retained rounds into report even after their host was deleted', () => {
     const finished = apply(deferred, { type: 'CompleteFocus' }, nowMs + 60000);
     const deleted = apply(finished, { type: 'DeleteActiveProject', projectId: 'p' }, nowMs + 61000);

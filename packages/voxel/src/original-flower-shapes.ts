@@ -40,22 +40,24 @@ export function addOriginalFlowerShapes(
   const entries = new Map<string, BlueprintVoxel[]>();
   for (const voxel of voxels) {
     const path = voxel.sourceBlockId?.toLowerCase().replace(/^minecraft:/, "");
-    if (!path || FLOWER_COLORS[path] === undefined) continue;
-    const list = entries.get(path) ?? [];
+    if (!path || (FLOWER_COLORS[path] === undefined && path !== 'wheat')) continue;
+    const key = path === 'wheat' ? `wheat:${wheatAge(voxel)}` : path;
+    const list = entries.get(key) ?? [];
     list.push(voxel);
-    entries.set(path, list);
+    entries.set(key, list);
   }
   const handled = new Set<BlueprintVoxel>();
-  for (const [path, placements] of entries) {
+  for (const [key, placements] of entries) {
+    const path = key.split(':')[0]!;
     const color = FLOWER_COLORS[path]!;
-    const geometry = makeFlowerGeometry(color);
+    const geometry = path === 'wheat' ? makeWheatGeometry(wheatAge(placements[0]!)) : makeFlowerGeometry(color);
     const material = new THREE.MeshStandardMaterial({ vertexColors: true, side: THREE.DoubleSide,
       roughness: 0.88, metalness: 0 });
     const mesh = new THREE.InstancedMesh(geometry, material, placements.length);
-    mesh.name = `blockcolc-original-flower-${path}`;
+    mesh.name = `blockcolc-original-flower-${key}`;
     mesh.castShadow = false;
     mesh.receiveShadow = true;
-    mesh.userData.originalShape = "crossed-flower-approximation";
+    mesh.userData.originalShape = path === 'wheat' ? 'original-crop-approximation' : "crossed-flower-approximation";
     mesh.userData.sourceBlockId = `minecraft:${path}`;
     mesh.userData.ownedMaterial = material;
     const matrix = new THREE.Matrix4();
@@ -72,6 +74,37 @@ export function addOriginalFlowerShapes(
     root.add(mesh);
   }
   return handled;
+}
+
+function wheatAge(voxel: BlueprintVoxel): number {
+  const age = Number(voxel.sourceBlockState?.age ?? 7);
+  return Number.isInteger(age) && age >= 0 && age <= 7 ? age : 7;
+}
+
+/** Original thin stalks and grain heads; pack-resolved crops still take priority. */
+function makeWheatGeometry(age: number): THREE.BufferGeometry {
+  const positions: number[] = [], colors: number[] = [];
+  const height = .18 + age / 7 * .68;
+  const addBox = (width: number, depth: number, tall: number, x: number, y: number, z: number, color: number): void => {
+    const box = new THREE.BoxGeometry(width, tall, depth).toNonIndexed();
+    const rgb = new THREE.Color(color), p = box.getAttribute('position');
+    for (let i = 0; i < p.count; i++) {
+      positions.push(p.getX(i) + x, p.getY(i) + y, p.getZ(i) + z); colors.push(rgb.r, rgb.g, rgb.b);
+    }
+    box.dispose();
+  };
+  for (const x of [-.24, 0, .24]) for (const z of [-.21, .21]) {
+    addBox(.045, .045, height, x, -.48 + height / 2, z, age >= 6 ? 0xa99448 : 0x62853e);
+    if (age >= 5) {
+      addBox(.09, .07, .18, x, -.52 + height, z, age === 7 ? 0xd7b65a : 0x9cab46);
+      addBox(.16, .035, .05, x, -.62 + height, z, age === 7 ? 0xc9a24d : 0x9cab46);
+    }
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+  geometry.computeVertexNormals(); geometry.computeBoundingBox(); geometry.computeBoundingSphere();
+  return geometry;
 }
 
 function makeFlowerGeometry(petalColor: number): THREE.BufferGeometry {

@@ -25,10 +25,13 @@ test("keeps the complete natural terrain inside safe clip planes at maximum zoom
     await expect.poll(async () => Math.abs(Number(await canvas.getAttribute("data-camera-azimuth")) - beforeAzimuth)).toBeGreaterThan(1.2);
     await expect(canvas).toHaveAttribute("data-visibility-near-clip-safe", "true");
     await expect(canvas).toHaveAttribute("data-visibility-far-clip-safe", "true");
-    const near = Number(await canvas.getAttribute("data-camera-near"));
-    const far = Number(await canvas.getAttribute("data-camera-far"));
-    const nearestTerrain = Number(await canvas.getAttribute("data-visibility-nearest-distance"));
-    const farthestTerrain = Number(await canvas.getAttribute("data-visibility-farthest-distance"));
+    // Camera easing continues between protocol calls. Read one coherent frame,
+    // not a near plane from one angle and terrain distances from another.
+    const { near, far, nearestTerrain, farthestTerrain } = await canvas.evaluate(element => {
+      const d = (element as HTMLCanvasElement).dataset;
+      return { near: Number(d.cameraNear), far: Number(d.cameraFar),
+        nearestTerrain: Number(d.visibilityNearestDistance), farthestTerrain: Number(d.visibilityFarthestDistance) };
+    });
     expect(near).toBeLessThanOrEqual(Math.max(0.5, nearestTerrain * 0.72) + 0.01);
     expect(far - farthestTerrain).toBeGreaterThanOrEqual(23.99);
     captures.push(await canvas.screenshot({ path: testInfo.outputPath(`maximum-zoom-rotation-${index + 1}.png`) }));

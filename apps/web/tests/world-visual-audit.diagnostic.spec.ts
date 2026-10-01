@@ -1,10 +1,26 @@
-import { expect, test, type Locator, type Page } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import type { VoxelRenderer } from '@blockcolc/voxel';
 import { fixBusinessDate } from './fixed-business-date';
 
 type ViewportRect = { x: number; y: number; width: number; height: number };
 
-async function pinchZoom(page: Page, canvas: Locator,
+async function assertTouchTargets(page: Page, canvasId: string, coordinates: { x: number; y: number }[]) {
+  // Resolve the known fixture and its hit targets in one browser task. A traced
+  // accessibility-locator lookup previously waited behind software-WebGL frames
+  // until cleanup, so its late result described the underlying page, not input.
+  // The actual canvas identity and all touch positions remain mandatory.
+  await expect.poll(() => page.evaluate(({ canvasId, coordinates }) => {
+    const element = document.getElementById(canvasId);
+    return coordinates.map(({ x, y }) => {
+      const target = document.elementFromPoint(x, y);
+      return { x, y, canvasHit: element instanceof HTMLCanvasElement && target === element,
+        target: target?.tagName ?? null, className: target?.getAttribute('class') ?? null };
+    });
+  }, { canvasId, coordinates }).then(hits => hits.every(hit => hit.canvasHit)
+    ? 'canvas' : JSON.stringify(hits)), { timeout: 20_000 }).toBe('canvas');
+}
+
+async function pinchZoom(page: Page, canvasId: string,
   bounds: ViewportRect, startDistance: number, endDistance: number) {
   const centerX = bounds.x + bounds.width / 2;
   const y = bounds.y + bounds.height * 0.35;
@@ -14,12 +30,7 @@ async function pinchZoom(page: Page, canvas: Locator,
   ];
   const start = points(startDistance);
   const end = points(endDistance);
-  await expect.poll(() => canvas.evaluate((element, coordinates) => coordinates.map(({ x, y }) => {
-    const target = document.elementFromPoint(x, y);
-    return { x, y, canvasHit: target === element, target: target?.tagName ?? null,
-      className: target?.getAttribute('class') ?? null };
-  }), [...start, ...end]).then(hits => hits.every(hit => hit.canvasHit)
-    ? 'canvas' : JSON.stringify(hits))).toBe('canvas');
+  await assertTouchTargets(page, canvasId, [...start, ...end]);
   const cdp = await page.context().newCDPSession(page);
   try {
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: start });
@@ -31,15 +42,14 @@ async function pinchZoom(page: Page, canvas: Locator,
   } finally { await cdp.detach(); }
 }
 
-async function touchDrag(page: Page, canvas: Locator, bounds: ViewportRect,
+async function touchDrag(page: Page, canvasId: string, bounds: ViewportRect,
   from: { x: number; y: number }, to: { x: number; y: number }) {
   const point = (id: number, progress: number) => ({
     id, x: bounds.x + bounds.width * (from.x + (to.x - from.x) * progress),
     y: bounds.y + bounds.height * (from.y + (to.y - from.y) * progress),
     radiusX: 1, radiusY: 1, force: 1,
   });
-  await expect.poll(() => canvas.evaluate((element, points) => points.every(({ x, y }) =>
-    document.elementFromPoint(x, y) === element), [point(43, 0), point(43, 1)])).toBe(true);
+  await assertTouchTargets(page, canvasId, [point(43, 0), point(43, 1)]);
   const cdp = await page.context().newCDPSession(page);
   try {
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [point(43, 0)] });
@@ -206,17 +216,24 @@ test('exercises rapid reveal interruption, rebuild, hidden, reduced-motion and d
 });
 
 test('records camera-local low rain and snow in main and preview worlds across real input and pause boundaries', async ({ page }, testInfo) => {
-  test.setTimeout(180_000);
+  test.setTimeout(240_000);
+  // Full-screen software WebGL can defer an actual diagnostics query for more
+  // than five seconds. Keep all resize/frustum/motion assertions, but allow a
+  // completed query; do not force frames, stop precipitation or rebuild here.
+  const weatherExpect = expect.configure({ timeout: 20_000 });
   await page.goto('/');
   await page.waitForFunction(() => Boolean((window as typeof window & { __blockcolcVoxelTest?: unknown }).__blockcolcVoxelTest));
   const observations: Record<string, unknown>[] = [];
+  const canvasId = 'blockcolc-precipitation-audit';
   for (const preview of [false, true]) {
-    await page.evaluate(previewMode => {
+    await page.evaluate(({ previewMode, canvasId }) => {
       const target = window as typeof window & {
         __blockcolcVoxelTest: typeof import('@blockcolc/voxel');
         __precipitationAuditRenderer?: VoxelRenderer;
       };
       const canvas = document.createElement('canvas');
+      if (document.getElementById(canvasId)) throw new Error('Previous precipitation fixture was not disposed');
+      canvas.id = canvasId;
       canvas.setAttribute('aria-label', '降水视野诊断');
       // Same host contract as the real main-world and blueprint-preview canvases.
       canvas.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;z-index:9999;touch-action:none';
@@ -225,14 +242,15 @@ test('records camera-local low rain and snow in main and preview worlds across r
         lightingQuality: 'performance', environmentStyle: 'natural-valley',
         worldSeed: 'precipitation-audit-fixed', previewMode,
       });
+      renderer.setReducedMotion(false);
       renderer.setWorld({ projectId: 'precipitation-audit', blueprintId: 'builtin-small-workshop',
         buildingCompletionBasisPoints: 10_000, buildingConditionBasisPoints: 10_000,
         isMonument: false, settlementIndex: 0 });
       renderer.setEnvironmentDebugOverride({ date: Date.parse('2026-09-27T12:00:00+08:00'),
         weather: { kind: 'clear', cloudIntensity: 0.12, precipitationIntensity: 0 } });
       target.__precipitationAuditRenderer = renderer;
-    }, preview);
-    const canvas = page.getByLabel('降水视野诊断');
+    }, { previewMode: preview, canvasId });
+    const canvas = page.locator(`#${canvasId}`);
     const mode = preview ? 'preview' : 'main-world';
     const read = () => page.evaluate(() =>
       (window as typeof window & { __precipitationAuditRenderer: VoxelRenderer })
@@ -247,9 +265,11 @@ test('records camera-local low rain and snow in main and preview worlds across r
           weather: { kind: 'rain', cloudIntensity: 0.32, precipitationIntensity: 0.01 } }));
       await expect(canvas).toHaveAttribute('data-weather-kind', 'rain');
       await expect(canvas).toHaveAttribute('data-environment-transition-active', 'false');
-      await expect.poll(async () => Number((await read()).rainCameraFrustumCount)).toBeGreaterThan(0);
+      await weatherExpect.poll(async () => Number((await read()).rainCameraFrustumCount)).toBeGreaterThan(0);
       const rainy = await read();
       expect(rainy.precipitationFieldMode).toBe(mode);
+      expect(rainy.precipitationMotionPaused).toBe(false);
+      await weatherExpect.poll(async () => Number((await read()).rainElapsedMs)).toBeGreaterThan(Number(rainy.rainElapsedMs));
       for (const key of ['precipitationFieldSpanX', 'precipitationFieldSpanZ']) {
         expect(Number(rainy[key]), `${mode} ${key}`).toBeGreaterThan(0);
         expect(Number(rainy[key]), `${mode} ${key}`).toBeLessThan(1_000);
@@ -259,17 +279,17 @@ test('records camera-local low rain and snow in main and preview worlds across r
       await canvas.screenshot({ path: testInfo.outputPath(`${mode}-low-rain.png`) });
       const bounds = (await canvas.boundingBox())!;
       const cameraDistanceRatioBeforeZoom = Number(await canvas.getAttribute('data-camera-distance-ratio'));
-      await pinchZoom(page, canvas, bounds, 48, 240);
-      await expect.poll(async () => Number(await canvas.getAttribute('data-camera-distance-ratio')))
+      await pinchZoom(page, canvasId, bounds, 48, 240);
+      await weatherExpect.poll(async () => Number(await canvas.getAttribute('data-camera-distance-ratio')))
         .toBeLessThan(cameraDistanceRatioBeforeZoom - 0.05);
-      await expect.poll(async () => Number((await read()).precipitationFieldSyncCount))
+      await weatherExpect.poll(async () => Number((await read()).precipitationFieldSyncCount))
         .toBeGreaterThan(Number(rainy.precipitationFieldSyncCount));
       const zoomed = await read();
       const cameraAzimuthBeforeDrag = Number(await canvas.getAttribute('data-camera-azimuth'));
-      await touchDrag(page, canvas, bounds, { x: 0.5, y: 0.35 }, { x: 0.72, y: 0.4 });
-      await expect.poll(async () => Number(await canvas.getAttribute('data-camera-azimuth')))
+      await touchDrag(page, canvasId, bounds, { x: 0.5, y: 0.35 }, { x: 0.72, y: 0.4 });
+      await weatherExpect.poll(async () => Number(await canvas.getAttribute('data-camera-azimuth')))
         .not.toBe(cameraAzimuthBeforeDrag);
-      await expect.poll(async () => Number((await read()).precipitationFieldSyncCount))
+      await weatherExpect.poll(async () => Number((await read()).precipitationFieldSyncCount))
         .toBeGreaterThan(Number(zoomed.precipitationFieldSyncCount));
       const rotated = await read();
       expect(rotated.worldRebuildCount).toBe(initial.worldRebuildCount);
@@ -278,20 +298,20 @@ test('records camera-local low rain and snow in main and preview worlds across r
 
       const originalViewport = page.viewportSize()!;
       await page.setViewportSize({ width: originalViewport.height, height: originalViewport.width });
-      await expect.poll(async () => Number((await read()).resizeCount))
+      await weatherExpect.poll(async () => Number((await read()).resizeCount))
         .toBeGreaterThan(Number(rotated.resizeCount));
-      await expect.poll(async () => Number((await read()).precipitationFieldSyncCount))
+      await weatherExpect.poll(async () => Number((await read()).precipitationFieldSyncCount))
         .toBeGreaterThan(Number(rotated.precipitationFieldSyncCount));
-      await expect.poll(async () => Number((await read()).rainCameraFrustumCount)).toBeGreaterThan(0);
+      await weatherExpect.poll(async () => Number((await read()).rainCameraFrustumCount)).toBeGreaterThan(0);
       const landscape = await read();
       expect(landscape.worldRebuildCount).toBe(initial.worldRebuildCount);
       expect(landscape.rainDropCount).toBe(rainy.rainDropCount);
       await canvas.screenshot({ path: testInfo.outputPath(`${mode}-low-rain-landscape.png`) });
       const landscapeResizeCount = Number((await read()).resizeCount);
       await page.setViewportSize(originalViewport);
-      await expect.poll(async () => Number((await read()).resizeCount))
+      await weatherExpect.poll(async () => Number((await read()).resizeCount))
         .toBeGreaterThan(landscapeResizeCount);
-      await expect.poll(() => canvas.evaluate(element => ({
+      await weatherExpect.poll(() => canvas.evaluate(element => ({
         width: Math.round(element.getBoundingClientRect().width),
         height: Math.round(element.getBoundingClientRect().height),
       }))).toEqual(originalViewport);
@@ -304,7 +324,7 @@ test('records camera-local low rain and snow in main and preview worlds across r
       expect((await read()).rainElapsedMs).toBe(hidden.rainElapsedMs);
       await page.evaluate(() => (window as typeof window & { __precipitationAuditRenderer: VoxelRenderer })
         .__precipitationAuditRenderer.setVisible(true));
-      await expect.poll(async () => Number((await read()).rainElapsedMs)).toBeGreaterThan(Number(hidden.rainElapsedMs));
+      await weatherExpect.poll(async () => Number((await read()).rainElapsedMs)).toBeGreaterThan(Number(hidden.rainElapsedMs));
       await page.evaluate(() => (window as typeof window & { __precipitationAuditRenderer: VoxelRenderer })
         .__precipitationAuditRenderer.setReducedMotion(true));
       const reduced = await read();
@@ -317,21 +337,23 @@ test('records camera-local low rain and snow in main and preview worlds across r
         renderer.setEnvironmentDebugOverride({ date: Date.parse('2026-09-27T12:00:00+08:00'),
           weather: { kind: 'snow', cloudIntensity: 0.32, precipitationIntensity: 0.01 } });
       });
-      await expect.poll(async () => Number((await read()).snowCameraFrustumCount)).toBeGreaterThan(0);
+      await weatherExpect.poll(async () => Number((await read()).snowCameraFrustumCount)).toBeGreaterThan(0);
       await expect(canvas).toHaveAttribute('data-environment-transition-active', 'false');
       await canvas.screenshot({ path: testInfo.outputPath(`${mode}-low-snow.png`) });
       const snow = await read();
+      expect(snow.precipitationMotionPaused).toBe(false);
+      await weatherExpect.poll(async () => Number((await read()).snowElapsedMs)).toBeGreaterThan(Number(snow.snowElapsedMs));
       expect(snow.worldRebuildCount).toBe(initial.worldRebuildCount);
       expect(Number(snow.snowFlakeCount)).toBeLessThanOrEqual(800);
       observations.push({ mode, rainy, rotated, landscape, hidden, reduced, snow,
         scope: 'Synthetic debug weather, real renderer and pointer input; frustum count is not pixel/OEM acceptance.' });
     } finally {
-      await page.evaluate(() => {
+      await page.evaluate(canvasId => {
         const target = window as typeof window & { __precipitationAuditRenderer?: VoxelRenderer };
         target.__precipitationAuditRenderer?.dispose();
         delete target.__precipitationAuditRenderer;
-        document.querySelector('canvas[aria-label="降水视野诊断"]')?.remove();
-      });
+        document.getElementById(canvasId)?.remove();
+      }, canvasId);
     }
   }
   await testInfo.attach('precipitation-field-observations', {

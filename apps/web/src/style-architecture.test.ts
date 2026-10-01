@@ -7,7 +7,8 @@ const sourceRoot = dirname(fileURLToPath(import.meta.url));
 const styleRoot = resolve(sourceRoot, 'styles');
 const expectedImports = [
   'tokens.css', 'base.css', 'foundation.css', 'settings.css', 'workbench.css',
-  'tasks-stats.css', 'setup.css', 'world.css', 'minimal-mode.css', 'theme.css', 'building-memory.css', 'glass-overlays.css', 'world-debug.css',
+  'tasks-stats.css', 'setup.css', 'world.css', 'minimal-mode.css', 'theme.css',
+  'focus-report.css', 'building-memory.css', 'glass-overlays.css', 'world-debug.css',
 ];
 
 describe('style architecture', () => {
@@ -27,6 +28,7 @@ describe('style architecture', () => {
   it('keeps version numbers out of current selectors and new feature overrides', () => {
     const css = expectedImports.map((file) => readFileSync(resolve(styleRoot, file), 'utf8')).join('\n');
     expect(css).not.toMatch(/\.v\d+(?:-|\b)/i);
+    expect(readFileSync(resolve(styleRoot, 'focus-report.css'), 'utf8')).not.toContain('!important');
     expect(readFileSync(resolve(styleRoot, 'building-memory.css'), 'utf8')).not.toContain('!important');
     expect(readFileSync(resolve(styleRoot, 'glass-overlays.css'), 'utf8')).not.toContain('!important');
     expect(readFileSync(resolve(styleRoot, 'tokens.css'), 'utf8')).not.toContain('!important');

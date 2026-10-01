@@ -128,11 +128,31 @@ test('snow settles on the minimal glass without covering the clock', async ({ pa
   await expect(canvas).toHaveAttribute('data-weather-kind', 'snow');
   const overlay = page.locator('.minimal-panel-weather-overlay');
   await expect(overlay).toHaveAttribute('data-weather-kind', 'snow');
+  await expect(overlay).toHaveAttribute('data-weather-style', 'pixel-layered');
+  await expect(overlay).toHaveAttribute('data-snow-tier', 'low');
   await expect.poll(async () => Number(await canvas.getAttribute('data-snow-flake-count'))).toBeGreaterThan(0);
   await page.locator('.focus-panel').screenshot({ path: testInfo.outputPath('weather-snow-glass.png') });
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await expect(overlay).toBeVisible();
   await expect(page.locator('.minimal-clock-gesture')).toBeVisible();
+  // Measure the actual static snow pixels, not just the diagnostic tier.
+  await expect.poll(() => overlay.locator('canvas').evaluate(element => {
+    const canvas = element as HTMLCanvasElement;
+    const context = canvas.getContext('2d')!;
+    const { data } = context.getImageData(0, 0, canvas.width, canvas.height);
+    let total = 0;
+    for (let x = 8; x < canvas.width - 8; x += 8) {
+      let depth = 0;
+      for (let y = canvas.height - 1; y >= Math.max(0, canvas.height - 30); y -= 1) {
+        if (data[(y * canvas.width + x) * 4 + 3]! < 170) break;
+        depth += 1;
+      }
+      total += depth;
+    }
+    return total / Math.ceil((canvas.width - 16) / 8);
+  })).toBeGreaterThan(4);
+  await expect(overlay.locator('canvas')).toHaveCSS('image-rendering', 'pixelated');
+  await page.locator('.focus-panel').screenshot({ path: testInfo.outputPath('pixel-snow-static-glass.png') });
 });
 
 test('opening camera movement never opens memory and is not replayed by route changes', async ({ page }) => {
@@ -307,10 +327,10 @@ test('glass drizzle does not intercept either direction of an actual touch swipe
   } finally { await cdp.detach(); }
 });
 
-test('natural decoration LOD switches in the actual legal zoom range without rebuilding', async ({ page }, testInfo) => {
+test('per-object scenery LOD follows projected size in legal zoom without rebuilding', async ({ page }, testInfo) => {
   test.setTimeout(90_000);
   const canvas = await createProject(page);
-  await expect(canvas).toHaveAttribute('data-initial-reveal-completed-count', '1');
+  await expect(canvas).toHaveAttribute('data-initial-reveal-completed-count', '1', { timeout: 20_000 });
   await expect.poll(async () => Number(await canvas.getAttribute('data-natural-decoration-count'))).toBeGreaterThan(0);
   const count = await canvas.getAttribute('data-natural-decoration-count');
   const generation = await canvas.getAttribute('data-renderer-generation');
@@ -326,12 +346,17 @@ test('natural decoration LOD switches in the actual legal zoom range without reb
   const farRatio = Number(await canvas.getAttribute('data-camera-distance-ratio'));
   expect(farRatio).toBeGreaterThanOrEqual(maximumRatio * 0.94 - 0.001);
   expect(farRatio).toBeLessThanOrEqual(maximumRatio + 0.001);
-  await expect(canvas).toHaveAttribute('data-natural-decoration-lod', 'silhouette');
+  const farLods = JSON.parse((await canvas.getAttribute('data-scenery-lods'))!) as { id: string; lod: string; projectedWidth: number }[];
+  expect(farLods.length).toBeGreaterThan(0);
+  for (const object of farLods) if (object.projectedWidth < 30) expect(object.lod).toBe('distant');
   await canvas.screenshot({ path: testInfo.outputPath('natural-decorations-far.png') });
   await pinchZoom(page, canvas, 36, 240);
   await expect.poll(async () => Number(await canvas.getAttribute('data-camera-distance-ratio')))
     .toBeLessThan(farRatio - 0.05);
-  await expect(canvas).toHaveAttribute('data-natural-decoration-lod', 'full');
+  const nearLods = JSON.parse((await canvas.getAttribute('data-scenery-lods'))!) as { id: string; lod: string; projectedWidth: number }[];
+  expect(nearLods.map(o => o.id)).toEqual(farLods.map(o => o.id));
+  for (const object of nearLods) if (object.projectedWidth > 42) expect(object.lod).toBe('full');
+  expect(nearLods.some(o => o.projectedWidth > farLods.find(f => f.id === o.id)!.projectedWidth)).toBe(true);
   expect(Number(await canvas.getAttribute('data-camera-distance-ratio'))).toBeLessThan(farRatio);
   await canvas.screenshot({ path: testInfo.outputPath('natural-decorations-near.png') });
   await expect(canvas).toHaveAttribute('data-natural-decoration-count', count!);
