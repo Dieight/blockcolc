@@ -262,9 +262,36 @@ describe('packaged daily reward blueprints', () => {
     expect(repository.saveCalls).toBe(2);
   });
 
+  it.skipIf(BUILTIN_DAILY_REWARD_BLUEPRINTS.length === 0)('adds the three new packaged rewards without changing the original resources or repeating saves', async () => {
+    const originalIds = new Set([
+      'builtin-local-mysterious-enchanting-table', 'builtin-local-small-water-tank', 'builtin-local-wqh-yellow-duck',
+    ]);
+    const candidates = BUILTIN_DAILY_REWARD_BLUEPRINTS;
+    const originalCandidates = candidates.filter(candidate => originalIds.has(candidate.id));
+    expect(originalCandidates).toHaveLength(3);
+    const repository = new CanonicalCasRepository();
+    const dependencies = applicationDependencies(repository);
+    const originalService = await ApplicationService.initialize(dependencies);
+    await registerBuiltinDailyRewardBlueprints(originalService, originalCandidates);
+    const originalResources = structuredClone(repository.state!.decorationBlueprintResources);
+    const beforeUpgrade = { revision: repository.revision, saveCalls: repository.saveCalls };
+    const upgraded = await ApplicationService.initialize(dependencies);
+    await expect(registerBuiltinDailyRewardBlueprints(upgraded, candidates)).resolves.toEqual({ examined: 6, accepted: 6, skipped: 0 });
+    expect(repository.state!.decorationBlueprintResources.filter(resource => originalIds.has(resource.id)))
+      .toEqual(originalResources);
+    expect(repository.state!.decorationBlueprintResources.filter(resource => !originalIds.has(resource.id)).map(resource => resource.id).sort())
+      .toEqual(['builtin-local-dieight-afk-pool', 'builtin-local-gyp-afk-spot', 'builtin-local-zdrcgubjo4-iron-golem']);
+    expect(repository.revision).toBe(beforeUpgrade.revision + 3);
+    expect(repository.saveCalls).toBe(beforeUpgrade.saveCalls + 3);
+    const afterUpgrade = { revision: repository.revision, saveCalls: repository.saveCalls };
+    const restarted = await ApplicationService.initialize(dependencies);
+    await registerBuiltinDailyRewardBlueprints(restarted, candidates);
+    expect({ revision: repository.revision, saveCalls: repository.saveCalls }).toEqual(afterUpgrade);
+  });
+
   it('is idempotent for whichever optional local reward bundle is present', async () => {
     const candidates = BUILTIN_DAILY_REWARD_BLUEPRINTS;
-    expect(candidates.length === 0 || candidates.length === 3).toBe(true);
+    expect(candidates.length === 0 || candidates.length === 6).toBe(true);
     const repository = new CanonicalCasRepository();
     const dependencies = applicationDependencies(repository);
     const first = await ApplicationService.initialize(dependencies);

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { stat } from 'node:fs/promises';
+import { stat, writeFile } from 'node:fs/promises';
 import { cpus, totalmem } from 'node:os';
 import { expect, test, type Page } from '@playwright/test';
 import { projectWorldState } from '@blockcolc/application';
@@ -230,6 +230,9 @@ async function collectSnapshot(page: Page, expectedFingerprint: number, browserN
         atlasPageCount: Number(canvas.dataset.atlasPageCount ?? 0),
         gpuFacingTextureCount: frame?.atlasTextureCount ?? null,
         worldRebuildCount: Number(canvas.dataset.worldRebuildCount ?? 0),
+        worldRebuildStagesMs: JSON.parse(canvas.dataset.worldRebuildStagesMs ?? '{}') as Record<string, number>,
+        sceneryBuildStagesMs: JSON.parse(canvas.dataset.sceneryBuildStagesMs ?? '{}') as Record<string, number>,
+        terrainGenerationCacheHit: canvas.dataset.terrainGenerationCacheHit === 'true',
         renderedWorldRebuildCount: Number(canvas.dataset.renderedWorldRebuildCount ?? 0),
         triangleCount: Number(canvas.dataset.renderTriangles ?? 0),
         rendererGeneration: Number(canvas.dataset.rendererGeneration ?? 0),
@@ -439,9 +442,12 @@ test('measures five default-atlas new-document boots with bounded repository ove
     const probe = await samplePage.evaluate(() => (window as unknown as ColdProbeWindow).__blockcolcResourcePackColdStartProbe?.read() ?? null);
     await samplePage.evaluate(() => (window as unknown as ColdProbeWindow).__blockcolcResourcePackColdStartProbe?.dispose());
     samples.push(sample);
-    await testInfo.attach(`cold-default-sample-${String(index + 1).padStart(2, '0')}.json`, {
+    const sampleName = `cold-default-sample-${String(index + 1).padStart(2, '0')}.json`;
+    const samplePath = testInfo.outputPath(sampleName);
+    await writeFile(samplePath, JSON.stringify(sample, null, 2));
+    await testInfo.attach(sampleName, {
       contentType: 'application/json',
-      body: JSON.stringify(sample, null, 2),
+      path: samplePath,
     });
     expect(probe?.requests.length ?? 0).toBeLessThanOrEqual(8);
     await samplePage.close();
@@ -478,9 +484,11 @@ test('measures five default-atlas new-document boots with bounded repository ove
     reuse: 'same browser context and origin storage/cache; every measured top-level page was closed before opening the next; browser process was kept alive',
     samples,
   };
+  const aggregatePath = testInfo.outputPath('cold-default-aggregate.json');
+  await writeFile(aggregatePath, JSON.stringify(final, null, 2));
   await testInfo.attach('cold-default-aggregate.json', {
     contentType: 'application/json',
-    body: JSON.stringify(final, null, 2),
+    path: aggregatePath,
   });
   expect(setupMismatches).toEqual([]);
   expect(final.outcome).toBe('complete');

@@ -44,6 +44,42 @@ async function installWeatherBridge(page: Page, deferFirstAstronomy: boolean) {
   }, { deferFirst: deferFirstAstronomy });
 }
 
+test('ordinary opening ends in real building focus and keeps its target/limits through orbit, zoom and map reset',async({page},info)=>{
+  test.setTimeout(90_000);
+  await page.goto('/');
+  await page.getByRole('button',{name:'开始建造',exact:true}).click();
+  const canvas=page.getByLabel('项目建筑世界');
+  await expect(canvas).toHaveAttribute('data-initial-reveal-completed-count','1',{timeout:20_000});
+  const map=page.getByRole('button',{name:'重置地图',exact:true});
+  await expect(map).toBeVisible();
+  await expect(page.getByRole('dialog',{name:'我的第一座工坊'})).toHaveCount(0);
+  const framing=()=>canvas.evaluate(node=>({distance:Number(node.dataset.cameraDistance),target:[node.dataset.cameraTargetX,node.dataset.cameraTargetY,node.dataset.cameraTargetZ],
+    minimum:Number(node.dataset.cameraMinimumDistanceRatio),maximum:Number(node.dataset.cameraMaximumDistanceRatio)}));
+  const opened=await framing();
+  expect(opened.minimum).toBe(.9);expect(opened.maximum).toBe(1.35);
+  await canvas.dispatchEvent('wheel',{deltaY:20});
+  const zoomed=await framing();
+  expect(zoomed.target).toEqual(opened.target);
+  expect(zoomed.distance/opened.distance).toBeCloseTo(Math.exp(20*.0012),2);
+  await canvas.evaluate(node=>{
+    node.dispatchEvent(new PointerEvent('pointerdown',{pointerId:5,clientX:100,clientY:100,bubbles:true}));
+    node.dispatchEvent(new PointerEvent('pointermove',{pointerId:5,clientX:120,clientY:100,bubbles:true}));
+    node.dispatchEvent(new PointerEvent('pointerup',{pointerId:5,clientX:120,clientY:100,bubbles:true}));
+  });
+  expect((await framing()).target).toEqual(opened.target);
+  await map.click();
+  await expect(map).toBeHidden();
+  expect((await framing()).minimum).toBe(.45);
+  const building=page.getByRole('button',{name:'查看建筑记忆：我的第一座工坊',exact:true});
+  await building.focus();await building.press('Enter');
+  const memory=page.getByRole('dialog',{name:'我的第一座工坊'});
+  await expect(memory).toBeVisible();
+  await memory.getByRole('button',{name:'关闭建筑记忆',exact:true}).click();
+  await expect(memory).toBeHidden();
+  expect(await framing()).toEqual(opened);
+  await info.attach('opening-focus',{body:JSON.stringify({opened,zoomed,afterMemory:await framing()}),contentType:'application/json'});
+});
+
 async function bridgeCalls(page: Page) {
   return page.evaluate(() => (window as unknown as { weatherHarness: { calls: string[] } }).weatherHarness.calls);
 }
@@ -52,7 +88,9 @@ async function openWorld(page: Page) {
   await page.goto('/');
   await page.getByRole('button', { name: '开始建造', exact: true }).click();
   const canvas = page.getByLabel('项目建筑世界');
-  await expect(canvas).toHaveAttribute('data-initial-reveal-completed-count', '1');
+  // This is a lifecycle precondition, not a five-second startup benchmark.
+  // Resource preparation, the first frame and the reveal have separate stages.
+  await expect(canvas).toHaveAttribute('data-initial-reveal-completed-count', '1', { timeout: 20_000 });
   return canvas;
 }
 
@@ -76,6 +114,28 @@ test('weather failure does not overwrite an independently successful astronomy c
   await page.getByLabel('同步现实天气', { exact: true }).uncheck();
   await page.getByRole('button', { name: '计时', exact: true }).click();
   await expect(canvas).toHaveAttribute('data-astronomy-source', 'synthetic');
+});
+
+test('cold opening waits for opted-in astronomy and a real environment frame before removing its loader', async ({ page }, info) => {
+  test.setTimeout(90_000);
+  await installWeatherBridge(page, false);
+  await openWorld(page);
+  await page.getByRole('button', { name: '设置', exact: true }).click();
+  await page.getByLabel('同步现实天气', { exact: true }).check();
+  await page.getByRole('button', { name: '计时', exact: true }).click();
+  await page.reload();
+  const canvas = page.getByLabel('项目建筑世界');
+  await expect(canvas).toHaveAttribute('data-initial-environment-preparation', 'ready');
+  await expect(canvas).toHaveAttribute('data-initial-reveal-completed-count', '1', { timeout: 20_000 });
+  await expect(canvas).toHaveAttribute('data-astronomy-source', 'provider+ephemeris');
+  expect(Number(await canvas.getAttribute('data-first-nonempty-frame-ms'))).toBeGreaterThan(0);
+  await expect(canvas).toHaveAttribute('data-environment-transition-started-count', '0');
+  await expect(page.locator('.boot-page')).toHaveCount(0);
+  await info.attach('prepared-opening', { body: JSON.stringify(await canvas.evaluate(node => ({
+    preparation: node.dataset.initialEnvironmentPreparation, firstFrameMs: node.dataset.firstNonemptyFrameMs,
+    rebuildMs: node.dataset.worldRebuildLastMs, stagesMs: node.dataset.worldRebuildStagesMs,
+    revealState: node.dataset.openingRevealState, source: node.dataset.astronomySource,
+  }))), contentType: 'application/json' });
 });
 
 test('an old astronomy response cannot restore opted-out coordinates or poison the next enabled interval', async ({ page }) => {

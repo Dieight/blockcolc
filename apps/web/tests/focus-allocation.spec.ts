@@ -69,7 +69,7 @@ async function seed(page: Page, state: DomainState, theme: 'light' | 'dark') {
   await page.reload();
 }
 
-test('F10 allocation keeps true zero-based lengths across light/dark reduced-motion screenshots', async ({ page }, testInfo) => {
+test('L14 allocation keeps duration shares and exact labels across light/dark reduced-motion screenshots', async ({ page }, testInfo) => {
   test.setTimeout(120_000);
   await page.clock.install({ time: new Date(startAt + 3 * 60 * 60_000) });
   const state = dataFixture();
@@ -95,28 +95,33 @@ test('F10 allocation keeps true zero-based lengths across light/dark reduced-mot
       }
       const chart = page.locator('.project-allocation');
       await expect(chart).toBeVisible();
+      await expect(chart).toHaveAttribute('data-chart-template', 'L14');
       await expect(chart).toContainText('一个很长的中文任务名称用于验证横向图表标签换行');
       await chart.scrollIntoViewIfNeeded();
+      await expect(chart.locator('[data-allocation-unit="true"]')).toHaveCount(100);
+      await expect(chart.getByRole('img')).toHaveAccessibleName(/1 小时 30 分钟.*30 分钟.*15 分钟/);
 
       const chartFacts = await chart.evaluate((element) => ({
-        bars: [...element.querySelectorAll<SVGPathElement>('.allocation-fill')].map((path) => ({
-          extent: Number(path.dataset.extent),
-          minutes: Number(path.dataset.minutes),
+        clusters: [...element.querySelectorAll<SVGGElement>('g[data-percentage-units]')].map((cluster) => ({
+          units: Number(cluster.dataset.percentageUnits),
+          points: cluster.querySelectorAll('[data-allocation-unit="true"]').length,
         })),
-        animation: getComputedStyle(element.querySelector<SVGPathElement>('.allocation-fill')!).animationName,
+        minutes: [...element.querySelectorAll<HTMLElement>('.allocation-legend li')].map(row => Number(row.dataset.minutes)),
+        shares: [...element.querySelectorAll<HTMLElement>('.allocation-legend-values small')].map(row => row.textContent),
+        animation: getComputedStyle(element.querySelector<SVGCircleElement>('.allocation-point')!).animationName,
         overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
         clipIds: [...element.querySelectorAll<SVGClipPathElement>('clipPath')].map((clip) => clip.id),
       }));
-      expect(chartFacts.bars.map((bar) => bar.minutes)).toEqual([90, 30, 15]);
-      expect(chartFacts.bars[0]?.extent).toBeCloseTo(400, 5);
-      expect(chartFacts.bars[1]?.extent).toBeCloseTo(400 * 30 / 90, 5);
-      expect(chartFacts.bars[2]?.extent).toBeCloseTo(400 * 15 / 90, 5);
-      expect((chartFacts.bars[1]?.extent ?? 0) / (chartFacts.bars[2]?.extent ?? 1)).toBeCloseTo(2, 5);
+      expect(chartFacts.minutes).toEqual([90, 30, 15]);
+      expect(chartFacts.shares).toEqual(['66.7%', '22.2%', '11.1%']);
+      expect(chartFacts.clusters).toEqual([{units:67,points:67},{units:22,points:22},{units:11,points:11}]);
+      expect(chartFacts.clusters.reduce((sum,cluster) => sum + cluster.units,0)).toBe(100);
       expect(chartFacts.animation).toBe('none');
       expect(chartFacts.overflow).toBeLessThanOrEqual(1);
-      expect(chartFacts.bars.length).toBe(3);
-      expect(chartFacts.clipIds.length).toBe(3);
-      expect(new Set(chartFacts.clipIds).size).toBe(chartFacts.clipIds.length);
+      // Percentage points are not clipped zero-origin bars; no per-chart SVG
+      // definitions are needed and chart instances cannot collide by clip ID.
+      expect(chartFacts.clipIds).toEqual([]);
+      await expect(chart.locator('.allocation-fill')).toHaveCount(0);
 
       await page.screenshot({
         path: testInfo.outputPath(`focus-allocation-${viewport.name}-${theme}.png`),

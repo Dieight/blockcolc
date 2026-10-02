@@ -4,7 +4,9 @@ import type { WorldEnvironmentStyle } from '@blockcolc/domain';
 import type { AstronomyContext, BlueprintV1, ConstructionOutlineVisibility, ExternalWeatherVisualOverride, VoxelLightingQuality, VoxelRenderer } from '@blockcolc/voxel';
 import type { ResourcePackRepository, ResourcePackSelectionMetadata } from '@blockcolc/resource-pack-indexeddb';
 import { Map as MapIcon, RotateCcw, Hammer } from 'lucide-react';
-import { LoadingPage } from './LoadingPage';
+import { LoadingPage, type LoadingStage } from './LoadingPage';
+import { waitForInitialEnvironment } from './initial-environment';
+import { useWorldGlass } from './use-world-glass';
 import { BuildingMemoryPanel, createBuildingMemory, conditionLabel } from './BuildingMemoryPanel';
 import { loadVoxelModule, useBlueprintCatalog, blueprintName, resourcePackAtlasMaximumSizeForTest } from './voxel-runtime';
 import { toVoxelWorlds, decorationDatesByProject } from './world-projection';
@@ -16,9 +18,8 @@ import { resolveSelectedResourcePackState } from './resource-pack-selection';
 import type { WorldDebugProjection } from './world-debug';
 import { closeFocusSubmissionObservation, commitFocusSubmissionProjection, isFocusSubmissionDiagnosticsEnabled, observeFocusSubmissionFrame, peekFocusSubmissionProjection } from './submission-performance';
 import { finishQualityLifecycleBoot, recordQualityLifecyclePhase } from './quality-lifecycle-performance';
-import { publishGlassWorldFrame } from './glass-refraction';
 
-export const WorldCanvasV7 = memo(function WorldCanvasV7({service,resourcePacks,lightingQuality,constructionOutlineVisibility,showWorldCoordinates,environmentStyle,worldSeed,terrainGenerationVersion,constructionFeedback=0,sessionActive=false,immersivePresentation=sessionActive,immersiveBand={bottom:0,right:0},externalWeatherOverride=null,astronomyContext=null,worldDebug=null,openingProjectId=null,focusedProjectId,memoryProjectId,onSelectProject,onClearWorldFocus,onCloseMemory,onContinueProject,switchBlockedReason,visible,onPickTerrain,pickedCell}:{service:ApplicationService;resourcePacks:ResourcePackRepository;lightingQuality:VoxelLightingQuality;constructionOutlineVisibility:ConstructionOutlineVisibility;showWorldCoordinates:boolean;environmentStyle:WorldEnvironmentStyle;worldSeed:string;terrainGenerationVersion:4;constructionFeedback?:number;sessionActive?:boolean;immersivePresentation?:boolean;immersiveBand?:{bottom:number;right:number};externalWeatherOverride?:ExternalWeatherVisualOverride|null;astronomyContext?:AstronomyContext|null;worldDebug?:WorldDebugProjection|null;openingProjectId?:string|null;focusedProjectId:string|null;memoryProjectId:string|null;onSelectProject:(projectId:string)=>void;onClearWorldFocus:()=>void;onCloseMemory:()=>void;onContinueProject:(projectId:string)=>Promise<void>;switchBlockedReason?:string;visible:boolean;onPickTerrain:(position:{x:number;y:number;z:number})=>void;pickedCell:{x:number;y:number;z:number}|null}) {
+export const WorldCanvasV7 = memo(function WorldCanvasV7({service,resourcePacks,lightingQuality,constructionOutlineVisibility,showWorldCoordinates,environmentStyle,worldSeed,terrainGenerationVersion,constructionFeedback=0,sessionActive=false,immersivePresentation=sessionActive,immersiveBand={bottom:0,right:0},glassClarity=50,externalWeatherOverride=null,astronomyContext=null,worldDebug=null,initialEnvironmentPending=false,openingProjectId=null,focusedProjectId,memoryProjectId,onSelectProject,onInitialProjectFocus,onClearWorldFocus,onCloseMemory,onContinueProject,switchBlockedReason,visible,onPickTerrain,pickedCell}:{service:ApplicationService;resourcePacks:ResourcePackRepository;lightingQuality:VoxelLightingQuality;constructionOutlineVisibility:ConstructionOutlineVisibility;showWorldCoordinates:boolean;environmentStyle:WorldEnvironmentStyle;worldSeed:string;terrainGenerationVersion:4;constructionFeedback?:number;sessionActive?:boolean;immersivePresentation?:boolean;immersiveBand?:{bottom:number;right:number};glassClarity?:number;externalWeatherOverride?:ExternalWeatherVisualOverride|null;astronomyContext?:AstronomyContext|null;worldDebug?:WorldDebugProjection|null;initialEnvironmentPending?:boolean;openingProjectId?:string|null;focusedProjectId:string|null;memoryProjectId:string|null;onSelectProject:(projectId:string)=>void;onInitialProjectFocus?:(projectId:string)=>void;onClearWorldFocus:()=>void;onCloseMemory:()=>void;onContinueProject:(projectId:string)=>Promise<void>;switchBlockedReason?:string;visible:boolean;onPickTerrain:(position:{x:number;y:number;z:number})=>void;pickedCell:{x:number;y:number;z:number}|null}) {
   const projectionToken=peekFocusSubmissionProjection();
   const projectionStartedAt=projectionToken===null?0:performance.now();
   const world=service.worldProjection();
@@ -31,10 +32,15 @@ export const WorldCanvasV7 = memo(function WorldCanvasV7({service,resourcePacks,
   const lastHandledPackRetryRef=useRef(0);
   const latestQualityRef=useRef(lightingQuality); latestQualityRef.current=lightingQuality;
   const immersiveBandRef=useRef(immersiveBand); immersiveBandRef.current=immersiveBand;
+  const glassPreference=useWorldGlass(immersivePresentation,glassClarity);
+  const glassPreferenceRef=useRef(glassPreference); glassPreferenceRef.current=glassPreference;
   const externalWeatherRef=useRef(externalWeatherOverride); externalWeatherRef.current=externalWeatherOverride;
+  const initialEnvironmentPendingRef=useRef(initialEnvironmentPending); initialEnvironmentPendingRef.current=initialEnvironmentPending;
+  const [bootStage,setBootStage]=useState<LoadingStage>('resources');
   const astronomyRef=useRef(astronomyContext); astronomyRef.current=astronomyContext;
   const debugRef=useRef(worldDebug); debugRef.current=worldDebug;
   const openingProjectRef=useRef(openingProjectId); openingProjectRef.current=openingProjectId;
+  const initialFocusRef=useRef(onInitialProjectFocus); initialFocusRef.current=onInitialProjectFocus;
   const preparedRendererRef=useRef<VoxelRenderer|null>(null);
   const initialPackAttemptRef=useRef<{key:string|null;readFailed:boolean}|null>(null);
   const snapshotOwnerRef=useRef<RendererWorldSnapshotOwner<Parameters<VoxelRenderer['setWorlds']>[0]>|null>(null);
@@ -151,22 +157,36 @@ export const WorldCanvasV7 = memo(function WorldCanvasV7({service,resourcePacks,
     setReady(false);
     setResourcePackLoading(false);
     setResourcePackError(false);
-    return startRendererGeneration({
+    let generationActive = true;
+    const releaseGeneration = startRendererGeneration({
       schedule: scheduleAfterPaint,
-      load: loadVoxelModule,
+      load: async () => {
+        if (initialEnvironmentPendingRef.current) setBootStage('environment');
+        const result = await waitForInitialEnvironment({
+          pending: () => initialEnvironmentPendingRef.current,
+          current: () => generationActive,
+          visible: () => visibleRef.current && !document.hidden,
+          now: () => performance.now(), wait: ms => new Promise(resolve => setTimeout(resolve, ms)),
+        });
+        if (!generationActive) throw new Error('Superseded world generation');
+        if (ref.current) ref.current.dataset.initialEnvironmentPreparation = result;
+        setBootStage('resources');
+        return loadVoxelModule();
+      },
       create: ({ createVoxelRenderer, resolveBuiltinBlueprint }) => {
         if (!ref.current) return null;
         const current = createVoxelRenderer(ref.current, {
           resolveBlueprint: id => importedRef.current.get(id) ?? resolveBuiltinBlueprint(id),
           resourcePackAtlasMaximumSize: resourcePackAtlasMaximumSizeForTest(),
           lightingQuality, constructionOutlineVisibility, environmentStyle, worldSeed, terrainGenerationVersion,
+          initialEnvironment: { weather: externalWeatherRef.current, astronomy: astronomyRef.current, debug: debugRef.current },
           onSelectProject: projectId => selectRef.current(projectId),
           onPickTerrain: position => { if (pickEnabledRef.current) pickTerrainRef.current(position); },
-          onFrameRendered: publishGlassWorldFrame,
           debugFlatColors: new URLSearchParams(location.search).has('flat'),
           debugVoidScan: new URLSearchParams(location.search).has('voidscan'),
         });
         renderer.current = current;
+        appliedDebugRef.current = debugRef.current;
         snapshotOwnerRef.current = createRendererWorldSnapshotCoordinator(current, latestSnapshotsRef.current, requestedSnapshot => {
           observeSubmittedWorldRebuild(current,requestedSnapshot.key);
         });
@@ -176,9 +196,10 @@ export const WorldCanvasV7 = memo(function WorldCanvasV7({service,resourcePacks,
       },
       initialize: async (current, isCurrent) => {
         current.setReducedMotion(matchMedia('(prefers-reduced-motion: reduce)').matches);
-        current.setVisible(visibleRef.current);
+        // Keep atmosphere, transitions and shader warm-up behind the loader.
+        current.setVisible(false);
         current.setImmersiveBandFraction(immersiveBandRef.current.bottom ?? 0, immersiveBandRef.current.right ?? 0);
-        current.setExternalWeatherOverride(externalWeatherRef.current ?? null);
+        current.setGlassSurface(glassPreferenceRef.current);
         current.focusProject(focusRef.current);
         let adoptedSelectionMetadata: ResourcePackSelectionMetadata | null = null;
         await initializeRendererWorlds({
@@ -189,7 +210,11 @@ export const WorldCanvasV7 = memo(function WorldCanvasV7({service,resourcePacks,
             adoptedSelectionMetadata = selection.metadata;
             return selection.pack ? { id: selection.pack.id, manifest: selection.pack.manifest } : null;
           },
-          initializeWorlds: (worlds, pack) => current.initializeWorlds(worlds, pack),
+          initializeWorlds: async (worlds, pack) => {
+            setBootStage('scene');
+            await new Promise<void>(resolve => scheduleAfterPaint(resolve));
+            if (isCurrent()) await current.initializeWorlds(worlds, pack);
+          },
           onWorldsInitializationRequested: snapshot => observeSubmittedWorldRebuild(current,snapshot.key),
           onError: error => { setResourcePackError(true); console.error('Voxel resource pack initialization failed; using default materials', error); },
           onPrepared: (key, pack, requestedPack, packReadFailed) => {
@@ -206,6 +231,14 @@ export const WorldCanvasV7 = memo(function WorldCanvasV7({service,resourcePacks,
             if (isCurrent()) current.setLightingQuality(latestQualityRef.current);
           },
         });
+        if (!isCurrent()) return;
+        current.setExternalWeatherOverride(externalWeatherRef.current);
+        current.setAstronomyContext(astronomyRef.current);
+        if (appliedDebugRef.current !== debugRef.current) current.setEnvironmentDebugOverride(debugRef.current);
+        appliedDebugRef.current = debugRef.current;
+        setBootStage('environment');
+        current.setVisible(visibleRef.current);
+        await current.prepareInitialPresentation();
       },
       ready: () => setReady(true),
       readyOnError: false,
@@ -225,6 +258,7 @@ export const WorldCanvasV7 = memo(function WorldCanvasV7({service,resourcePacks,
         appliedPackRef.current = undefined;
       },
     });
+    return () => { generationActive = false; releaseGeneration(); };
   }, [service, resourcePacks, constructionOutlineVisibility, environmentStyle, worldSeed, terrainGenerationVersion]);
   useEffect(()=>{
     const current=renderer.current;
@@ -232,7 +266,7 @@ export const WorldCanvasV7 = memo(function WorldCanvasV7({service,resourcePacks,
     current.setLightingQuality(lightingQuality);
   },[lightingQuality,ready]);
   useEffect(()=>{renderer.current?.setVisible(visible && documentVisible);},[visible,documentVisible]);
-  useEffect(()=>{renderer.current?.setExternalWeatherOverride(externalWeatherOverride??null);},[externalWeatherOverride]);
+  useEffect(()=>{if(ready)renderer.current?.setExternalWeatherOverride(externalWeatherOverride??null);},[externalWeatherOverride,ready]);
   useEffect(()=>{
     const current=renderer.current;
     if (!ready || !visible || !documentVisible || resourcePackLoading || !current || preparedRendererRef.current!==current) return;
@@ -279,7 +313,12 @@ export const WorldCanvasV7 = memo(function WorldCanvasV7({service,resourcePacks,
     return scheduleAfterPaint(()=>{
       if (renderer.current !== current || !visibleRef.current || document.hidden || initialRevealStartedRef.current) return;
       initialRevealStartedRef.current=true;
-      void current.revealInitialProject(openingProjectRef.current).then(result=>{
+      const openingProject=openingProjectRef.current;
+      void current.revealInitialProject(openingProject).then(result=>{
+        if (result==='completed' && openingProject && renderer.current===current
+          && focusRef.current===null && openingProjectRef.current===openingProject) {
+          initialFocusRef.current?.(openingProject);
+        }
         recordQualityLifecyclePhase('initial-reveal-complete', { status: result === 'completed' ? 'ok' : 'stale' });
         finishQualityLifecycleBoot(result === 'completed' ? 'completed' : 'cancelled');
       }).catch(error=>{
@@ -306,6 +345,7 @@ export const WorldCanvasV7 = memo(function WorldCanvasV7({service,resourcePacks,
     return ()=>{if(frame)cancelAnimationFrame(frame);};
   },[sessionActive]);
   useEffect(()=>{renderer.current?.setImmersiveBandFraction(immersiveBandRef.current.bottom??0,immersiveBandRef.current.right??0);},[immersiveBand?.bottom,immersiveBand?.right]);
+  useEffect(()=>{renderer.current?.setGlassSurface(glassPreference);},[glassPreference]);
   // MT-02: with the renderer resident, the pack switched in settings must apply when the pane returns; re-apply only when the active pack actually changed.
   useEffect(() => {
     const refreshOwner = ++packRefreshOwnerRef.current;
@@ -357,9 +397,16 @@ export const WorldCanvasV7 = memo(function WorldCanvasV7({service,resourcePacks,
   }, [visible, documentVisible, resourcePacks, ready, packRetryRevision]);
   useEffect(()=>{snapshotOwnerRef.current?.observe({key:snapshotKey,worlds:snapshots});},[snapshotKey,snapshots]);
   useEffect(()=>{renderer.current?.focusProject(focusedProjectId);},[focusedProjectId]);
+  useEffect(()=>{
+    const current=renderer.current;
+    if(current && ref.current?.dataset.openingRevealState==='active'){
+      current.focusProject(focusRef.current);
+      current.resetCamera();
+    }
+  },[openingProjectId]);
   const memoryProject=world.projects.find(project=>project.project.id===memoryProjectId);
   const memory=memoryProject?createBuildingMemory(state,memoryProject,blueprintLabel(memoryProject.building.blueprintId,memoryProject.building.importedBlueprint?.title)):null;
-  const loadingStatus=!ready?(resourcePackError?'世界初始化失败，请重新打开此页面或刷新后重试。':'正在建造世界…'):resourcePackLoading?'正在更新世界材质…':environmentUpdating?'正在更新世界画面…':null;
+  const loadingStatus=!ready?(resourcePackError?'世界初始化失败，请重新打开此页面或刷新后重试。':bootStage==='environment'?'正在校准光照与天气…':bootStage==='scene'?'正在准备地形与建筑…':'正在读取世界资源…'):resourcePackLoading?'正在更新世界材质…':environmentUpdating?'正在更新世界画面…':null;
   return <>
     <figure className={focusedProjectId?'world is-project-focused':'world'}>
       <canvas ref={ref} role="img" aria-label="项目建筑世界" aria-describedby="world-summary" data-coordinate-picking={pickEnabled?'true':'false'}/>
@@ -382,6 +429,6 @@ export const WorldCanvasV7 = memo(function WorldCanvasV7({service,resourcePacks,
       {visible&&constructionFeedback>0&&<div key={constructionFeedback} className="construction-feedback" role="status"><Hammer/><span>材料已送达，继续建造</span><i/><i/><i/></div>}
     </figure>
     {visible&&!immersivePresentation&&memory&&<BuildingMemoryPanel memory={memory} switchBlockedReason={memory.isActive?undefined:switchBlockedReason} onClose={onCloseMemory} onContinue={()=>void onContinueProject(memory.projectId)}/>}
-    {loadingStatus&&<LoadingPage status={loadingStatus}/>}
+    {loadingStatus&&<LoadingPage stage={resourcePackError?'error':!ready?bootStage:resourcePackLoading?'resources':'environment'} status={loadingStatus}/>}
   </>;
 });

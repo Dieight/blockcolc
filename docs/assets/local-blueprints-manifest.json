@@ -1,0 +1,404 @@
+{
+  "schemaVersion": 1,
+  "converter": "packages/litematic/scripts/package-local-builtins.ts",
+  "metadata": "packages/voxel/src/local-blueprint-sources.ts",
+  "sourceSnapshot": "artifacts/v2.3.0/build-inputs/local-builtins-01",
+  "assets": [
+    {
+      "source": "Dieight的圣诞树.litematic",
+      "sourceBytes": 2531,
+      "sourceSha256": "4ba5c586505f067732182874281331b604128effa353a5d3bc5f0ededbdaf567",
+      "id": "builtin-local-dieight-christmas-tree",
+      "category": "building",
+      "title": "Dieight的圣诞树",
+      "sourceDataVersion": 4671,
+      "sourceDimensions": {
+        "width": 11,
+        "height": 20,
+        "depth": 11
+      },
+      "nonAirBlocks": 626,
+      "asset": "packages/voxel/src/local-blueprints/buildings/builtin-local-dieight-christmas-tree.json",
+      "assetBytes": 104299,
+      "assetSha256": "94741446927dc9f34b76170304b191347b5cac8868daf607cd79d5cc88904fee"
+    },
+    {
+      "source": "Dieight的小别墅.litematic",
+      "sourceBytes": 1840,
+      "sourceSha256": "a67e92193335325db32ba8cea764a71d8f52f2410b343fe660c9acd5f98f0dfc",
+      "id": "builtin-local-small-villa",
+      "category": "building",
+      "title": "Dieight的小别墅",
+      "sourceDataVersion": 3700,
+      "sourceDimensions": {
+        "width": 15,
+        "height": 10,
+        "depth": 11
+      },
+      "nonAirBlocks": 653,
+      "asset": "packages/voxel/src/local-blueprints/buildings/builtin-local-small-villa.json",
+      "assetBytes": 78130,
+      "assetSha256": "01eaa6943c1a2060af57b56b157cce7de23c1d047d9ddada3bfef58542be337d"
+    },
+    {
+      "source": "Dieight的小水箱.litematic",
+      "sourceBytes": 782,
+      "sourceSha256": "4870c3119bc1d9ae6860c0e482436549b00bf952ef6cdd32cb00d6db5a9890c9",
+      "id": "builtin-local-small-water-tank",
+      "category": "daily-reward",
+      "title": "Dieight的小水箱",
+      "sourceDataVersion": 3700,
+      "sourceDimensions": {
+        "width": 7,
+        "height": 7,
+        "depth": 7
+      },
+      "nonAirBlocks": 343,
+      "asset": "packages/voxel/src/local-blueprints/daily-rewards/builtin-local-small-water-tank.json",
+      "assetBytes": 48455,
+      "assetSha256": "6c528e8163f8bfcaeba5c0e92eb3490ecf040d187ccd1eecde9aef38d4dec732"
+    },
+    {
+      "source": "Dieight的挂机池.litematic",
+      "sourceBytes": 811,
+      "sourceSha256": "3236138f56eef1bebc4fbf120812f9e25612c21cb742be98b89aa285029304e5",
+      "id": "builtin-local-dieight-afk-pool",
+      "category": "daily-reward",
+      "title": "Dieight的挂机池",
+      "sourceDataVersion": 4671,
+      "sourceDimensions": {
+        "width": 5,
+        "height": 6,
+        "depth": 6
+      },
+      "nonAirBlocks": 80,
+      "asset": "packages/voxel/src/local-blueprints/daily-rewards/builtin-local-dieight-afk-pool.json",
+      "assetBytes": 10282,
+      "assetSha256": "38522132fdc143f4c4d29715bda7bd83eccde680f96cdcac71a4fc0a98979b32"
+    },
+    {
+      "source": "Dieight的昔涟Q版手办_byMC烤河马.litematic",
+      "sourceBytes": 1546,
+      "sourceSha256": "17b01794f3217f927d2fe2ec9eee85cbe3aa926162314135bd269a3fc2cd7dbb",
+      "id": "builtin-local-dieight-xilian-figurine",
+      "category": "building",
+      "title": "Dieight的昔涟Q版手办_byMC烤河马",
+      "sourceDataVersion": 3465,
+      "sourceDimensions": {
+        "width": 17,
+        "height": 23,
+        "depth": 11
+      },
+      "nonAirBlocks": 765,
+      "asset": "packages/voxel/src/local-blueprints/buildings/builtin-local-dieight-xilian-figurine.json",
+      "assetBytes": 81599,
+      "assetSha256": "1941710f4ba098cdc21172df04d0c2da363f4df01c0016d8cf48c776f5aa3e8b"
+    },
+    {
+      "source": "Dieight的神秘附魔台.litematic",
+      "sourceBytes": 591,
+      "sourceSha256": "67abd4aa41b1a42b20ca0f3f0e3baeaf404e654aa5cdc085cde3dd8a4ed45b49",
+      "id": "builtin-local-mysterious-enchanting-table",
+      "category": "daily-reward",
+      "title": "Dieight的神秘附魔台",
+      "sourceDataVersion": 5023,
+      "sourceDimensions": {
+        "width": 5,
+        "height": 7,
+        "depth": 5
+      },
+      "nonAirBlocks": 60,
+      "asset": "packages/voxel/src/local-blueprints/daily-rewards/builtin-local-mysterious-enchanting-table.json",
+      "assetBytes": 7055,
+      "assetSha256": "abd1e6621244cf63d7bb0826b158d640dd60a1a791fdf7e9dd83d8cdcf2ad84a"
+    },
+    {
+      "source": "Dieight的高级火柴盒.litematic",
+      "sourceBytes": 1595,
+      "sourceSha256": "393dbfc679514e38c88030a1fcf03dba657b9deefe9bf590f8f76335e0703b2a",
+      "id": "builtin-local-advanced-matchbox",
+      "category": "building",
+      "title": "Dieight的高级火柴盒",
+      "sourceDataVersion": 3700,
+      "sourceDimensions": {
+        "width": 8,
+        "height": 11,
+        "depth": 8
+      },
+      "nonAirBlocks": 347,
+      "asset": "packages/voxel/src/local-blueprints/buildings/builtin-local-advanced-matchbox.json",
+      "assetBytes": 45248,
+      "assetSha256": "56005cf5997a9e05d8f0999f750d80007eca8cfae8cc8f4351a82af87c3e33c9"
+    },
+    {
+      "source": "Dieight的高级火柴盒plus.litematic",
+      "sourceBytes": 4459,
+      "sourceSha256": "89cb8794d949a119a2a6549bd4cc8477aff563c196252c5b6522889f62620463",
+      "id": "builtin-local-advanced-matchbox-plus",
+      "category": "building",
+      "title": "Dieight的高级火柴盒plus",
+      "sourceDataVersion": 3700,
+      "sourceDimensions": {
+        "width": 17,
+        "height": 10,
+        "depth": 24
+      },
+      "nonAirBlocks": 1721,
+      "asset": "packages/voxel/src/local-blueprints/buildings/builtin-local-advanced-matchbox-plus.json",
+      "assetBytes": 208134,
+      "assetSha256": "2fed53fb14ea27414404e5e11f7c064ca948954022ac40106bbc676633c826fd"
+    },
+    {
+      "source": "Dieight的高级火柴盒pro.litematic",
+      "sourceBytes": 3441,
+      "sourceSha256": "273700aedaf0c9c446122352e528a8fbd83ba62c1bd775f1493201d43e28daec",
+      "id": "builtin-local-advanced-matchbox-pro",
+      "category": "building",
+      "title": "Dieight的高级火柴盒pro",
+      "sourceDataVersion": 5023,
+      "sourceDimensions": {
+        "width": 13,
+        "height": 14,
+        "depth": 13
+      },
+      "nonAirBlocks": 823,
+      "asset": "packages/voxel/src/local-blueprints/buildings/builtin-local-advanced-matchbox-pro.json",
+      "assetBytes": 120028,
+      "assetSha256": "cefe5a36a0b845f6a2651e7da41522a9d145fb001751013fdba651e7fba65f26"
+    },
+    {
+      "source": "GYPpro的挂机点.litematic",
+      "sourceBytes": 603,
+      "sourceSha256": "1852e2169d7282b5b679d90799aeb031744fe1ff5c6902ff7b678af1483e90b1",
+      "id": "builtin-local-gyp-afk-spot",
+      "category": "daily-reward",
+      "title": "GYPpro的挂机点",
+      "sourceDataVersion": 4671,
+      "sourceDimensions": {
+        "width": 5,
+        "height": 3,
+        "depth": 5
+      },
+      "nonAirBlocks": 39,
+      "asset": "packages/voxel/src/local-blueprints/daily-rewards/builtin-local-gyp-afk-spot.json",
+      "assetBytes": 5167,
+      "assetSha256": "930c1b979eb939e8c44bf2f4711f653b7687a0b245dcdbcffd4609130c602592"
+    },
+    {
+      "source": "GYPpro的昔涟-仪式剑.litematic",
+      "sourceBytes": 1495,
+      "sourceSha256": "e3e46785421335b654a1efe98942dbda3cefcbf3005536a5425ea45d2f9641c5",
+      "id": "builtin-local-gyp-ritual-sword",
+      "category": "building",
+      "title": "GYPpro的昔涟-仪式剑",
+      "sourceDataVersion": 4440,
+      "sourceDimensions": {
+        "width": 13,
+        "height": 90,
+        "depth": 30
+      },
+      "nonAirBlocks": 1226,
+      "asset": "packages/voxel/src/local-blueprints/buildings/builtin-local-gyp-ritual-sword.json",
+      "assetBytes": 158321,
+      "assetSha256": "070cc69903ff782e8a429e1f00bdec151ac6fe868341c545ac30b77601768d79"
+    },
+    {
+      "source": "GYPpro的樱花仓库熔炉.litematic",
+      "sourceBytes": 13199,
+      "sourceSha256": "a0878726085a8577239295416fb884da41253b396b30ae49c9e3d03e5c68047b",
+      "id": "builtin-local-gyp-cherry-storage-furnace",
+      "category": "building",
+      "title": "GYPpro的樱花仓库熔炉",
+      "sourceDataVersion": 4671,
+      "sourceDimensions": {
+        "width": 39,
+        "height": 18,
+        "depth": 43
+      },
+      "nonAirBlocks": 6315,
+      "asset": "packages/voxel/src/local-blueprints/buildings/builtin-local-gyp-cherry-storage-furnace.json",
+      "assetBytes": 872724,
+      "assetSha256": "f71244bb3856e0d17e9b98ca72384783f54e64339abca9c42d9e355006ebba39"
+    },
+    {
+      "source": "GYPpro的樱花树.litematic",
+      "sourceBytes": 1804,
+      "sourceSha256": "82fdd11d443c19e3900e1ede6cb12ff5835bc5200bfebb90fe065cb7c929421b",
+      "id": "builtin-local-gyp-cherry-tree",
+      "category": "building",
+      "title": "GYPpro的樱花树",
+      "sourceDataVersion": 4671,
+      "sourceDimensions": {
+        "width": 14,
+        "height": 22,
+        "depth": 19
+      },
+      "nonAirBlocks": 776,
+      "asset": "packages/voxel/src/local-blueprints/buildings/builtin-local-gyp-cherry-tree.json",
+      "assetBytes": 131516,
+      "assetSha256": "58801ce961e92c0f2363f7079cf2adf51e2703440a9eae783a12f017e85da6c0"
+    },
+    {
+      "source": "GYPpro的简易小仓库.litematic",
+      "sourceBytes": 2080,
+      "sourceSha256": "e148d66f29f7ee4f12c32e31837f22b0de4180ae02683f37de308331d5ad06f4",
+      "id": "builtin-local-gyp-simple-warehouse",
+      "category": "building",
+      "title": "GYPpro的简易小仓库",
+      "sourceDataVersion": 5023,
+      "sourceDimensions": {
+        "width": 19,
+        "height": 6,
+        "depth": 14
+      },
+      "nonAirBlocks": 590,
+      "asset": "packages/voxel/src/local-blueprints/buildings/builtin-local-gyp-simple-warehouse.json",
+      "assetBytes": 91924,
+      "assetSha256": "009778c60324cfa11d3c65db6e94a4b647d6784f9eee5590a2bb75d04e3e643a"
+    },
+    {
+      "source": "GYPpro的豪宅（一层）.litematic",
+      "sourceBytes": 10280,
+      "sourceSha256": "c56039ada1dc6ea53e192fa17961dadadfcb65fdfd0f25bea0988f3c56ef6142",
+      "id": "builtin-local-gyp-mansion-first-floor",
+      "category": "building",
+      "title": "GYPpro的豪宅（一层）",
+      "sourceDataVersion": 3700,
+      "sourceDimensions": {
+        "width": 49,
+        "height": 7,
+        "depth": 47
+      },
+      "nonAirBlocks": 8813,
+      "asset": "packages/voxel/src/local-blueprints/buildings/builtin-local-gyp-mansion-first-floor.json",
+      "assetBytes": 931584,
+      "assetSha256": "6da8bb7bff506ddaff444ed8de7a409cc4f969a3ddcc467c69dfc93e5a6a4a1f"
+    },
+    {
+      "source": "Togawa15akiko的刷铁机.litematic",
+      "sourceBytes": 3716,
+      "sourceSha256": "7e6db509e1f82cc1c0fd29f2591566440efbe0849baaae5d17eb07188f8b6826",
+      "id": "builtin-local-togawa-iron-farm",
+      "category": "building",
+      "title": "Togawa15akiko的刷铁机",
+      "sourceDataVersion": 4671,
+      "sourceDimensions": {
+        "width": 14,
+        "height": 16,
+        "depth": 14
+      },
+      "nonAirBlocks": 717,
+      "asset": "packages/voxel/src/local-blueprints/buildings/builtin-local-togawa-iron-farm.json",
+      "assetBytes": 102924,
+      "assetSha256": "ec34b0c00d0ee0c098969a39a9d6935ecc722faf1860eba50cf369b95cb6f199"
+    },
+    {
+      "source": "Togawa15akiko的豪宅.litematic",
+      "sourceBytes": 6174,
+      "sourceSha256": "4fceb5353ff94c1319e6df8845467ac062401c57de925f44d41cc641310c01cc",
+      "id": "builtin-local-togawa-mansion",
+      "category": "building",
+      "title": "Togawa15akiko的豪宅",
+      "sourceDataVersion": 4671,
+      "sourceDimensions": {
+        "width": 25,
+        "height": 15,
+        "depth": 20
+      },
+      "nonAirBlocks": 2146,
+      "asset": "packages/voxel/src/local-blueprints/buildings/builtin-local-togawa-mansion.json",
+      "assetBytes": 315210,
+      "assetSha256": "71564f1242609338cdb306de552ddfe6da1c7b0325f71edba7dd71858c4876cb"
+    },
+    {
+      "source": "karry_steven的豪宅.litematic",
+      "sourceBytes": 10624,
+      "sourceSha256": "84bb2e4b2bb8ecbbd47b90cd43e74ca13d60b684e6296f3b9c2088d59697249b",
+      "id": "builtin-local-gkr-mansion",
+      "category": "building",
+      "title": "karry_steven的豪宅",
+      "sourceDataVersion": 3700,
+      "sourceDimensions": {
+        "width": 27,
+        "height": 17,
+        "depth": 67
+      },
+      "nonAirBlocks": 5174,
+      "asset": "packages/voxel/src/local-blueprints/buildings/builtin-local-gkr-mansion.json",
+      "assetBytes": 635876,
+      "assetSha256": "8b9daa18ac4093f24025173e140cb6f7e8bc8378e4b8deec2bd7b736fdaa96e5"
+    },
+    {
+      "source": "m0m0kA_QWQ的小黄鸭.litematic",
+      "sourceBytes": 470,
+      "sourceSha256": "30dfdbfa0600355a43ed958b607659863323c3364088a5c1eaeac0a0be8b9fa2",
+      "id": "builtin-local-wqh-yellow-duck",
+      "category": "daily-reward",
+      "title": "m0m0kA_QWQ的小黄鸭",
+      "sourceDataVersion": 5023,
+      "sourceDimensions": {
+        "width": 5,
+        "height": 7,
+        "depth": 5
+      },
+      "nonAirBlocks": 81,
+      "asset": "packages/voxel/src/local-blueprints/daily-rewards/builtin-local-wqh-yellow-duck.json",
+      "assetBytes": 8852,
+      "assetSha256": "e346de3bb78062a276fc44c3e3a3ba4924d1419bc573a3ee1d81c4f4cd0ca308"
+    },
+    {
+      "source": "m0m0kA_QWQ的神秘小房子.litematic",
+      "sourceBytes": 1196,
+      "sourceSha256": "3665f2910121333d3969e474e1a36589286c5a63b6a45b21384b9d4f3a0534aa",
+      "id": "builtin-local-momo-mysterious-house",
+      "category": "building",
+      "title": "m0m0kA_QWQ的神秘小房子",
+      "sourceDataVersion": 4671,
+      "sourceDimensions": {
+        "width": 10,
+        "height": 6,
+        "depth": 16
+      },
+      "nonAirBlocks": 232,
+      "asset": "packages/voxel/src/local-blueprints/buildings/builtin-local-momo-mysterious-house.json",
+      "assetBytes": 35280,
+      "assetSha256": "60c8fb4ea28672b078052cf56cc16fdfb917013fb71e2ebfc73749226d252ca9"
+    },
+    {
+      "source": "zdrcgubjo4的小喷泉.litematic",
+      "sourceBytes": 1310,
+      "sourceSha256": "780afbcc9ecc4de93d654036e491e05f9844e3aa499269a437a70b470656857f",
+      "id": "builtin-local-zdrcgubjo4-small-fountain",
+      "category": "building",
+      "title": "zdrcgubjo4的小喷泉",
+      "sourceDataVersion": 4671,
+      "sourceDimensions": {
+        "width": 13,
+        "height": 14,
+        "depth": 13
+      },
+      "nonAirBlocks": 530,
+      "asset": "packages/voxel/src/local-blueprints/buildings/builtin-local-zdrcgubjo4-small-fountain.json",
+      "assetBytes": 63837,
+      "assetSha256": "311a0e7203793b40561c0e27360e04bfb5e2148a88057bc1adc7bd0cbe7939d2"
+    },
+    {
+      "source": "zdrcgubjo4的铁傀儡.litematic",
+      "sourceBytes": 567,
+      "sourceSha256": "042af20b03165b589ef6f39c44c9fc636bc0966275a571cf434082935732b30b",
+      "id": "builtin-local-zdrcgubjo4-iron-golem",
+      "category": "daily-reward",
+      "title": "zdrcgubjo4的铁傀儡",
+      "sourceDataVersion": 4671,
+      "sourceDimensions": {
+        "width": 4,
+        "height": 4,
+        "depth": 3
+      },
+      "nonAirBlocks": 33,
+      "asset": "packages/voxel/src/local-blueprints/daily-rewards/builtin-local-zdrcgubjo4-iron-golem.json",
+      "assetBytes": 4441,
+      "assetSha256": "5abc4cfac9c4b0faf9154b56f43554d7ff9cf3fd47e5f6701f4c49d41b9c7dc3"
+    }
+  ]
+}

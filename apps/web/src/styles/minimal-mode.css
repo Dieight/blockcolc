@@ -1,6 +1,8 @@
 /* Gesture surfaces share FocusFace and FocusTimer; no alternate timer geometry. */
 .minimal-clock-gesture,.minimal-break-clock{position:relative;min-width:44px;min-height:64px;cursor:pointer;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-tap-highlight-color:transparent;border-radius:8px}
-.minimal-clock-gesture:focus-visible,.minimal-break-clock:focus-visible{outline:2px solid var(--focus);outline-offset:8px}
+.minimal-clock-gesture:focus-visible,.minimal-break-clock:focus-visible{outline:none}
+.minimal-clock-gesture::after,.minimal-break-clock::after{content:"";position:absolute;left:25%;right:25%;bottom:-6px;height:2px;background:var(--focus);opacity:0;pointer-events:none;transition:none}
+.minimal-clock-gesture:focus-visible:not([data-pointer-focus])::after,.minimal-break-clock:focus-visible:not([data-pointer-focus])::after{opacity:1}
 .minimal-clock-gesture[aria-disabled="true"],.minimal-break-clock[aria-disabled="true"]{cursor:wait}
 .minimal-clock-selection{position:absolute;top:100%;left:50%;transform:translateX(-50%);margin-top:8px;white-space:nowrap;color:var(--muted);font-size:12px;font-weight:500;line-height:1.4}
 .minimal-clock-error{position:absolute;bottom:calc(100% + 12px);left:16px;right:16px;margin:0;padding:12px;border-radius:8px;background:var(--surface);color:var(--ink);font-size:13px;line-height:1.5}

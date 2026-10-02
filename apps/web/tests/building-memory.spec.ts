@@ -1,6 +1,20 @@
 import { expect, test, type Page } from '@playwright/test';
 
 async function selectBuilding(page: Page, title: string) {
+  const canvas = page.getByLabel('项目建筑世界');
+  // Navigating to task creation may legitimately cancel the opening reveal.
+  // Both terminal states are ready for selection; an active reveal is not.
+  await expect(canvas).toHaveAttribute('data-opening-reveal-state', /^(completed|cancelled)$/, {timeout:20_000});
+  const map = page.getByRole('button', {name:'重置地图',exact:true});
+  // Opening commits the renderer focus before React mounts its map action.
+  // Wait for that receipt when needed, then verify the renderer actually
+  // adopted the overview limits before taking the comparison baseline.
+  if (Number(await canvas.getAttribute('data-camera-minimum-distance-ratio')) >= .9) await expect(map).toBeVisible();
+  if (await map.isVisible()) {
+    await map.click();
+    await expect(map).toBeHidden();
+  }
+  await expect(canvas).toHaveAttribute('data-camera-minimum-distance-ratio', '0.4500');
   const before = await cameraState(page);
   const entry = page.getByRole('button', { name: `查看建筑记忆：${title}` });
   await entry.focus();

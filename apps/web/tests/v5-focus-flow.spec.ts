@@ -331,6 +331,11 @@ test('about page exposes local-first, repository and manual update information',
   await expect(dialog).toContainText(`版本 ${currentVersion}`);
   await expect(dialog).toContainText('无账号、无云同步、无后台分析');
   await expect(dialog.getByRole('link', { name: /GitHub/ })).toHaveAttribute('href', /github\.com\/Dieight\/blockcolc/);
+  await expect(dialog.getByRole('link', { name: /Apache-2.0/ })).toHaveAttribute('href', 'https://github.com/Dieight/blockcolc/blob/main/LICENSE');
+  await expect(dialog.getByRole('link', { name: /SunCalc · BSD-2-Clause/ })).toHaveAttribute('href', 'licenses/suncalc.txt');
+  const notice = await page.request.get('/licenses/suncalc.txt');
+  expect(notice.ok()).toBe(true);
+  expect(await notice.text()).toContain('Volodymyr Agafonkin');
   await dialog.getByRole('button', { name: '手动检查更新' }).click();
   await expect(dialog.getByRole('status')).toContainText(`当前已是最新版本 ${currentVersion}`);
   await page.screenshot({ path: testInfo.outputPath('about.png'), fullPage: true });

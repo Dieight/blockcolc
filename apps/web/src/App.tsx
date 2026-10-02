@@ -22,7 +22,6 @@ import { WorldCanvasV7 } from './WorldCanvasV7';
 import { useWorldWeather } from './use-world-weather';
 import { NORMAL_WORLD_DEBUG, projectWorldDebug, type WorldDebugSettings } from './world-debug';
 import { MarathonProgressReport } from './FocusReports';
-import { GlassEdgeRefraction } from './GlassEdgeRefraction';
 import { BlueprintPicker } from './BlueprintPicker';
 import { shouldPersistBlueprintSnapshot, toImportedBlueprint } from './blueprint-adapter';
 import { useBlueprintCatalog } from './voxel-runtime';
@@ -221,7 +220,7 @@ export function App({ service, resourcePacks }: { service: ApplicationService; r
       onMinimalPresentationChange={setMinimalPresentation} onImmersiveLayoutChange={setWorldImmersive}
       onExitMinimal={()=>setMinimalTemporarilyExited(true)} onEnterMinimal={()=>setMinimalTemporarilyExited(false)}
       recordedIntegrityNotice={recordedIntegrityNotice} focusedProjectId={worldFocusProjectId} memoryProjectId={worldMemoryProjectId}
-      onFocusWorldProject={selectWorldProject} onClearWorldFocus={clearWorldFocus} onCloseWorldMemory={closeWorldMemory}
+      onFocusWorldProject={selectWorldProject} onInitialProjectFocus={setWorldFocusProjectId} onClearWorldFocus={clearWorldFocus} onCloseWorldMemory={closeWorldMemory}
       onOpenTasks={()=>navigateTo('tasks')} visible={worldVisible}/>
   </div> : null;
   const firstRunSetup = <ProjectSetup run={run} resourcePacks={resourcePacks} buildingBlueprints={state.buildingBlueprintResources} existingProjects={state.projects.filter(project=>project.status==='paused')} draft={setupDraft} firstRun={firstRunRequired} onDraftChange={updateSetupDraft} onCreated={()=>{setProjectDraft(null);writeFirstProjectSetupMarker();setFirstProjectSetupDone(true);navigateTo('world');}}/>;
@@ -239,7 +238,7 @@ export function App({ service, resourcePacks }: { service: ApplicationService; r
             worldDebug={worldDebugProjection} focusedProjectId={null} memoryProjectId={null}
             onSelectProject={()=>{}} onClearWorldFocus={()=>{}} onCloseMemory={()=>{}} onContinueProject={async()=>{}}
             visible={worldVisible} onPickTerrain={()=>{}} pickedCell={null}/></div>
-          <section className="focus-panel"><GlassEdgeRefraction active={worldVisible}/><MarathonProgressReport variant={minimalWanted ? 'minimal' : 'immersive'} key={orphanedDeferredHost} state={state} hostProjectId={orphanedDeferredHost} run={run} onSubmitted={() => { createRoundPlanStore(() => window.localStorage).write(null); refresh(); }}/></section>
+          <section className="focus-panel"><MarathonProgressReport variant={minimalWanted ? 'minimal' : 'immersive'} key={orphanedDeferredHost} state={state} hostProjectId={orphanedDeferredHost} run={run} onSubmitted={() => { createRoundPlanStore(() => window.localStorage).write(null); refresh(); }}/></section>
         </div>
         : firstRunSetup)}
       {active && <RoutePane active={tab === 'tasks'} route="tasks"><Suspense fallback={<LoadingPage status="正在打开任务…"/>}><TasksScreen active={active} state={state} run={run} onCreateProject={beginProjectSetup} onViewProject={viewProjectInWorld}/></Suspense></RoutePane>}
@@ -348,7 +347,23 @@ function AboutDialog({onClose}:{onClose:()=>void}){
   const [checking,setChecking]=useState(false);const [updateResult,setUpdateResult]=useState('');const closeRef=useRef<HTMLButtonElement>(null);
   useEffect(()=>{closeRef.current?.focus();const onKey=(event:KeyboardEvent)=>{if(event.key==='Escape')onClose();};window.addEventListener('keydown',onKey);return()=>window.removeEventListener('keydown',onKey);},[onClose]);
   const check=async()=>{setChecking(true);setUpdateResult('');try{const response=await fetch(`${REPOSITORY_URL.replace('github.com','api.github.com/repos')}/releases/latest`,{headers:{Accept:'application/vnd.github+json'}});if(!response.ok)throw new Error(String(response.status));const release=await response.json() as {tag_name?:string;html_url?:string};const latest=(release.tag_name??'').replace(/^v/,'');if(!/^\d+\.\d+\.\d+$/.test(latest))throw new Error('invalid release');setUpdateResult(compareVersions(latest,APP_VERSION)>0?`发现新版本 ${latest}，可前往 GitHub 下载。`:`当前已是最新版本 ${APP_VERSION}。`);}catch{setUpdateResult('暂时无法检查更新，请确认网络后重试。');}finally{setChecking(false);}};
-  return <div className="dialog-backdrop" role="presentation"><section className="confirm-dialog about-dialog" role="dialog" aria-modal="true" aria-labelledby="about-title"><button ref={closeRef} className="dialog-close" aria-label="关闭关于页面" onClick={onClose}><X/></button><Info className="about-icon"/><h2 id="about-title">方块钟 Blockcolc</h2><p className="about-version">版本 {APP_VERSION}</p><p>本地优先的专注计时器。任务、专注记录、蓝图和资源包默认只保存在你的设备上。</p><dl><div><dt>项目仓库</dt><dd><a href={REPOSITORY_URL} target="_blank" rel="noreferrer">GitHub <ExternalLink/></a></dd></div><div><dt>隐私</dt><dd>无账号、无云同步、无后台分析</dd></div><div><dt>许可</dt><dd>开源许可见项目仓库 · <a href="licenses/suncalc.txt" target="_blank" rel="noreferrer">SunCalc 许可</a></dd></div></dl><p className="legal-note">本应用不是 Minecraft 官方产品，未获 Mojang Studios 或 Microsoft 认可或关联。Minecraft 是其权利人的商标。</p><button className="check-update" type="button" disabled={checking} onClick={()=>void check()}><RefreshCw className={checking?'is-spinning':''}/>{checking?'正在检查':'手动检查更新'}</button>{updateResult&&<p className="update-result" role="status">{updateResult}</p>}</section></div>;
+  return <div className="dialog-backdrop" role="presentation">
+    <section className="confirm-dialog about-dialog" role="dialog" aria-modal="true" aria-labelledby="about-title">
+      <button ref={closeRef} className="dialog-close" aria-label="关闭关于页面" onClick={onClose}><X/></button>
+      <Info className="about-icon"/><h2 id="about-title">方块钟 Blockcolc</h2>
+      <p className="about-version">版本 {APP_VERSION}</p>
+      <p>本地优先的专注计时器。任务、专注记录、蓝图和资源包默认只保存在你的设备上。</p>
+      <dl>
+        <div><dt>项目仓库</dt><dd><a href={REPOSITORY_URL} target="_blank" rel="noreferrer">GitHub <ExternalLink/></a></dd></div>
+        <div><dt>隐私</dt><dd>无账号、无云同步、无后台分析</dd></div>
+        <div><dt>项目许可</dt><dd><a href={`${REPOSITORY_URL}/blob/main/LICENSE`} target="_blank" rel="noreferrer">Apache-2.0 <ExternalLink/></a></dd></div>
+        <div><dt>天文计算</dt><dd><a href="licenses/suncalc.txt" target="_blank" rel="noreferrer">SunCalc · BSD-2-Clause <ExternalLink/></a></dd></div>
+      </dl>
+      <p className="legal-note">本应用不是 Minecraft 官方产品，未获 Mojang Studios 或 Microsoft 认可或关联。Minecraft 是其权利人的商标。</p>
+      <button className="check-update" type="button" disabled={checking} onClick={()=>void check()}><RefreshCw className={checking?'is-spinning':''}/>{checking?'正在检查':'手动检查更新'}</button>
+      {updateResult&&<p className="update-result" role="status">{updateResult}</p>}
+    </section>
+  </div>;
 }
 
 function CompletionCeremony({title,onClose}:{title:string;onClose:()=>void}){const button=useRef<HTMLButtonElement>(null);useEffect(()=>{button.current?.focus();},[]);return <div className="ceremony-backdrop" role="presentation"><section className="completion-ceremony" role="dialog" aria-modal="true" aria-labelledby="ceremony-title"><div className="ceremony-rays"/><Trophy/><span>主体建筑完成</span><h2 id="ceremony-title">{title}</h2><p>这项长期工作已经在聚落中留下完整建筑。</p><button ref={button} onClick={onClose}>回到聚落</button></section></div>;}

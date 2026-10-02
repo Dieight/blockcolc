@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   precipitationFieldForView,
+  precipitationFieldLimits,
   precipitationPositionForOffset,
   rainCrossSectionScaleForView,
   stepPrecipitationClock,
@@ -43,6 +44,17 @@ function view(overrides: Partial<PrecipitationFieldInput> = {}): PrecipitationFi
 }
 
 describe("camera-bounded precipitation field", () => {
+  it("lets wide views cover distant scenery even with one small task", () => {
+    const limits = precipitationFieldLimits({ previewMode: false, visibleSpanX: 720, visibleSpanZ: 640,
+      framingSpanX: 18, framingSpanZ: 18 });
+    expect(limits.maxSpanX).toBe(720); expect(limits.maxSpanZ).toBe(640);
+    const field = precipitationFieldForView(view({ ...limits, cameraPosition: { x: 0, y: 180, z: 215 } }));
+    expect(field.spanX).toBeGreaterThan(180);
+    expect(field.spanZ).toBeGreaterThan(180);
+    const preview = precipitationFieldLimits({ previewMode: true, visibleSpanX: 720, visibleSpanZ: 640,
+      framingSpanX: 18, framingSpanZ: 18 });
+    expect(preview.maxSpanX).toBeLessThan(40); expect(preview.maxSpanZ).toBeLessThan(40);
+  });
   it("fits the frustum through the precipitation slab instead of the full terrain envelope", () => {
     const field = precipitationFieldForView(view());
     expect(field.usedFallback).toBe(false);

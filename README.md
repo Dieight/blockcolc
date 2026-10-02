@@ -46,6 +46,27 @@ Minecraft 是 Mojang Studios 的商标。本项目与 Mojang Studios 或 Microso
 不附带未经授权的原版纹理、字体、声音或模型。
 已发行备份格式与数据库名保留兼容，不因项目改名重置用户数据。
 
+## 技术与来源
+
+项目源码采用 [Apache-2.0](LICENSE)。主要依赖和用途如下；各依赖仍按各自许可使用。
+
+| 技术 | 用途 | 上游 |
+| --- | --- | --- |
+| TypeScript、React | 共享业务与 Android/Web 界面 | [TypeScript](https://github.com/microsoft/TypeScript)、[React](https://github.com/facebook/react) |
+| Three.js / WebGL | 方块世界、实例绘制、光照和天气 | [Three.js](https://github.com/mrdoob/three.js) |
+| Capacitor、Kotlin | Android 宿主、通知、生命周期、定位和文件桥接 | [Capacitor](https://github.com/ionic-team/capacitor)、[Kotlin](https://github.com/JetBrains/kotlin) |
+| IndexedDB | 本地任务、资源和恢复快照 | [MDN 文档](https://developer.mozilla.org/en-US/docs/Web/API/IndexedDB_API) |
+| SunCalc 2.0.2 | 太阳/月亮位置、月相与亮边角度计算 | [SunCalc](https://github.com/mourner/suncalc)、[BSD-2-Clause 许可](apps/web/public/licenses/suncalc.txt) |
+| fflate | 本地 ZIP/GZIP 解压，用于资源包和 Litematic | [fflate](https://github.com/101arrowz/fflate) |
+| Lucide | 界面图标 | [Lucide](https://github.com/lucide-icons/lucide) |
+| Vite、Vitest、Playwright | 构建、单元测试和浏览器交互验证 | [Vite](https://github.com/vitejs/vite)、[Vitest](https://github.com/vitest-dev/vitest)、[Playwright](https://github.com/microsoft/playwright) |
+
+现实天气使用 [和风天气 API](https://dev.qweather.com/docs/)，由用户选择开启，离线时回退本地天气。
+世界生成和装饰布局由项目实现，参考 Minecraft 的方块形态与环境构成；
+不是 Minecraft 世界生成器，也不随包分发其原版资源。用户导入的材质包与蓝图按原作者许可使用。
+视觉参考见 [设计来源](docs/assets/design-sources.md)；补充蓝图见[来源与稳定 ID](docs/assets/local-blueprints.md)。
+SunCalc 的版权声明和完整许可随应用保留，可在关于页单独查看；它不是 Blockcolc 的项目许可。
+
 ## 工程入口
 
 - [当前产品规则](BLOCKCOLC.md)

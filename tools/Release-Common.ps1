@@ -381,6 +381,63 @@ function Assert-AcceptedReleaseEvidence {
     }
 }
 
+function Get-ApkPublicAssets {
+    param([Parameter(Mandatory)][string]$Path)
+    $archive = [IO.Compression.ZipFile]::OpenRead($Path)
+    try {
+        $entries = foreach ($entry in ($archive.Entries | Sort-Object FullName)) {
+            if ($entry.FullName -notlike 'assets/public/*' -or $entry.FullName.EndsWith('/')) { continue }
+            $stream = $entry.Open()
+            try { $hash = (Get-FileHash -InputStream $stream -Algorithm SHA256).Hash.ToLowerInvariant() }
+            finally { $stream.Dispose() }
+            [pscustomobject][ordered]@{ path = $entry.FullName; bytes = $entry.Length; sha256 = $hash }
+        }
+        if (@($entries).Count -eq 0) { throw 'APK has no public core assets.' }
+        return @($entries)
+    } finally { $archive.Dispose() }
+}
+
+function Assert-PairedReleaseEvidence {
+    param(
+        [Parameter(Mandatory)]$Evidence,
+        [Parameter(Mandatory)]$Pair,
+        [Parameter(Mandatory)]$Context,
+        [Parameter(Mandatory)][object[]]$StandardAssets,
+        [Parameter(Mandatory)][object[]]$PrivateAssets
+    )
+    Assert-ReleaseEvidenceVersion -Evidence $Evidence -Context $Context
+    if ($Pair.versionName -cne $Context.VersionName -or $Pair.versionCode -ne $Context.VersionCode -or
+        $Pair.packageId -cne $Context.PackageId -or $Pair.signerSha256 -cne $Context.SignerSha256) {
+        throw 'Paired evidence application identity differs from the candidate.'
+    }
+    if ([string]::IsNullOrWhiteSpace([string]$Evidence.deliveryRoundId) -or $Pair.deliveryRoundId -cne $Evidence.deliveryRoundId) {
+        throw 'Paired evidence must use the candidate DeliveryRoundId.'
+    }
+    Assert-Sha256Equal -Expected $Evidence.candidateSha256 -Actual $Pair.standard.sha256 -Boundary 'paired standard candidate'
+    if ($Pair.private.sha256 -notmatch '^[0-9a-f]{64}$' -or $Pair.standard.isolation -ne 'passed' -or $Pair.private.isolation -ne 'passed') {
+        throw 'Paired evidence lacks valid private digest or isolation checks.'
+    }
+    $requiredGates = @('version','releaseWorkflow','fixtures','uiAssets','typecheck','unit','extendedUnit','storageE2e','coreLoopE2e','webE2e','androidBuild')
+    foreach ($gate in $requiredGates) {
+        if ((Get-OptionalEvidenceProperty -Object $Evidence.gates -Name $gate) -ne 'passed') { throw "Candidate gate did not pass: $gate" }
+    }
+    if ($Pair.fullReleaseGate -ne 'passed' -or $Pair.sharedCore.sameBytes -ne $true -or $StandardAssets.Count -eq 0) {
+        throw 'Paired evidence is not complete and passing.'
+    }
+    $standardManifest = $StandardAssets | ConvertTo-Json -Depth 4 -Compress
+    $privateManifest = $PrivateAssets | ConvertTo-Json -Depth 4 -Compress
+    $recordedManifest = @($Pair.sharedCore.entries) | ConvertTo-Json -Depth 4 -Compress
+    if ($standardManifest -cne $privateManifest -or $standardManifest -cne $recordedManifest) {
+        throw 'Actual APK core assets do not match each other and the paired evidence.'
+    }
+    foreach ($channel in @($Pair.standard, $Pair.private)) {
+        $tests = $channel.android.tests
+        if ($tests.tests -lt 1 -or $tests.failures -ne 0 -or $tests.errors -ne 0 -or $tests.skipped -ne 0 -or $channel.android.lintErrors -ne 0) {
+            throw 'Paired Android checks are not complete and passing.'
+        }
+    }
+}
+
 function Assert-ReleaseWorkPacketComplete {
     param([Parameter(Mandatory)]$Context)
     $packet = Join-Path $Context.Root "docs\versions\V$($Context.VersionCode).md"
@@ -603,12 +660,20 @@ function Get-WebReleaseReportIndex {
     if (-not $reportFile) { throw 'The Web release gate did not archive a runner report during this preparation.' }
     $report = Get-Content -LiteralPath $reportFile.FullName -Raw | ConvertFrom-Json
     $reportStartedAt = [DateTimeOffset]::MinValue
-    $startedAtText = [string](Get-OptionalEvidenceProperty -Object $report -Name 'startedAt')
+    # ConvertFrom-Json can return DateTime rather than text. A plain string
+    # cast loses its UTC/offset and fractional seconds; keep round-trip form.
+    $startedAtValue = Get-OptionalEvidenceProperty -Object $report -Name 'startedAt'
+    $startedAtText = if ($startedAtValue -is [datetime] -or $startedAtValue -is [DateTimeOffset]) {
+        $startedAtValue.ToString('o', [Globalization.CultureInfo]::InvariantCulture)
+    } else { [string]$startedAtValue }
     if (-not [DateTimeOffset]::TryParse($startedAtText, [ref]$reportStartedAt) -or $reportStartedAt.UtcDateTime -lt $StartedAtUtc) {
         throw "Web release runner report predates this preparation: $($reportFile.FullName)"
     }
     $reportFinishedAt = [DateTimeOffset]::MinValue
-    $finishedAtText = [string](Get-OptionalEvidenceProperty -Object $report -Name 'finishedAt')
+    $finishedAtValue = Get-OptionalEvidenceProperty -Object $report -Name 'finishedAt'
+    $finishedAtText = if ($finishedAtValue -is [datetime] -or $finishedAtValue -is [DateTimeOffset]) {
+        $finishedAtValue.ToString('o', [Globalization.CultureInfo]::InvariantCulture)
+    } else { [string]$finishedAtValue }
     if (-not [DateTimeOffset]::TryParse($finishedAtText, [ref]$reportFinishedAt) -or $reportFinishedAt -lt $reportStartedAt) {
         throw "Web release runner report has no valid finish time: $($reportFile.FullName)"
     }

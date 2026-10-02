@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { QWeatherAstronomyResult, QWeatherFailureReason, QWeatherLocationSource, QWeatherResult } from '@blockcolc/platform-capacitor';
-import { localDateForDate, weatherForExternalOverride, type AstronomyContext, type AstronomySchedule } from '@blockcolc/voxel';
+import { localDateForDate, weatherForExternalOverride } from '@blockcolc/voxel/environment';
+import type { AstronomyContext, AstronomySchedule } from '@blockcolc/voxel/astronomy';
 import { qweatherVisual, type ExternalWeatherVisual } from './qweather-visual';
 
 type NativeWeatherResult = QWeatherResult;

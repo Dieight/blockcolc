@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { planWorldScenery, sceneryHouseBlocks, sceneryTreeBlocks, sceneryLod, scenerySurfaceAt,
   sceneryBiome, sceneryCampBlocks, sceneryWreckBlocks, sceneryGeometryLayers, type ScenerySurface } from '../src/scenery';
-import { layoutWorlds, terrainSurfaceRectangles } from '../src/renderer';
+import { alignWorldsToEnvironment, layoutWorlds, terrainSurfaceRectangles } from '../src/renderer';
 import { createSteppedTerrainData } from '../src/terrain';
 import { roadCellsForVillage } from '../src/village';
 
@@ -14,6 +14,31 @@ const input = { environmentStyle: 'natural-valley' as const, worldSeed: 'review-
   roads: [{ x: 0, z: 17 }], trees: [{ x: 25, y: 1, z: 18, scale: 1 }] };
 
 describe('deterministic biome scenery', () => {
+  it.each([
+    { count: 1, seed: 'world-default' }, { count: 2, seed: 'ocean-single' },
+    { count: 7, seed: 'review-valley' }, { count: 12, seed: 'archipelago-230' },
+    { count: 24, seed: 'world-default' }, { count: 32, seed: 'archipelago-230' },
+    { count: 48, seed: 'scenery-review-fixed' },
+  ])('exposes a ship beside the real ocean shore for $count tasks / $seed', ({ count, seed }) => {
+    const worlds = alignWorldsToEnvironment(layoutWorlds(Array.from({ length: count }, (_, settlementIndex) => ({
+      projectId: `ocean-${settlementIndex}`, settlementIndex, blueprintId: 'builtin-timber-house',
+      buildingCompletionBasisPoints: 10_000, buildingConditionBasisPoints: 10_000, isMonument: false,
+    }))), 'ocean-island');
+    const roads = roadCellsForVillage(worlds);
+    const pads = worlds.map(w => ({ x: w.worldPosition.x, z: w.worldPosition.z,
+      width: w.footprint.width, depth: w.footprint.depth, groundLevel: w.worldPosition.y }));
+    const terrain = createSteppedTerrainData(worlds, roads, pads, undefined,
+      { environmentStyle: 'ocean-island', worldSeed: seed, terrainGenerationVersion: 4 });
+    const surfaces = terrainSurfaceRectangles(terrain);
+    const result = planWorldScenery({ environmentStyle: 'ocean-island', worldSeed: seed, surfaces,
+      trees: terrain.naturalTrees, roads, protectedRects: worlds.map(w => ({ x: w.worldPosition.x,
+        z: w.worldPosition.z, width: w.footprint.width + 5, depth: w.footprint.depth + 5 })) });
+    const wreck = result.objects.find(o => o.role === 'wreck');
+    expect(wreck, `missing ship for ${seed}/${count}`).toBeDefined();
+    expect(scenerySurfaceAt(surfaces, wreck!.x, wreck!.z)?.water).toBe(true);
+    const waterY = scenerySurfaceAt(surfaces, wreck!.x, wreck!.z)!.supportY;
+    expect(wreck!.y + Math.max(...wreck!.distantVoxels.map(v => v.y))).toBeGreaterThan(waterY + 7);
+  }, 60_000);
   it('partitions shared silhouettes without dropping, replacing or duplicating near detail', () => {
     for (const object of [sceneryHouseBlocks(), sceneryCampBlocks(), sceneryWreckBlocks()]) {
       const before = structuredClone(object);

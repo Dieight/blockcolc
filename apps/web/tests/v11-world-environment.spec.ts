@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { showWorldOverview } from './world-overview';
 
 test('switches the derived world environment without moving project data', async ({ page }, testInfo) => {
   await page.goto('/');
@@ -31,6 +32,7 @@ test('switches the derived world environment without moving project data', async
   // The sky rebuilds with the environment: clouds must match the small island,
   // not keep the natural valley's wide envelope.
   await expect.poll(async () => Number(await canvas.getAttribute('data-cloud-span-x'))).toBeLessThan(naturalSpan / 2);
+  await showWorldOverview(page);
   await expect(page.getByText('林边聚落 · 1 栋')).toBeVisible();
 });
 

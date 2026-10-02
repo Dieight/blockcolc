@@ -14,11 +14,8 @@ const STRICT_CSP = [
   "base-uri 'self'",
 ].join('; ');
 
-// The user-supplied local bundle is intentionally optional on clean checkouts.
-// The dedicated packaged-catalog spec asserts all seven entries when the bundle
-// is available; this compatibility test keeps its original core/import
-// contract in either checkout shape.
-const LOCAL_BUILTIN_TITLE_PATTERN = /Dieight的高级火柴盒plus|Dieight的高级火柴盒pro|Dieight的高级火柴盒|karry_steven的豪宅|GYPpro的豪宅（一层）|GYPpro的简易小仓库|Dieight的小别墅/;
+// The local bundle remains optional on clean checkouts. Its dedicated spec
+// checks exact catalogue identities; this case checks the CSP/import boundary.
 
 test('imports a real Litematic under a CSP that forbids eval', async ({ page }) => {
   const sample = resolve(process.cwd(), '../../litematic/bd29cade-7000-42b7-adc1-0631ce512c30.litematic');
@@ -49,7 +46,7 @@ test('imports a real Litematic under a CSP that forbids eval', async ({ page }) 
   const setup = page.locator('.setup');
   await setup.getByLabel('导入 .litematic').setInputFiles(sample);
   await expect(page.getByText(/4,301 个方块/)).toBeVisible();
-  const localBuiltinCount = await setup.locator('label.blueprint-option').filter({ hasText: LOCAL_BUILTIN_TITLE_PATTERN }).count();
+  const localBuiltinCount = await setup.locator('label.blueprint-option input[value^="builtin-local-"]').count();
   await expect(page.getByRole('radio')).toHaveCount(4 + localBuiltinCount);
 
   const runtime = await page.evaluate(() => ({

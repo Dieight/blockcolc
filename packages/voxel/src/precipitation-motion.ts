@@ -23,30 +23,46 @@ export interface PrecipitationUniforms {
   span: { value: number };
   speed: { value: number };
   size: { value: number };
+  center: { value: [number, number] };
+  field: { value: [number, number] };
+}
+
+export interface PrecipitationGroundUniforms {
+  texture:{value:THREE.Texture};
+  bounds:{value:[number,number,number,number]};
 }
 
 /** Move particles in the existing instanced draw; only uniforms change per frame. */
-export function patchPrecipitationMaterial(material: THREE.MeshBasicMaterial, snow: boolean, base: number, span: number, speed = 1): PrecipitationUniforms {
+export function patchPrecipitationMaterial(material: THREE.MeshBasicMaterial, snow: boolean, base: number, span: number, speed = 1, ground?:PrecipitationGroundUniforms): PrecipitationUniforms {
   const uniforms = { elapsed: { value: 0 }, base: { value: base }, span: { value: span },
-    speed: { value: speed }, size: { value: 1 } };
+    speed: { value: speed }, size: { value: 1 },
+    center: { value: [0, 0] as [number, number] }, field: { value: [1, 1] as [number, number] } };
   material.onBeforeCompile = shader => {
     Object.assign(shader.uniforms, { weatherElapsed: uniforms.elapsed, weatherBase: uniforms.base,
-      weatherSpan: uniforms.span, weatherSpeed: uniforms.speed, weatherSize: uniforms.size });
-    shader.vertexShader = `attribute float weatherPhase;
+      weatherSpan: uniforms.span, weatherSpeed: uniforms.speed, weatherSize: uniforms.size,
+      weatherCenter: uniforms.center, weatherField: uniforms.field });
+    if(ground)Object.assign(shader.uniforms,{weatherGround:ground.texture,weatherGroundBounds:ground.bounds});
+    shader.vertexShader = `attribute float weatherPhase; attribute vec2 weatherOffset;
 uniform float weatherElapsed; uniform float weatherBase; uniform float weatherSpan;
+uniform vec2 weatherCenter; uniform vec2 weatherField;
 uniform float weatherSpeed; uniform float weatherSize;\n${shader.vertexShader}`;
+    if(ground)shader.vertexShader=`uniform sampler2D weatherGround; uniform vec4 weatherGroundBounds;\n${shader.vertexShader}`;
     if (snow) shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>',
       '#include <begin_vertex>\ntransformed *= weatherSize * (0.65 + weatherPhase * 0.9);');
+    else shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>',
+      '#include <begin_vertex>\ntransformed.xz *= weatherSize;');
     shader.vertexShader = shader.vertexShader.replace('#include <project_vertex>', `
 vec4 mvPosition = vec4(transformed, 1.0);
 #ifdef USE_INSTANCING
   mvPosition = instanceMatrix * mvPosition;
-  mvPosition.y += weatherBase + fract(weatherPhase - weatherElapsed * ${snow ? '0.00022' : '0.00078 * weatherSpeed'}) * weatherSpan - instanceMatrix[3].y;
+  mvPosition.xz += weatherCenter + weatherOffset * weatherField - instanceMatrix[3].xz;
   ${snow ? 'float drift = weatherPhase * 6.28318530718 + weatherElapsed * 0.00055; mvPosition.x += sin(drift) * 1.35; mvPosition.z += cos(drift * 0.72) * 0.8;' : ''}
+  ${ground ? 'vec2 groundUv=clamp((mvPosition.xz-weatherGroundBounds.xy)/weatherGroundBounds.zw,vec2(0.0),vec2(1.0)); float groundY=texture2D(weatherGround,groundUv).r;' : 'float groundY=0.0;'}
+  mvPosition.y += groundY + weatherBase + fract(weatherPhase - weatherElapsed * ${snow ? '0.00022' : '0.00078 * weatherSpeed'}) * weatherSpan - instanceMatrix[3].y;
 #endif
 mvPosition = modelViewMatrix * mvPosition;
 gl_Position = projectionMatrix * mvPosition;`);
   };
-  material.customProgramCacheKey = () => `blockcolc-precipitation-${snow ? 'snow' : 'rain'}-v1`;
+  material.customProgramCacheKey = () => `blockcolc-precipitation-${snow ? 'snow' : 'rain'}-v3-${ground?'ground':'flat'}-field`;
   return uniforms;
 }

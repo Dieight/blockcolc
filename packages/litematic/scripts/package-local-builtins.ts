@@ -1,30 +1,13 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { validateBlueprint } from "@blockcolc/voxel";
+import { createHash } from "node:crypto";
+import { validateBlueprint } from "@blockcolc/voxel/blueprint-model";
+import { LOCAL_BUILTIN_SOURCES as SOURCES } from "@blockcolc/voxel/local-blueprint-sources";
 import { parseLitematic } from "../src/index.js";
 import { selectLocalBuiltinInput } from "./local-builtin-input.js";
 
-type LocalBuiltinCategory = "building" | "daily-reward";
-
-interface LocalBuiltinSource {
-  category: LocalBuiltinCategory;
-  id: string;
-}
-
 const INPUT_DIRECTORY = selectLocalBuiltinInput(process.argv[2]);
 const OUTPUT_DIRECTORY = resolve(import.meta.dirname, "../../voxel/src/local-blueprints");
-const SOURCES: Readonly<Record<string, LocalBuiltinSource>> = Object.freeze({
-  "Dieight的高级火柴盒.litematic": { category: "building", id: "builtin-local-advanced-matchbox" },
-  "Dieight的高级火柴盒plus.litematic": { category: "building", id: "builtin-local-advanced-matchbox-plus" },
-  "Dieight的高级火柴盒pro.litematic": { category: "building", id: "builtin-local-advanced-matchbox-pro" },
-  "GYPpro的简易小仓库.litematic": { category: "building", id: "builtin-local-gyp-simple-warehouse" },
-  "Dieight的神秘附魔台.litematic": { category: "daily-reward", id: "builtin-local-mysterious-enchanting-table" },
-  "Dieight的小别墅.litematic": { category: "building", id: "builtin-local-small-villa" },
-  "Dieight的小水箱.litematic": { category: "daily-reward", id: "builtin-local-small-water-tank" },
-  "karry_steven的豪宅.litematic": { category: "building", id: "builtin-local-gkr-mansion" },
-  "GYPpro的豪宅（一层）.litematic": { category: "building", id: "builtin-local-gyp-mansion-first-floor" },
-  "m0m0kA_QWQ的小黄鸭.litematic": { category: "daily-reward", id: "builtin-local-wqh-yellow-duck" },
-});
 
 if (!existsSync(INPUT_DIRECTORY)) {
   throw new Error(`Configured local blueprint input directory is missing: ${INPUT_DIRECTORY}`);
@@ -81,6 +64,9 @@ if (!existsSync(INPUT_DIRECTORY)) {
           category: source.category,
           stableId: blueprint.id,
           preservedTitle: blueprint.title,
+          description: source.description,
+          sourceSha256: createHash("sha256").update(sourceBytes).digest("hex"),
+          blueprintSha256: createHash("sha256").update(JSON.stringify(blueprint)).digest("hex"),
           dimensions: result.preview.dimensions,
           sourceMetadata: {
             name: result.preview.name,

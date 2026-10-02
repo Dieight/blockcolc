@@ -26,9 +26,11 @@ export function MinimalClockGesture({ clockText, busy, focusMinutes = 25, breakM
   const day = selected?.toDateString() === new Date().toDateString() ? '今天' : '明天';
   return <div className="minimal-clock-gesture" role="button" tabIndex={busy ? -1 : 0} aria-disabled={busy}
     aria-label={selected ? `专注到${day} ${text}，双击或按 Enter 开始专注` : `当前时间 ${text}，上下滑动或按方向键选择结束时间`}
+    onBlur={event => { delete event.currentTarget.dataset.pointerFocus; }}
     onPointerDown={event => {
       event.stopPropagation();
       if (busy || !event.isPrimary || event.button !== 0) return;
+      event.currentTarget.dataset.pointerFocus = 'true';
       event.currentTarget.setPointerCapture(event.pointerId);
       drag.current = { id:event.pointerId, x:event.clientX, y:event.clientY, lastY:event.clientY, base:selection, lastSelection:selection, feedbackRounds:new Set(), detentRounds:new Set(), detentPx:0, direction:0, moved:false, axis:null };
     }}
@@ -92,6 +94,7 @@ export function MinimalClockGesture({ clockText, busy, focusMinutes = 25, breakM
       }
     }}
     onKeyDown={event => {
+      delete event.currentTarget.dataset.pointerFocus;
       if (busy) return;
       if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
         event.preventDefault(); setSelection(value => {

@@ -4,6 +4,7 @@ import {
   ambientScaleForWeather,
   cloudBudgetForView,
   cloudAdvectionSpeed,
+  clearSkyVisibilityForWeather,
   conditionVisualForVoxels,
   decorationsForProject,
   effectiveWeatherOverride,
@@ -18,6 +19,15 @@ import {
 import { ambientEnvironmentDecorations } from "../src/natural-decorations";
 
 describe("deterministic local environment", () => {
+  it("separates visible celestial disks and sharp water highlights from diffuse lighting", () => {
+    expect(clearSkyVisibilityForWeather({ kind: "clear" })).toBe(1);
+    for (const kind of ["cloudy", "mist", "rain", "snow"] as const) {
+      expect(clearSkyVisibilityForWeather({ kind })).toBe(0);
+      // Provider cloud percentage need not be valid for its non-clear weather category.
+      expect(sunlightScaleForWeather({ kind, cloudIntensity: 0 })).toBeGreaterThan(0);
+      expect(sunlightScaleForWeather({ kind, cloudIntensity: 1 })).toBeGreaterThan(0);
+    }
+  });
   it("keeps the external weather active when a debug projection has weather null", () => {
     const external = { kind: "rain" as const, precipitationIntensity: 0.65 };
     expect(effectiveWeatherOverride(null, external)).toBe(external);
@@ -244,7 +254,10 @@ describe("bounded world follow-up presentation", () => {
     expect(budget.blockScale).toBe(1);
     expect(budget.spanX).toBeGreaterThan(420);
     expect(budget.spanZ).toBeGreaterThan(380);
-    expect(budget.maxInstances).toBe(900);
+    expect(budget.maxInstances).toBe(1600);
+    expect(budget.nearSpanX).toBe(148);
+    expect(budget.nearSpanZ).toBe(148);
+    expect(budget.nearSpanX).toBeLessThan(budget.spanX / 2);
   });
 
   it("keeps cloudy sky visibly denser than mist on expanded terrain", () => {

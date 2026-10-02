@@ -3,6 +3,7 @@ import { crossViewportRendererSpecs, desktopOnlySpecs, diagnosticSpecs } from '.
 
 export default defineConfig({
   testDir: './tests', timeout: 30_000, fullyParallel: true,
+  maxFailures: 1,
   use: { baseURL: 'http://127.0.0.1:41988', trace: 'retain-on-failure' },
   projects: [
     {

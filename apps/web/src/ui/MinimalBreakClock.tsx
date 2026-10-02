@@ -8,9 +8,13 @@ export function MinimalBreakClock({ children, busy, phase = 'break', onContinue 
   const tap = useRef<{ time:number; x:number; y:number } | null>(null);
   return <div className={`minimal-break-clock${phase === 'ready' ? ' minimal-ready-clock' : ''}`} role="button" tabIndex={0} aria-disabled={busy}
     aria-label={phase === 'ready' ? '计划待继续：双击剩余专注总时间或按 Enter 开始下一轮' : '双击休息中计时或按 Enter 跳过休息并继续专注'}
+    onBlur={event => { delete event.currentTarget.dataset.pointerFocus; }}
     onPointerDown={event => {
       event.stopPropagation();
-      if (!busy && event.isPrimary && event.button === 0) down.current = { id:event.pointerId, x:event.clientX, y:event.clientY, moved:false };
+      if (!busy && event.isPrimary && event.button === 0) {
+        event.currentTarget.dataset.pointerFocus = 'true';
+        down.current = { id:event.pointerId, x:event.clientX, y:event.clientY, moved:false };
+      }
     }}
     onPointerMove={event => {
       if (down.current && Math.hypot(event.clientX - down.current.x, event.clientY - down.current.y) >= 12) down.current.moved = true;
@@ -26,6 +30,7 @@ export function MinimalBreakClock({ children, busy, phase = 'break', onContinue 
       }
     }}
     onKeyDown={event => {
+      delete event.currentTarget.dataset.pointerFocus;
       if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); if (!busy && !event.repeat) onContinue(); }
     }}>{children}</div>;
 }

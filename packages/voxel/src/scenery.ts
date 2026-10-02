@@ -206,17 +206,19 @@ export function planWorldScenery(input: {
     { role: 'farm' as const, x: 11, z: 8, width: 7, depth: 7, ...farmBlocks() },
   ];
   const supports = (cx: number, cz: number, width: number, depth: number): { min: number; max: number } | null => {
-    const heights: number[] = [];
+    let min = Infinity, max = -Infinity;
     for (let dx = -Math.floor(width / 2); dx <= Math.floor(width / 2); dx++) {
       for (let dz = -Math.floor(depth / 2); dz <= Math.floor(depth / 2); dz++) {
         const x = cx + dx, z = cz + dz;
         const s = surfaceAt(x, z);
         if (!s || s.water || protectedRects.some(r => overlaps({ x, z, width: 1, depth: 1 }, r, 2))
           || input.roads.some(r => Math.abs(r.x - x) <= 2 && Math.abs(r.z - z) <= 2)) return null;
-        heights.push(s.supportY);
+        min = Math.min(min, s.supportY);
+        max = Math.max(max, s.supportY);
+        // A larger sampled area cannot recover an already excessive height range.
+        if (max - min > 4) return null;
       }
     }
-    const min = Math.min(...heights), max = Math.max(...heights);
     return max - min <= 4 ? { min, max } : null;
   };
   // Prefer one farther locality on one side, but never invent land to fit it.
@@ -298,8 +300,9 @@ export function planWorldScenery(input: {
     landStructure('camp', 13, 11, sceneryCampBlocks(), coreRadius + 30);
     // Ocean water can be one large quad, whose center is under the main island.
     // Search supported shore offsets instead of requiring one candidate per water quad.
+    function wreckAtShore(searchRadius:number) {
     const waterCandidates = new Map<string, { x: number; z: number; y: number }>();
-    for (const land of landSites.filter(p => Math.hypot(p.x - coreX, p.z - coreZ) < coreRadius + 75)) {
+    for (const land of landSites.filter(p => Math.hypot(p.x - coreX, p.z - coreZ) < searchRadius)) {
       for (const offset of [16, 20, 24, 28]) for (const [dx, dz] of [[offset, 0], [-offset, 0], [0, offset], [0, -offset]]) {
         const x = land.x + dx!, z = land.z + dz!, s = surfaceAt(x, z);
         if (s?.water) waterCandidates.set(`${x}:${z}`, { x, z, y: s.supportY });
@@ -312,9 +315,13 @@ export function planWorldScenery(input: {
           + Math.max(0, (p.x - coreX) + (p.z - coreZ)) * .5;
         return score(a) - score(b) || a.x - b.x || a.z - b.z;
       });
-    const wreck = waterSites.find(p => !occupied({ ...p, width: 9, depth: 21 }, 4)
+    return waterSites.find(p => !occupied({ ...p, width: 9, depth: 21 }, 4)
       && [-4, 0, 4].every(dx => [-10, 0, 10].every(dz => surfaceAt(p.x + dx, p.z + dz)?.water))
       && [[18, 0], [-18, 0], [0, 18], [0, -18]].some(([dx, dz]) => { const s = surfaceAt(p.x + dx!, p.z + dz!); return s && !s.water; }));
+    }
+    // Keep existing valid landmarks. The island grows faster than the task
+    // footprint: if the old search is all dry land, follow the actual shore.
+    const wreck = wreckAtShore(coreRadius + 75) ?? wreckAtShore(coreRadius * 3 + 140);
     if (wreck) objects.push({ id: `scenery:${input.worldSeed}:wreck`, role: 'wreck', x: wreck.x, y: wreck.y - .2, z: wreck.z,
       width: 9, depth: 21, ...sceneryWreckBlocks() });
     const shore = landSites.find(p => !occupied({ ...p, width: 7, depth: 15 })

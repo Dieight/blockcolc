@@ -1,8 +1,9 @@
 import { useEffect, useId, useRef, useState, type CSSProperties } from 'react';
 import { addLocalDays } from '@blockcolc/domain';
+import { allocationPercentageUnits, allocationWeight } from '../focus-allocation-field';
 
 export interface CalendarDay { date:string; minutes:number; sessions:number; future:boolean }
-export interface AllocationRow { projectId:string; title:string; minutes:number; unallocated?:boolean }
+export interface AllocationRow { projectId:string; title:string; minutes:number; durationMs?:number; unallocated?:boolean }
 export interface MonumentTaskRow { subtaskId:string; title:string; minutes:number; share:number|null }
 
 const ALLOCATION_BAR_WIDTH = 400;
@@ -88,33 +89,57 @@ export function FocusCalendarChart({ days, today }: { days:CalendarDay[]; today:
   </section>;
 }
 
-/** G3 Chunky Bars / glance-gallery.html / “Revenue by plan”.
- * Template audit also compared L2 Dot Cascade (lupi-gallery.html) and the F1
- * Rung Bars/F5 Tick Rows (basics-gallery.html): G3 best preserves a direct
- * ranking while its bars can be laid out horizontally for long task names.
- * Offline React adaptation: zero-based lengths, rounded outer ends and direct
- * values replace the superseded tick rows while retaining the product green.
+/** L14 Hundred Field / lupi-gallery.html / “A hundred of us, four minds”.
+ * Actual duration owns the shares; dots are approximate percentage units.
+ * Retain the template's golden-angle clusters, every-fifth spoke and core
+ * connections. Exact task labels/time remain outside the plotting geometry.
  */
 export function FocusAllocationChart({ rows, rangeLabel }: { rows:AllocationRow[]; rangeLabel:string }) {
   const reveal = useChartReveal();
-  const clipPrefix = useId().replace(/[^a-zA-Z0-9_-]/g, '');
-  const maximum = Math.max(1, ...rows.map(row => row.minutes));
-  return <section className="focus-chart project-allocation" ref={reveal.ref} data-chart-template="G3" aria-labelledby="project-allocation-title">
-    <div className="stats-section-heading"><div><h2 id="project-allocation-title">时间花在了哪里</h2><p>{rangeLabel} · 按实际专注时长比较</p></div></div>
-    {rows.length === 0 ? <p className="chart-empty">开始一次专注，投入会在这里留下记录。</p> : <ol key={`${rangeLabel}-${reveal.revision}`} className={`allocation-bars${reveal.revision ? ' is-revealed' : ''}`}>
-      {rows.map((row,index) => <li key={row.projectId} className={row.unallocated ? 'is-unallocated' : undefined}>
-        <div className="allocation-row-heading"><strong>{row.title}</strong><span>{formatFocusMinutes(row.minutes)}</span></div>
-        <svg viewBox={'0 0 ' + ALLOCATION_BAR_WIDTH + ' ' + ALLOCATION_BAR_HEIGHT} preserveAspectRatio="none" role="img" aria-label={`${row.title} · ${formatFocusMinutes(row.minutes)}`} className="allocation-bar">
-          <defs><clipPath id={clipPrefix + '-allocation-clip-' + index}><rect width={ALLOCATION_BAR_WIDTH} height={ALLOCATION_BAR_HEIGHT} rx={ALLOCATION_BAR_HEIGHT / 2}/></clipPath></defs>
-          <g clipPath={'url(#' + clipPrefix + '-allocation-clip-' + index + ')'}>
-            <rect className="allocation-track" width={ALLOCATION_BAR_WIDTH} height={ALLOCATION_BAR_HEIGHT}/>
-            <path className="allocation-fill chart-mark" style={delay(index * .11)}
-              data-minutes={row.minutes} data-extent={Math.max(0,row.minutes) / maximum * ALLOCATION_BAR_WIDTH}
-              d={allocationBarPath(Math.max(0,row.minutes) / maximum * ALLOCATION_BAR_WIDTH)}/>
-          </g>
-        </svg>
-      </li>)}
-    </ol>}
+  const units = allocationPercentageUnits(rows);
+  const total = rows.reduce((sum,row) => sum + allocationWeight(row),0);
+  const centers = rows.length === 1 ? [[200,88]] : rows.length === 2 ? [[122,96],[286,96]]
+    : rows.length === 3 ? [[110,88],[290,88],[200,225]] : rows.length === 4 ? [[132,140],[276,116],[186,252],[322,238]]
+    : rows.map((_,index) => [index % 2 ? 290 : 110, 95 + Math.floor(index / 2) * 130]);
+  const height = rows.length === 1 ? 185 : rows.length === 2 ? 200 : rows.length === 3 ? 310 : rows.length === 4 ? 320 : 440;
+  const rnd = (i:number,k:number) => Math.abs(((i * 73856093) ^ (k * 19349663)) % 1000) / 1000;
+  const shade = (index:number,row:AllocationRow):CSSProperties => ({ '--allocation-ink':row.unallocated ? 'var(--chart-faint)' : ['var(--chart-data)','var(--chart-data-mid)','var(--chart-data-soft)','var(--chart-muted)','color-mix(in srgb,var(--chart-data) 50%,var(--chart-paper))','var(--chart-ink)'][index % 6] } as CSSProperties);
+  const share = (row:AllocationRow) => {
+    const value = total > 0 ? allocationWeight(row) / total * 100 : 0;
+    return value > 0 && value < 1 ? '<1%' : `${Number(value.toFixed(1))}%`;
+  };
+  const time = (row:AllocationRow) => allocationWeight(row) > 0 && row.minutes === 0 ? '不足 1 分钟' : formatFocusMinutes(row.minutes);
+  return <section className="focus-chart project-allocation" ref={reveal.ref} data-chart-template="L14" aria-labelledby="project-allocation-title">
+    <div className="stats-section-heading"><div><h2 id="project-allocation-title">时间花在了哪里</h2><p>{rangeLabel} · 一簇投入，一项任务</p></div></div>
+    {total === 0 ? <p className="chart-empty">开始一次专注，投入会在这里留下记录。</p> : <div key={`${rangeLabel}-${reveal.revision}`} className={`allocation-field${reveal.revision ? ' is-revealed' : ''}`}>
+      <svg className="allocation-constellation" viewBox={`0 0 400 ${height}`} role="img" aria-label={`专注时间占比。${rows.map(row => `${row.title} · ${time(row)} · ${share(row)}`).join('；')}。每个散点约为总投入的 1%，精确时长和占比见下方任务列表。`}>
+        {centers.slice(0,rows.length).slice(1).map(([x,y],index) => <line key={index} x1={centers[index]![0]} y1={centers[index]![1]} x2={x} y2={y} className="allocation-link chart-mark" style={delay(.9 + index * .1)}/>)}
+        {rows.map((row,index) => {
+          const [cx,cy] = centers[index]!;
+          let edge = 0;
+          const points = Array.from({length:units[index]!},(_,k) => {
+            const angle = (k * 137.508 + index * 55) * Math.PI / 180;
+            const radius = 4 + Math.sqrt(k) * 5.9 + rnd(k+1,index+2) * 3;
+            edge = Math.max(edge,radius);
+            return {x:cx! + radius * Math.cos(angle), y:cy! + radius * Math.sin(angle), radius:1.5 + rnd(k+2,index+3) * 1.7};
+          });
+          return <g key={row.projectId} style={shade(index,row)} data-project-id={row.projectId} data-percentage-units={units[index]}>
+            <title>{`${row.title} · ${time(row)} · ${share(row)}`}</title>
+            {points.map((point,k) => <g key={k}>
+              {k % 5 === 0 && <line x1={cx} y1={cy} x2={point.x} y2={point.y} className="allocation-spoke chart-mark" style={delay(index * .14 + k * .012)}/>}
+              <circle cx={point.x} cy={point.y} r={point.radius} data-allocation-unit="true" className="allocation-point chart-mark" style={delay(index * .14 + k * .012)}/>
+            </g>)}
+            <circle cx={cx} cy={cy} r={2.4} className="allocation-core chart-mark" style={delay(index * .14)}/>
+            <text x={cx} y={cy! + edge + 15} textAnchor="middle" className="allocation-cluster-label chart-mark" style={delay(.5 + index * .12)}>{`${String(index+1).padStart(2,'0')} · ${share(row)}`}</text>
+          </g>;
+        })}
+      </svg>
+      <ol className="allocation-legend">{rows.map((row,index) => <li key={row.projectId} className={row.unallocated ? 'is-unallocated' : undefined} style={shade(index,row)} data-minutes={row.minutes}>
+        <span className="allocation-legend-index">{String(index+1).padStart(2,'0')}</span>
+        <strong>{row.title}</strong><span className="allocation-legend-values">{time(row)}<small>{share(row)}</small></span>
+      </li>)}</ol>
+      <p className="allocation-unit-note">散点按百分比取整，时长不作分摊。</p>
+    </div>}
   </section>;
 }
 

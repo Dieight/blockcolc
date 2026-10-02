@@ -9,7 +9,7 @@ html[data-theme="dark"],html[data-theme="dark"] body,html[data-theme="dark"] #ro
 [data-theme="dark"] .world,[data-theme="dark"] .setup-world{background:#0d1712}
 
 /* Inputs & generic buttons */
-[data-theme="dark"] select,[data-theme="dark"] input,[data-theme="dark"] textarea{background:#121a16;color:#e6efe9;border-color:#38473d}
+[data-theme="dark"] select,[data-theme="dark"] input:not(.number-field input),[data-theme="dark"] textarea{background:#121a16;color:#e6efe9;border-color:#38473d}
 [data-theme="dark"] input::placeholder,[data-theme="dark"] textarea::placeholder{color:#6c8577}
 [data-theme="dark"] .duration button,[data-theme="dark"] .report-options button,[data-theme="dark"] .setting button,[data-theme="dark"] .dialog-actions button,[data-theme="dark"] .resource-pack-original button,[data-theme="dark"] .resource-pack-list li button,[data-theme="dark"] .resource-pack-import,[data-theme="dark"] .backup-actions button,[data-theme="dark"] .file-button,[data-theme="dark"] .rollback-heading button,[data-theme="dark"] .rollback-list li button,[data-theme="dark"] .setup-kind button,[data-theme="dark"] .blueprint-option,[data-theme="dark"] .danger-outline,[data-theme="dark"] .planned-days button{background:#131c17;color:#e6efe9;border-color:#38473d}
 [data-theme="dark"] .duration .selected,[data-theme="dark"] .blueprint-option.selected{background:#1f3329;border-color:var(--focus);color:var(--focus)}
@@ -45,7 +45,6 @@ html[data-theme="dark"],html[data-theme="dark"] body,html[data-theme="dark"] #ro
 [data-theme="dark"] .report>svg,[data-theme="dark"] .about-icon,[data-theme="dark"] .task-list b,[data-theme="dark"] .build-percent,[data-theme="dark"] .plan-summary span:last-child,[data-theme="dark"] .task-switch-action,[data-theme="dark"] .settings-text-action,[data-theme="dark"] .resource-pack-original button,[data-theme="dark"] .resource-pack-list li button:not(.resource-pack-delete),[data-theme="dark"] .backup-actions button,[data-theme="dark"] .file-button,[data-theme="dark"] .rollback-heading button,[data-theme="dark"] .rollback-list li button{color:var(--focus)}
 [data-theme="dark"] .meter{background:#24312a}
 [data-theme="dark"] .text-toggle button:hover{background:rgba(230,239,233,.08)}
-[data-theme="dark"] .number-field input:focus-visible{background:#121a16}
 [data-theme="dark"] .glass-transparency-control{color:#e6efe9}
 [data-theme="dark"] .glass-transparency-control input[type="range"]{--range-track:#3a4941;background:transparent;border-color:transparent}
 
@@ -89,7 +88,7 @@ html[data-theme="dark"],html[data-theme="dark"] body,html[data-theme="dark"] #ro
 @media(min-width:700px){[data-theme="dark"] .focus-immersive .is-focusing .focus-panel{box-shadow:-18px 0 42px rgb(0 0 0 / var(--focus-glass-shadow-alpha))}}
 [data-theme="dark"] .focus-immersive .is-focusing .timer{color:#e6efe9}
 [data-theme="dark"] .focus-immersive .is-focusing .immersive-hint{color:var(--muted)}
-@media(prefers-reduced-transparency:reduce){[data-theme="dark"] .focus-immersive .is-focusing .focus-panel{background:rgba(20,29,25,.92)}}
+@media(prefers-reduced-transparency:reduce){[data-theme="dark"] .focus-immersive .is-focusing .focus-panel{background:var(--surface)}}
 
 /* Remaining light controls: dropdowns, pickers, tabs, switchers, settlement, steppers.
  * A1-04: the floating choice-menu options and the switcher action buttons now
@@ -136,4 +135,3 @@ html[data-theme="dark"],html[data-theme="dark"] body,html[data-theme="dark"] #ro
 [data-theme="dark"] .boot-page{background:#0e1512}
 [data-theme="dark"] .boot-page-mark{color:#e6efe9}
 [data-theme="dark"] .boot-page-status{color:#93b0a0}
-[data-theme="dark"] .boot-page-blocks i{background:#4f8f63}

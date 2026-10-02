@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { showWorldOverview } from './world-overview';
 
 async function expectWorldCanvasDoesNotCover(button: import('@playwright/test').Locator) {
   const hitTest = await button.evaluate((element) => {
@@ -15,27 +16,11 @@ async function expectWorldCanvasDoesNotCover(button: import('@playwright/test').
 async function revealFocusControls(page: import('@playwright/test').Page) {
   const endButton = page.getByRole('button', { name: '结束本次专注' });
   if (await endButton.isVisible().catch(() => false)) return;
-  // Aim the double-tap at the hint paragraph, never at a fixed band offset:
-  // a tap that lands on the end button would open the end dialog, and the
-  // band moves between panel layouts, so pixel offsets can hit other controls.
-  const hint = page.locator('.immersive-hint');
-  const box = (await hint.boundingBox()) ?? (await page.locator('.focus-panel').boundingBox());
-  if (!box) throw new Error('Focus panel has no layout box');
-  const x = box.x + box.width / 2;
-  const y = box.y + box.height / 2;
-  for (let attempt = 0; attempt < 5; attempt += 1) {
-    // A mouse double-click fires two pointerup events in the same spot, which
-    // the gesture detector reads as a double-tap; it also works on desktop
-    // contexts where touchscreen emulation is unavailable.
-    await page.mouse.dblclick(x, y);
-    try {
-      await expect(endButton).toBeVisible({ timeout: 1_500 });
-      return;
-    } catch {
-      await page.waitForTimeout(300);
-    }
-  }
-  throw new Error('Focus controls did not reveal after repeated double-taps');
+  await expect(page.locator('.world-screen')).toHaveClass(/is-focusing/);
+  // Resolve the moving panel at the gesture, rather than caching coordinates
+  // that can land on the end button after the immersive layout settles.
+  await page.locator('.immersive-hint').dblclick();
+  await expect(endButton).toBeVisible();
 }
 test('runs a repeatable habit building cycle with frozen targets and stable completed buildings', async ({ page }, testInfo) => {
   // Ten early-completed rounds plus a second WebGL preview renderer for the
@@ -70,7 +55,7 @@ test('runs a repeatable habit building cycle with frozen targets and stable comp
     await expectWorldCanvasDoesNotCover(startRound);
     await startRound.click();
     await revealFocusControls(page);
-  await page.getByRole('button', { name: '结束本次专注' }).click();
+    await page.getByRole('button', { name: '结束本次专注' }).click();
     const dialog = page.getByRole('dialog', { name: '如何结束这次专注？' });
     await expect(dialog.getByRole('button', { name: /提前完成本轮/ })).toContainText('推进当前习惯建筑');
     await dialog.getByRole('button', { name: /提前完成本轮/ }).click();
@@ -87,6 +72,11 @@ test('runs a repeatable habit building cycle with frozen targets and stable comp
   await page.screenshot({ path: testInfo.outputPath('habit-next-building-mobile.png'), fullPage: true });
   await page.getByRole('button', { name: '开始建造这座建筑' }).click();
 
+  await expect(page.getByRole('figure', { name: /^林边聚落，共 2 栋建筑。/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: '查看建筑记忆：阅读英语 · 第 1 座', exact: true })).toBeAttached();
+  // Opening now commits a real building focus. The settlement label is only
+  // shown in overview, so enter overview through the real map control first.
+  await showWorldOverview(page);
   await expect(page.getByText('林边聚落 · 2 栋')).toBeVisible();
   await expect(page.locator('.workbench-context')).toContainText('第 2 座');
   await expect(page.locator('.workbench-context')).toContainText('本周期 0 / 12 轮');

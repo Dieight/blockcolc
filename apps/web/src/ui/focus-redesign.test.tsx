@@ -49,25 +49,25 @@ describe('statistics template contracts', () => {
     expect(html).toContain('calendar-day-hit');
     expect(html).toContain('tabindex="0"');
   });
-  it('replaces ticks with bars preserving raw values and a common zero-based length', () => {
+  it('uses percentage clusters without bars or a clock ruler, preserving full task labels', () => {
     const html = renderToStaticMarkup(<FocusAllocationChart rows={[{projectId:'a',title:'完整长中文标题',minutes:100},{projectId:'b',title:'另一个任务',minutes:50}]} rangeLabel="近 30 天"/>);
-    expect(html).toContain('data-chart-template="G3"');
-    expect(html).toContain('data-extent="400"'); expect(html).toContain('data-extent="200"');
+    expect(html).toContain('data-chart-template="L14"');
+    expect(html).toContain('data-percentage-units="67"'); expect(html).toContain('data-percentage-units="33"');
     expect(html).not.toContain('chart-tick');
     expect(html).toContain('完整长中文标题'); expect(html).toContain('50 分');
-    expect(html).toContain('role="img" aria-label="完整长中文标题 · 1 小时 40 分钟"');
+    expect(html).toContain('完整长中文标题 · 1 小时 40 分钟 · 66.7%');
+    expect(html).toContain('aria-label="专注时间占比。完整长中文标题 · 1 小时 40 分钟 · 66.7%；另一个任务 · 50 分钟 · 33.3%。');
+    expect([...html.matchAll(/data-allocation-unit="true"/g)]).toHaveLength(100);
   });
-  it('keeps zero and extreme values honest, and gives each SVG clip path a reusable unique id', () => {
+  it('keeps zero and extreme values honest without cross-chart definitions', () => {
     const html = renderToStaticMarkup(<>
       <FocusAllocationChart rows={[{projectId:'zero',title:'零投入',minutes:0},{projectId:'long',title:'一个很长的中文任务名称用于检查换行',minutes:120}]} rangeLabel="近 30 天"/>
       <FocusAllocationChart rows={[{projectId:'large',title:'极端长时长',minutes:7200}]} rangeLabel="近 90 天"/>
     </>);
-    const clipIds = [...html.matchAll(/id="([^"]*allocation-clip-[^"]*)"/g)].map(match => match[1]);
-    expect(clipIds.length).toBe(3);
-    expect(new Set(clipIds).size).toBe(clipIds.length);
+    expect(html).not.toContain('clipPath');
     expect(html).toContain('data-minutes="0"');
-    expect(html).toContain('data-extent="0"');
-    expect(html).toContain('data-extent="400"');
+    expect(html).toContain('data-percentage-units="0"');
+    expect(html).toContain('data-percentage-units="100"');
     expect(html).not.toContain('NaN');
     expect(html).not.toContain('Infinity');
     expect(html).toContain('120 小时');

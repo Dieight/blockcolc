@@ -85,6 +85,8 @@ export interface CloudBudget {
   blockScale: number;
   spanX: number;
   spanZ: number;
+  nearSpanX: number;
+  nearSpanZ: number;
   previewMode: boolean;
 }
 
@@ -206,6 +208,11 @@ export function precipitationParticleCount(
   return Math.min(cap, Math.max(minimum, Math.round(base * density * area)));
 }
 
+/** A clouded sky can still illuminate terrain without a visible solar disk or sharp reflection. */
+export function clearSkyVisibilityForWeather(weather: Pick<WeatherState, "kind">): number {
+  return weather.kind === "clear" ? 1 : 0;
+}
+
 /** Weather tint/cloud/star response is common across the environment layouts. */
 export function sunlightScaleForWeather(weather: Pick<WeatherState, "kind" | "cloudIntensity"> & Partial<Pick<WeatherState, "thunderstorm">>): number {
   const fullCloudScale = weatherVisualForWeather(weather).sunlightScale;
@@ -267,6 +274,8 @@ export function cloudBudgetForView(input: CloudBudgetInput): CloudBudget {
       blockScale,
       spanX: Math.max(12, contentWidth * 1.15),
       spanZ: Math.max(10, contentDepth * 1.15),
+      nearSpanX: Math.max(12, contentWidth * 1.15),
+      nearSpanZ: Math.max(10, contentDepth * 1.15),
       previewMode: true,
     };
   }
@@ -277,15 +286,17 @@ export function cloudBudgetForView(input: CloudBudgetInput): CloudBudget {
   // cap on expanded terrain, erasing their visual distinction. Fog owns mist;
   // clouds own overcast. Keep coverage growth sublinear and weather-specific.
   const kindDensity: Record<WeatherKind, number> = {
-    clear: 0.6, cloudy: 1, rain: 1.12, mist: 0.45, snow: 0.82,
+    clear: 0.6, cloudy: 1.6, rain: 1.4, mist: 0.45, snow: 1.15,
   };
   return {
-    cloudCount: weatherCloudCount === 0 ? 0 : Math.min(compact ? 40 : 85,
+    cloudCount: weatherCloudCount === 0 ? 0 : Math.min(compact ? 64 : 128,
       Math.max(1, Math.round(weatherCloudCount * density * Math.sqrt(spreadRatio) * kindDensity[input.weatherKind]))),
-    maxInstances: 900,
+    maxInstances: 1600,
     blockScale: 1,
     spanX: compact ? Math.max(32, visibleWidth * 1.05) : Math.max(32, visibleWidth + 24),
     spanZ: compact ? Math.max(28, visibleDepth * 1.05) : Math.max(28, visibleDepth + 24),
+    nearSpanX: Math.min(visibleWidth + 24, Math.max(100, contentWidth * 1.6 + 100)),
+    nearSpanZ: Math.min(visibleDepth + 24, Math.max(100, contentDepth * 1.6 + 100)),
     previewMode: false,
   };
 }

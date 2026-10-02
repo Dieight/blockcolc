@@ -70,6 +70,22 @@ const FALLBACK_MIN_SPAN = 16;
 const ABSOLUTE_MAX_SPAN = 4096;
 const CORNER_COORDINATES = [-1, 1] as const;
 
+/** Camera coverage may expand to the visible landscape, never stop at the task footprint. */
+export function precipitationFieldLimits(input: {
+  previewMode: boolean; visibleSpanX: number; visibleSpanZ: number; framingSpanX: number; framingSpanZ: number;
+}): { minSpanX: number; minSpanZ: number; maxSpanX: number; maxSpanZ: number } {
+  const axis = (visible: number, framing: number) => {
+    const extent = isFinitePositive(visible) ? Math.min(ABSOLUTE_MAX_SPAN, visible) : FALLBACK_MAX_SPAN;
+    const frame = isFinitePositive(framing) ? framing : FALLBACK_MIN_SPAN;
+    const maximum = input.previewMode ? Math.min(extent, Math.max(12, frame * 1.45 + 6)) : extent;
+    const minimum = Math.min(maximum, Math.max(input.previewMode ? 8 : 24, frame * .65));
+    return [minimum, maximum] as const;
+  };
+  const [minSpanX, maxSpanX] = axis(input.visibleSpanX, input.framingSpanX);
+  const [minSpanZ, maxSpanZ] = axis(input.visibleSpanZ, input.framingSpanZ);
+  return { minSpanX, minSpanZ, maxSpanX, maxSpanZ };
+}
+
 /**
  * Produces a bounded root-local x/z field covering the camera frustum where it
  * crosses the precipitation height slab. No Three.js types are needed, so the

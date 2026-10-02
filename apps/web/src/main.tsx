@@ -12,7 +12,7 @@ const logNativeStartup = (phase: string, durationMs: number): void => {
   bridge?.logRenderDiagnostic?.(`[blockcolc-startup] ${JSON.stringify({ phase, durationMs: Number(durationMs.toFixed(2)) })}`);
 };
 document.documentElement.dataset.bootstrapState = 'loading';
-root.render(<LoadingPage status="正在恢复你的世界…"/>);
+root.render(<LoadingPage stage="storage" status="正在读取本地记录…"/>);
 const loadingPagePainted = new Promise<void>((resolve) => {
   requestAnimationFrame(() => window.setTimeout(resolve, 0));
 });

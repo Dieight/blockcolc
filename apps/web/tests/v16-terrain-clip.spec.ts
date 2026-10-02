@@ -1,4 +1,5 @@
 import { expect, test, type Locator } from "@playwright/test";
+import { showWorldOverview } from './world-overview';
 
 test("keeps the complete natural terrain inside safe clip planes at maximum zoom", async ({ page }, testInfo) => {
   await page.clock.install({ time: new Date("2026-07-26T12:00:00+08:00") });
@@ -8,8 +9,10 @@ test("keeps the complete natural terrain inside safe clip planes at maximum zoom
   await expect(canvas).toHaveAttribute("data-terrain-generation-version", "4");
   // Clouds span the full visible terrain, not just the settlement core (V16 regression guard).
   await expect.poll(async () => Number(await canvas.getAttribute("data-cloud-span-x"))).toBeGreaterThan(600);
+  await showWorldOverview(page);
   await canvas.dispatchEvent("wheel", { deltaY: 4_000, deltaMode: 0 });
-  await expect.poll(async () => Number(await canvas.getAttribute("data-camera-distance-ratio"))).toBeGreaterThanOrEqual(1.13);
+  await expect(canvas).toHaveAttribute('data-camera-maximum-distance-ratio', '0.9000');
+  await expect.poll(async () => Number(await canvas.getAttribute("data-camera-distance-ratio"))).toBeCloseTo(.9, 3);
 
   const box = await canvas.boundingBox();
   if (!box) throw new Error("World canvas has no layout box");
@@ -19,9 +22,12 @@ test("keeps the complete natural terrain inside safe clip planes at maximum zoom
   for (let index = 0; index < 4; index += 1) {
     const beforeAzimuth = Number(await canvas.getAttribute("data-camera-azimuth"));
     const pointerId = 61 + index * 10;
-    await pointer(canvas, "pointerdown", pointerId, centerX - 72, centerY);
-    await pointer(canvas, "pointermove", pointerId, centerX + 72, centerY);
-    await pointer(canvas, "pointerup", pointerId, centerX + 72, centerY);
+    await canvas.evaluate((node, gesture) => {
+      for (const [type, x, buttons] of [['pointerdown', gesture.x - 72, 1], ['pointermove', gesture.x + 72, 1], ['pointerup', gesture.x + 72, 0]] as const) {
+        node.dispatchEvent(new PointerEvent(type, { bubbles: true, pointerId: gesture.id, pointerType: 'touch',
+          isPrimary: true, clientX: x, clientY: gesture.y, buttons }));
+      }
+    }, { id: pointerId, x: centerX, y: centerY });
     await expect.poll(async () => Math.abs(Number(await canvas.getAttribute("data-camera-azimuth")) - beforeAzimuth)).toBeGreaterThan(1.2);
     await expect(canvas).toHaveAttribute("data-visibility-near-clip-safe", "true");
     await expect(canvas).toHaveAttribute("data-visibility-far-clip-safe", "true");
@@ -40,14 +46,3 @@ test("keeps the complete natural terrain inside safe clip planes at maximum zoom
   expect(new Set(captures.map((capture) => capture.toString("base64"))).size).toBe(4);
   await expect(canvas).toHaveAttribute("data-continuous-rendering", "false");
 });
-
-async function pointer(locator: Locator, type: string, pointerId: number, clientX: number, clientY: number): Promise<void> {
-  await locator.dispatchEvent(type, {
-    pointerId,
-    pointerType: "touch",
-    isPrimary: true,
-    clientX,
-    clientY,
-    buttons: type === "pointerup" ? 0 : 1,
-  });
-}

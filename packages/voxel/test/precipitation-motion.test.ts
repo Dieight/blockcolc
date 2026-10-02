@@ -33,6 +33,10 @@ describe('instanced precipitation motion', () => {
       material.onBeforeCompile(shader, {} as THREE.WebGLRenderer);
       uniforms.elapsed.value = 16;
       expect(shader.uniforms.weatherElapsed).toBe(uniforms.elapsed);
+      uniforms.center.value[0] = 145; uniforms.field.value[1] = 680;
+      expect(shader.uniforms.weatherCenter).toBe(uniforms.center);
+      expect(shader.uniforms.weatherField).toBe(uniforms.field);
+      expect(shader.vertexShader).toContain('weatherOffset * weatherField');
       expect(shader.vertexShader).toContain('fract(weatherPhase');
       expect(shader.vertexShader).not.toContain('#include <project_vertex>');
       material.dispose();

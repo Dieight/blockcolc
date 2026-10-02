@@ -187,7 +187,7 @@ test('minimal cold opening travels from the maximum to minimum settlement zoom',
     canvas.getAttribute('data-camera-minimum-distance-ratio'), canvas.getAttribute('data-camera-maximum-distance-ratio'),
     canvas.getAttribute('data-camera-distance-ratio'),
   ]);
-  expect(Number(start) / Number(end)).toBeGreaterThan(2);
+  expect(Number(start) / Number(end)).toBeCloseTo(2, 2);
   expect(Number(current)).toBeCloseTo(Number(minimum), 2);
   expect(Number(start) / Number(end)).toBeCloseTo(Number(maximum) / Number(minimum), 2);
   expect(await page.getByRole('button', { name: '关闭建筑记忆' }).count()).toBe(0);
@@ -198,7 +198,11 @@ test('reduced motion skips decorative opening animation without blocking the usa
   await page.emulateMedia({ reducedMotion: 'reduce' });
   const canvas = await createProject(page);
   await expect(page.getByRole('button', { name: '开始 1 轮' })).toBeVisible();
-  await expect(canvas).toHaveAttribute('data-initial-reveal-completed-count', '0');
+  await expect(canvas).toHaveAttribute('data-initial-reveal-started-count', '0');
+  await expect(canvas).toHaveAttribute('data-initial-reveal-completed-count', '1');
+  await expect(canvas).toHaveAttribute('data-opening-reveal-state', 'completed');
+  await expect(canvas).toHaveAttribute('data-camera-minimum-distance-ratio', '0.9000');
+  await expect(page.getByRole('button', { name: '重置地图', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: '关闭建筑记忆' })).toHaveCount(0);
 });
 

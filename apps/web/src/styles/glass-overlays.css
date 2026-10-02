@@ -1,8 +1,5 @@
 /* Fixed, high-readability glass for transient functional layers above the world or page.
    The immersive focus board keeps its own user-adjustable material tokens. */
-.glass-edge-refraction{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:0;opacity:.5;filter:blur(.6px);border-radius:inherit}
-.focus-panel>.glass-edge-refraction~:is(.focus-face,.minimal-idle-carousel,.report){position:relative;z-index:1}
-@media(prefers-reduced-transparency:reduce){.glass-edge-refraction{display:none}}
 .world-hud span,
 .world-hud button,
 .toast,

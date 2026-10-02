@@ -42,28 +42,40 @@ describe("built-in blueprint catalog", () => {
       TIMBER_HOUSE_BLUEPRINT,
       VILLAGE_CHAPEL_BLUEPRINT,
     ]));
-    expect(BUILTIN_LOCAL_BUILDING_BLUEPRINTS.length === 0 || BUILTIN_LOCAL_BUILDING_BLUEPRINTS.length === 7).toBe(true);
-    expect(BUILTIN_DAILY_REWARD_BLUEPRINTS.length === 0 || BUILTIN_DAILY_REWARD_BLUEPRINTS.length === 3).toBe(true);
+    expect(BUILTIN_LOCAL_BUILDING_BLUEPRINTS.length === 0 || BUILTIN_LOCAL_BUILDING_BLUEPRINTS.length === 16).toBe(true);
+    expect(BUILTIN_DAILY_REWARD_BLUEPRINTS.length === 0 || BUILTIN_DAILY_REWARD_BLUEPRINTS.length === 6).toBe(true);
     expect(BUILTIN_LOCAL_BUILDING_BLUEPRINTS.every((blueprint) => blueprint.id.startsWith("builtin-local-") && blueprint.title)).toBe(true);
     expect(BUILTIN_DAILY_REWARD_BLUEPRINTS.every((blueprint) => blueprint.id.startsWith("builtin-local-") && blueprint.title)).toBe(true);
-    if (BUILTIN_LOCAL_BUILDING_BLUEPRINTS.length === 7) {
+    if (BUILTIN_LOCAL_BUILDING_BLUEPRINTS.length === 16) {
       expect(BUILTIN_LOCAL_BUILDING_BLUEPRINTS.map((blueprint) => [blueprint.id, blueprint.title])).toEqual([
         ["builtin-local-advanced-matchbox-plus", "Dieight的高级火柴盒plus"],
         ["builtin-local-advanced-matchbox-pro", "Dieight的高级火柴盒pro"],
         ["builtin-local-advanced-matchbox", "Dieight的高级火柴盒"],
+        ["builtin-local-dieight-christmas-tree", "Dieight的圣诞树"],
+        ["builtin-local-dieight-xilian-figurine", "Dieight的昔涟Q版手办_byMC烤河马"],
         ["builtin-local-gkr-mansion", "karry_steven的豪宅"],
+        ["builtin-local-gyp-cherry-storage-furnace", "GYPpro的樱花仓库熔炉"],
+        ["builtin-local-gyp-cherry-tree", "GYPpro的樱花树"],
         ["builtin-local-gyp-mansion-first-floor", "GYPpro的豪宅（一层）"],
+        ["builtin-local-gyp-ritual-sword", "GYPpro的昔涟-仪式剑"],
         ["builtin-local-gyp-simple-warehouse", "GYPpro的简易小仓库"],
+        ["builtin-local-momo-mysterious-house", "m0m0kA_QWQ的神秘小房子"],
         ["builtin-local-small-villa", "Dieight的小别墅"],
+        ["builtin-local-togawa-iron-farm", "Togawa15akiko的刷铁机"],
+        ["builtin-local-togawa-mansion", "Togawa15akiko的豪宅"],
+        ["builtin-local-zdrcgubjo4-small-fountain", "zdrcgubjo4的小喷泉"],
       ]);
     } else {
       expect(BUILTIN_BLUEPRINT_CATALOG).toHaveLength(CORE_BUILTIN_BLUEPRINT_CATALOG.length);
     }
-    if (BUILTIN_DAILY_REWARD_BLUEPRINTS.length === 3) {
+    if (BUILTIN_DAILY_REWARD_BLUEPRINTS.length === 6) {
       expect(BUILTIN_DAILY_REWARD_BLUEPRINTS.map((blueprint) => [blueprint.id, blueprint.title])).toEqual([
+        ["builtin-local-dieight-afk-pool", "Dieight的挂机池"],
+        ["builtin-local-gyp-afk-spot", "GYPpro的挂机点"],
         ["builtin-local-mysterious-enchanting-table", "Dieight的神秘附魔台"],
         ["builtin-local-small-water-tank", "Dieight的小水箱"],
         ["builtin-local-wqh-yellow-duck", "m0m0kA_QWQ的小黄鸭"],
+        ["builtin-local-zdrcgubjo4-iron-golem", "zdrcgubjo4的铁傀儡"],
       ]);
     } else {
       expect(BUILTIN_DAILY_REWARD_BLUEPRINTS).toEqual([]);
@@ -106,6 +118,18 @@ describe("built-in blueprint catalog", () => {
       ["builtin-local-gkr-mansion", "karry_steven的豪宅", "karry_steven的豪宅"],
       ["builtin-local-gyp-mansion-first-floor", "GYPpro的豪宅（一层）", "GYPpro的豪宅（一层）"],
       ["builtin-local-wqh-yellow-duck", "m0m0kA_QWQ的小黄鸭", "m0m0kA_QWQ的小黄鸭"],
+      ["builtin-local-dieight-afk-pool", "Dieight的挂机池", "Dieight的挂机池"],
+      ["builtin-local-dieight-christmas-tree", "Dieight的圣诞树", "Dieight的圣诞树"],
+      ["builtin-local-dieight-xilian-figurine", "Dieight的昔涟Q版手办_byMC烤河马", "Dieight的昔涟Q版手办（MC烤河马制作）"],
+      ["builtin-local-gyp-afk-spot", "GYPpro的挂机点", "GYPpro的挂机点"],
+      ["builtin-local-gyp-ritual-sword", "GYPpro的昔涟-仪式剑", "GYPpro的昔涟-仪式剑"],
+      ["builtin-local-gyp-cherry-storage-furnace", "GYPpro的樱花仓库熔炉", "GYPpro的樱花仓库熔炉"],
+      ["builtin-local-gyp-cherry-tree", "GYPpro的樱花树", "GYPpro的樱花树"],
+      ["builtin-local-momo-mysterious-house", "m0m0kA_QWQ的神秘小房子", "m0m0kA_QWQ的神秘小房子"],
+      ["builtin-local-togawa-mansion", "Togawa15akiko的豪宅", "Togawa15akiko的豪宅"],
+      ["builtin-local-togawa-iron-farm", "Togawa15akiko的刷铁机", "Togawa15akiko的刷铁机"],
+      ["builtin-local-zdrcgubjo4-iron-golem", "zdrcgubjo4的铁傀儡", "zdrcgubjo4的铁傀儡"],
+      ["builtin-local-zdrcgubjo4-small-fountain", "zdrcgubjo4的小喷泉", "zdrcgubjo4的小喷泉"],
     ] as const;
     for (const [id, title, credit] of sources) {
       const description = localBuiltinBlueprintDescription(id, title);

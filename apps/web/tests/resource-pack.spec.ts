@@ -4,6 +4,7 @@ import { existsSync } from 'node:fs';
 import { deflateSync } from 'node:zlib';
 import { basename, resolve } from 'node:path';
 import { readPersistedDomainState } from './persisted-domain-state';
+import { observeWorldDrawBudget, readWorldDrawBudget } from './world-draw-budget';
 
 test('imports, persists, switches and safely deletes a local Java resource pack', async ({page}) => {
   const archive=Buffer.from(makePack());
@@ -131,6 +132,7 @@ test('applies an atlas to a real imported building and restores original renderi
   await page.getByRole('button',{name:'开始建造'}).click();
   await setActiveProjectProgress(page,9900);
   await page.reload();
+  await observeWorldDrawBudget(page, '项目建筑世界');
   const canvas=page.getByLabel('项目建筑世界');
   await expect(canvas).toBeVisible();
   await prepareMaterialComparison(page, canvas);
@@ -157,8 +159,7 @@ test('applies an atlas to a real imported building and restores original renderi
   await expect.poll(async()=>Number(await canvas.getAttribute('data-multipart-geometry-voxel-count'))).toBeGreaterThan(40);
   await expect.poll(async()=>Number(await canvas.getAttribute('data-geometry-signature-batch-count'))).toBeGreaterThan(0);
   expect(Number(await canvas.getAttribute('data-geometry-signature-batch-count'))).toBeLessThanOrEqual(64);
-  expect(Number(await canvas.getAttribute('data-render-calls'))).toBeLessThanOrEqual(120);
-  expect(Number(await canvas.getAttribute('data-render-triangles'))).toBeLessThanOrEqual(350_000); // V23 refined far-fine tier adds terrain triangles on purpose
+  await expectColorRenderBudget(canvas, testInfo);
   await expect(canvas).toHaveAttribute('data-continuous-rendering','false');
   await expect(canvas).toHaveAttribute('data-animation-scheduled','true');
   await expect.poll(async()=>Number(await canvas.getAttribute('data-animation-interpolated-texture-count'))).toBeGreaterThan(0);
@@ -238,8 +239,8 @@ test('retextures built-in buildings through vanilla stand-in blocks', async ({ p
   }, { timeout: 20_000 }).toBeLessThan(0.02);
 });
 
-for (const projectSeed of [null, '20c94b43-1756-47c7-8bf6-03b12c778bdb']) {
-test(`renders translucent multipart panes and zero-thickness iron bars from a real imported building${projectSeed ? ' with the high-batch regression seed' : ''}`,async({page},testInfo)=>{
+for (const projectSeed of [null, '20c94b43-1756-47c7-8bf6-03b12c778bdb', '67b5e352-7d97-4606-8c74-ffa968e99ebd', 'd368ad47-5108-4558-9453-d6f5d8bde331', 'd5023bf2-df0a-4220-8318-25779c0dcec8']) {
+test(`renders translucent multipart panes and zero-thickness iron bars from a real imported building${projectSeed ? ` with the high-batch regression seed ${projectSeed}` : ''}`,async({page},testInfo)=>{
   test.setTimeout(90_000);
   const sample=resolve(process.cwd(),'../../litematic/a94f3c5d-b4ad-42e1-ba26-f474b204b0ea.litematic');
   test.skip(!existsSync(sample), 'The real Litematic compatibility fixture stays local.');
@@ -252,7 +253,7 @@ test(`renders translucent multipart panes and zero-thickness iron bars from a re
   }, projectSeed);
   await page.clock.install({time:new Date('2026-07-26T05:00:00.000Z')});
   await page.goto('/?__atlasPageSize=256');
-  await page.getByLabel('导入 .litematic').setInputFiles(sample);
+  await page.getByRole('group', {name:'选择建筑蓝图'}).getByLabel('导入 .litematic').setInputFiles(sample);
   await page.getByLabel('大型任务').fill('P2 透明连接验证');
   await page.getByRole('button', { name: '清空小任务' }).click();
   await page.getByLabel('新增小任务').fill('验证墙体连接');
@@ -266,6 +267,7 @@ test(`renders translucent multipart panes and zero-thickness iron bars from a re
   await expect(page.locator('.resource-pack-panel .backup-notice')).toContainText('已导入并启用');
   await setActiveProjectProgress(page,9900);
   await page.reload();
+  await observeWorldDrawBudget(page, '项目建筑世界');
   const canvas=page.getByLabel('项目建筑世界');
   await expect(canvas).toBeVisible();
   await expect(canvas).toHaveAttribute('data-initial-reveal-completed-count', '1', { timeout: 20_000 });
@@ -274,15 +276,12 @@ test(`renders translucent multipart panes and zero-thickness iron bars from a re
   await expect.poll(async()=>Number(await canvas.getAttribute('data-translucent-geometry-voxel-count'))).toBeGreaterThan(50);
   await expect.poll(async()=>Number(await canvas.getAttribute('data-geometry-quad-instance-count'))).toBeGreaterThan(500);
   expect(Number(await canvas.getAttribute('data-geometry-signature-batch-count'))).toBeLessThanOrEqual(64);
-  await expect.poll(async()=>{
-    const fullscreenPasses=Number(await canvas.getAttribute('data-fullscreen-pass-count'));
-    return Number(await canvas.getAttribute('data-render-calls'))-fullscreenPasses*6;
-  }).toBeLessThanOrEqual(120);
-  expect(Number(await canvas.getAttribute('data-render-triangles'))).toBeLessThanOrEqual(350_000); // V23 refined far-fine tier adds terrain triangles on purpose
+  await expectColorRenderBudget(canvas, testInfo);
   await expect(canvas).toHaveAttribute('data-continuous-rendering','false');
   const metrics = await canvas.evaluate(element => {
     const d = (element as HTMLCanvasElement).dataset;
-    return { calls: Number(d.renderCalls), triangles: Number(d.renderTriangles), frame: Number(d.renderFrameCount),
+    return { calls: Number(d.colorRenderCalls), triangles: Number(d.colorRenderTriangles),
+      totalCalls: Number(d.renderCalls), totalTriangles: Number(d.renderTriangles), frame: Number(d.renderFrameCount),
       quality: d.activeLightingQuality, geometryBatches: Number(d.geometrySignatureBatchCount),
       sceneryCalls: Number(d.ambientDecorationDrawCalls), village: d.sceneryVillage, lods: d.sceneryLods };
   });
@@ -291,6 +290,32 @@ test(`renders translucent multipart panes and zero-thickness iron bars from a re
       limits: { colorCalls: 120, triangles: 350_000, geometryBatches: 64 } }) });
   await canvas.screenshot({path:testInfo.outputPath('p2-multipart-pane-bars.png')});
 });
+}
+
+async function expectColorRenderBudget(canvas: import('@playwright/test').Locator, info: import('@playwright/test').TestInfo) {
+  // Counters are published together after a real frame of the current rebuild.
+  // Depth refreshes and fullscreen composition are measured separately, not
+  // estimated from a multiplier or mistaken for steady scene draw calls.
+  await expect.poll(() => canvas.evaluate(node => {
+    const d = (node as HTMLCanvasElement).dataset;
+    return Number(d.colorRenderCalls) > 0 && d.renderedWorldRebuildCount === d.worldRebuildCount;
+  })).toBe(true);
+  const metrics = await canvas.evaluate(node => {
+    const d = (node as HTMLCanvasElement).dataset;
+    return { calls: Number(d.colorRenderCalls), triangles: Number(d.colorRenderTriangles),
+      totalCalls: Number(d.renderCalls), totalTriangles: Number(d.renderTriangles),
+      quality: d.activeLightingQuality, geometryBatches: Number(d.geometrySignatureBatchCount) };
+  });
+  await info.attach('actual-color-pass-budget', { contentType: 'application/json', body: JSON.stringify({
+    metrics, limits: { colorCalls: 120, colorTriangles: 350_000, geometryBatches: 64 },
+  }) });
+  const draws = await readWorldDrawBudget(canvas.page());
+  if (draws) await info.attach('actual-world-draw-list', { contentType: 'application/json', body: JSON.stringify(draws) });
+  expect(metrics.calls).toBeLessThanOrEqual(120);
+  expect(metrics.triangles).toBeLessThanOrEqual(350_000);
+  expect(metrics.triangles).toBeGreaterThan(0);
+  expect(metrics.totalCalls).toBeGreaterThanOrEqual(metrics.calls);
+  expect(metrics.totalTriangles).toBeGreaterThanOrEqual(metrics.triangles);
 }
 
 test('a user-owned 26.3 client JAR supplies models beneath all four provided appearance packs', async ({page}) => {

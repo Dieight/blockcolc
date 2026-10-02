@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import type { ApplicationCommand, ApplicationResult, ApplicationService } from '@blockcolc/application';
 import { completedPomodorosOn, dailyGoalForDate, localDateOf, type FocusInterruptionCategory } from '@blockcolc/domain';
 import type { ResourcePackRepository } from '@blockcolc/resource-pack-indexeddb';
-import { localDateForDate, weatherForLocalDate, type WeatherState } from '@blockcolc/voxel';
+import { localDateForDate, weatherForLocalDate, type WeatherState } from '@blockcolc/voxel/environment';
 import { Minimize2, ListTodo, AlertTriangle, Clock3, Square } from 'lucide-react';
 import type { FocusPreferences } from './app-types';
 import type { RecordedIntegrityNotice } from './application-lifecycle';
@@ -19,6 +19,7 @@ import { marathonEndInstant } from './marathon-end-time';
 import { WorldCanvasV7 } from './WorldCanvasV7';
 import { localWeatherConditionLabel, WorldWeatherAttribution } from './WorldWeatherStatus';
 import type { WorldWeatherView } from './use-world-weather';
+import { initialEnvironmentPending } from './initial-environment';
 import type { WorldDebugProjection } from './world-debug';
 import { FocusFace } from './ui/FocusFace';
 import { MinimalClockGesture } from './ui/MinimalClockGesture';
@@ -29,7 +30,6 @@ import { FocusTimer } from './FocusTimer';
 import { FocusPlanSheet, HabitFocusPlanSheet } from './FocusPlanSheets';
 import { HabitBuildingSelection } from './HabitBuildingSelection';
 import { ProgressReportV7, MarathonProgressReport } from './FocusReports';
-import { GlassEdgeRefraction } from './GlassEdgeRefraction';
 import { EndFocusDialog } from './EndFocusDialog';
 import { formatClockDuration, formatDurationSummary, formatClockTime } from './focus-format';
 
@@ -40,7 +40,7 @@ function breakPlanIdentity(plan: RoundPlan | null): string | null {
 }
 function immersiveBandTestOverride():{bottom:number;right:number}|undefined{if(!testBuildEnabled())return undefined;const read=(key:string)=>{const raw=new URLSearchParams(location.search).get(key);if(raw===null)return undefined;const value=Number(raw);return Number.isFinite(value)&&value>=0&&value<=0.75?value:undefined;};const bottom=read('__immersiveBand');const right=read('__immersiveRightBand');if(bottom===undefined&&right===undefined)return undefined;return{bottom:bottom??0,right:right??0};}
 
-export function WorldScreenV7({ service, resourcePacks, run, refresh, onReconcileFocus, preferences, worldWeather, worldDebug = null, minimalWanted, fullDeferredPresentation, onMinimalPresentationChange, onImmersiveLayoutChange, onExitMinimal, onEnterMinimal, recordedIntegrityNotice, focusedProjectId, memoryProjectId, onFocusWorldProject, onClearWorldFocus, onCloseWorldMemory, onOpenTasks, visible }: {
+export function WorldScreenV7({ service, resourcePacks, run, refresh, onReconcileFocus, preferences, worldWeather, worldDebug = null, minimalWanted, fullDeferredPresentation, onMinimalPresentationChange, onImmersiveLayoutChange, onExitMinimal, onEnterMinimal, recordedIntegrityNotice, focusedProjectId, memoryProjectId, onFocusWorldProject, onInitialProjectFocus, onClearWorldFocus, onCloseWorldMemory, onOpenTasks, visible }: {
   service: ApplicationService;
   resourcePacks: ResourcePackRepository;
   run: (command: ApplicationCommand) => Promise<ApplicationResult>;
@@ -60,6 +60,7 @@ export function WorldScreenV7({ service, resourcePacks, run, refresh, onReconcil
   focusedProjectId: string | null;
   memoryProjectId: string | null;
   onFocusWorldProject: (projectId: string) => void;
+  onInitialProjectFocus: (projectId: string) => void;
   onClearWorldFocus: () => void;
   onCloseWorldMemory: () => void;
   onOpenTasks: () => void;
@@ -418,6 +419,14 @@ export function WorldScreenV7({ service, resourcePacks, run, refresh, onReconcil
   const afterReport = (sessionId: string) => flow.afterReport(reconciledPlan, sessionId);
   const [marathonNow, setMarathonNow] = useState(Date.now());
   const isMarathonContext = marathonPlan || planMode === 'marathon';
+  const settlementPresentation=minimalWanted || Boolean(isMarathonContext);
+  const wasSettlementPresentation=useRef(settlementPresentation);
+  useEffect(()=>{
+    // Entering a plan/minimal view starts from the settlement, not the ordinary
+    // cold-start building focus. Later intentional building taps still work.
+    if(settlementPresentation && !wasSettlementPresentation.current)onClearWorldFocus();
+    wasSettlementPresentation.current=settlementPresentation;
+  },[settlementPresentation,onClearWorldFocus]);
   const focusMinutes = isMarathonContext
     ? preferences.focusMinutes
     : planHostIsHabit ? preferences.habitFocusMinutes : preferences.focusMinutes;
@@ -491,9 +500,11 @@ export function WorldScreenV7({ service, resourcePacks, run, refresh, onReconcil
         environmentStyle={state.worldSettings.environmentStyle} worldSeed={state.worldSettings.worldSeed}
         terrainGenerationVersion={state.worldSettings.terrainGenerationVersion} constructionFeedback={constructionFeedback}
         sessionActive={!!session} immersivePresentation={isImmersiveLayout} immersiveBand={immersiveBand}
+        glassClarity={preferences.focusGlassTransparency}
         externalWeatherOverride={worldWeather.override} astronomyContext={worldWeather.astronomyContext ?? null} worldDebug={worldDebug}
+        initialEnvironmentPending={initialEnvironmentPending(preferences.realWeatherEnabled, worldWeather)}
         openingProjectId={minimalWanted || marathonPlan || planMode === 'marathon' ? null : active.project.id}
-        focusedProjectId={focusedProjectId} memoryProjectId={memoryProjectId} onSelectProject={onFocusWorldProject}
+        focusedProjectId={focusedProjectId} memoryProjectId={memoryProjectId} onSelectProject={onFocusWorldProject} onInitialProjectFocus={onInitialProjectFocus}
         onClearWorldFocus={onClearWorldFocus} onCloseMemory={onCloseWorldMemory}
         onContinueProject={async(projectId)=>{if(projectId!==active.project.id){const result=await run({type:'SwitchActiveProject',projectId});if(!result?.ok)return;}onCloseWorldMemory();}}
         switchBlockedReason={session?'结束本轮专注后才能切换任务。':pending.length>0?'先完成当前任务的进度汇报，再切换任务。':undefined}
@@ -501,7 +512,6 @@ export function WorldScreenV7({ service, resourcePacks, run, refresh, onReconcil
       <WorldWeatherAttribution view={worldWeather} localConditionText={localWeatherConditionLabel(localWeather.kind)}/>
     </div>
     {visible && <section ref={focusPanelRef} className="focus-panel focus-workbench-panel" onPointerUp={(event) => handlePanelTap({ target: event.target, clientX: event.clientX, clientY: event.clientY })}>
-      <GlassEdgeRefraction active={isImmersiveLayout}/>
       <MinimalPanelWeatherOverlay active={minimalIdle} weather={panelWeather ? { kind: panelWeather.kind,
         precipitationIntensity: panelWeather.precipitationIntensity, visualPrecipitationIntensity: panelWeather.visualPrecipitationIntensity, seed: panelWeather.seed,
         thunderstorm: panelWeather.thunderstorm } : null}/>

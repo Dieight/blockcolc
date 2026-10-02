@@ -64,6 +64,55 @@ Assert-Throws -MessagePattern 'version does not match' -Action {
     Assert-ReleaseEvidenceVersion -Evidence $evidence -Context $wrongVersion
 }
 
+$pairedCandidate = $evidence | ConvertTo-Json -Depth 6 | ConvertFrom-Json
+$pairedCandidate | Add-Member -NotePropertyName deliveryRoundId -NotePropertyValue 'synthetic-paired-round'
+$pairedGates = [pscustomobject]@{}
+foreach ($gate in @('version','releaseWorkflow','fixtures','uiAssets','typecheck','unit','extendedUnit','storageE2e','coreLoopE2e','webE2e','androidBuild')) {
+    $pairedGates | Add-Member -NotePropertyName $gate -NotePropertyValue 'passed'
+}
+$pairedCandidate | Add-Member -NotePropertyName gates -NotePropertyValue $pairedGates
+$assets = @([pscustomobject][ordered]@{ path='assets/public/index.html'; bytes=17; sha256=$hashA })
+$syntheticAndroid = [pscustomobject]@{ tests=[pscustomobject]@{ tests=1; failures=0; errors=0; skipped=0 }; lintErrors=0 }
+$pairedEvidence = [pscustomobject]@{
+    versionName=$context.VersionName; versionCode=$context.VersionCode; packageId=$context.PackageId; signerSha256=$context.SignerSha256
+    deliveryRoundId='synthetic-paired-round'; fullReleaseGate='passed'
+    standard=[pscustomobject]@{ sha256=$hashB; isolation='passed'; android=$syntheticAndroid }
+    private=[pscustomobject]@{ sha256=$hashA; isolation='passed'; android=$syntheticAndroid }
+    sharedCore=[pscustomobject]@{ sameBytes=$true; entries=$assets }
+}
+Assert-PairedReleaseEvidence -Evidence $pairedCandidate -Pair $pairedEvidence -Context $context -StandardAssets $assets -PrivateAssets $assets
+foreach ($field in @('deliveryRoundId','versionName','packageId','signerSha256')) {
+    Assert-Throws -MessagePattern 'identity|DeliveryRoundId' -Action {
+        $invalid = $pairedEvidence | ConvertTo-Json -Depth 8 | ConvertFrom-Json
+        $invalid.$field = 'different'
+        Assert-PairedReleaseEvidence -Evidence $pairedCandidate -Pair $invalid -Context $context -StandardAssets $assets -PrivateAssets $assets
+    }
+}
+Assert-Throws -MessagePattern 'SHA-256 mismatch' -Action {
+    $invalid = $pairedEvidence | ConvertTo-Json -Depth 8 | ConvertFrom-Json
+    $invalid.standard.sha256 = $hashA
+    Assert-PairedReleaseEvidence -Evidence $pairedCandidate -Pair $invalid -Context $context -StandardAssets $assets -PrivateAssets $assets
+}
+Assert-Throws -MessagePattern 'Actual APK core' -Action {
+    $differentAssets = @([pscustomobject][ordered]@{ path='assets/public/index.html'; bytes=17; sha256=$hashB })
+    Assert-PairedReleaseEvidence -Evidence $pairedCandidate -Pair $pairedEvidence -Context $context -StandardAssets $assets -PrivateAssets $differentAssets
+}
+Assert-Throws -MessagePattern 'Actual APK core' -Action {
+    $invalid = $pairedEvidence | ConvertTo-Json -Depth 8 | ConvertFrom-Json
+    $invalid.sharedCore.entries[0].bytes = 18
+    Assert-PairedReleaseEvidence -Evidence $pairedCandidate -Pair $invalid -Context $context -StandardAssets $assets -PrivateAssets $assets
+}
+Assert-Throws -MessagePattern 'gate did not pass' -Action {
+    $invalid = $pairedCandidate | ConvertTo-Json -Depth 8 | ConvertFrom-Json
+    $invalid.gates.webE2e = 'failed'
+    Assert-PairedReleaseEvidence -Evidence $invalid -Pair $pairedEvidence -Context $context -StandardAssets $assets -PrivateAssets $assets
+}
+Assert-Throws -MessagePattern 'Android checks' -Action {
+    $invalid = $pairedEvidence | ConvertTo-Json -Depth 8 | ConvertFrom-Json
+    $invalid.private.android.tests.skipped = 1
+    Assert-PairedReleaseEvidence -Evidence $pairedCandidate -Pair $invalid -Context $context -StandardAssets $assets -PrivateAssets $assets
+}
+
 $temporaryBase = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
 $temporaryRoot = [IO.Path]::GetFullPath((Join-Path $temporaryBase "blockcolc-release-workflow-$([guid]::NewGuid().ToString('N'))"))
 if (-not $temporaryRoot.StartsWith($temporaryBase, [StringComparison]::OrdinalIgnoreCase)) { throw "Unsafe temporary test path: $temporaryRoot" }
@@ -175,6 +224,24 @@ try {
     Assert-True -Condition ($reportIndex.ExitCode -eq 0 -and $reportIndex.SkipCount -eq 2 -and $reportIndex.AttemptCount -eq 2 -and $reportIndex.SuiteCount -eq 2 -and $reportIndex.RetryCount -eq 1 -and $reportIndex.FlakyCount -eq 1 -and @($reportIndex.SuiteReports).Count -eq 2) -Message 'Web release summary index includes actual runner outcome, skipped, retry and flaky counts.'
     $reportEvidence = [pscustomobject]@{ schemaVersion = 3; reportIndex = @([pscustomobject]@{ path = $reportIndex.Path; sha256 = $reportIndex.Sha256; status = 'passed'; exitCode = 0; suiteReports = $reportIndex.SuiteReports }) }
     Assert-ReleaseReportIndex -Evidence $reportEvidence -Context ([pscustomobject]@{ Root = $temporaryRoot })
+    # Exercise UTC and both offset signs with a sub-second preparation
+    # boundary. PowerShell's JSON date conversion must not shift the instant
+    # to the local zone or round away its fractional seconds.
+    $timestampReport = Get-Content -LiteralPath $reportPath -Raw | ConvertFrom-Json
+    foreach ($offsetHours in @(0, 8, -5)) {
+        $started = [DateTimeOffset]::UtcNow.ToOffset([TimeSpan]::FromHours($offsetHours))
+        $finished = $started.AddMilliseconds(175)
+        $timestampReport.startedAt = $started.ToString('o')
+        $timestampReport.finishedAt = $finished.ToString('o')
+        $timestampReport | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $reportPath -Encoding utf8
+        (Get-Item -LiteralPath $reportPath).LastWriteTimeUtc = $started.UtcDateTime.AddSeconds(1)
+        $roundTrip = Get-WebReleaseReportIndex -RepositoryRoot $temporaryRoot -StartedAtUtc $started.UtcDateTime.AddMilliseconds(-1)
+        Assert-True -Condition ([DateTimeOffset]::Parse($roundTrip.StartedAt).UtcTicks -eq $started.UtcTicks) -Message "Report start preserves offset $offsetHours and fractions."
+        Assert-True -Condition ([DateTimeOffset]::Parse($roundTrip.FinishedAt).UtcTicks -eq $finished.UtcTicks) -Message "Report finish preserves offset $offsetHours and fractions."
+        Assert-Throws -MessagePattern 'predates this preparation' -Action {
+            Get-WebReleaseReportIndex -RepositoryRoot $temporaryRoot -StartedAtUtc $started.UtcDateTime.AddMilliseconds(1)
+        }
+    }
     $invalidReport = Get-Content -LiteralPath $reportPath -Raw | ConvertFrom-Json
     $invalidReport.suites[0].exitCode = $null
     $invalidReport | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $reportPath -Encoding utf8
@@ -194,6 +261,14 @@ finally {
 $prepareSource = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'Prepare-Release.ps1') -Raw
 $installSource = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'Install-ReleaseCandidate.ps1') -Raw
 $publishSource = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'Publish-Release.ps1') -Raw
+$pairedPublishSource = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'Publish-PairedRelease.ps1') -Raw
+Assert-True -Condition ($pairedPublishSource -notmatch 'Install-AndVerifyApk|Get-AuthorizedAndroidDevices|Build-AndroidRelease|gradlew|vite\s+build') -Message 'Paired publication must not require devices or rebuild accepted APKs.'
+Assert-True -Condition ($pairedPublishSource -match 'ConfirmUserAcceptance' -and $pairedPublishSource -match 'ConfirmPublish' -and $pairedPublishSource -match 'UserApproval') -Message 'Paired publication must require explicit human acceptance and publication authorization.'
+Assert-True -Condition ($pairedPublishSource.IndexOf("'run','watch'", [StringComparison]::Ordinal) -lt $pairedPublishSource.IndexOf("'release','create'", [StringComparison]::Ordinal)) -Message 'Publication commit CI must finish before a public Release is created.'
+$pairedTokens = $null
+$pairedErrors = $null
+[void][System.Management.Automation.Language.Parser]::ParseInput($pairedPublishSource, [ref]$pairedTokens, [ref]$pairedErrors)
+Assert-True -Condition (@($pairedErrors).Count -eq 0) -Message 'Paired publication script must parse.'
 $verificationSource = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'Build-Verification-Apk.ps1') -Raw
 $workspaceRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $privateInstallPath = Join-Path $workspaceRoot 'blockcolc-relay-private\tools\Install-PrivateVerification.ps1'

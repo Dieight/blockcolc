@@ -412,8 +412,8 @@ describe("merged stepped terrain", () => {
       worldSeed: "stress-world",
     });
     expect(terrain.bounds.maxX - terrain.framingBounds.maxX).toBeGreaterThanOrEqual(52);
-    // V23 follow-up: the refined 2-unit far ring adds cells on purpose; the
-    // cap must still catch an out-of-control build.
+    // Wider near/middle bands and the refined 4-unit far band must still fit
+    // the existing budget; zoomed-out detail must not grow without a bound.
     expect(terrain.cellCount).toBeLessThan(150_000);
     expect(terrain.triangleCount).toBeLessThan(500_000);
     expect(placements).toHaveLength(count);

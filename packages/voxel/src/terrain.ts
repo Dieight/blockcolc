@@ -316,19 +316,11 @@ function createNaturalTerrainDataV2(
   // The camera can see well beyond the settlement framing box on tall mobile
   // viewports. Keep the far envelope outside that frustum so the square LOD
   // boundary never becomes the visual horizon.
-  // V23 follow-up: the far ring's 16-unit cells still read as giant slabs on
-  // the visible horizon. The band between the middle ring and the camera's
-  // visible range is exactly where those slabs showed, so it refines to
-  // 2-unit cells (1/8 of 16); beyond it the 16-unit skirt sits past the fog
-  // horizon where the projection is sub-pixel. The fine band is 96 units wide
-  // (middle -> middle+96), which rides just past the fitted camera's visible
-  // range for mid-sized settlements. It is gated to farExtent <= 1024:
-  // imported wide blueprints push the rings far out, where the far ring is
-  // barely visible anyway and refining it would multiply the mesh for no
-  // visible gain. Boundaries land on the 16-unit lattice so the two far tiers
-  // share exact edges (2-unit cells sit on odd centers, edges on multiples of
-  // 2, which includes multiples of 16). The refinement is v4-only: legacy
-  // generators keep their single 16-unit far ring untouched.
+  // The visible far band continues the middle ring's 4-unit lattice. Making
+  // distant cells finer than the middle ring multiplied geometry without
+  // improving the zoomed-out composition. Beyond this band, v4 uses 8-unit
+  // cells for ordinary-sized worlds. Wide imported worlds keep a bounded
+  // 16-unit skirt. Legacy generators retain their original profile.
   const support = createV2SupportContext(placements, roads, additionalPads, roadGroundHeightAt);
   const hydrologyExtent = Math.min(farExtent, 560);
   const hydrologyV2 = terrainGenerationVersion === 2 ? createV2Hydrology(hydrologyExtent, seedHash, support) : null;
@@ -374,7 +366,7 @@ function createNaturalTerrainDataV2(
     const key = `${x}:${z}:${size}`;
     const cached = cellSampleCache.get(key);
     if (cached) return cached;
-    // V23 ①: far LOD cells (16 units) sample the broad terrain so mountains and
+    // Far LOD cells sample the broad terrain so mountains and
     // water read as coherent big blocks instead of aliased pillars.
     const broad0 = hydrologyV3
       ? sampleNaturalTerrainV3(x, z, seedHash, support, hydrologyV3, true, true)
@@ -446,8 +438,8 @@ function createNaturalTerrainDataV2(
 
   addV2LodSquare(nearExtent, 0, 2, (x, z) => addCell(x, z, 2, "near"));
   addV2LodSquare(middleExtent, nearExtent, 4, (x, z) => addCell(x, z, 4, "middle"));
-  if (refinedFar) addV2LodSquare(farFineExtent, middleExtent, 2, (x, z) => addCell(x, z, 2, "far"));
-  addV2LodSquare(farExtent, refinedFar ? farFineExtent : middleExtent, 16, (x, z) => addCell(x, z, 16, "far"));
+  if (refinedFar) addV2LodSquare(farFineExtent, middleExtent, 4, (x, z) => addCell(x, z, 4, "far"));
+  addV2LodSquare(farExtent, refinedFar ? farFineExtent : middleExtent, farCellSize, (x, z) => addCell(x, z, farCellSize, "far"));
 
   closeV2CornerSlits(positions, indicesByMaterial, sideIndices);
 
@@ -1091,9 +1083,9 @@ function addV2CellSide(
   const insideNear = Math.abs(acrossX) <= nearExtent && Math.abs(acrossZ) <= nearExtent;
   const insideMiddle = Math.abs(acrossX) <= middleExtent && Math.abs(acrossZ) <= middleExtent;
   const insideFine = refinedFar && Math.abs(acrossX) <= farFineExtent && Math.abs(acrossZ) <= farFineExtent;
-  const neighborSize = insideNear ? 2 : insideMiddle ? 4 : insideFine ? 2 : farCellSize;
+  const neighborSize = insideNear ? 2 : insideMiddle || insideFine ? 4 : farCellSize;
   // Ring lattices: near cells sit on odd coordinates, middle cells at 2 mod 4,
-  // the far fine tier also on odd coordinates (2 mod 2), far cells at 8 mod 16
+  // the fine far tier continues the middle lattice, and outer cells use 8 or 16
   // — the lattice offset is always half the neighbor size. Snap the neighbor
   // sample to a real cell center of
   // ITS ring instead of the off-lattice adjacent position, and split this

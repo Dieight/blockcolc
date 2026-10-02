@@ -7,7 +7,7 @@ import {
   type BlueprintV1,
   type BlueprintVoxel,
   type MaterialId,
-} from "@blockcolc/voxel";
+} from "@blockcolc/voxel/blueprint-model";
 import {
   JAVA_NBT_TAG_TYPE,
   parseJavaNbtWithPistonNumericTagTypes,
@@ -153,6 +153,7 @@ export async function parseLitematic(
     throw new LitematicParseError("INVALID_NBT", "Could not parse Java big-endian NBT", { cause });
   }
   const root = record(nbtDocument.root, "root");
+  const minecraftDataVersion = integerValue(root.MinecraftDataVersion, "MinecraftDataVersion");
   const metadata = optionalRecord(root.Metadata, "Metadata") ?? {};
   const regionsRecord = record(root.Regions, "Regions");
   const regionNames = Object.keys(regionsRecord).sort(compareText);
@@ -228,7 +229,7 @@ export async function parseLitematic(
       enforce(blocks.size <= limits.maxOutputVoxels, `Output block count exceeds ${limits.maxOutputVoxels}`);
     }
     attachMovingPistonMovedStates(region, blocks, nbtDocument.getNumericTagType);
-    attachSignAndCampfireData(region, blocks);
+    attachSignAndCampfireData(region, blocks, minecraftDataVersion >= NBT_TEXT_COMPONENT_DATA_VERSION);
   }
 
   if (blocks.size === 0) invalid("Litematic contains no non-air blocks");
@@ -264,7 +265,7 @@ export async function parseLitematic(
       description: stringValue(metadata.Description, ""),
       litematicVersion: integerValue(root.Version, "Version"),
       litematicSubVersion: optionalIntegerValue(root.SubVersion, "SubVersion"),
-      minecraftDataVersion: integerValue(root.MinecraftDataVersion, "MinecraftDataVersion"),
+      minecraftDataVersion,
       dimensions,
       regionCount: parsedRegions.length,
       paletteEntries,
@@ -704,7 +705,7 @@ function parsePistonMovedState(entity: RecordValue): NonNullable<BlueprintVoxel[
   return Object.keys(ordered).length === 0 ? { blockId } : { blockId, properties: ordered };
 }
 
-function attachSignAndCampfireData(region: ParsedRegion, blocks: Map<string, DecodedVoxel>): void {
+function attachSignAndCampfireData(region: ParsedRegion, blocks: Map<string, DecodedVoxel>, directSignComponents: boolean): void {
   const { position, signedSize, dimensions } = region.preview;
   for (const raw of region.tileEntities) {
     if (!isRecord(raw)) continue;
@@ -727,7 +728,7 @@ function attachSignAndCampfireData(region: ParsedRegion, blocks: Map<string, Dec
 
     if (isSignEntity && isSignBlockId(voxel.state.name)) {
       if (voxel.sign !== undefined) invalid("Duplicate sign block entity for one voxel");
-      voxel.sign = parseSignBlockEntity(raw);
+      voxel.sign = parseSignBlockEntity(raw, directSignComponents);
     } else if (isCampfireEntity && isCampfireBlockId(voxel.state.name)) {
       if (voxel.campfire !== undefined) invalid("Duplicate campfire block entity for one voxel");
       voxel.campfire = parseCampfireBlockEntity(raw);
@@ -743,11 +744,11 @@ function isCampfireBlockId(blockId: string): boolean {
   return blockId === "minecraft:campfire" || blockId === "minecraft:soul_campfire";
 }
 
-function parseSignBlockEntity(entity: RecordValue): NonNullable<BlueprintVoxel["sign"]> {
+function parseSignBlockEntity(entity: RecordValue, directComponents: boolean): NonNullable<BlueprintVoxel["sign"]> {
   if (entity.front_text !== undefined || entity.back_text !== undefined) {
     return {
-      front: parseSignFace(entity.front_text, "TileEntities.sign.front_text"),
-      back: parseSignFace(entity.back_text, "TileEntities.sign.back_text"),
+      front: parseSignFace(entity.front_text, "TileEntities.sign.front_text", directComponents),
+      back: parseSignFace(entity.back_text, "TileEntities.sign.back_text", directComponents),
     };
   }
   if (["Text1", "Text2", "Text3", "Text4"].some((key) => entity[key] !== undefined)) {
@@ -764,14 +765,14 @@ function parseSignBlockEntity(entity: RecordValue): NonNullable<BlueprintVoxel["
   return { front: emptySignFace(), back: emptySignFace() };
 }
 
-function parseSignFace(raw: unknown, path: string): NonNullable<BlueprintVoxel["sign"]>["front"] {
+function parseSignFace(raw: unknown, path: string, directComponents: boolean): NonNullable<BlueprintVoxel["sign"]>["front"] {
   if (raw === undefined) return emptySignFace();
   const face = record(raw, path);
   const rawMessages = face.messages;
   let lines: string[] = [];
   if (rawMessages !== undefined) {
     if (!Array.isArray(rawMessages) || rawMessages.length > 4) invalid(`${path}.messages must contain at most four lines`);
-    lines = rawMessages.map((message, index) => parseSignComponent(message, `${path}.messages[${index}]`));
+    lines = rawMessages.map((message, index) => parseSignComponent(message, `${path}.messages[${index}]`, directComponents));
   }
   const dyeColor = parseSignDyeColor(face.color, `${path}.color`, "black");
   const glowing = parseNbtBoolean(face.has_glowing_text, `${path}.has_glowing_text`, false);
@@ -797,6 +798,9 @@ function parseNbtBoolean(raw: unknown, path: string, fallback: boolean): boolean
   invalid(`${path} must be a boolean byte`);
 }
 
+// 25w02a / 1.21.5 changed saved components from JSON strings to direct NBT.
+// https://www.minecraft.net/en-us/article/minecraft-snapshot-25w02a
+const NBT_TEXT_COMPONENT_DATA_VERSION = 4298;
 const MAX_SIGN_COMPONENT_BYTES = 8192;
 const MAX_SIGN_COMPONENT_DEPTH = 8;
 const MAX_SIGN_COMPONENT_NODES = 64;
@@ -808,35 +812,44 @@ const DISCARDED_SIGN_COMPONENT_KEYS = new Set([
 ]);
 const DYNAMIC_SIGN_COMPONENT_KEYS = new Set(["translate", "with", "selector", "score", "nbt", "keybind", "separator"]);
 
-function parseSignComponent(raw: unknown, path: string): string {
-  if (typeof raw !== "string" || raw.length > MAX_SIGN_COMPONENT_BYTES) invalid(`${path} must be a bounded serialized text component`);
-  // Older Litematic exporters can store an untouched sign line as an empty
-  // NBT string, rather than as the JSON component `""`.
-  if (raw === "") return "";
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    invalid(`${path} must contain valid serialized text component JSON`);
+function parseSignComponent(raw: unknown, path: string, directComponent = false): string {
+  let parsed: unknown = raw;
+  if (!directComponent) {
+    if (typeof raw !== "string" || raw.length > MAX_SIGN_COMPONENT_BYTES) invalid(`${path} must be a bounded serialized text component`);
+    // Untouched lines from older exporters can also be empty NBT strings.
+    if (raw === "") return "";
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      invalid(`${path} must contain valid serialized text component JSON`);
+    }
   }
   const budget = { nodes: 0 };
-  const text = flattenSignComponent(parsed, path, 0, budget);
+  const text = flattenSignComponent(parsed, path, 0, budget, directComponent);
   if (text.length > MAX_SIGN_LINE_LENGTH || SIGN_LINE_CONTROL.test(text)) {
     invalid(`${path} exceeds the plain display text limit`);
   }
   return text;
 }
 
-function flattenSignComponent(raw: unknown, path: string, depth: number, budget: { nodes: number }): string {
+function flattenSignComponent(raw: unknown, path: string, depth: number, budget: { nodes: number }, nbtWrappers: boolean): string {
   budget.nodes += 1;
   if (depth > MAX_SIGN_COMPONENT_DEPTH || budget.nodes > MAX_SIGN_COMPONENT_NODES) {
     throw new LitematicParseError("LIMIT_EXCEEDED", "Sign text component structure exceeds its limit");
   }
-  if (typeof raw === "string") return raw;
+  if (typeof raw === "string") {
+    if (raw.length > MAX_SIGN_LINE_LENGTH || SIGN_LINE_CONTROL.test(raw)) invalid(`${path} exceeds the plain display text limit`);
+    return raw;
+  }
   if (Array.isArray(raw)) {
-    return raw.map((entry, index) => flattenSignComponent(entry, `${path}[${index}]`, depth + 1, budget)).join("");
+    return raw.map((entry, index) => flattenSignComponent(entry, `${path}[${index}]`, depth + 1, budget, nbtWrappers)).join("");
   }
   if (!isRecord(raw)) invalid(`${path} is not a plain display component`);
+  // Binary NBT stores a heterogeneous list entry as a compound with one empty
+  // key. Only unwrap that exact shape, and only for direct NBT components.
+  if (nbtWrappers && Object.keys(raw).length === 1 && Object.hasOwn(raw, "")) {
+    return flattenSignComponent(raw[""], `${path}.wrapper`, depth + 1, budget, nbtWrappers);
+  }
   let text = "";
   if (Object.hasOwn(raw, "text")) {
     if (typeof raw.text !== "string") invalid(`${path}.text must be plain text`);
@@ -845,13 +858,14 @@ function flattenSignComponent(raw: unknown, path: string, depth: number, budget:
   const extra = raw.extra;
   if (extra !== undefined) {
     if (!Array.isArray(extra)) invalid(`${path}.extra must be a component list`);
-    text += extra.map((entry, index) => flattenSignComponent(entry, `${path}.extra[${index}]`, depth + 1, budget)).join("");
+    text += extra.map((entry, index) => flattenSignComponent(entry, `${path}.extra[${index}]`, depth + 1, budget, nbtWrappers)).join("");
   }
   for (const key of Object.keys(raw)) {
     if (key === "text" || key === "extra" || DISCARDED_SIGN_COMPONENT_KEYS.has(key)) continue;
     if (DYNAMIC_SIGN_COMPONENT_KEYS.has(key)) unsupportedBlockEntity("Dynamic sign text components are unsupported");
     unsupportedBlockEntity("Sign component contains unsupported display data");
   }
+  if (text.length > MAX_SIGN_LINE_LENGTH || SIGN_LINE_CONTROL.test(text)) invalid(`${path} exceeds the plain display text limit`);
   return text;
 }
 

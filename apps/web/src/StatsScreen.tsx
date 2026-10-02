@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { projectFocusAttribution, projectMonumentFocus, type ApplicationService, type MonumentFocusProjection, type UnallocatedFocusProjection } from '@blockcolc/application';
 import { addLocalDays, localDateOf } from '@blockcolc/domain';
-import { effectiveFocusMillisecondsByDate, focusSessionCountByDate, focusWindowSummary, projectFocusAllocation } from './focus-stats';
+import { dailyGoalTargetForWindow, effectiveFocusMillisecondsByDate, focusSessionCountByDate, focusWindowSummary, projectFocusAllocation } from './focus-stats';
 import { AchievementUnlockDialog, AchievementsSection, type AchievementEntry } from './ui/AchievementsPanel';
 import { FocusAllocationChart, FocusCalendarChart, formatFocusMinutes, MonumentFocusChart } from './ui/FocusStatsCharts';
 
@@ -61,6 +61,7 @@ export function StatsScreen({ state, achievementEntries, active = false }: { sta
   const [period, setPeriod] = useState<number>(30);
   const today = localDateOf(new Date(), state.calendar.timeZone);
   const summary = useMemo(() => focusWindowSummary(state,today,period),[state,today,period]);
+  const targetRounds = useMemo(() => dailyGoalTargetForWindow(state,today,period),[state,today,period]);
   const allocation = useMemo(() => {
     const all = projectFocusAllocation(state,today,period);
     if (all.length <= 6) return all;
@@ -70,7 +71,7 @@ export function StatsScreen({ state, achievementEntries, active = false }: { sta
     const visible = allocated.slice(0, visibleAllocatedCount);
     const hidden = allocated.slice(visibleAllocatedCount);
     const other = hidden.length > 0
-      ? [{ projectId:'other', title:`其他 ${hidden.length} 项任务`, minutes:hidden.reduce((sum,row) => sum + row.minutes,0), share:hidden.reduce((sum,row) => sum + row.share,0) }]
+      ? [{ projectId:'other', title:`其他 ${hidden.length} 项任务`, durationMs:hidden.reduce((sum,row) => sum + row.durationMs,0), minutes:Math.round(hidden.reduce((sum,row) => sum + row.durationMs,0) / 60_000), share:hidden.reduce((sum,row) => sum + row.share,0) }]
       : [];
     return [...visible, ...other, ...(unallocated ? [unallocated] : [])];
   },[state,today,period]);
@@ -113,19 +114,22 @@ export function StatsScreen({ state, achievementEntries, active = false }: { sta
   },[state.focusHistory,today]);
   const label = PERIODS.find(item => item.days === period)!.label;
   return <section className="page stats-page">
-    <header className="stats-page-heading"><h1>专注轨迹</h1><p className="stats-intro">看看时间留下的痕迹。</p></header>
+    <header className="stats-page-heading"><div><h1>专注轨迹</h1><p className="stats-intro">专注与建造，按时间回看。</p></div><time className="stats-today" dateTime={today}>{today.replaceAll('-', '.')}</time></header>
     <FocusCalendarChart days={days} today={today}/>
     <section className="stats-period-section" aria-label="按时间范围统计">
-    <section className="stats-overview" aria-label="有效专注摘要">
       <div className="stats-periods" role="group" aria-label="统计时间范围">{PERIODS.map(item => <button type="button" key={item.days} aria-pressed={period === item.days} onClick={() => setPeriod(item.days)}>{item.label}</button>)}</div>
-      <div className="stats-duration"><span>{label}有效专注</span><strong>{formatFocusMinutes(summary.minutes)}</strong></div>
-      <div className="stats-key-facts"><div><strong>{summary.activeDays}</strong><span>活跃日</span></div><div><strong>{summary.completed + summary.early}</strong><span>有效完成轮次</span></div></div>
+    <section className="stats-overview" aria-label="有效专注摘要">
+      <div className="stats-duration"><span>{label}有效专注</span><strong>{formatFocusMinutes(summary.minutes).split(/(\d+)/).filter(Boolean).map((part,index) => <span key={index} className={/^\d+$/.test(part) ? 'stats-duration-number' : 'stats-duration-unit'}>{part}</span>)}</strong></div>
+      <div className="stats-key-facts"><div><strong>{summary.activeDays}</strong><span>活跃日</span></div><div><strong>{summary.completed + summary.early}<span className="stats-round-divider"> / </span>{targetRounds}</strong><span>有效完成轮次 / 目标完成轮次</span></div></div>
     </section>
     <FocusAllocationChart rows={allocation} rangeLabel={label}/>
     </section>
+    <section className="stats-archive-section" aria-label="建造留下的记录">
+    <div className="stats-archive-heading"><h2>建造留下的记录</h2><span>累计</span></div>
     <MonumentStatistics monuments={monuments} unallocated={unallocated}/>
     <AchievementsSection entries={achievementEntries}/>
-    <p className="muted stats-note">仅保存在本机。时长包含中断前的实际投入；有效完成轮次包含完整与提前完成。日期沿用记录保存时的本地日期。</p>
+    </section>
+    <details className="stats-reading-note"><summary>统计口径与本地保存</summary><p className="muted stats-note">仅保存在本机。时长包含中断前的实际投入；有效完成轮次包含完整与提前完成。日期沿用记录保存时的本地日期。</p></details>
     {receiptError && pendingAchievements.length === 0 && <p className="achievement-receipt-notice" role="status">{receiptError}</p>}
     {active && pendingAchievements.length > 0 && <AchievementUnlockDialog entries={pendingAchievements} error={receiptError} onDismiss={dismissAchievements}/>}
   </section>;

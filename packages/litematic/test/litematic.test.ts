@@ -425,6 +425,79 @@ describe("Litematic decoding boundaries", () => {
     });
   });
 
+  it("preserves literal sign strings after the direct-NBT data-version boundary", async () => {
+    const region = makeRegion({
+      position: { x: 0, y: 0, z: 0 }, size: { x: 1, y: 1, z: 1 },
+      palette: ["minecraft:oak_sign"], values: [0],
+      tileEntities: [blockTileEntity("minecraft:sign", 0, 0, 0, {
+        front_text: nbt.compound({ messages: nbt.list(8, [
+          nbt.string("挂机池"), nbt.string('123'), nbt.string('{"text":"literal"}'), nbt.string(""),
+        ]), color: nbt.string("blue"), has_glowing_text: nbt.byte(1) }),
+        back_text: nbt.compound({ messages: nbt.list(8, [nbt.string("背面")]) }),
+      })],
+    });
+    for (const dataVersion of [4298, 4325, 4671, 5023]) {
+      const result = await parseLitematic(makeLitematic({ regions: { sign: region }, dataVersion }));
+      expect(result.blueprint.voxels[0]?.sign).toEqual({
+        front: { lines: ["挂机池", "123", '{"text":"literal"}', ""], dyeColor: "blue", glowing: true },
+        back: { lines: ["背面"], dyeColor: "black", glowing: false },
+      });
+      expect(result.preview.compatibility.preservedSignBlockEntities).toBe(1);
+    }
+    await expect(parseLitematic(makeLitematic({ regions: { sign: region }, dataVersion: 4297 })))
+      .rejects.toMatchObject({ code: "INVALID_LITEMATIC", message: expect.stringContaining("serialized text component JSON") });
+  });
+
+  it("flattens bounded direct-NBT compounds and heterogeneous list wrappers without preserving actions", async () => {
+    const input = makeLitematic({ dataVersion: 4671, regions: { sign: makeRegion({
+      position: { x: 0, y: 0, z: 0 }, size: { x: 1, y: 1, z: 1 },
+      palette: ["minecraft:oak_hanging_sign"], values: [0],
+      tileEntities: [blockTileEntity("minecraft:hanging_sign", 0, 0, 0, {
+        front_text: nbt.compound({ messages: nbt.list(10, [
+          nbt.compound({ text: nbt.string("前"), extra: nbt.list(10, [
+            nbt.compound({ "": nbt.string("面") }), nbt.compound({ text: nbt.string("展示") }),
+          ]), click_event: nbt.compound({ action: nbt.string("run_command"), command: nbt.string("discard") }),
+          hover_event: nbt.compound({ action: nbt.string("show_text"), value: nbt.string("discard") }) }),
+          nbt.compound({ "": nbt.list(10, [nbt.compound({ "": nbt.string("第二") }), nbt.compound({ text: nbt.string("行") })]) }),
+          nbt.compound({ "": nbt.string("") }),
+        ]) }),
+      })],
+    }) } });
+    const result = await parseLitematic(input);
+    expect(result.blueprint.voxels[0]?.sign?.front.lines).toEqual(["前面展示", "第二行", ""]);
+    expect(JSON.stringify(result.blueprint)).not.toMatch(/click_event|hover_event|discard/);
+  });
+
+  it.each(["translate", "selector", "score", "nbt", "keybind"])("rejects dynamic %s in direct-NBT signs", async (key) => {
+    const input = makeLitematic({ dataVersion: 4671, regions: { sign: makeRegion({
+      position: { x: 0, y: 0, z: 0 }, size: { x: 1, y: 1, z: 1 },
+      palette: ["minecraft:oak_sign"], values: [0],
+      tileEntities: [blockTileEntity("minecraft:sign", 0, 0, 0, {
+        front_text: nbt.compound({ messages: nbt.list(10, [nbt.compound({ [key]: nbt.string("unsupported") })]) }),
+      })],
+    }) } });
+    await expect(parseLitematic(input)).rejects.toMatchObject({ code: "UNSUPPORTED_BLOCK_ENTITY_DATA" });
+  });
+
+  it("keeps display length, control-character and structure budgets for direct-NBT signs", async () => {
+    const withMessage = (message: TestNbtTag) => makeLitematic({ dataVersion: 4671, regions: { sign: makeRegion({
+      position: { x: 0, y: 0, z: 0 }, size: { x: 1, y: 1, z: 1 },
+      palette: ["minecraft:oak_sign"], values: [0],
+      tileEntities: [blockTileEntity("minecraft:sign", 0, 0, 0, {
+        front_text: nbt.compound({ messages: nbt.list(message.type, [message]) }),
+      })],
+    }) } });
+    for (const message of [nbt.string("x".repeat(257)), nbt.string("bad\nline"), nbt.int(1),
+      nbt.compound({ "": nbt.string("value"), text: nbt.string("ambiguous") })]) {
+      await expect(parseLitematic(withMessage(message))).rejects.toBeInstanceOf(LitematicParseError);
+    }
+    let deep = nbt.string("value");
+    for (let depth = 0; depth < 10; depth++) deep = nbt.compound({ "": deep });
+    await expect(parseLitematic(withMessage(deep))).rejects.toMatchObject({ code: "LIMIT_EXCEEDED" });
+    const wide = nbt.compound({ extra: nbt.list(8, Array.from({ length: 65 }, () => nbt.string("x"))) });
+    await expect(parseLitematic(withMessage(wide))).rejects.toMatchObject({ code: "LIMIT_EXCEEDED" });
+  });
+
   it("reports unsupported campfire item components and rejects malformed bounded block-entity data", async () => {
     const withCampfire = (items: TestNbtTag[]) => makeLitematic({ regions: { campfire: makeRegion({
       position: { x: 0, y: 0, z: 0 }, size: { x: 1, y: 1, z: 1 },
@@ -658,11 +731,11 @@ function blockTileEntity(id: string, x: number, y: number, z: number, fields: Re
   return nbt.compound({ x: nbt.int(x), y: nbt.int(y), z: nbt.int(z), id: nbt.string(id), ...fields });
 }
 
-function makeLitematic(input: { regions: Record<string, RegionInput> }): Buffer {
+function makeLitematic(input: { regions: Record<string, RegionInput>; dataVersion?: number }): Buffer {
   const root = nbt.compound({
     Version: nbt.int(7),
     SubVersion: nbt.int(1),
-    MinecraftDataVersion: nbt.int(3953),
+    MinecraftDataVersion: nbt.int(input.dataVersion ?? 3953),
     Metadata: nbt.compound({ Name: nbt.string("Synthetic"), Author: nbt.string("Test"), Description: nbt.string("") }),
     Regions: nbt.compound(Object.fromEntries(Object.entries(input.regions).map(([name, region]) => [name, nbt.compound(region)]))),
   });

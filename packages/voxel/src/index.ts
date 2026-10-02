@@ -25,6 +25,7 @@ export * from './resource-geometry';
 export * from './material-response';
 export * from './original-materials';
 export * from './lighting-postprocess';
+export { glassMaterialFor, type GlassSurfacePreference } from './glass-surface';
 export * from './input-frame-scheduler';
 export * from './terrain-profile';
 export * from './astronomy';

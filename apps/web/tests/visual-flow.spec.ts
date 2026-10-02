@@ -1,11 +1,10 @@
 import { expect, test } from '@playwright/test';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { showWorldOverview } from './world-overview';
 
-// The seven supplemental blueprints are packaged only in the local asset build.
-// Keep the legacy three-blueprint assertions valid on a clean checkout while
-// counting any packaged additions when they are present.
-const LOCAL_BUILTIN_TITLE_PATTERN = /Dieight的高级火柴盒plus|Dieight的高级火柴盒pro|Dieight的高级火柴盒|karry_steven的豪宅|GYPpro的豪宅（一层）|GYPpro的简易小仓库|Dieight的小别墅/;
+// Local assets are optional on clean checkouts; identify packaged choices by
+// their stable IDs rather than a list of author names.
 
 async function createDefaultProject(page: import('@playwright/test').Page) {
   await page.goto('/');
@@ -104,23 +103,12 @@ async function revealFocusControls(page: import('@playwright/test').Page) {
   // a tap that lands on the end button would open the end dialog, and the
   // band moves between panel layouts, so pixel offsets can hit other controls.
   const hint = page.locator('.immersive-hint');
-  const box = (await hint.boundingBox()) ?? (await page.locator('.focus-panel').boundingBox());
-  if (!box) throw new Error('Focus panel has no layout box');
-  const x = box.x + box.width / 2;
-  const y = box.y + box.height / 2;
-  for (let attempt = 0; attempt < 5; attempt += 1) {
-    // A mouse double-click fires two pointerup events in the same spot, which
-    // the gesture detector reads as a double-tap; it also works on desktop
-    // contexts where touchscreen emulation is unavailable.
-    await page.mouse.dblclick(x, y);
-    try {
-      await expect(endButton).toBeVisible({ timeout: 1_500 });
-      return;
-    } catch {
-      await page.waitForTimeout(300);
-    }
-  }
-  throw new Error('Focus controls did not reveal after repeated double-taps');
+  await expect(page.locator('.world-screen')).toHaveClass(/is-focusing/);
+  // Re-resolve the live element after restoration instead of caching coordinates
+  // before layout settles. Retrying at an old position can press the newly
+  // revealed end button (or navigation) and alter the business state.
+  await hint.dblclick();
+  await expect(endButton).toBeVisible();
 }
 test('@smoke creates a project, renders the world and persists focus state', async ({ page }, testInfo) => {
   // The hint-fade assertion adds a five-second rhythm check on top of the
@@ -161,7 +149,7 @@ test('previews three blueprints and persists the selected building', async ({ pa
   await page.goto('/');
   const radios = page.getByRole('radio');
   await expect(page.getByRole('radio', { name: /林边工坊/ })).toBeChecked();
-  const localBuiltinCount = await page.locator('label.blueprint-option').filter({ hasText: LOCAL_BUILTIN_TITLE_PATTERN }).count();
+  const localBuiltinCount = await page.locator('label.blueprint-option input[value^="builtin-local-"]').count();
   await expect(radios).toHaveCount(3 + localBuiltinCount);
 
   const preview = page.getByRole('img', { name: /完整建筑预览/ });
@@ -210,7 +198,7 @@ test('imports a local litematic, previews it and persists its normalized bluepri
   test.skip(!existsSync(sample), 'The real Litematic compatibility fixture stays local.');
   await page.goto('/');
   await page.getByLabel('导入 .litematic').setInputFiles(sample);
-  const localBuiltinCount = await page.locator('label.blueprint-option').filter({ hasText: LOCAL_BUILTIN_TITLE_PATTERN }).count();
+  const localBuiltinCount = await page.locator('label.blueprint-option input[value^="builtin-local-"]').count();
   await expect(page.getByRole('radio')).toHaveCount(4 + localBuiltinCount);
   await expect(page.getByText(/4,301 个方块/)).toBeVisible();
   await expect(page.getByText(/忽略 340 个实体、方块实体或计划刻/)).toBeVisible();
@@ -264,6 +252,7 @@ test('renders a monument with the active building and restores both after deleti
   let summary = page.locator('#world-summary');
   await expect(summary).toContainText('完成第一栋建筑，林边工坊，纪念建筑');
   await expect(summary).toContainText('开始第二栋建筑，河岸木屋，正在建造');
+  await showWorldOverview(page);
   await expect(page.getByText('林边聚落 · 2 栋')).toBeVisible();
 
   await openTasks(page);

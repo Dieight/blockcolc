@@ -1,4 +1,4 @@
-import { addLocalDays, localDateOf, type DomainState, type ISODate, type ISOInstant } from '@blockcolc/domain';
+import { addLocalDays, dailyGoalForDate, localDateOf, type DomainState, type ISODate, type ISOInstant } from '@blockcolc/domain';
 import { projectFocusAttribution } from '@blockcolc/application';
 
 export type FocusHistory = DomainState['focusHistory'];
@@ -57,8 +57,20 @@ export interface ProjectFocusAllocation {
   projectId: string;
   title: string;
   minutes: number;
+  durationMs: number;
   share: number;
   unallocated?: boolean;
+}
+
+/** Sum saved daily targets; a day without an override uses the product default. */
+export function dailyGoalTargetForWindow(state: DomainState, endDate: ISODate, days: number): number {
+  if (!Number.isSafeInteger(days) || days < 1) throw new Error('days must be a positive integer');
+  let target = 0;
+  for (let offset = 1 - days; offset <= 0; offset++) {
+    const goal = dailyGoalForDate(state, addLocalDays(endDate, offset));
+    if (goal.enabled) target += goal.targetPomodoros;
+  }
+  return target;
 }
 
 export function focusWindowSummary(state: DomainState, endDate: ISODate, days: number): FocusWindowSummary {
@@ -90,8 +102,8 @@ export function projectFocusAllocation(state: DomainState, endDate: ISODate, day
   const total = [...milliseconds.values()].reduce((sum, value) => sum + value, 0);
   const titles = new Map(state.projects.map((project) => [project.id, project.title]));
   return [...milliseconds]
-    .map(([projectId, value]) => ({ projectId, title: projectId === 'unallocated' ? '未分配 / 不可追溯' : (titles.get(projectId) ?? '已移除任务'), minutes: Math.round(value / 60_000), share: total > 0 ? Math.round(value / total * 100) : 0, ...(projectId === 'unallocated' ? { unallocated: true } : {}) }))
-    .sort((left, right) => (left.unallocated ? 1 : right.unallocated ? -1 : right.minutes - left.minutes || left.title.localeCompare(right.title, 'zh-CN')));
+    .map(([projectId, value]) => ({ projectId, title: projectId === 'unallocated' ? '未分配 / 不可追溯' : (titles.get(projectId) ?? '已移除任务'), minutes: Math.round(value / 60_000), durationMs: value, share: total > 0 ? Math.round(value / total * 100) : 0, ...(projectId === 'unallocated' ? { unallocated: true } : {}) }))
+    .sort((left, right) => (left.unallocated ? 1 : right.unallocated ? -1 : right.durationMs - left.durationMs || left.title.localeCompare(right.title, 'zh-CN')));
 }
 
 export interface FocusHourProject {

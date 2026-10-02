@@ -7,6 +7,8 @@ test("renders the current compact world and supports bounded rotate and pinch ge
   const canvas = page.getByLabel("项目建筑世界");
   await expect(canvas).toHaveAttribute("data-quality-tier", /^(low|balanced|high)$/);
   await expect(canvas).toHaveAttribute("data-world-root-members", "terrain,roads,buildingsAndDecorations,worldLightRig,atmosphere");
+  await expect(canvas).toHaveAttribute("data-initial-reveal-completed-count", "1", { timeout: 20_000 });
+  await page.getByRole("button", { name: "重置地图", exact: true }).click();
   await expect(canvas).toHaveAttribute("data-shadow-auto-update", "false");
   const activeLighting = await canvas.getAttribute("data-active-lighting-quality");
   await expect(canvas).toHaveAttribute("data-fullscreen-pass-count", activeLighting === "cinematic" ? "4" : "0");
@@ -68,7 +70,7 @@ test("renders the current compact world and supports bounded rotate and pinch ge
   await expect.poll(async () => Number(await canvas.getAttribute("data-camera-distance-ratio"))).toBeLessThan(beforePinch);
   const zoomRatio = Number(await canvas.getAttribute("data-camera-distance-ratio"));
   expect(zoomRatio).toBeCloseTo(0.45, 2);
-  expect(zoomRatio).toBeLessThanOrEqual(1.14);
+  expect(zoomRatio).toBeLessThanOrEqual(0.9);
   expect(Number(await canvas.getAttribute("data-camera-minimum-distance-ratio"))).toBeCloseTo(0.45, 2);
   await expect(canvas).toHaveAttribute("data-visibility-near-clip-safe", "true");
   await expect(canvas).toHaveAttribute("data-visibility-far-clip-safe", "true");
@@ -81,8 +83,10 @@ test("renders the current compact world and supports bounded rotate and pinch ge
   const zoomed = await canvas.screenshot({ path: testInfo.outputPath("v2-world-pinched.png") });
   expect(Buffer.compare(rotated, zoomed)).not.toBe(0);
 
-  await page.getByRole("button", { name: "重置视角" }).click();
+  // Reset now lands at the valley overview's maximum (0.9). Zoom out from
+  // the pinched-in view instead, so this actually exercises a bounded gesture.
   const beforeZoomOut = Number(await canvas.getAttribute("data-camera-distance-ratio"));
+  expect(beforeZoomOut).toBeCloseTo(0.45, 2);
   await touch(cdp, "touchStart", [
     { id: 21, x: centerX - 75, y: centerY },
     { id: 22, x: centerX + 75, y: centerY },
@@ -94,7 +98,8 @@ test("renders the current compact world and supports bounded rotate and pinch ge
   await touch(cdp, "touchEnd", []);
   await expect.poll(async () => Number(await canvas.getAttribute("data-camera-distance-ratio"))).toBeGreaterThan(beforeZoomOut);
   const zoomedOutRatio = Number(await canvas.getAttribute("data-camera-distance-ratio"));
-  expect(zoomedOutRatio).toBeLessThanOrEqual(1.14);
+  expect(zoomedOutRatio).toBeCloseTo(0.9, 2);
+  expect(Number(await canvas.getAttribute("data-camera-maximum-distance-ratio"))).toBeCloseTo(0.9, 2);
   const zoomedOut = await canvas.screenshot({ path: testInfo.outputPath("v2-world-zoomed-out.png") });
   expect(zoomedOut.byteLength).toBeGreaterThan(2_000);
   await expect(canvas).toHaveAttribute("data-visibility-near-clip-safe", "true");
@@ -131,6 +136,9 @@ test("lets the settlement inspect the same large blueprint closer than its previ
   const world = page.getByLabel("项目建筑世界");
   await expect(world).toBeVisible();
   await expect(world).toHaveAttribute("data-initial-reveal-completed-count", "1", { timeout: 15_000 });
+  // Ordinary opening ends in building focus. Compare the preview to the
+  // settlement inspection range only after intentionally returning to the map.
+  await page.getByRole("button", { name: "重置地图", exact: true }).click();
   await expect.poll(async () => Number(await world.getAttribute("data-camera-distance-ratio"))).toBeGreaterThan(0);
   const worldBox = await world.boundingBox();
   if (!worldBox) throw new Error("Settlement world has no layout box");

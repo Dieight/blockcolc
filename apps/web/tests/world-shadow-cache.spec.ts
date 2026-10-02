@@ -1,6 +1,7 @@
 import { expect, test, type Page, type TestInfo } from '@playwright/test';
 import type * as THREE from 'three';
 import type { VoxelRenderer } from '@blockcolc/voxel';
+import { observeWorldDrawBudget, readWorldDrawBudget } from './world-draw-budget';
 
 type ShadowProbe = {
   app: VoxelRenderer;
@@ -18,6 +19,7 @@ const canvasName = '阴影缓存回归世界';
 async function mountWorld(page: Page, reducedMotion = true): Promise<void> {
   await page.goto('/');
   await page.waitForFunction(() => !!(window as ProbeWindow).__blockcolcVoxelTest);
+  await observeWorldDrawBudget(page, canvasName);
   await page.evaluate(async ({ reduced, label }) => {
     const scope = window as ProbeWindow;
     const voxel = scope.__blockcolcVoxelTest;
@@ -164,6 +166,7 @@ test.afterEach(async ({ page }, info) => {
   if (info.status !== info.expectedStatus) {
     const diagnostics = await page.evaluate(() => (window as Partial<ProbeWindow>).__shadowCacheProbe?.app.getDiagnostics());
     await info.attach('shadow-renderer-diagnostics', { body: JSON.stringify(diagnostics), contentType: 'application/json' });
+    await info.attach('actual-world-draw-list', { body: JSON.stringify(await readWorldDrawBudget(page)), contentType: 'application/json' });
   }
   await page.evaluate(() => (window as Partial<ProbeWindow>).__shadowCacheProbe?.app.dispose());
 });

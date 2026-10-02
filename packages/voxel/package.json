@@ -3,7 +3,15 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "exports": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./blueprint": "./src/blueprint.ts",
+    "./blueprint-model": "./src/blueprint-model.ts",
+    "./local-blueprint-sources": "./src/local-blueprint-sources.ts",
+    "./environment": "./src/environment.ts",
+    "./astronomy": "./src/astronomy.ts",
+    "./glass-material": "./src/glass-material.ts"
+  },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run --exclude \"test/*.diagnostic.test.ts\" --exclude \"test/*.extended.test.ts\"",

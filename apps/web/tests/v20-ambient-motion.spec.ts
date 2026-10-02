@@ -34,6 +34,7 @@ test("hides the ambient motion pump the moment the world pane is not visible", a
   await createDefaultProject(page);
   const canvas = page.getByLabel("项目建筑世界");
   await expect(canvas).toHaveAttribute("data-continuous-rendering", "false");
+  await expect(canvas).toHaveAttribute('data-first-nonempty-frame-ms', /\d/, { timeout: 15_000 });
   // The pump reports its gate on every tick; the world pane is visible here, so
   // the dataset must exist (its value may be false on the performance tier).
   await expect
@@ -68,16 +69,39 @@ test("reduced motion closes the ambient gate and skips the construction reveal",
 test("the finished increment grows block by block and settles fully", async ({ page }, testInfo) => {
   await createDefaultProject(page);
   const canvas = page.getByLabel("项目建筑世界");
+  await expect(canvas).toHaveAttribute('data-first-nonempty-frame-ms', /\d/);
+  // Subscribe before committing progress. A late driver poll can miss a
+  // transient on a busy software GPU; keep only samples from actual new-world
+  // frames, not from the pre-render diagnostic update during rebuilding.
+  await canvas.evaluate(node => {
+    const element = node as HTMLCanvasElement;
+    const baseline = Number(element.dataset.worldRebuildCount);
+    const frames: Array<{ frame: number; remaining: number }> = [];
+    (window as typeof window & { __constructionFrames?: typeof frames }).__constructionFrames = frames;
+    const observer = new MutationObserver(() => {
+      const d = element.dataset;
+      if (Number(d.worldRebuildCount) <= baseline || d.worldRebuildCount !== d.renderedWorldRebuildCount) return;
+      const frame = Number(d.renderFrameCount);
+      if (frames.at(-1)?.frame !== frame) frames.push({ frame, remaining: Number(d.constructionRevealCount) });
+    });
+    observer.observe(element, { attributes: true, attributeFilter: [
+      'data-render-frame-count', 'data-rendered-world-rebuild-count', 'data-construction-reveal-count',
+    ] });
+  });
   await completeOneRoundEarly(page);
-  // The first wave pops ~240 ms after the rebuild and the whole reveal takes
-  // ~3.5 s: the counter must rise above zero and return to zero by itself.
-  await expect
-    .poll(async () => Number(await canvas.getAttribute("data-construction-reveal-count") ?? "0"), { timeout: 2_000 })
-    .toBeGreaterThan(0);
+  const readFrames = () => page.evaluate(() =>
+    (window as typeof window & { __constructionFrames?: Array<{ frame: number; remaining: number }> }).__constructionFrames ?? []);
+  // Require multiple real frames and a decreasing positive count, so latching
+  // a single synchronous rebuild mutation cannot masquerade as animation.
+  await expect.poll(async () => {
+    const remaining = (await readFrames()).map(frame => frame.remaining).filter(count => count > 0);
+    return remaining.length >= 2 && Math.max(...remaining) > Math.min(...remaining);
+  }, { timeout: 10_000 }).toBe(true);
   await page.screenshot({ path: testInfo.outputPath("v20-reveal-mid.png"), fullPage: true });
   await expect
     .poll(async () => Number(await canvas.getAttribute("data-construction-reveal-count") ?? "0"), { timeout: 10_000 })
     .toBe(0);
+  await testInfo.attach('rendered-construction-frames', { contentType: 'application/json', body: JSON.stringify(await readFrames()) });
   await page.screenshot({ path: testInfo.outputPath("v20-reveal-settled.png"), fullPage: true });
 });
 

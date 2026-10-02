@@ -1,7 +1,22 @@
 import { describe, expect, it } from "vitest";
-import { cameraZoomBounds, clampCameraDistance } from "../src/camera-zoom";
+import { cameraZoomBounds, clampCameraDistance, openingZoomDistance } from "../src/camera-zoom";
 
 describe("renderer camera zoom bounds", () => {
+  it('keeps the whole valley fitted while no longer zooming beyond its overview, without changing close inspection', () => {
+    expect(cameraZoomBounds(100, 'settlement', 'natural-valley')).toEqual({ minimum: 45, maximum: 90 });
+    expect(cameraZoomBounds(100, 'settlement', 'ocean-island').maximum).toBeCloseTo(114);
+    expect(cameraZoomBounds(100, 'preview', 'natural-valley').maximum).toBeCloseTo(135);
+    expect(cameraZoomBounds(100, 'focused', 'natural-valley').minimum).toBe(90);
+  });
+  it("moves through the full opening range with even projected scale changes", () => {
+    expect(openingZoomDistance(120, 30, 0)).toBe(120);
+    expect(openingZoomDistance(120, 30, .5)).toBeCloseTo(60);
+    expect(openingZoomDistance(120, 30, 1)).toBe(30);
+    const distances = Array.from({ length: 11 }, (_, i) => openingZoomDistance(120, 30, i / 10));
+    for (let i = 1; i < distances.length - 1; i++) {
+      expect(distances[i]! / distances[i - 1]!).toBeCloseTo(distances[i + 1]! / distances[i]!);
+    }
+  });
   it("lets the settlement camera zoom closer than blueprint previews", () => {
     const fittedDistance = 100;
     const settlement = cameraZoomBounds(fittedDistance, "settlement");

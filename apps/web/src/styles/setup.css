@@ -35,20 +35,20 @@
 .interruption-list strong{color:#58635d;font-size:12px;font-weight:600;font-variant-numeric:tabular-nums}
 .interruption-bar{height:6px;border-radius:3px;background:#efe3d5;overflow:hidden}
 .interruption-bar b{display:block;height:100%;border-radius:3px;background:#a0652b}
-/* V18 shared full-screen loading page: used by the initial bootstrap (main.tsx) and by the world renderer rebuild on the timer tab, so both stages read as one continuous loading screen. The renderer init is deferred past the first paint (rAF + setTimeout in WorldCanvasV7) so the switch feels immediate and the heavy work happens behind this page. */
+/* Shared loader; only its preparation caption changes between stages. */
 .boot-page{position:fixed;inset:0;z-index:30;display:grid;place-items:center;background:#f3f5f2;padding:24px;text-align:center}
 .boot-page-inner{display:flex;flex-direction:column;align-items:center;gap:14px;animation:world-boot-in .18s ease-out}
 .boot-page-mark{font-weight:800;font-size:20px;color:#17211c}
 .boot-page-mark small{display:block;font-size:11px;font-weight:400;color:#8a938d;letter-spacing:.14em;text-transform:uppercase;margin-top:2px}
 .boot-page-status{margin:0;font-size:14px;color:#58635d}
-.boot-page-blocks{display:flex;gap:6px;align-items:flex-end;height:10px}
-/* V27: blocks rise from below and settle in sequence — a small crew laying the
- * first bricks of the settlement while the world restores. */
-.boot-page-blocks i{width:10px;height:10px;background:#276749;animation:world-boot-block .9s ease-in-out infinite}
-.boot-page-blocks i:nth-child(2){animation-delay:.12s;background:#3e7d5c}
-.boot-page-blocks i:nth-child(3){animation-delay:.24s;background:#5b9275}
-@media(prefers-reduced-motion:reduce){.boot-page-blocks i{animation:none;opacity:1;transform:none}}
+.boot-page-stage{font-size:11px;color:var(--focus);letter-spacing:.12em;margin-top:12px}
+.boot-page-model{width:120px;height:100px;display:grid;place-items:center;perspective:480px}
+.boot-page-site{position:relative;width:62px;height:62px;transform-style:preserve-3d;transform:rotateX(58deg) rotateZ(-45deg)}
+.boot-cube{position:absolute;left:0;top:0;width:18px;height:18px;background:var(--focus);transform-style:preserve-3d;transform:translate3d(var(--cube-x),var(--cube-y),0);animation:world-boot-cube 3s ease-in-out infinite;animation-delay:var(--cube-delay)}
+.boot-cube::before,.boot-cube::after{content:"";position:absolute;width:18px;height:10px;background:color-mix(in srgb,var(--focus) 70%,var(--app-bg));transform-origin:bottom left;backface-visibility:hidden}
+.boot-cube::before{bottom:0;left:0;transform:rotateX(-90deg)}
+.boot-cube::after{bottom:0;right:0;transform-origin:bottom right;transform:rotateX(-90deg) rotateY(90deg);background:color-mix(in srgb,var(--focus) 48%,var(--app-bg))}
+@media(prefers-reduced-motion:reduce){.boot-cube,.boot-page-inner{animation:none}}
 @keyframes world-boot-in{from{opacity:0}to{opacity:1}}
-/* DF-UI-09: cold-start animation restored to the v1.11.0 three-block rise; only the animation rules moved back, the V26 boot sequence itself is untouched. */
-@keyframes world-boot-block{0%,100%{transform:translateY(0);opacity:.55}35%{transform:translateY(-7px);opacity:1}70%{transform:translateY(0);opacity:.75}}
+@keyframes world-boot-cube{0%,70%,100%{transform:translate3d(var(--cube-x),var(--cube-y),0);opacity:1}30%{transform:translate3d(var(--cube-x),var(--cube-y),18px);opacity:.55}}
 .daily-goal-workbench{margin-bottom:26px}

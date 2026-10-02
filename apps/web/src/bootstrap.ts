@@ -19,7 +19,7 @@ export async function bootstrap() {
   // bundle load or invalid optional asset must not prevent the local clock from
   // opening; the domain command remains the persistence/validation boundary.
   try {
-    const { BUILTIN_DAILY_REWARD_BLUEPRINTS } = await import('@blockcolc/voxel');
+    const { BUILTIN_DAILY_REWARD_BLUEPRINTS } = await import('@blockcolc/voxel/blueprint');
     await registerBuiltinDailyRewardBlueprints(service, BUILTIN_DAILY_REWARD_BLUEPRINTS);
   } catch {
     // Optional packaged decorations are an enhancement, never a bootstrap gate.

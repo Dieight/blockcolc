@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createInitialState, type FocusSession } from '@blockcolc/domain';
-import { effectiveFocusMillisecondsByDate, focusHeatmapLevel, focusHourDistribution, focusSessionCountByDate, focusSessionEndedAt, focusSessionLocalDate, focusWindowSummary, projectFocusAllocation, settlementTotals } from './focus-stats';
+import { dailyGoalTargetForWindow, effectiveFocusMillisecondsByDate, focusHeatmapLevel, focusHourDistribution, focusSessionCountByDate, focusSessionEndedAt, focusSessionLocalDate, focusWindowSummary, projectFocusAllocation, settlementTotals } from './focus-stats';
 
 const base = {
   projectId: 'project',
@@ -52,8 +52,8 @@ describe('effective focus statistics', () => {
 
     expect(focusWindowSummary(state, '2026-08-12', 7)).toEqual({ minutes: 60, activeDays: 2, completed: 1, early: 0, interrupted: 1 });
     expect(projectFocusAllocation(state, '2026-08-12')).toEqual([
-      { projectId: 'project-a', title: '论文', minutes: 45, share: 75 },
-      { projectId: 'project-b', title: '阅读', minutes: 15, share: 25 },
+      { projectId: 'project-a', title: '论文', minutes: 45, durationMs: 2_700_000, share: 75 },
+      { projectId: 'project-b', title: '阅读', minutes: 15, durationMs: 900_000, share: 25 },
     ]);
   });
 
@@ -96,9 +96,25 @@ describe('effective focus statistics', () => {
       { id: 'legacy-b-report', projectId: 'project-b', subtaskId: 'task-b', focusSessionIds: ['legacy-shared'], progressBasisPoints: 10000, reportedAt: '2026-08-10T03:00:00.000Z', shared: true },
     ];
     expect(projectFocusAllocation(state, '2026-08-10', 1)).toEqual([
-      { projectId: 'project-a', title: '主线', minutes: 25, share: 50 },
-      { projectId: 'project-b', title: '支线', minutes: 15, share: 30 },
-      { projectId: 'unallocated', title: '未分配 / 不可追溯', minutes: 10, share: 20, unallocated: true },
+      { projectId: 'project-a', title: '主线', minutes: 25, durationMs: 1_500_000, share: 50 },
+      { projectId: 'project-b', title: '支线', minutes: 15, durationMs: 900_000, share: 30 },
+      { projectId: 'unallocated', title: '未分配 / 不可追溯', minutes: 10, durationMs: 600_000, share: 20, unallocated: true },
     ]);
+  });
+  it('sums daily targets over the same inclusive dates, including defaults and disabled days', () => {
+    const state = createInitialState('Asia/Shanghai');
+    expect(dailyGoalTargetForWindow(state,'2026-10-02',7)).toBe(56);
+    state.dailyGoals.push(
+      { date:'2026-09-26',targetPomodoros:12,enabled:true,reachedAt:null },
+      { date:'2026-09-27',targetPomodoros:99,enabled:false,reachedAt:null },
+      { date:'2026-10-02',targetPomodoros:4,enabled:true,reachedAt:null },
+      { date:'2026-10-03',targetPomodoros:80,enabled:true,reachedAt:null },
+    );
+    const before = structuredClone(state.dailyGoals);
+    expect(dailyGoalTargetForWindow(state,'2026-10-02',7)).toBe(48);
+    expect(dailyGoalTargetForWindow(state,'2026-10-02',1)).toBe(4);
+    expect(dailyGoalTargetForWindow(state,'2026-09-27',1)).toBe(0);
+    expect(state.dailyGoals).toEqual(before);
+    expect(() => dailyGoalTargetForWindow(state,'2026-10-02',0)).toThrow();
   });
 });

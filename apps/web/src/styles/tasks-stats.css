@@ -132,25 +132,31 @@
 .achievement-progress small{color:var(--muted);font-size:11px;font-variant-numeric:tabular-nums;white-space:nowrap}
 /* Existing app palette; custom semantic colors override the template's Mono skin. */
 .stats-page{--chart-paper:var(--surface);--chart-ink:var(--ink);--chart-muted:var(--muted);--chart-grid:var(--line);--chart-data:var(--focus);--chart-data-mid:color-mix(in srgb,var(--focus) 85%,var(--surface));--chart-data-soft:color-mix(in srgb,var(--focus) 70%,var(--surface));--chart-faint:color-mix(in srgb,var(--muted) 45%,var(--surface));max-width:800px}
-.stats-page-heading h1{margin:0 0 6px}
-.stats-intro{margin:0 0 24px;color:var(--muted);font-size:13px}
-.stats-period-section{margin:20px 0;border:1px solid var(--line);border-radius:16px;background:var(--surface);padding:20px 16px}
-.stats-overview{padding:0 0 22px}
-.stats-periods{display:flex;gap:4px;padding:4px;border-radius:12px;background:var(--surface-subtle);margin-bottom:24px}
-.stats-periods button{min-width:44px;min-height:44px;flex:1;padding:8px 4px;border:0;border-radius:8px;background:transparent;color:var(--muted);font-size:13px;font-weight:600}
-.stats-periods button[aria-pressed="true"]{background:var(--surface-active);color:var(--focus)}
+.stats-page-heading{display:flex;justify-content:space-between;align-items:baseline;gap:16px;margin-bottom:28px}
+.stats-page-heading h1{margin:0 0 8px;letter-spacing:-.04em}
+.stats-intro{margin:0;color:var(--muted);font-size:13px;line-height:1.6}
+.stats-today{color:var(--muted);font-size:11px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.stats-period-section,.stats-archive-section{margin:0 0 24px;background:var(--surface);padding:0 20px 24px;border:1px solid var(--line);border-radius:16px;overflow:hidden}
+.stats-overview{position:relative;padding:28px 0 24px}
+.stats-overview::before{content:"";position:absolute;top:30px;bottom:28px;left:-21px;width:3px;background:var(--focus);border-radius:0 2px 2px 0}
+.stats-periods{display:flex;gap:4px;margin:0 -20px;padding:4px 10px 0;border-bottom:1px solid var(--line)}
+.stats-periods button{position:relative;min-width:44px;min-height:48px;flex:1;padding:8px 4px;border:0;border-radius:4px 4px 0 0;background:transparent;color:var(--muted);font-size:13px;font-weight:500}
+.stats-periods button[aria-pressed="true"]{color:var(--focus);font-weight:700}
+.stats-periods button[aria-pressed="true"]::after{content:"";position:absolute;bottom:-1px;left:22%;right:22%;height:2px;background:var(--focus)}
 .stats-duration{display:grid;gap:10px}
 .stats-duration>span{font-size:13px;color:var(--muted)}
-.stats-duration>strong{font-size:32px;line-height:1.3;font-weight:750;overflow-wrap:anywhere;font-variant-numeric:tabular-nums;color:var(--ink)}
-.stats-key-facts{display:flex;gap:28px;margin-top:18px}
-.stats-key-facts>div{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
-.stats-key-facts strong{font-size:19px;font-weight:700;font-variant-numeric:tabular-nums}
+.stats-duration>strong{font-size:clamp(36px,9vw,54px);line-height:1.2;font-weight:650;letter-spacing:-.045em;overflow-wrap:anywhere;font-variant-numeric:tabular-nums;color:var(--ink)}
+.stats-duration-unit{font-size:15px;letter-spacing:0;font-weight:500;color:var(--muted);white-space:pre-wrap}
+.stats-key-facts{display:flex;gap:28px;margin-top:24px}
+.stats-key-facts>div{display:grid;gap:5px;min-width:96px}
+.stats-key-facts strong{font-size:23px;font-weight:550;font-variant-numeric:tabular-nums;line-height:1.2}
 .stats-key-facts span{font-size:12px;color:var(--muted)}
-.focus-chart{margin:0 0 20px;padding:20px 16px 16px;border:1px solid var(--line);border-radius:16px;background:var(--chart-paper);color:var(--chart-ink);box-shadow:none;backdrop-filter:none;font-family:inherit}
+.stats-key-facts .stats-round-divider{font-size:19px;font-weight:400;color:var(--muted)}
+.focus-chart{margin:0 0 24px;padding:22px 18px 16px;border:1px solid var(--line);border-radius:16px;background:var(--chart-paper);color:var(--chart-ink);box-shadow:none;backdrop-filter:none;font-family:inherit}
 .stats-period-section .project-allocation{margin:0;padding:20px 0 0;border:0;border-top:1px solid var(--line);border-radius:0}
 .stats-section-heading{display:flex;align-items:start;justify-content:space-between;gap:12px;margin-bottom:18px}
 .stats-section-heading>div{min-width:0}
-.focus-chart h2{margin:0 0 5px;font-size:17px;font-weight:700;line-height:1.4;color:var(--chart-ink)}
+.focus-chart h2{margin:0 0 5px;font-size:16px;font-weight:650;line-height:1.4;color:var(--chart-ink)}
 .focus-chart p{margin:0;font-size:12px;line-height:1.5;color:var(--chart-muted)}
 .chart-replay{flex:0 0 44px;min-width:44px;min-height:44px;padding:0;border:0;background:transparent;color:var(--chart-muted);font-size:24px;border-radius:8px}
 .focus-chart svg{display:block;width:100%;overflow:visible;font-family:inherit}
@@ -170,20 +176,27 @@
 .calendar-day-detail span{font-size:12px;line-height:1.5;color:var(--muted)}
 .calendar-day-detail button{flex:0 0 44px;min-width:44px;min-height:44px;padding:0;border:0;border-radius:8px;background:transparent;color:var(--focus);font-size:22px}
 .calendar-day-detail button:disabled{opacity:.4}
-.allocation-bars{display:grid;gap:20px;margin:0;padding:0;list-style:none}
-.allocation-row-heading{display:flex;align-items:baseline;justify-content:space-between;gap:6px 16px;flex-wrap:wrap;margin-bottom:8px}
-.allocation-row-heading>strong{min-width:0;flex:1 1 140px;font-size:0.9375rem;line-height:1.5;font-weight:600;overflow-wrap:anywhere}
-.allocation-row-heading>span{font-size:0.8125rem;line-height:1.5;font-variant-numeric:tabular-nums;color:var(--chart-muted)}
-/* G3 Chunky Bars adapted to offline React SVG: horizontal lengths keep the
-   zero origin visible and leave the label column free for long task names. */
-.focus-chart .allocation-bar{display:block;width:100%;height:16px;min-width:0;overflow:hidden}
-.allocation-track{fill:var(--surface-subtle)}
-.allocation-fill{fill:var(--chart-data)}
-.allocation-bars li.is-unallocated .allocation-fill{fill:var(--chart-faint)}
-.allocation-bars li.is-unallocated .allocation-row-heading>strong{color:var(--chart-muted)}
+.allocation-constellation{max-width:450px;margin:-12px auto 0}
+.allocation-link{stroke:var(--chart-grid);stroke-width:.7;stroke-dasharray:2 5}
+.allocation-spoke{stroke:var(--chart-grid);stroke-width:.6}
+.allocation-point{fill:var(--allocation-ink);opacity:.9}
+.allocation-core{fill:var(--chart-ink)}
+.allocation-cluster-label{fill:var(--chart-ink);font-size:10px;font-weight:600;paint-order:stroke;stroke:var(--chart-paper);stroke-width:3px}
+.allocation-legend{list-style:none;display:grid;margin:0;padding:0}
+.allocation-legend>li{display:grid;grid-template-columns:28px minmax(0,1fr) auto;gap:12px;align-items:baseline;padding:12px 0;border-top:1px solid var(--chart-grid)}
+.allocation-legend-index{color:var(--allocation-ink);font-size:12px;font-weight:700;font-variant-numeric:tabular-nums}
+.allocation-legend strong{font-size:14px;line-height:1.5;font-weight:550;overflow-wrap:anywhere}
+.allocation-legend-values{display:grid;gap:4px;text-align:right;color:var(--chart-ink);font-size:12px;font-variant-numeric:tabular-nums}
+.allocation-legend-values small{color:var(--chart-muted);font-size:11px}
+.allocation-legend .is-unallocated strong{color:var(--chart-muted)}
+.focus-chart .allocation-unit-note{margin-top:10px;font-size:11px}
 .focus-chart .chart-empty{padding:22px 0 30px}
-.monument-statistics,.achievements-disclosure{margin:20px 0 0;padding:0 16px 16px;border:1px solid var(--line);border-radius:16px;background:var(--surface);color:var(--ink)}
-.monument-statistics>summary,.achievements-disclosure>summary{min-height:56px;padding:12px 0;display:flex;align-items:center;gap:12px;cursor:pointer;font-weight:650;list-style:none}
+.stats-archive-heading{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin:0;padding:20px 0 16px}
+.stats-archive-heading h2{margin:0;font-size:14px;font-weight:600;color:var(--ink)}
+.stats-archive-heading>span{font-size:11px;color:var(--muted)}
+.monument-statistics,.achievements-disclosure{margin:0;padding:0 2px;border:0;border-top:1px solid var(--line);border-radius:0;background:none;color:var(--ink)}
+.monument-statistics[open],.achievements-disclosure[open]{padding-bottom:18px}
+.monument-statistics>summary,.achievements-disclosure>summary{min-height:64px;padding:14px 0;display:flex;align-items:center;gap:12px;cursor:pointer;font-weight:600;list-style:none}
 .monument-statistics>summary::-webkit-details-marker,.achievements-disclosure>summary::-webkit-details-marker{display:none}
 .monument-statistics>summary::after,.achievements-disclosure>summary::after{content:"＋";margin-left:auto;color:var(--muted);font-size:18px}
 .monument-statistics[open]>summary::after,.achievements-disclosure[open]>summary::after{content:"−"}
@@ -214,6 +227,13 @@
 .monument-task-bars svg{height:16px}
 .monument-bar-track{fill:var(--surface-subtle)}
 .monument-bar-fill{fill:var(--chart-data)}
+.stats-reading-note{margin:20px 0 0;color:var(--muted);font-size:11px;line-height:1.7}
+.stats-reading-note>summary{min-height:44px;display:flex;align-items:center;cursor:pointer;list-style:none}
+.stats-reading-note>summary::-webkit-details-marker{display:none}
+.stats-reading-note>summary::after{content:"＋";margin-left:6px}
+.stats-reading-note[open]>summary::after{content:"−"}
+.stats-reading-note .stats-note{margin:0 0 12px}
+@media(max-width:380px){.stats-page-heading{gap:8px}.stats-today{font-size:10px}.stats-period-section{padding-left:16px;padding-right:16px}.stats-periods{margin:0 -16px}.stats-overview::before{left:-17px}}
 .achievement-receipt-notice{margin:12px 0 0;padding:9px 10px;border-left:3px solid var(--danger);background:var(--surface-subtle);color:var(--muted);font-size:12px;line-height:1.6}
 .achievement-unlock-layer{position:fixed;inset:0;z-index:70;display:grid;place-items:center;padding:20px max(16px,var(--safe-left)) max(20px,var(--safe-right));background:color-mix(in srgb,var(--ink) 35%,transparent);overscroll-behavior:contain}
 .achievement-unlock-dialog{width:min(100%,520px);max-height:min(84dvh,720px);overflow:auto;padding:22px 18px 18px;border:1px solid var(--line);border-radius:16px;background:var(--surface);color:var(--ink);box-shadow:0 12px 40px color-mix(in srgb,var(--ink) 18%,transparent)}

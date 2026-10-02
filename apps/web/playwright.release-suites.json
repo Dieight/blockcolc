@@ -61,6 +61,7 @@
         "focus-allocation.spec.ts",
         "minimal-report.spec.ts",
         "glass-edge-refraction.spec.ts",
+        "glass-material.spec.ts",
         "task-editor-layout.spec.ts",
         "v23-appearance.spec.ts",
         "v5-focus-flow.spec.ts"
@@ -87,7 +88,9 @@
         "world-presentation.spec.ts",
         "world-shadow-cache.spec.ts",
         "world-weather-lifecycle.spec.ts",
-        "world-precipitation-motion.spec.ts"
+        "world-weather-coverage.spec.ts",
+        "world-precipitation-motion.spec.ts",
+        "world-precipitation-density.spec.ts"
       ]
     }
   ]

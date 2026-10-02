@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { fixBusinessDate } from './fixed-business-date';
+import { showWorldOverview } from './world-overview';
 import type * as THREE from 'three';
 
 type MotionWindow = typeof window & { __blockcolcVoxelTest: typeof import('@blockcolc/voxel');
@@ -73,6 +74,11 @@ test('rain and layered snow keep falling during actual touch rotation and freeze
       const a = await canvas.getAttribute('data-camera-azimuth'); await page.waitForTimeout(120);
       return Math.abs(Number(await canvas.getAttribute('data-camera-azimuth')) - Number(a));
     }).toBeLessThan(.0002);
+    // Keep the close-up touch/clock checks above. Pixel motion is observed from
+    // the overview, not a building close-up whose foreground hillside can hide
+    // all the sparse light-rain drops for several frames.
+    await showWorldOverview(page);
+    await expect.poll(async () => Number(await canvas.getAttribute(`data-${kind}-camera-frustum-count`))).toBeGreaterThan(0);
     const idleCadence = await canvas.evaluate(async element => {
       const surface = element as HTMLCanvasElement;
       const startedAt = performance.now();
@@ -92,9 +98,25 @@ test('rain and layered snow keep falling during actual touch rotation and freeze
     expect(Number(uploads)).toBeGreaterThan(0);
     const frame = await canvas.screenshot({ path: info.outputPath(`${kind}-moving-1.png`) });
     const previousFrame = Number(await canvas.getAttribute('data-render-frame-count'));
-    await expect.poll(async () => Number(await canvas.getAttribute('data-render-frame-count'))).toBeGreaterThan(previousFrame);
-    const next = await canvas.screenshot({ path: info.outputPath(`${kind}-moving-2.png`) });
-    expect(next.equals(frame)).toBe(false);
+    const beforeElapsed = Number(await canvas.getAttribute(clock));
+    const motionSamples: { frame: number; elapsed: number; changed: boolean }[] = [];
+    // The ordinary cold opening now ends in a genuine close-up. With light
+    // rain, a single intervening frame need not contain any visible drop.
+    // Require real pixel motion within a bounded window, not on every frame;
+    // a frozen shader still fails even if the diagnostic clock keeps advancing.
+    await expect.poll(async () => {
+      const rendered = Number(await canvas.getAttribute('data-render-frame-count'));
+      const elapsed = Number(await canvas.getAttribute(clock));
+      if (rendered <= previousFrame || elapsed <= beforeElapsed) return false;
+      const next = await canvas.screenshot({ path: info.outputPath(`${kind}-moving-2.png`) });
+      const changed = !next.equals(frame);
+      motionSamples.push({ frame: rendered, elapsed, changed });
+      return changed;
+    }, { timeout: 5_000 }).toBe(true);
+    const drawnMesh = await page.evaluate(() => (window as MotionWindow).__weatherMeshProbe);
+    expect(drawnMesh?.name).toBe(`world-${kind}`);
+    expect(Number(drawnMesh?.elapsed)).toBeGreaterThan(beforeElapsed);
+    await info.attach(`${kind}-pixel-motion-samples`, { body: JSON.stringify(motionSamples), contentType: 'application/json' });
     // Particle motion changes pixels/uniform time, without uploading every instance again.
     expect(await canvas.getAttribute(`data-${kind}-matrix-upload-count`)).toBe(uploads);
     await page.getByRole('button', { name: '任务', exact: true }).click();
