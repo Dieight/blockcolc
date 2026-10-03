@@ -4,7 +4,7 @@
 
 每版记录分开发、交付和发布说明，创建时机与格式见 [模板](../templates/README.md)。发布工具读取 `V<versionCode>.md`；立项或创建文档本身不增加构建号。
 
-- v2.4.0：[开发](2.4.0-development.md)、[本轮交付](V50.md)、[发布说明](../releases/v2.4.0.md)，用户已验收 50 号私人包并授权发布同轮标准候选，发布核对进行中。
+- v2.4.0：[开发](2.4.0-development.md)、[交付](V50.md)、[发布](../releases/v2.4.0.md)，已关闭。
 - v2.3.0：[开发](2.3.0-development.md)、[交付](V46.md)、[发布](../releases/v2.3.0.md)，已关闭。
 
 - v2.2.0：[开发](2.2.0-development.md)、[交付](V44.md)、[发布](../releases/v2.2.0.md)，已关闭。
