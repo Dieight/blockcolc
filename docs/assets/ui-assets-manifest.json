@@ -4,15 +4,34 @@
   "note": "Hashes are generated from tracked files. Only approval.status=approved identifies an approved source; generated-derived files must reproduce byte-for-byte from that source.",
   "assets": [
     {
-      "path": "apps/android/icon-source/blockcolc-four-periods-approved-20260913.png",
+      "path": "apps/android/icon-source/blockcolc-pixel-tomato-approved-20261003.png",
       "role": "approved-master",
+      "approval": {
+        "status": "approved",
+        "approvedOn": "2026-10-03",
+        "sha256": "B29148C46FCC9FDB4E6CAE31981688AA4C37BF4B91BBB657A8DA9B4F844CF0E2"
+      },
+      "sha256": "B29148C46FCC9FDB4E6CAE31981688AA4C37BF4B91BBB657A8DA9B4F844CF0E2",
+      "bytes": 639483
+    },
+    {
+      "path": "apps/android/icon-source/blockcolc-pixel-cutaway-tomato-20261003.png",
+      "role": "unapproved-draft",
+      "sha256": "80A6705716CF66EDF3666527341373903F95D72D46609FC7F044E8CB252B5E3C",
+      "bytes": 621933,
+      "note": "Direction draft selected for refinement; left-side shell and inset dial were corrected in the final approved master."
+    },
+    {
+      "path": "apps/android/icon-source/blockcolc-four-periods-approved-20260913.png",
+      "role": "historical-approved-master",
       "approval": {
         "status": "approved",
         "approvedOn": "2026-09-13",
         "sha256": "5945F337F23A34CB69CB4252BD428F8E6FD1FC1D1E0ACF4E14C8105A2498629F"
       },
       "sha256": "5945F337F23A34CB69CB4252BD428F8E6FD1FC1D1E0ACF4E14C8105A2498629F",
-      "bytes": 924574
+      "bytes": 924574,
+      "note": "Previous approved master; superseded by the pixel cutaway tomato selected on 2026-10-03."
     },
     {
       "path": "apps/android/icon-source/blockcolc-icon-source.png",
@@ -31,155 +50,155 @@
     {
       "path": "apps/web/public/icons/blockcolc-192.png",
       "role": "generated-derived",
-      "derivedFrom": "apps/android/icon-source/blockcolc-four-periods-approved-20260913.png",
+      "derivedFrom": "apps/android/icon-source/blockcolc-pixel-tomato-approved-20261003.png",
       "generatedBy": "tools/build-adaptive-icon-source.py",
       "generatedOutput": "generated/web-icons/blockcolc-192.png",
-      "sha256": "F61C7E7ACFE3B493D94FF4028ABD4B8A88EAF043AA4FAB57D4DCC0A7AF7A9F7F",
-      "bytes": 22716
+      "sha256": "332C4532056A1F55980C3C91D44E5CE19428C55C4231282AFB31C5B952FF176A",
+      "bytes": 30406
     },
     {
       "path": "apps/web/public/icons/blockcolc-512.png",
       "role": "generated-derived",
-      "derivedFrom": "apps/android/icon-source/blockcolc-four-periods-approved-20260913.png",
+      "derivedFrom": "apps/android/icon-source/blockcolc-pixel-tomato-approved-20261003.png",
       "generatedBy": "tools/build-adaptive-icon-source.py",
       "generatedOutput": "generated/web-icons/blockcolc-512.png",
-      "sha256": "10AC30002726AEDFA83BE0628F21CCE0BFB45959EF1A14A09177243842E8F9ED",
-      "bytes": 127157
+      "sha256": "60CD6692A3188AA7BC7B8543A278BEA46805C75E7C86213B5012C6604ACF1864",
+      "bytes": 155553
     },
     {
       "path": "apps/android/android/app/src/main/res/mipmap-mdpi/ic_launcher_foreground.png",
       "role": "generated-derived",
-      "derivedFrom": "apps/android/icon-source/blockcolc-four-periods-approved-20260913.png",
+      "derivedFrom": "apps/android/icon-source/blockcolc-pixel-tomato-approved-20261003.png",
       "generatedBy": "tools/build-adaptive-icon-source.py",
       "generatedOutput": "generated/android-res/mipmap-mdpi/ic_launcher_foreground.png",
-      "sha256": "7FCE21D3045201CA5CE01F44659BA35BA20166C7D9CC1097D3BB4F65CFB6741D",
-      "bytes": 6226
+      "sha256": "BC5723432A7A136DCE82512F07F3E894FF4B982D3167DB26BA39FF67A8B25977",
+      "bytes": 8564
     },
     {
       "path": "apps/android/android/app/src/main/res/mipmap-mdpi/ic_launcher.png",
       "role": "generated-derived",
-      "derivedFrom": "apps/android/icon-source/blockcolc-four-periods-approved-20260913.png",
+      "derivedFrom": "apps/android/icon-source/blockcolc-pixel-tomato-approved-20261003.png",
       "generatedBy": "tools/build-adaptive-icon-source.py",
       "generatedOutput": "generated/android-res/mipmap-mdpi/ic_launcher.png",
-      "sha256": "0218FBCBBB0C1E13716F160C02DB898454F7D5B566E009D431E338C4310E5642",
-      "bytes": 2951
+      "sha256": "E3E2A47100400A7456464247A24AD6C3054F341EC8A6F41AF4FB1578E4E4889D",
+      "bytes": 3720
     },
     {
       "path": "apps/android/android/app/src/main/res/mipmap-mdpi/ic_launcher_round.png",
       "role": "generated-derived",
-      "derivedFrom": "apps/android/icon-source/blockcolc-four-periods-approved-20260913.png",
+      "derivedFrom": "apps/android/icon-source/blockcolc-pixel-tomato-approved-20261003.png",
       "generatedBy": "tools/build-adaptive-icon-source.py",
       "generatedOutput": "generated/android-res/mipmap-mdpi/ic_launcher_round.png",
-      "sha256": "6E3EA2B140DB96D7D19B83D86BA6CCAD411D5F95BB5B6DC72A87DC6FD2E9C20C",
-      "bytes": 4244
+      "sha256": "BB575E1E975C0CC58F03608969ECCBC6AC688A92188D5E2A3AFDB1098C7882C9",
+      "bytes": 4911
     },
     {
       "path": "apps/android/android/app/src/main/res/mipmap-hdpi/ic_launcher_foreground.png",
       "role": "generated-derived",
-      "derivedFrom": "apps/android/icon-source/blockcolc-four-periods-approved-20260913.png",
+      "derivedFrom": "apps/android/icon-source/blockcolc-pixel-tomato-approved-20261003.png",
       "generatedBy": "tools/build-adaptive-icon-source.py",
       "generatedOutput": "generated/android-res/mipmap-hdpi/ic_launcher_foreground.png",
-      "sha256": "3C301A927662284956643C7EEF40A67BF9514D98B12EAD59E3DE7D84D2D2EBBF",
-      "bytes": 11404
+      "sha256": "B7BC9C835AD3C25CBD873374E43AFFC76688ABF104606BD294DE7D7B13D176E7",
+      "bytes": 15730
     },
     {
       "path": "apps/android/android/app/src/main/res/mipmap-hdpi/ic_launcher.png",
       "role": "generated-derived",
-      "derivedFrom": "apps/android/icon-source/blockcolc-four-periods-approved-20260913.png",
+      "derivedFrom": "apps/android/icon-source/blockcolc-pixel-tomato-approved-20261003.png",
       "generatedBy": "tools/build-adaptive-icon-source.py",
       "generatedOutput": "generated/android-res/mipmap-hdpi/ic_launcher.png",
-      "sha256": "436D74E4D17912EE108B0BF4950EDD68F26B47930BC2B5BB52AF58F04B2E3AF4",
-      "bytes": 5075
+      "sha256": "EA8FDE062D26595DD76B32B7FB35457DA023290820F2AF02995B05E110361358",
+      "bytes": 6866
     },
     {
       "path": "apps/android/android/app/src/main/res/mipmap-hdpi/ic_launcher_round.png",
       "role": "generated-derived",
-      "derivedFrom": "apps/android/icon-source/blockcolc-four-periods-approved-20260913.png",
+      "derivedFrom": "apps/android/icon-source/blockcolc-pixel-tomato-approved-20261003.png",
       "generatedBy": "tools/build-adaptive-icon-source.py",
       "generatedOutput": "generated/android-res/mipmap-hdpi/ic_launcher_round.png",
-      "sha256": "C291E5693C5137B1F581ADE6E69A59D24D9967F55E8F36935927094BFF2DC099",
-      "bytes": 6943
+      "sha256": "631DC1133448710C0C5191FEA233077B2E0BA59D225C2900FC66A963D087ABC3",
+      "bytes": 8741
     },
     {
       "path": "apps/android/android/app/src/main/res/mipmap-xhdpi/ic_launcher_foreground.png",
       "role": "generated-derived",
-      "derivedFrom": "apps/android/icon-source/blockcolc-four-periods-approved-20260913.png",
+      "derivedFrom": "apps/android/icon-source/blockcolc-pixel-tomato-approved-20261003.png",
       "generatedBy": "tools/build-adaptive-icon-source.py",
       "generatedOutput": "generated/android-res/mipmap-xhdpi/ic_launcher_foreground.png",
-      "sha256": "7E19FFD96B77FC59579D5EA0F53E7241CB0AA675D5CED8D68D71150A941C4404",
-      "bytes": 17723
+      "sha256": "E61A4BEA90744AC0EA70246B1E60D1C71118ABA1CA9263BA9B5DA497063CA422",
+      "bytes": 24447
     },
     {
       "path": "apps/android/android/app/src/main/res/mipmap-xhdpi/ic_launcher.png",
       "role": "generated-derived",
-      "derivedFrom": "apps/android/icon-source/blockcolc-four-periods-approved-20260913.png",
+      "derivedFrom": "apps/android/icon-source/blockcolc-pixel-tomato-approved-20261003.png",
       "generatedBy": "tools/build-adaptive-icon-source.py",
       "generatedOutput": "generated/android-res/mipmap-xhdpi/ic_launcher.png",
-      "sha256": "6F2C67C8CE554FD46F2182877D416BEED10C3B3DD8C1B34D4A82A0157C561701",
-      "bytes": 7690
+      "sha256": "D79660B1EE89EAAE62C1ABE3185083FF95DACC15893BA2CC88D1DD090205655E",
+      "bytes": 10526
     },
     {
       "path": "apps/android/android/app/src/main/res/mipmap-xhdpi/ic_launcher_round.png",
       "role": "generated-derived",
-      "derivedFrom": "apps/android/icon-source/blockcolc-four-periods-approved-20260913.png",
+      "derivedFrom": "apps/android/icon-source/blockcolc-pixel-tomato-approved-20261003.png",
       "generatedBy": "tools/build-adaptive-icon-source.py",
       "generatedOutput": "generated/android-res/mipmap-xhdpi/ic_launcher_round.png",
-      "sha256": "B353E5A37982E56A45767D16DCFE54BF4F850F94B17FF783B8EB7C25FF91E48E",
-      "bytes": 10719
+      "sha256": "3D60579281851733D9B0B7EB85D8FEC1CD7A36A3EFB563D620E44F99BAE4C222",
+      "bytes": 13614
     },
     {
       "path": "apps/android/android/app/src/main/res/mipmap-xxhdpi/ic_launcher_foreground.png",
       "role": "generated-derived",
-      "derivedFrom": "apps/android/icon-source/blockcolc-four-periods-approved-20260913.png",
+      "derivedFrom": "apps/android/icon-source/blockcolc-pixel-tomato-approved-20261003.png",
       "generatedBy": "tools/build-adaptive-icon-source.py",
       "generatedOutput": "generated/android-res/mipmap-xxhdpi/ic_launcher_foreground.png",
-      "sha256": "61902814BF48BBED60E878FB1D94F4CE7CF74AA28AD11ED0ED6F9A7E20CCD931",
-      "bytes": 35206
+      "sha256": "89B8CD13364CCDCE9B87658D46E871563EF858E7ED87FBD231BFA36C0387B46E",
+      "bytes": 46300
     },
     {
       "path": "apps/android/android/app/src/main/res/mipmap-xxhdpi/ic_launcher.png",
       "role": "generated-derived",
-      "derivedFrom": "apps/android/icon-source/blockcolc-four-periods-approved-20260913.png",
+      "derivedFrom": "apps/android/icon-source/blockcolc-pixel-tomato-approved-20261003.png",
       "generatedBy": "tools/build-adaptive-icon-source.py",
       "generatedOutput": "generated/android-res/mipmap-xxhdpi/ic_launcher.png",
-      "sha256": "BF6190F143824EBF0685D4FF84966C4540EFD3B5AAF1C84F49EC4227D78A415F",
-      "bytes": 14272
+      "sha256": "C403376ACEE5ED5A7FFF241824DBB4E62C4FF3282F8B1C6F2FB6055C520909FE",
+      "bytes": 19471
     },
     {
       "path": "apps/android/android/app/src/main/res/mipmap-xxhdpi/ic_launcher_round.png",
       "role": "generated-derived",
-      "derivedFrom": "apps/android/icon-source/blockcolc-four-periods-approved-20260913.png",
+      "derivedFrom": "apps/android/icon-source/blockcolc-pixel-tomato-approved-20261003.png",
       "generatedBy": "tools/build-adaptive-icon-source.py",
       "generatedOutput": "generated/android-res/mipmap-xxhdpi/ic_launcher_round.png",
-      "sha256": "9945FE2C03829CA54C984DC695996B8E40E29DA0F775E989656FC5A4E1355C22",
-      "bytes": 19337
+      "sha256": "536683FB36B944694553A06CE6B0F993828560B2286D7CF777E913DC8D6ADFCE",
+      "bytes": 24678
     },
     {
       "path": "apps/android/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_foreground.png",
       "role": "generated-derived",
-      "derivedFrom": "apps/android/icon-source/blockcolc-four-periods-approved-20260913.png",
+      "derivedFrom": "apps/android/icon-source/blockcolc-pixel-tomato-approved-20261003.png",
       "generatedBy": "tools/build-adaptive-icon-source.py",
       "generatedOutput": "generated/android-res/mipmap-xxxhdpi/ic_launcher_foreground.png",
-      "sha256": "80C16EE3D0263AF4ABAB24AD40AFB82F3B2F2B28CD0A5B09AAEE7B41ADA7E7F3",
-      "bytes": 57536
+      "sha256": "04FFD4CBF957883E4019D99F9273DFA416AD0B9323F86670BAF5FAE77EBEBF01",
+      "bytes": 73628
     },
     {
       "path": "apps/android/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png",
       "role": "generated-derived",
-      "derivedFrom": "apps/android/icon-source/blockcolc-four-periods-approved-20260913.png",
+      "derivedFrom": "apps/android/icon-source/blockcolc-pixel-tomato-approved-20261003.png",
       "generatedBy": "tools/build-adaptive-icon-source.py",
       "generatedOutput": "generated/android-res/mipmap-xxxhdpi/ic_launcher.png",
-      "sha256": "F61C7E7ACFE3B493D94FF4028ABD4B8A88EAF043AA4FAB57D4DCC0A7AF7A9F7F",
-      "bytes": 22716
+      "sha256": "332C4532056A1F55980C3C91D44E5CE19428C55C4231282AFB31C5B952FF176A",
+      "bytes": 30406
     },
     {
       "path": "apps/android/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_round.png",
       "role": "generated-derived",
-      "derivedFrom": "apps/android/icon-source/blockcolc-four-periods-approved-20260913.png",
+      "derivedFrom": "apps/android/icon-source/blockcolc-pixel-tomato-approved-20261003.png",
       "generatedBy": "tools/build-adaptive-icon-source.py",
       "generatedOutput": "generated/android-res/mipmap-xxxhdpi/ic_launcher_round.png",
-      "sha256": "FC90D512D110595E82DBFA05FA5918C1F1E19F76AE1CDD6CE63AE4762EDC2006",
-      "bytes": 29509
+      "sha256": "069201119C2AD4325F71BA3A94A3939CFA90E1DF15E97445906860D3E3985819",
+      "bytes": 37557
     },
     {
       "path": "apps/android/android/app/src/main/res/drawable/ic_stat_tomato_outline.xml",

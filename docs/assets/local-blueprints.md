@@ -4,7 +4,9 @@
 
 ## 当前封装
 
-v2.3.0 新增 12 张：9 张普通补充蓝图，3 张每日奖励。此前 10 张的稳定 ID、分类、名称和转换产物均未改变。完整文件与派生摘要见 [资源清单](local-blueprints-manifest.json)，运行时名称、分类和描述由 [目录元数据](../../packages/voxel/src/local-blueprint-sources.ts)统一维护。
+当前共 22 张：16 张普通补充蓝图、6 张每日奖励。v2.3.0 新增的 12 张见下表；v2.4.0 修正负尺寸选区的坐标解释，重新转换仪式剑和昔涟 Q 版手办，其他 20 份产物未变。稳定 ID、分类和名称保留。完整文件与派生摘要见 [资源清单](local-blueprints-manifest.json)，运行时名称、分类和描述由 [目录元数据](../../packages/voxel/src/local-blueprint-sources.ts)统一维护。
+
+坐标依据 [Litematica 的容器写入实现](https://github.com/maruohon/litematica/blob/ornithe/1.12.2/src/main/java/litematica/scheduler/task/LocalCreateSchematicTask.java)：选区可以反向选择，方块与方块实体始终相对最小角保存。用户提供的“月湾画廊”仅用于本地回归，不加入内置目录。
 
 | 新增名称 | 分类 | 稳定 ID |
 | --- | --- | --- |

@@ -52,7 +52,7 @@ test('ordinary opening ends in real building focus and keeps its target/limits t
   await expect(canvas).toHaveAttribute('data-initial-reveal-completed-count','1',{timeout:20_000});
   const map=page.getByRole('button',{name:'重置地图',exact:true});
   await expect(map).toBeVisible();
-  await expect(page.getByRole('dialog',{name:'我的第一座工坊'})).toHaveCount(0);
+  await expect(page.getByRole('region',{name:'我的第一座工坊',exact:true})).toHaveCount(0);
   const framing=()=>canvas.evaluate(node=>({distance:Number(node.dataset.cameraDistance),target:[node.dataset.cameraTargetX,node.dataset.cameraTargetY,node.dataset.cameraTargetZ],
     minimum:Number(node.dataset.cameraMinimumDistanceRatio),maximum:Number(node.dataset.cameraMaximumDistanceRatio)}));
   const opened=await framing();
@@ -72,7 +72,7 @@ test('ordinary opening ends in real building focus and keeps its target/limits t
   expect((await framing()).minimum).toBe(.45);
   const building=page.getByRole('button',{name:'查看建筑记忆：我的第一座工坊',exact:true});
   await building.focus();await building.press('Enter');
-  const memory=page.getByRole('dialog',{name:'我的第一座工坊'});
+  const memory=page.getByRole('region',{name:'我的第一座工坊',exact:true});
   await expect(memory).toBeVisible();
   await memory.getByRole('button',{name:'关闭建筑记忆',exact:true}).click();
   await expect(memory).toBeHidden();

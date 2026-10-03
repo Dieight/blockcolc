@@ -19,7 +19,7 @@ async function selectBuilding(page: Page, title: string) {
   const entry = page.getByRole('button', { name: `查看建筑记忆：${title}` });
   await entry.focus();
   await entry.press('Enter');
-  const panel = page.getByRole('dialog', { name: title });
+  const panel = page.getByRole('region', { name: title, exact: true });
   await expect(panel).toBeVisible();
   await expect.poll(() => cameraState(page)).not.toEqual(before);
   return panel;
@@ -53,14 +53,11 @@ test('building memory shows derived history and returns to the current task', as
   await expect(panel).toContainText('0%');
   await expect(panel).toContainText('尚无记录');
   await expect(panel).toContainText('确定目标');
-  const memoryMaterial = await panel.evaluate(element => ({
-    backdropFilter: getComputedStyle(element).backdropFilter,
-    backgroundImage: getComputedStyle(element).backgroundImage,
-  }));
-  // 液态玻璃统一后 blur 随外观滑杆缩放（默认 50% → 10.5px），断言材质结构而非固定像素。
-  expect(memoryMaterial.backdropFilter).toContain('blur(');
-  expect(memoryMaterial.backdropFilter).toContain('saturate(1.24) contrast(1.04)');
-  expect(memoryMaterial.backgroundImage).toContain('linear-gradient');
+  expect(await panel.evaluate(element => element.closest('.focus-workbench-panel') !== null)).toBe(true);
+  await expect(page.locator('.building-memory-layer')).toHaveCount(0);
+  await expect(panel).not.toHaveAttribute('aria-modal', 'true');
+  await expect(page.getByRole('button', { name: '调整本次计划' })).toBeHidden();
+  await expect(panel.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '0');
   const continueButton = panel.getByRole('button', { name: '继续专注' });
   await expect(continueButton).toBeVisible();
   expect((await continueButton.boundingBox())?.height).toBeGreaterThanOrEqual(44);
@@ -72,11 +69,17 @@ test('building memory shows derived history and returns to the current task', as
   expect(portraitBox && portraitViewport ? portraitBox.y + portraitBox.height : Number.POSITIVE_INFINITY).toBeLessThanOrEqual(portraitViewport?.height ?? 0);
   if (testInfo.project.name === 'mobile-chromium') {
     const navBox = await page.locator('.bottom-nav').boundingBox();
-    expect(Math.abs((portraitBox!.y + portraitBox!.height) - navBox!.y)).toBeLessThanOrEqual(1.5);
+    const workbenchBox = await page.locator('.focus-workbench-panel').boundingBox();
+    expect(Math.abs((workbenchBox!.y + workbenchBox!.height) - navBox!.y)).toBeLessThanOrEqual(1.5);
   } else {
-    const headerBox = await page.locator('.topbar').boundingBox();
-    expect(Math.abs(portraitBox!.y - (headerBox!.y + headerBox!.height))).toBeLessThanOrEqual(1.5);
-    expect(Math.abs((portraitBox!.x + portraitBox!.width) - portraitViewport!.width)).toBeLessThanOrEqual(1.5);
+    const worldBox = await page.locator('figure.world').boundingBox();
+    const workbenchBox = await page.locator('.focus-workbench-panel').boundingBox();
+    // Wide layouts keep the existing workbench beside the world. Memory
+    // replaces that content; it must neither overlap the canvas nor float
+    // outside its host. Portrait already checks the original bottom band.
+    expect(workbenchBox!.x).toBeGreaterThanOrEqual(worldBox!.x + worldBox!.width);
+    expect(portraitBox!.x).toBeGreaterThanOrEqual(workbenchBox!.x);
+    expect(portraitBox!.x + portraitBox!.width).toBeLessThanOrEqual(workbenchBox!.x + workbenchBox!.width);
   }
   await page.screenshot({ path: testInfo.outputPath('building-memory.png'), fullPage: true });
 
@@ -87,11 +90,28 @@ test('building memory shows derived history and returns to the current task', as
     expect(panelBox?.x).toBeGreaterThanOrEqual(0);
     expect(panelBox?.y).toBeGreaterThanOrEqual(0);
     expect(panelBox ? panelBox.x + panelBox.width : Number.POSITIVE_INFINITY).toBeLessThanOrEqual(915);
-    expect(panelBox ? panelBox.y + panelBox.height : Number.POSITIVE_INFINITY).toBeLessThanOrEqual(412);
-    expect(await panel.evaluate(element => element.scrollHeight <= element.clientHeight + 1)).toBe(true);
+    const workbench = page.locator('.focus-workbench-panel');
+    expect(await workbench.evaluate(element => getComputedStyle(element).overflowY)).toBe('auto');
+    const workbenchBox = await workbench.boundingBox();
+    await testInfo.attach('landscape-layout', {
+      body: JSON.stringify(await page.evaluate(() => Object.fromEntries(
+        ['.world-screen', '.world-stage', 'figure.world', '.focus-workbench-panel', '.building-memory-panel'].map(selector => {
+          const element = document.querySelector(selector)!;
+          const box = element.getBoundingClientRect();
+          const css = getComputedStyle(element);
+          return [selector, { top: box.top, bottom: box.bottom, height: box.height, cssHeight: css.height,
+            minHeight: css.minHeight, gridRows: css.gridTemplateRows, padding: css.padding,
+            scrollHeight: element.scrollHeight, clientHeight: element.clientHeight }];
+        }),
+      )), null, 2),
+      contentType: 'application/json',
+    });
+    expect(workbenchBox ? workbenchBox.y + workbenchBox.height : Number.POSITIVE_INFINITY).toBeLessThanOrEqual(412);
+    await continueButton.scrollIntoViewIfNeeded();
+    await expect(continueButton).toBeInViewport();
+    await expect(panel.getByRole('button', { name: '关闭建筑记忆' })).toBeInViewport();
     const headerBox = await page.locator('.topbar').boundingBox();
-    expect(Math.abs(panelBox!.y - (headerBox!.y + headerBox!.height))).toBeLessThanOrEqual(1.5);
-    expect(Math.abs((panelBox!.x + panelBox!.width) - 915)).toBeLessThanOrEqual(1.5);
+    expect(panelBox!.y).toBeGreaterThanOrEqual(headerBox!.y + headerBox!.height);
     await page.screenshot({ path: testInfo.outputPath('building-memory-landscape.png'), fullPage: true });
   }
 
@@ -100,6 +120,32 @@ test('building memory shows derived history and returns to the current task', as
   await expect(panel).toBeHidden();
   await expect(page.getByRole('heading', { name: '我的第一座工坊' })).toBeVisible();
   await expect.poll(() => cameraState(page)).toEqual(focusedCamera);
+});
+
+test('memory leaves the world interactive and Escape restores the existing workbench', async ({ page }) => {
+  test.setTimeout(60_000);
+  await page.goto('/');
+  await page.getByRole('button', { name: '开始建造' }).click();
+  const panel = await selectBuilding(page, '我的第一座工坊');
+  const canvas = page.getByLabel('项目建筑世界');
+  const before = await cameraState(page);
+  await canvas.evaluate(node => {
+    const rect = node.getBoundingClientRect();
+    const dispatch = (type: string, x: number, buttons: number) => node.dispatchEvent(new PointerEvent(type, {
+      bubbles: true, cancelable: true, pointerId: 83, pointerType: 'touch', isPrimary: true,
+      clientX: x, clientY: rect.top + rect.height * .42, buttons,
+    }));
+    dispatch('pointerdown', rect.left + rect.width * .7, 1);
+    dispatch('pointermove', rect.left + rect.width * .35, 1);
+    dispatch('pointerup', rect.left + rect.width * .35, 0);
+  });
+  await expect.poll(async () => (await cameraState(page)).azimuth).not.toBe(before.azimuth);
+  await expect(panel).toBeVisible();
+  const rotated = await cameraState(page);
+  await page.keyboard.press('Escape');
+  await expect(panel).toBeHidden();
+  await expect(page.getByRole('button', { name: '调整本次计划' })).toBeVisible();
+  await expect.poll(() => cameraState(page)).toEqual(rotated);
 });
 
 test('a paused building can become the current task from its memory panel', async ({ page }) => {

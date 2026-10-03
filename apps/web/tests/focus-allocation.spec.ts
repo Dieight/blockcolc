@@ -55,7 +55,10 @@ async function seed(page: Page, state: DomainState, theme: 'light' | 'dark') {
         const transaction = database.transaction('appState', 'readwrite');
         const store = transaction.objectStore('appState');
         const current = store.get('current');
-        current.onsuccess = () => store.put({ id: 'current', revision: (current.result?.revision ?? 0) + 1, state: nextState });
+        current.onsuccess = () => store.put({ id: 'current', revision: (current.result?.revision ?? 0) + 1,
+          // Allocation fixtures keep the catalog installed by first bootstrap.
+          state: { ...nextState, decorationBlueprintResources: current.result?.state?.decorationBlueprintResources
+            ?? nextState.decorationBlueprintResources } });
         transaction.oncomplete = () => resolve();
         transaction.onerror = () => reject(transaction.error);
         transaction.onabort = () => reject(transaction.error);
@@ -67,6 +70,9 @@ async function seed(page: Page, state: DomainState, theme: 'light' | 'dark') {
     localStorage.removeItem('blockcolc-round-plan-v1');
   }, { state, theme });
   await page.reload();
+  // The simulated clock must release the startup frame before theme/UI checks.
+  await page.clock.runFor(32);
+  await expect(page.locator('html')).toHaveAttribute('data-bootstrap-state', 'ready');
 }
 
 test('L14 allocation keeps duration shares and exact labels across light/dark reduced-motion screenshots', async ({ page }, testInfo) => {

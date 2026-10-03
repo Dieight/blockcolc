@@ -12,11 +12,14 @@ test('glass adjustment is collapsed until requested, keyboard-accessible, and pr
   const range = page.getByLabel('液态玻璃通透程度', { exact: true });
   const summary = page.locator('.glass-transparency-setting > summary');
   await expect(range).toBeHidden();
-  await expect(summary).toContainText('50%');
+  await expect(summary).toContainText('100%');
   await summary.focus();
   await page.keyboard.press('Enter');
   await expect(range).toBeVisible();
   await range.focus();
+  await page.keyboard.press('Home');
+  await expect(range).toHaveValue('0');
+  await expect(summary).toContainText('0%');
   await page.keyboard.press('End');
   await expect(range).toHaveValue('100');
   await expect(summary).toContainText('100%');
@@ -58,6 +61,8 @@ test('real-weather availability stays in Settings while Web keeps the local simu
 
 test('settings page keeps grouped rows, quiet secondary actions, and 44px targets', async ({ page }, testInfo) => {
   await openSettings(page);
+  await expect(page.getByLabel('开启专注完整性')).not.toBeChecked();
+  await page.getByLabel('开启专注完整性').check();
 
   for (const heading of ['计时', '专注保护', '提醒', '世界', '高级', '建筑蓝图库', '方块材质包', '本地备份']) {
     await expect(page.getByRole('heading', { name: heading })).toBeVisible();

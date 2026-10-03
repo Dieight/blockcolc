@@ -10,12 +10,12 @@
 | 单一业务、交互或渲染行为 | 相关纯测试、原生测试或浏览器 spec，必要的类型检查 |
 | 多模块集成 | `npm run test:fast`；主要用户路径变化时补 `npm run test:web:smoke` |
 | 共享计时、恢复、存储或渲染逻辑 | 相关稳定回归：`npm run test:e2e -w @blockcolc/web`，按影响扩大 |
-| 正式版本输入冻结 | 完整门禁；常规工具入口 `tools/Prepare-Release.ps1` |
+| 用户明确要求全量检查（如全量测试包） | 完整门禁；常规工具入口 `tools/Prepare-Release.ps1` |
 | 测试 runner、fixture、构建或发布工具 | 工具测试和受影响的上层验证 |
 
 定点示例：`npm run test:e2e -w @blockcolc/web -- tests/resource-pack.spec.ts --project=mobile-chromium --workers=1`。
 
-扩展检查按需使用 `npm run test:extended`、`npm run test:web:diagnostics`、`npm run test:diagnostics -w @blockcolc/voxel`。`npm run test:web:release` 使用优化的 test-mode 构建，分 core、visual、renderer；renderer 单 worker，正式 APK 不含测试探针。
+扩展检查按需使用 `npm run test:extended`、`npm run test:web:diagnostics`、`npm run test:diagnostics -w @blockcolc/voxel`。`npm run test:web:release` 使用优化的 test-mode 构建，分 core、visual、renderer；当前本机软件 WebGL 下各批单 worker，避免不同页面的世界初始化争抢渲染资源。批次归属和并发由 manifest 持有，正式 APK 不含测试探针。
 
 ## 回归和实际操作
 
@@ -35,13 +35,17 @@
 
 必要验证记录命令、输入、退出码和原报告，注明失败、跳过和重试。小定点无需另建报告系统；完整门禁的输入指纹、计数和摘要由工具报告持有，工作包给链接。
 
-长任务等完成结果；浏览器批次首次失败即停止，修好后重跑，不继续耗时执行后续用例。超时、中断或缺最终报告记为未完成；单例重跑用于诊断，不能拼成完整门禁。先分清失败来自产品、测试还是环境。
+长任务等完成结果。用户明确要求全量时，首轮跑完全部可执行的门禁和用例，集中收集问题；全部返修后，后续全量遇错即停，修好再从头跑，直到完整通过。首轮使用 `tools/Prepare-Release.ps1 -CollectFailures`；后续不加此参数。单独首轮 Web 全量使用 `npm run test:web:release -- --collect-all-failures`。定点验证仍默认遇错即停。
+
+首轮的失败也必须记录，不能因继续执行而算作通过。环境无法继续、超时、中断或缺最终报告记为未完成；单例重跑用于诊断，不能拼成完整门禁。先分清失败来自产品、测试还是环境。已通过的全量仅卡在构建或交付时，按下一段复用证据，不重新收集一轮。
 
 全量已通过，仅构建或交付工具失败时，检查应用源码、依赖、配置和生成资产的差异，补受影响工具及构建验证，核对最终包内资产，复用未受影响的原报告。应用输入改变则重验相关范围；正式候选是否重跑全量，按冻结输入和影响判断。已经改变的应用内容需要新的用户确认。
 
 原始失败记录保留。日志使用合成数据，排除凭据、任务正文和完整敏感响应；整理方法见 [工作区维护](WORKSPACE-MAINTENANCE.md)。
 
 ## 测试包
+
+日常测试包用于体验和继续修改，完成受影响的定点验证后直接构建，不默认跑全量。只有用户明确要求全量检查（如「全量测试包」）时，才运行完整门禁。已定点修好的问题不因出测试包重复检查；中途停止的全量记录为未完成，不能当作发布证据。
 
 1. 验证后冻结应用源码、依赖、配置和资产。新交付轮的 versionCode 高于任一通道已交付或发布的版本；日常编辑不递增，同摘要再次交付仍是原轮。
 2. 同轮顺序构建标准 APK 与含好友服务器模块的私有 APK。标准用 `tools/Build-Verification-Apk.ps1 -ArtifactOnly -DeliveryRoundId <本轮ID>`；私有工作区用 `tools/Build-IntegratedVerification.ps1 -RepositoryRoot <主工作树> -DeliveryRoundId <同一ID>`。尖括号参数要替换。
@@ -54,6 +58,8 @@
 ## 发布
 
 按当前用户授权发布。已批准的常用路径是：完整冻结门禁、同轮标准和私人包、用户体验私人包并接受、发布对应标准候选。沿用这一轮的结果，不重复全量、第二次标准包体验或重建已接受候选。
+
+准备发布时先核对已有完整门禁是否仍有效。缺少证据就说明缺项，由用户决定是否开始全量，不因「出包」或「发布」自行扩大验证范围。
 
 这条路径用 `tools/Publish-PairedRelease.ps1`：传入成对核对记录和发布说明，明确确认用户验收与发布授权。工具重新核对两包身份、核心摘要、应用输入和私有隔离，等发布提交的 CI 通过后上传原标准候选，不查询或安装手机。
 

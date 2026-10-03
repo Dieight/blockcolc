@@ -2,6 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { defaultFocusPreferences, FOCUS_PREFERENCES_KEY, loadFocusPreferences, parseFocusPreferences, saveFocusPreferences } from './focus-preferences';
 
 describe('local focus preferences', () => {
+  it('uses the approved new-install defaults without overwriting explicit saved options', () => {
+    expect(defaultFocusPreferences()).toMatchObject({focusGlassTransparency:100,lightingQuality:'cinematic',constructionOutlineVisibility:'current',themeMode:'system',autoContinueFocus:false,returnToFocusReminders:true,minimalMode:false});
+    expect(parseFocusPreferences({...defaultFocusPreferences(),focusGlassTransparency:50,lightingQuality:'balanced',constructionOutlineVisibility:'all',themeMode:'light',autoContinueFocus:true,returnToFocusReminders:false,minimalMode:true})).toMatchObject({focusGlassTransparency:50,lightingQuality:'balanced',constructionOutlineVisibility:'all',themeMode:'light',autoContinueFocus:true,returnToFocusReminders:false,minimalMode:true});
+  });
   it('keeps real weather off for new and legacy records, persisting only explicit opt-in', () => {
     expect(defaultFocusPreferences().realWeatherEnabled).toBe(false);
     expect(parseFocusPreferences({ focusMinutes: 45, breakMinutes: 5 }).realWeatherEnabled).toBe(false);
@@ -31,7 +35,7 @@ describe('local focus preferences', () => {
     expect(parseFocusPreferences(null).showWorldCoordinates).toBe(false);
     expect(parseFocusPreferences({ focusMinutes: 25, breakMinutes: 0 })).toMatchObject({
       focusMinutes: 25, habitFocusMinutes: 25, breakMinutes: 0, showWorldCoordinates: true,
-      focusGlassTransparency: 50, themeMode: 'system',
+      focusGlassTransparency: 100, themeMode: 'system',
     });
   });
   it.each([null, [], 'invalid', { focusMinutes: '25', breakMinutes: 5 }, { focusMinutes: Infinity, breakMinutes: 5 }])('falls back for invalid root record %j', value => {
@@ -50,7 +54,7 @@ describe('local focus preferences', () => {
   });
   it('rounds and clamps numeric boundaries without coercing malformed optional values to NaN', () => {
     expect(parseFocusPreferences({ focusMinutes: 999, breakMinutes: -1, habitFocusMinutes: 'bad', habitTargetRounds: {}, focusGlassTransparency: Infinity })).toMatchObject({
-      focusMinutes: 180, breakMinutes: 0, habitFocusMinutes: 180, habitTargetRounds: 10, focusGlassTransparency: 50,
+      focusMinutes: 180, breakMinutes: 0, habitFocusMinutes: 180, habitTargetRounds: 10, focusGlassTransparency: 100,
     });
     expect(parseFocusPreferences({ focusMinutes: 24.6, breakMinutes: 99, habitFocusMinutes: 0, habitTargetRounds: 100, focusGlassTransparency: 101 })).toMatchObject({
       focusMinutes: 25, breakMinutes: 60, habitFocusMinutes: 1, habitTargetRounds: 30, focusGlassTransparency: 100,

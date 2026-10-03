@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ApplicationCommand, ApplicationResult, ApplicationService } from '@blockcolc/application';
 import { completedPomodorosOn, dailyGoalForDate, localDateOf, projectProgressBasisPoints } from '@blockcolc/domain';
-import { Check, ChevronDown, GripVertical, LockKeyhole, MapPinned, Minus, Pencil, Plus, Repeat2, Trash2, X } from 'lucide-react';
+import { GripVertical, LockKeyhole, Trash2 } from 'lucide-react';
+import { PixelCheck as Check, PixelChevron as ChevronDown, PixelCube as MapPinned, PixelMinus as Minus, PixelEdit as Pencil, PixelPlus as Plus, PixelRepeat as Repeat2, PixelClose as X, PixelIcon, PixelSprout } from './ui/PixelIcon';
+import { PixelProgress } from './ui/PixelProgress';
 import { ChoiceMenu } from './ChoiceMenu';
 import { NativeImeTextEntry, isImeCommitKey } from './NativeImeTextEntry';
 import { useBackLayer } from './back-layer';
@@ -228,7 +230,7 @@ export function TasksScreen({ active, state, run, onCreateProject, onViewProject
 
     {isHabit ? <section className="habit-cycle-panel" aria-labelledby="habit-cycle-title">
       <div className="habit-cycle-heading"><Repeat2/><div><h2 id="habit-cycle-title">习惯周期</h2><p>每次完整或提前完成的专注都会推进当前建筑。</p></div></div>
-      <div className="habit-cycle-progress"><div><span>{habit?.awaitingNextBuilding?'等待下一座建筑':`第 ${habit?.cycleNumber??1} 座建筑`}</span><strong>{habit?.awaitingNextBuilding?'待选择':`${habit?.completedFocusSessionIds.length??0} / ${habit?.targetRounds??10} 轮`}</strong></div><progress max={habit?.targetRounds??10} value={habit?.awaitingNextBuilding?habit?.targetRounds??10:habit?.completedFocusSessionIds.length??0}/></div>
+      <div className="habit-cycle-progress"><div><span>{habit?.awaitingNextBuilding?'等待下一座建筑':`第 ${habit?.cycleNumber??1} 座建筑`}</span><strong>{habit?.awaitingNextBuilding?'待选择':`${habit?.completedFocusSessionIds.length??0} / ${habit?.targetRounds??10} 轮`}</strong></div><PixelProgress rounds label="习惯周期进度" max={habit?.targetRounds??10} value={habit?.awaitingNextBuilding?habit?.targetRounds??10:habit?.completedFocusSessionIds.length??0}/></div>
       <dl><div><dt>已完成建筑</dt><dd>{completedHabitBuildings} 座</dd></div><div><dt>当前蓝图</dt><dd>{habit?.awaitingNextBuilding?'前往计时页选择':'本周期内锁定'}</dd></div></dl>
     </section> : <>
       <div className="task-section-heading">
@@ -252,15 +254,12 @@ export function TasksScreen({ active, state, run, onCreateProject, onViewProject
     </>}
     </section>
 
-    <ProjectPortfolio state={state} activeProjectId={active.project.id} expanded={portfolioExpanded} switchBlocked={switchBlocked} pending={pending} onToggle={()=>setPortfolioExpanded(value=>!value)} onActivate={projectId=>perform({type:'SwitchActiveProject',projectId})} onView={onViewProject}/>
-
-    <details className="task-management-disclosure task-surface">
-    <summary>任务管理</summary>
+    <ProjectPortfolio state={state} activeProjectId={active.project.id} expanded={portfolioExpanded} switchBlocked={switchBlocked} pending={pending} onToggle={()=>setPortfolioExpanded(value=>!value)} onActivate={projectId=>perform({type:'SwitchActiveProject',projectId})} onView={onViewProject}>
     <section className="project-delete-zone" aria-labelledby="delete-project-title">
       <div><h2 id="delete-project-title">删除任务</h2><p>{hasActiveFocus ? '请先结束当前专注，才能删除任务。' : isHabit ? `当前未完成建筑会移除，已完成的 ${completedHabitBuildings} 座建筑会保留。删除前仍会创建回滚备份。` : '删除前会自动创建本地回滚备份，可在设置中恢复。'}</p></div>
-      <button type="button" className="danger-outline" title={hasActiveFocus ? '请先结束当前专注后再删除任务' : undefined} disabled={pending || hasActiveFocus} onClick={() => setDeleteProjectOpen(true)}><Trash2/>删除当前任务</button>
+      <button type="button" className="danger-outline" title={hasActiveFocus ? '请先结束当前专注后再删除任务' : undefined} disabled={pending || hasActiveFocus} onClick={() => setDeleteProjectOpen(true)}><PixelIcon name="close"/>删除当前任务</button>
     </section>
-    </details>
+    </ProjectPortfolio>
 
     {deleteTarget && <ConfirmDialog
       title="删除这个小任务？"
@@ -283,16 +282,35 @@ export function TasksScreen({ active, state, run, onCreateProject, onViewProject
   </section>;
 }
 
-function ProjectPortfolio({state,activeProjectId,expanded,switchBlocked,pending,onToggle,onActivate,onView}:{state:AppState;activeProjectId:string;expanded:boolean;switchBlocked:boolean;pending:boolean;onToggle:()=>void;onActivate:(projectId:string)=>Promise<boolean>;onView:(projectId:string)=>void}) {
+function ProjectPortfolio({state,activeProjectId,expanded,switchBlocked,pending,onToggle,onActivate,onView,children}:{state:AppState;activeProjectId:string;expanded:boolean;switchBlocked:boolean;pending:boolean;onToggle:()=>void;onActivate:(projectId:string)=>Promise<boolean>;onView:(projectId:string)=>void;children:React.ReactNode}) {
   const visible=state.projects.filter(project=>project.status!=='deleted');
-  if(visible.length<2)return null;
   const groups=[
     {id:'current',label:'当前',projects:visible.filter(project=>project.id===activeProjectId)},
     {id:'habit',label:'习惯',projects:visible.filter(project=>project.kind==='habit'&&project.id!==activeProjectId)},
     {id:'paused',label:'暂停',projects:visible.filter(project=>project.kind==='finite'&&project.status==='paused')},
     {id:'completed',label:'纪念',projects:visible.filter(project=>project.status==='monument')},
   ].filter(group=>group.projects.length>0);
-  return <section className={`project-portfolio task-surface${expanded?' is-expanded':''}`} aria-label="任务总览"><button type="button" className="project-portfolio-toggle" aria-expanded={expanded} onClick={onToggle}><span><strong>任务总览</strong><small>{groups.map(group=>`${group.label} ${group.projects.length}`).join(' · ')}</small></span><ChevronDown/></button>{expanded&&<div className="project-portfolio-groups">{groups.map(group=><section key={group.id}><h3>{group.label}<span>{group.projects.length}</span></h3><div>{group.projects.map(project=>{const isCurrent=project.id===activeProjectId;const isMonument=project.status==='monument';const progress=project.kind==='habit'?(project.habit?.awaitingNextBuilding?'等待下一座建筑':`第 ${project.habit?.cycleNumber??1} 座 · ${project.habit?.completedFocusSessionIds.length??0}/${project.habit?.targetRounds??10} 轮`):`${Math.round(projectProgressBasisPoints(project)/100)}%`;return <div className="project-portfolio-row" key={project.id}><span><strong>{project.title}</strong><small>{project.kind==='habit'?'习惯 · ':''}{progress}</small></span><button type="button" disabled={pending||(!isCurrent&&!isMonument&&switchBlocked)} onClick={()=>{if(isCurrent||isMonument)onView(project.id);else void onActivate(project.id);}}>{isCurrent||isMonument?'查看':'切换'}</button></div>;})}</div></section>)}</div>}</section>;
+  return <section className={`project-portfolio task-surface${expanded?' is-expanded':''}`} aria-label="任务总览与管理">
+    <button type="button" className="project-portfolio-toggle" aria-expanded={expanded} onClick={onToggle}>
+      <PixelIcon name="tasks"/><span><strong>任务总览与管理</strong><small>{groups.map(group=>`${group.label} ${group.projects.length}`).join(' · ')}</small></span><PixelIcon name={expanded?'minus':'plus'}/>
+    </button>
+    {expanded && <div className="project-portfolio-body">
+      <div className="project-portfolio-groups">{groups.map(group=><section key={group.id}>
+        <h3>{group.label}<span>{group.projects.length}</span></h3>
+        <div>{group.projects.map(project=>{
+          const isCurrent=project.id===activeProjectId;
+          const isMonument=project.status==='monument';
+          const progress=project.kind==='habit'?(project.habit?.awaitingNextBuilding?'等待下一座建筑':`第 ${project.habit?.cycleNumber??1} 座 · ${project.habit?.completedFocusSessionIds.length??0}/${project.habit?.targetRounds??10} 轮`):`${Math.round(projectProgressBasisPoints(project)/100)}%`;
+          return <div className="project-portfolio-row" key={project.id}>
+            <PixelIcon name={isMonument?'cube':project.kind==='habit'?'repeat':isCurrent?'flag':'tasks'}/>
+            <span className="project-portfolio-copy"><strong>{project.title}</strong><small>{project.kind==='habit'?'习惯 · ':''}{progress}</small><PixelProgress value={projectProgressBasisPoints(project)} max={10000} label={`${project.title} 建造进度`}/></span>
+            <button type="button" disabled={pending||(!isCurrent&&!isMonument&&switchBlocked)} onClick={()=>{if(isCurrent||isMonument)onView(project.id);else void onActivate(project.id);}}><PixelIcon name={isCurrent||isMonument?'map':'play'}/>{isCurrent||isMonument?'查看':'切换'}</button>
+          </div>;
+        })}</div>
+      </section>)}</div>
+      {children}
+    </div>}
+  </section>;
 }
 
 function SubtaskRow({ id, title, progressBasisPoints, phase, index, pending, managing, dragging, dropPosition, showDelete, canDelete, deleteReason, onRename, onMove, onDragStart, onDragMove, onDragEnd, onDragCancel, onDelete }: {
@@ -333,13 +351,13 @@ function SubtaskRow({ id, title, progressBasisPoints, phase, index, pending, man
     {managing ? <button type="button" className="task-drag-handle" aria-label={`长按拖动“${title}”排序；使用方向键微调`} disabled={pending} onPointerDown={onDragStart} onPointerMove={onDragMove} onPointerUp={onDragEnd} onPointerCancel={onDragCancel} onKeyDown={event => {
       if (event.key === 'ArrowUp') { event.preventDefault(); void onMove(-1); }
       if (event.key === 'ArrowDown') { event.preventDefault(); void onMove(1); }
-    }}><GripVertical/></button> : <div className="task-order">{index + 1}</div>}
+    }}><GripVertical/></button> : <div className="task-order"><PixelIcon name={phase === 'complete' ? 'check' : phase === 'current' ? 'flag' : 'tasks'} size={20}/></div>}
     <div className="task-copy">
       {editing ? <label><span className="sr-only" id={`subtask-title-${id}`}>小任务名称</span><NativeImeTextEntry targetRef={draftRef} name={`subtask-title-${id}`} defaultValue={title} ariaLabel="小任务名称" autoFocus disabled={pending} onValueChange={setDraft} onNativeKeyDown={event => {
         if (isImeCommitKey(event)) void save();
         if (event.key === 'Escape') { setDraft(title); setEditing(false); }
       }}/></label> : <strong>{title}</strong>}
-      <div><progress max={10000} value={progressBasisPoints}/><span>{Math.round(progressBasisPoints / 100)}%</span></div>
+      <div><PixelProgress max={10000} value={progressBasisPoints} label={`${title} 施工进度`}/><span>{Math.round(progressBasisPoints / 100)}%</span></div>
     </div>
     {editing && <div className="task-row-actions">
       {editing ? <>
@@ -519,11 +537,12 @@ function DailyGoalControl({ state, run, onViewReward }: { state: AppState; run: 
     <section className="daily-goal daily-goal-workbench task-surface" aria-labelledby="daily-goal-title">
       <div className="daily-goal-summary"><div><h2 id="daily-goal-title">今日目标</h2><p>所有任务合计</p></div><button ref={openerRef} type="button" className="daily-goal-adjust" aria-label="调整今日目标" onClick={() => { resetTargetDraft(); setTargetError(''); setSheetError(''); setOpen(true); }}><Pencil/><span>调整</span></button></div>
       <div className="daily-goal-tally"><strong>{completed}{enabled && <span> / {goal.targetPomodoros}</span>}</strong><span>{enabled ? '轮已完成' : '轮 · 目标未开启'}</span></div>
-      {enabled && <progress className="daily-goal-progress" aria-label={`今日 ${completed} / ${goal.targetPomodoros} 轮`} max={goal.targetPomodoros} value={Math.min(completed,goal.targetPomodoros)}/>}
+      {enabled && <PixelProgress rounds className="daily-goal-progress" label={`今日 ${completed} / ${goal.targetPomodoros} 轮`} max={goal.targetPomodoros} value={completed}/>}
+      {enabled && completed < goal.targetPomodoros && <p className="daily-goal-hint"><PixelSprout/>再完成 {goal.targetPomodoros - completed} 轮，达成今日目标</p>}
       {rewardName && <span className="daily-goal-reward"><Check/>今日装饰已入库 · {rewardName}</span>}
       {goal.reachedAt && <span className="goal-reached"><Check/>今日已达成</span>}
     </section>
-    {open && <div className="dialog-backdrop daily-goal-sheet-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) closeSheet(); }}><section ref={sheetRef} className="daily-goal-sheet" role="dialog" aria-modal="true" aria-labelledby="daily-goal-sheet-title" aria-describedby="daily-goal-sheet-summary daily-goal-controls-note" aria-busy={pending} tabIndex={-1}><div className="sheet-heading daily-goal-sheet-heading"><div><span className="eyebrow">全局进度</span><h2 id="daily-goal-sheet-title">调整今日目标</h2></div><button ref={closeRef} type="button" className="dialog-close" aria-label="关闭今日目标" disabled={pending} onClick={() => closeSheet()}><X/></button></div><p id="daily-goal-sheet-summary" className="daily-goal-sheet-summary">{enabled ? `今日已完成 ${completed} / ${goal.targetPomodoros} 轮` : `今日已完成 ${completed} 轮`}</p><p id="daily-goal-controls-note" className="daily-goal-sheet-note">目标按本地日期统计所有任务的完整或提前完成轮次。</p><div className="daily-goal-controls"><div className="daily-goal-setting-row"><div className="daily-goal-setting-copy"><span id="daily-goal-enabled-label">开启今日目标</span><small>达成后会在建筑世界中放置一件今日装饰。</small></div><label className="switch-control ios-switch daily-goal-switch" onPointerDown={markTargetActionPointerDown}><input type="checkbox" role="switch" aria-labelledby="daily-goal-enabled-label" aria-checked={requestedState} checked={requestedState} disabled={pending} onChange={() => changeEnabled(!requestedState)}/><span aria-hidden="true">{requestedState ? '已开启' : '已关闭'}</span></label></div><div className="daily-goal-setting-row daily-goal-target-row"><div className="daily-goal-setting-copy"><label htmlFor="daily-goal-target">目标轮数</label><small id="daily-goal-target-help">输入正整数；步进会立即保存。</small></div><div className="daily-goal-stepper"><button type="button" aria-label="减少目标轮数" aria-controls="daily-goal-target" disabled={pending || (validTarget && parsedTarget <= 1)} onPointerDown={markTargetActionPointerDown} onClick={() => stepTarget(-1)}><Minus/></button><input ref={targetInputRef} id="daily-goal-target" aria-label="今日目标次数" aria-describedby={targetDescribedBy} aria-errormessage={targetError ? 'daily-goal-error' : undefined} aria-invalid={targetError ? 'true' : undefined} type="number" min="1" step="1" inputMode="numeric" autoComplete="off" value={target} disabled={pending} onChange={event => { targetRef.current = event.target.value; setTarget(event.target.value); setTargetError(''); setSheetError(''); }} onBlur={commitTargetOnBlur} onKeyDown={event => { if (isImeCommitKey(event.nativeEvent)) { event.preventDefault(); event.currentTarget.blur(); } }}/><button type="button" aria-label="增加目标轮数" aria-controls="daily-goal-target" disabled={pending} onPointerDown={markTargetActionPointerDown} onClick={() => stepTarget(1)}><Plus/></button></div></div></div>{(targetError || sheetError) && <p id="daily-goal-error" className="daily-goal-error" role="alert">{targetError || sheetError}</p>}{reward && <div className="daily-goal-reward-panel"><span><Check/><b>今日装饰已入库</b><small>{rewardName}</small></span><button type="button" disabled={pending} onClick={() => { closeSheet(false); onViewReward(reward.projectId); }}>查看所在建筑</button></div>}</section></div>}
+    {open && <div className="dialog-backdrop daily-goal-sheet-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) closeSheet(); }}><section ref={sheetRef} className="daily-goal-sheet" role="dialog" aria-modal="true" aria-labelledby="daily-goal-sheet-title" aria-describedby="daily-goal-sheet-summary daily-goal-controls-note" aria-busy={pending} tabIndex={-1}><div className="sheet-heading daily-goal-sheet-heading"><div><span className="eyebrow"><PixelIcon name="flag"/>每日建造</span><h2 id="daily-goal-sheet-title">调整今日目标</h2></div><button ref={closeRef} type="button" className="dialog-close" aria-label="关闭今日目标" disabled={pending} onClick={() => closeSheet()}><X/></button></div><p id="daily-goal-sheet-summary" className="daily-goal-sheet-summary">{enabled ? `今日已完成 ${completed} / ${goal.targetPomodoros} 轮` : `今日已完成 ${completed} 轮`}</p><PixelProgress className="daily-goal-progress" value={completed} max={goal.targetPomodoros} rounds label="今日目标完成进度"/><p id="daily-goal-controls-note" className="daily-goal-sheet-note">目标按本地日期统计所有任务的完整或提前完成轮次。</p><div className="daily-goal-controls"><div className="daily-goal-setting-row"><div className="daily-goal-setting-copy"><span id="daily-goal-enabled-label">开启今日目标</span><small>达成后会在建筑世界中放置一件今日装饰。</small></div><label className="switch-control ios-switch daily-goal-switch" onPointerDown={markTargetActionPointerDown}><input type="checkbox" role="switch" aria-labelledby="daily-goal-enabled-label" aria-checked={requestedState} checked={requestedState} disabled={pending} onChange={() => changeEnabled(!requestedState)}/><span aria-hidden="true">{requestedState ? '已开启' : '已关闭'}</span></label></div><div className="daily-goal-setting-row daily-goal-target-row"><div className="daily-goal-setting-copy"><label htmlFor="daily-goal-target">目标轮数</label><small id="daily-goal-target-help">输入正整数；步进会立即保存。</small></div><div className="daily-goal-stepper"><button type="button" aria-label="减少目标轮数" aria-controls="daily-goal-target" disabled={pending || (validTarget && parsedTarget <= 1)} onPointerDown={markTargetActionPointerDown} onClick={() => stepTarget(-1)}><Minus/></button><input ref={targetInputRef} id="daily-goal-target" aria-label="今日目标次数" aria-describedby={targetDescribedBy} aria-errormessage={targetError ? 'daily-goal-error' : undefined} aria-invalid={targetError ? 'true' : undefined} type="number" min="1" step="1" inputMode="numeric" autoComplete="off" value={target} disabled={pending} onChange={event => { targetRef.current = event.target.value; setTarget(event.target.value); setTargetError(''); setSheetError(''); }} onBlur={commitTargetOnBlur} onKeyDown={event => { if (isImeCommitKey(event.nativeEvent)) { event.preventDefault(); event.currentTarget.blur(); } }}/><button type="button" aria-label="增加目标轮数" aria-controls="daily-goal-target" disabled={pending} onPointerDown={markTargetActionPointerDown} onClick={() => stepTarget(1)}><Plus/></button></div></div></div>{(targetError || sheetError) && <p id="daily-goal-error" className="daily-goal-error" role="alert">{targetError || sheetError}</p>}{reward && <div className="daily-goal-reward-panel"><span><Check/><b>今日装饰已入库</b><small>{rewardName}</small></span><button type="button" disabled={pending} onClick={() => { closeSheet(false); onViewReward(reward.projectId); }}>查看所在建筑</button></div>}</section></div>}
   </>;
 }
 

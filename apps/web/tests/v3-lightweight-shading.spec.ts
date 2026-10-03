@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { selectValleyFixture } from './valley-fixture';
 
 test("turns a real blueprint lamp glow on only at night and keeps it attached while rotating", async ({ page }, testInfo) => {
   await page.clock.install({ time: new Date("2026-07-26T12:00:00+08:00") });
@@ -78,6 +79,7 @@ test("renders distinct day phases with a bounded optional post-process and no co
   await page.clock.install({ time: new Date("2026-07-26T06:30:00+08:00") });
   await page.goto("/");
   await page.getByRole("button", { name: "开始建造" }).click();
+  await selectValleyFixture(page, { automaticLighting: true });
 
   const canvas = page.getByLabel("项目建筑世界");
   const captures: Buffer[] = [];
@@ -150,6 +152,7 @@ test("keeps a deterministic mist day readable and rotates clouds with the world"
   await page.clock.install({ time: new Date("2026-07-28T12:00:00+08:00") });
   await page.goto("/");
   await page.getByRole("button", { name: "开始建造" }).click();
+  await selectValleyFixture(page, { automaticLighting: true });
 
   const canvas = page.getByLabel("项目建筑世界");
   await expect(canvas).toHaveAttribute("data-weather-kind", "mist");
@@ -178,6 +181,7 @@ test("moves rain across frames without a permanent render loop", async ({ page }
   await page.clock.install({ time: new Date("2026-07-30T12:00:00+08:00") });
   await page.goto("/");
   await page.getByRole("button", { name: "开始建造" }).click();
+  await selectValleyFixture(page, { automaticLighting: true });
 
   const canvas = page.getByLabel("项目建筑世界");
   await expect(canvas).toHaveAttribute("data-weather-kind", "rain");

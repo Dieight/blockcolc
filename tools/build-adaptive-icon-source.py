@@ -24,7 +24,7 @@ def subject_mask(image: Image.Image) -> Image.Image:
         where=maximum > 0,
     )
 
-    # The generated subject is red/green, while the background and shadow are neutral.
+    # Legacy opaque masters have a colored subject on a neutral background.
     seed = ((saturation >= 0.16) & (maximum <= 0.99)).astype(np.uint8) * 255
     seed_image = Image.fromarray(seed, mode="L")
     seed_image = seed_image.filter(ImageFilter.MaxFilter(3)).filter(ImageFilter.MinFilter(3))
@@ -40,8 +40,8 @@ def subject_mask(image: Image.Image) -> Image.Image:
     return mask.filter(ImageFilter.GaussianBlur(1.0))
 
 
-def fit_foreground(image: Image.Image, mask: Image.Image) -> tuple[Image.Image, dict[str, int]]:
-    bbox = mask.getbbox()
+def fit_foreground(image: Image.Image, mask: Image.Image, bounds_mask: Image.Image | None = None) -> tuple[Image.Image, dict[str, int]]:
+    bbox = (bounds_mask if bounds_mask is not None else mask).getbbox()
     if bbox is None:
         raise ValueError("No foreground was detected")
 
@@ -231,9 +231,17 @@ def main() -> None:
     args = parser.parse_args()
 
     args.output.mkdir(parents=True, exist_ok=True)
-    source = Image.open(args.input).convert("RGB")
-    mask = subject_mask(source)
-    foreground, metrics = fit_foreground(source, mask)
+    source = Image.open(args.input).convert("RGBA")
+    # New generated masters carry their own alpha, including internal gaps.
+    # Preserve it instead of filling the negative space as the opaque-master
+    # extractor does. The legacy path remains reproducible for old masters.
+    alpha = source.getchannel("A")
+    has_alpha = alpha.getextrema()[0] < 255
+    mask = alpha if has_alpha else subject_mask(source)
+    # Near-transparent export specks must not shift an otherwise centered mark.
+    # Only the crop bounds use this threshold; retained pixels keep their alpha.
+    bounds_mask = alpha.point(lambda value: 255 if value >= 128 else 0) if has_alpha else None
+    foreground, metrics = fit_foreground(source, mask, bounds_mask)
 
     composite = Image.new("RGBA", foreground.size, BRAND_BACKGROUND)
     composite.alpha_composite(foreground)

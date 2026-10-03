@@ -5,6 +5,8 @@ import { createBackupEnvelope } from '@blockcolc/storage-indexeddb';
 const RECEIPT_KEY = 'blockcolc-achievement-display-receipts-v1';
 const startAt = Date.parse('2026-09-13T08:00:00+08:00');
 
+test.beforeEach(async ({ page }) => { await page.emulateMedia({ reducedMotion: 'reduce' }); });
+
 function stateWithOneCompletedRound(): DomainState {
   let state = createInitialState('Asia/Shanghai');
   const run = (command: DomainCommand, now: number) => {
@@ -98,7 +100,11 @@ async function seed(page: Page, state: DomainState, expectedBootstrapState: 'rea
         const transaction = database.transaction('appState', 'readwrite');
         const store = transaction.objectStore('appState');
         const current = store.get('current');
-        current.onsuccess = () => store.put({ id: 'current', revision: (current.result?.revision ?? 0) + 1, state: nextState });
+        current.onsuccess = () => store.put({ id: 'current', revision: (current.result?.revision ?? 0) + 1,
+          // Historical business fixtures keep the already-installed catalog;
+          // they do not exercise a fresh resource-import transaction sequence.
+          state: { ...nextState, decorationBlueprintResources: current.result?.state?.decorationBlueprintResources
+            ?? nextState.decorationBlueprintResources } });
         transaction.oncomplete = () => resolve();
         transaction.onerror = () => reject(transaction.error);
         transaction.onabort = () => reject(transaction.error);

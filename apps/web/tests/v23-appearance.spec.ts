@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { expandGlassSetting } from './expand-glass-setting';
+import { selectLastCalendarDays } from './select-calendar-days';
 
 // V23 ③④: appearance settings (light/dark/system) and heatmap day detail on click.
 
@@ -17,7 +18,17 @@ test("dark theme toggles the document theme from settings", async ({ page }) => 
   await dark.click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
   await page.getByRole("button", { name: "计时" }).click();
-  await expect(page.locator(".workbench-context")).toHaveCSS("border-left-color", "rgb(39, 103, 73)");
+  const context = page.locator(".workbench-context");
+  await expect(context).toHaveCSS("border-left-width", "0px");
+  await expect(context.locator("strong")).toHaveCSS("color", "rgb(230, 239, 233)");
+  const pixels = await context.evaluate(element => {
+    const marker = getComputedStyle(element, '::before');
+    const probe = document.createElement('span');
+    probe.style.color = 'var(--focus)'; element.append(probe);
+    const focusColor = getComputedStyle(probe).color; probe.remove();
+    return { width: marker.width, height: marker.height, color: marker.backgroundColor, focusColor };
+  });
+  expect(pixels).toMatchObject({ width: '6px', height: '6px', color: pixels.focusColor });
   await page.getByRole("button", { name: "设置", exact: true }).click();
   await page.getByRole("button", { name: "浅色" }).click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
@@ -26,6 +37,8 @@ test("dark theme toggles the document theme from settings", async ({ page }) => 
 test('numeric settings have no idle frame in either theme, but keep an accessible editing state',async({page},info)=>{
   await createDefaultProject(page);
   await page.getByRole('button',{name:'设置',exact:true}).click();
+  await page.getByRole('checkbox',{name:'开启专注完整性'}).check();
+  await expect(page.getByLabel('允许有效离开次数')).toBeEnabled();
   for(const theme of ['浅色','深色']){
     await page.getByRole('button',{name:theme,exact:true}).click();
     const inputs=page.locator('.number-field input');
@@ -44,8 +57,10 @@ test('statistics keep the heatmap first, aggregate daily goals and share their a
   await createDefaultProject(page);
   await page.getByRole('button',{name:'统计',exact:true}).click();
   const calendar=page.locator('.focus-heatmap-card'),period=page.locator('.stats-period-section'),archive=page.locator('.stats-archive-section');
-  expect(await calendar.evaluate(node=>!!(node.compareDocumentPosition(document.querySelector('.stats-period-section')!)&Node.DOCUMENT_POSITION_FOLLOWING))).toBe(true);
-  await page.getByRole('button',{name:'近 7 天',exact:true}).click();
+  expect(await period.evaluate(node=>node.contains(document.querySelector('.focus-heatmap-card')))).toBe(true);
+  expect(await page.locator('.stats-overview').evaluate(node=>!!(node.compareDocumentPosition(document.querySelector('.focus-heatmap-card')!)&Node.DOCUMENT_POSITION_FOLLOWING))).toBe(true);
+  expect(await period.evaluate(node=>!!(node.compareDocumentPosition(document.querySelector('.project-allocation')!)&Node.DOCUMENT_POSITION_FOLLOWING))).toBe(true);
+  await selectLastCalendarDays(page,7);
   const rounds=page.locator('.stats-key-facts>div').filter({hasText:'有效完成轮次 / 目标完成轮次'});
   await expect(rounds.locator('strong')).toHaveText('0 / 56');
   await expect(page.locator('.project-allocation')).toHaveAttribute('data-chart-template','L14');
@@ -177,7 +192,7 @@ test("immersive glass transparency persists and keeps an adaptive dark material"
   // glass-material.spec.ts, not simulated by overriding CSS tokens on a live focus.
 });
 
-test("clicking a calendar day shows that day's focus detail without a date picker", async ({ page }, testInfo) => {
+test("clicking a calendar day updates summaries and preserves keyboard date selection", async ({ page }, testInfo) => {
   await page.clock.install({ time: new Date("2026-08-05T08:00:00Z") });
   await createDefaultProject(page);
   // 1-minute round, no break, so one round completes quickly.
@@ -201,23 +216,21 @@ test("clicking a calendar day shows that day's focus detail without a date picke
   await expect(unlockDialog).toHaveCount(0);
   await page.locator('.focus-calendar-chart [data-date="2026-08-05"]').click();
   await expect(page.locator('.stats-page input[type="date"]')).toHaveCount(0);
-  const tip = page.locator(".calendar-day-detail");
+  const tip = page.locator(".stats-overview");
   await expect(tip).toBeVisible();
   await expect(tip).toContainText("1 分钟");
-  await expect(tip).toContainText("1 次");
+  await expect(tip.locator('.stats-rounds>strong')).toHaveText('1 / 8');
   await page.screenshot({path:testInfo.outputPath('calendar-filled-selected-light.png'),fullPage:true,animations:'disabled'});
   await page.getByRole('button',{name:'设置',exact:true}).click();
   await page.getByRole('button',{name:'深色',exact:true}).click();
   await page.getByRole('button',{name:'统计',exact:true}).click();
   await page.screenshot({path:testInfo.outputPath('calendar-filled-selected-dark.png'),fullPage:true,animations:'disabled'});
-  await page.getByRole('button',{name:'查看前一天专注'}).click();
-  await expect(tip).toContainText('这一天还没有有效专注记录');
-  await page.getByRole('button',{name:'查看后一天专注'}).click();
+  await page.locator('.focus-calendar-chart').press('ArrowUp');
+  await expect(tip).toContainText('0 分钟');
+  await page.locator('.focus-calendar-chart').press('ArrowDown');
   await expect(tip).toContainText('1 分钟');
-  await page.getByRole('button',{name:'关闭日期详情'}).click();
-  await expect(tip).toHaveCount(0);
   await page.locator('.focus-calendar-chart').press('End');
-  await expect(tip).toContainText('2026年8月5日');
+  await expect(page.locator('.calendar-day[data-date="2026-08-05"]')).toHaveAttribute('aria-selected','true');
   await page.locator('.focus-calendar-chart').press('Escape');
-  await expect(tip).toHaveCount(0);
+  await expect(tip).toContainText('1 分钟');
 });

@@ -15,6 +15,15 @@ summary:focus:not(:focus-visible){outline:none}
 
 :root{--native-safe-area-inset-left:0px;--native-safe-area-inset-top:0px;--native-safe-area-inset-right:0px;--native-safe-area-inset-bottom:0px;--safe-left:max(env(safe-area-inset-left),var(--native-safe-area-inset-left));--safe-top:max(env(safe-area-inset-top),var(--native-safe-area-inset-top));--safe-right:max(env(safe-area-inset-right),var(--native-safe-area-inset-right));--safe-bottom:max(env(safe-area-inset-bottom),var(--native-safe-area-inset-bottom))}
 /* Reset, application shell and cross-feature foundations. */
+.app-brand{display:flex;align-items:center;gap:10px;color:var(--ink)}
+.app-brand>.pixel-icon{width:24px;height:24px;color:var(--focus)}
+.app-brand>div{display:grid;gap:1px}
+.app-brand .brand-mark{font-size:18px;line-height:1.2;font-weight:750}
+.app-brand .brand-en{margin:0;font-size:11px;line-height:1.25;letter-spacing:.03em;color:var(--muted)}
+.bottom-nav .pixel-icon{width:24px;height:24px}
+.bottom-nav button{position:relative;min-height:44px;font-size:12px;gap:5px}
+.bottom-nav .nav-active::after{content:"";width:3px;height:3px;background:var(--focus);position:absolute;bottom:6px;border-radius:0}
+@media(min-width:700px){.bottom-nav .nav-active::after{bottom:auto;left:10px;width:3px;height:14px}}
 html,body,#root{min-height:100%;background:var(--app-bg)}
 .route-pane{min-width:0;min-height:100%}
 /* Actionable toast: re-enable pointer events only when a decision is needed;

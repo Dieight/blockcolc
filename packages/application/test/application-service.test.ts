@@ -626,9 +626,21 @@ describe("initialization and command persistence", () => {
 });
 
 describe("lifecycle recovery", () => {
+  it("does not count app-switch excursions until focus integrity is explicitly enabled", async () => {
+    const f = await fixture();
+    expect(f.service.snapshot().focusIntegrityPolicy.enabled).toBe(false);
+    const project = await createProject(f.service, ["One"]);
+    await f.service.dispatch({ type: "StartFocus", subtaskId: project.subtasks[0]!.id, plannedDurationMs: 60_000 });
+    await f.service.handleLifecycleEvent({ type: "background", source: "native" });
+    f.clock.set("2026-07-20T09:00:04.000Z");
+    await expect(f.service.handleLifecycleEvent({ type: "foreground" })).resolves.toMatchObject({ ok: true, events: [] });
+    expect(f.repository.persisted?.activeFocusSession?.integrity).toMatchObject({ effectiveExcursions: 0, backgroundedAt: null, backgroundReason: null });
+  });
+
   it("persists native app-switch excursions and maps lock/exemption context", async () => {
     const f = await fixture();
     const project = await createProject(f.service, ["One"]);
+    await f.service.dispatch({ type: "ConfigureFocusIntegrity", enabled: true, maxEffectiveExcursions: 3 });
     await f.service.dispatch({ type: "StartFocus", subtaskId: project.subtasks[0]!.id, plannedDurationMs: 60_000 });
 
     await expect(f.service.handleLifecycleEvent({ type: "background", source: "native" })).resolves.toMatchObject({
@@ -681,6 +693,7 @@ describe("lifecycle recovery", () => {
   it("counts multi-window stops as app-switch excursions (split-screen anti-cheat)", async () => {
     const f = await fixture();
     const project = await createProject(f.service, ["One"]);
+    await f.service.dispatch({ type: "ConfigureFocusIntegrity", enabled: true, maxEffectiveExcursions: 3 });
     await f.service.dispatch({ type: "StartFocus", subtaskId: project.subtasks[0]!.id, plannedDurationMs: 60_000 });
     await f.service.handleLifecycleEvent({ type: "background", source: "native", context: { multiWindow: true } });
     expect(f.repository.persisted?.activeFocusSession?.integrity.backgroundReason).toBe("app-switch");
@@ -694,6 +707,7 @@ describe("lifecycle recovery", () => {
   it("uses the native background instant when context delivery is delayed", async () => {
     const f = await fixture();
     const project = await createProject(f.service, ["One"]);
+    await f.service.dispatch({ type: "ConfigureFocusIntegrity", enabled: true, maxEffectiveExcursions: 3 });
     await f.service.dispatch({ type: "StartFocus", subtaskId: project.subtasks[0]!.id, plannedDurationMs: 60_000 });
     f.clock.set("2026-07-20T09:00:05.000Z");
     await f.service.handleLifecycleEvent({

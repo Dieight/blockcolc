@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import type { BlueprintCatalogEntry } from '@blockcolc/voxel';
 import type { ResourcePackRepository } from '@blockcolc/resource-pack-indexeddb';
-import { Check } from 'lucide-react';
+import { PixelCheck as Check } from './ui/PixelIcon';
 import { BlueprintPreview } from './BlueprintPreview';
 
 function complexityLabel(value:BlueprintCatalogEntry['complexity']) { return value==='simple'?'紧凑':value==='moderate'?'适中':'丰富'; }

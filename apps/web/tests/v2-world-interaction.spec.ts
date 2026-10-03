@@ -1,4 +1,5 @@
 import { expect, test, type CDPSession } from "@playwright/test";
+import { selectValleyFixture } from './valley-fixture';
 
 test("renders the current compact world and supports bounded rotate and pinch gestures", async ({ page }, testInfo) => {
   await page.clock.install({ time: new Date("2026-07-26T12:00:00+08:00") });
@@ -9,6 +10,8 @@ test("renders the current compact world and supports bounded rotate and pinch ge
   await expect(canvas).toHaveAttribute("data-world-root-members", "terrain,roads,buildingsAndDecorations,worldLightRig,atmosphere");
   await expect(canvas).toHaveAttribute("data-initial-reveal-completed-count", "1", { timeout: 20_000 });
   await page.getByRole("button", { name: "重置地图", exact: true }).click();
+  // Check the cold-start reveal before replacing its renderer with the valley.
+  await selectValleyFixture(page);
   await expect(canvas).toHaveAttribute("data-shadow-auto-update", "false");
   const activeLighting = await canvas.getAttribute("data-active-lighting-quality");
   await expect(canvas).toHaveAttribute("data-fullscreen-pass-count", activeLighting === "cinematic" ? "4" : "0");

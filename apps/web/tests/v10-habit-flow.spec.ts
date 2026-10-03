@@ -23,12 +23,10 @@ async function revealFocusControls(page: import('@playwright/test').Page) {
   await expect(endButton).toBeVisible();
 }
 test('runs a repeatable habit building cycle with frozen targets and stable completed buildings', async ({ page }, testInfo) => {
-  // Ten early-completed rounds plus a second WebGL preview renderer for the
-  // next-building picker exceed the default budget on shared GPUs; the local
-  // gate machine can additionally drift with thermal/background state, so the
-  // budget stays above the measured 41-72 s spread. V20's throttled ambient
-  // loop adds a low but constant software-WebGL load during the whole flow,
-  // pushing local wall time past 100 s: keep headroom at 150 s.
+  // This is a ten-round business/persistence check, not an ambient-motion
+  // check. Keep all real gestures and construction updates, but avoid a
+  // continuous software-WebGL weather loop competing with the page actions.
+  await page.emulateMedia({ reducedMotion: 'reduce' });
   test.setTimeout(150_000);
   await page.setViewportSize({ width: 412, height: 915 });
   await page.goto('/');
@@ -85,5 +83,8 @@ test('runs a repeatable habit building cycle with frozen targets and stable comp
   await expect(page.locator('.habit-cycle-panel')).toContainText('已完成建筑');
   await expect(page.locator('.habit-cycle-panel')).toContainText('1 座');
   await expect(page.locator('.habit-cycle-panel')).toContainText('0 / 12 轮');
+  await expect(page.locator('.project-portfolio-toggle')).toHaveAttribute('aria-expanded', 'false');
+  await page.locator('.project-portfolio-toggle').click();
+  await expect(page.locator('.project-portfolio-toggle')).toHaveAttribute('aria-expanded', 'true');
   await expect(page.locator('.project-delete-zone')).toContainText('已完成的 1 座建筑会保留');
 });

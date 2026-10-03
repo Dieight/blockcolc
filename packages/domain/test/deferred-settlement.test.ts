@@ -53,9 +53,10 @@ describe('minimal marathon deferred settlement', () => {
     expect(f.state().focusHistory[0]).toMatchObject({status:'interrupted',deferredSettlement:true});
     expect(execute(f.state(),{type:'ReportMarathonFocus',focusSessionIds:['round'],entries:[],habitAllocations:[]},{now:()=>new Date('2026-09-06T08:02:00Z')})).toMatchObject({ok:false,code:'PROGRESS_REQUIRES_COMPLETED_FOCUS'});
   });
-  it('migrates schema 10 without inventing deferred semantics and rejects malformed flags', () => {
-    const f=fixture(); const legacy={...structuredClone(f.state()),schemaVersion:10,
-      focusIntegrityPolicy: { enabled: true, maxEffectiveExcursions: 3 }};
+  it.each([true, false])('migrates schema 10 with saved integrity=%s without inventing deferred semantics and rejects malformed flags', (enabled) => {
+    const f=fixture(); f.run({type:'ConfigureFocusIntegrity',enabled,maxEffectiveExcursions:3});
+    const legacy={...structuredClone(f.state()),schemaVersion:10,
+      focusIntegrityPolicy: { enabled, maxEffectiveExcursions: 3 }};
     expect(parseDomainState(legacy)).toEqual(f.state());
     f.start();
     for (const override of [{deferredSettlement:false},{marathon:false},{subtaskId:'s'}]) {

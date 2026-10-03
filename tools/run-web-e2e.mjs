@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { collectReportEvidence, summarizePlaywrightReport } from './web-release-report.mjs';
+import { fullRunExitCode, shouldStopFullRun } from './full-run-policy.mjs';
 
 const toolsDirectory = path.dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = path.dirname(toolsDirectory);
@@ -15,8 +16,11 @@ const diagnosticMode = commandArguments.includes('--diagnostics');
 const productionMode = commandArguments.includes('--production');
 const releaseSuiteCheckMode = commandArguments.includes('--release-suites-check');
 const releaseSuiteMode = commandArguments.includes('--release-suites') || releaseSuiteCheckMode;
+const collectAllFailures = commandArguments.includes('--collect-all-failures');
+if (collectAllFailures && !releaseSuiteMode) throw new Error('Failure collection is only for an explicitly requested first full release run.');
 if (diagnosticMode && releaseSuiteMode) throw new Error('Diagnostic and release-suite modes are mutually exclusive.');
-const playwrightArguments = commandArguments.filter((argument) => argument !== '--diagnostics' && argument !== '--production' && argument !== '--release-suites' && argument !== '--release-suites-check');
+const playwrightArguments = commandArguments.filter((argument) => !['--diagnostics', '--production', '--release-suites', '--release-suites-check', '--collect-all-failures'].includes(argument));
+if (collectAllFailures) playwrightArguments.push('--max-failures=0');
 if (releaseSuiteMode && playwrightArguments.some((argument) => argument === '--workers' || argument.startsWith('--workers='))) {
   throw new Error('Release-suite worker ownership comes from playwright.release-suites.json and cannot be overridden.');
 }
@@ -217,6 +221,7 @@ async function runReleaseSuites() {
     schemaVersion: 1,
     startedAt: new Date().toISOString(),
     status: 'running',
+    failurePolicy: collectAllFailures ? 'collect-all' : 'fail-fast',
     fullTestCount,
     source: await getWorkingTreeFingerprint(),
     suites: [],
@@ -263,7 +268,7 @@ async function runReleaseSuites() {
       playwrightReportSha256: sha256(originalReport),
       reportSummary: { stats: reportSummary.stats, testCount: reportSummary.testCount },
     });
-    if (exitCode !== 0) {
+    if (shouldStopFullRun(exitCode,collectAllFailures)) {
       summary.status = 'failed';
       summary.exitCode = exitCode;
       summary.attemptCount = summary.suites.reduce((total, item) => total + item.attemptCount, 0);
@@ -273,14 +278,14 @@ async function runReleaseSuites() {
     }
     await writeReleaseSummary(summary);
   }
-  summary.status = 'passed';
-  summary.exitCode = 0;
+  summary.exitCode = fullRunExitCode(summary.suites);
+  summary.status = summary.exitCode === 0 ? 'passed' : 'failed';
   summary.attemptCount = summary.suites.reduce((total, suite) => total + suite.attemptCount, 0);
   summary.finishedAt = new Date().toISOString();
   summary.durationSeconds = summary.suites.reduce((total, suite) => total + suite.durationSeconds, 0);
   await writeReleaseSummary(summary, true);
   process.stdout.write(`\nAll ${fullTestCount} classified Web release tests completed across ${planned.length} suites.\n`);
-  return 0;
+  return summary.exitCode;
 }
 
 async function checkReleaseSuites() {

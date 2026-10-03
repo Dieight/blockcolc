@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from 'react';
 import type { ApplicationCommand, ApplicationResult, ApplicationService } from '@blockcolc/application';
 import type { FocusInterruptionCategory } from '@blockcolc/domain';
-import { Check } from 'lucide-react';
+import { PixelCheck as Check } from './ui/PixelIcon';
 import { unsettledMarathonSessions } from './marathon-settlement';
 import type { CommandRunnerOptions } from './command-runner';
 import { beginFocusSubmission } from './submission-performance';

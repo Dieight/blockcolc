@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createElement } from 'react';
-import { readAchievementReceipt, reconcileAchievementBatch, writeAchievementReceipt, MonumentStatistics, type AchievementReceiptStorage } from './StatsScreen';
+import { readAchievementReceipt, reconcileAchievementBatch, writeAchievementReceipt, MonumentStatistics, StatsScreen, type AchievementReceiptStorage } from './StatsScreen';
+import {createInitialState} from '@blockcolc/domain';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { AchievementEntry } from './ui/AchievementsPanel';
 import type { MonumentFocusProjection, UnallocatedFocusProjection } from '@blockcolc/application';
@@ -47,6 +48,12 @@ describe('achievement display receipts', () => {
 });
 
 describe('monument statistics disclosure', () => {
+  it('keeps calendar selection without preset periods, date inputs or a trailing reading note', () => {
+    const html=renderToStaticMarkup(createElement(StatsScreen,{state:createInitialState('Asia/Shanghai')}));
+    expect(html).toContain('有效完成轮次 / 目标完成轮次');
+    expect(html).toContain('aria-multiselectable="true"');
+    for(const removed of ['stats-periods','calendar-range-picker','calendar-selection','type="date"','统计口径与本地保存']) expect(html).not.toContain(removed);
+  });
   it('starts the section and every memorial card collapsed, then explains untraceable history inside', () => {
     const monument: MonumentFocusProjection = {
       id: 'monument-1', source: 'finite', projectId: 'project-1', title: '林间工坊', completedAt: null,
@@ -56,7 +63,9 @@ describe('monument statistics disclosure', () => {
     };
     const unallocated: UnallocatedFocusProjection = { rounds: 3, completedRounds: 2, interruptedRounds: 1, minutes: 45 };
     const html = renderToStaticMarkup(createElement(MonumentStatistics, { monuments: [monument], unallocated }));
-    expect(html).toContain('<details class="monument-statistics"><summary><span>纪念建筑</span><small>1 座已完成</small>');
+    expect(html).toContain('<details class="monument-statistics"><summary>');
+    expect(html).toContain('data-pixel-icon="cube"');
+    expect(html).toContain('<span>纪念建筑</span><small>1 座已完成</small>');
     expect(html).toContain('展示可追溯投入；旧记录单列，不估算分配');
     expect(html).toContain('另有 2 个完成轮次、1 条中断记录未分配或无法追溯（共 45 分钟），未计入宿主任务或小任务占比。');
     expect(html).toContain('<details>');

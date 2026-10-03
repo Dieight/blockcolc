@@ -1,10 +1,13 @@
 import { expect, test } from '@playwright/test';
 import { showWorldOverview } from './world-overview';
+import { selectValleyFixture } from './valley-fixture';
 
 test('switches the derived world environment without moving project data', async ({ page }, testInfo) => {
   await page.goto('/');
   await page.getByRole('button', { name: '开始建造' }).click();
   const canvas = page.getByLabel('项目建筑世界');
+  await expect(canvas).toHaveAttribute('data-environment-style', 'ocean-island');
+  await selectValleyFixture(page);
 
   await expect(canvas).toHaveAttribute('data-environment-style', 'natural-valley');
   await expect.poll(async () => Number(await canvas.getAttribute('data-natural-tree-count'))).toBeGreaterThan(0);
@@ -41,6 +44,7 @@ test('selects a building with a light tap', async ({ page }, testInfo) => {
   await page.goto('/');
   await page.getByRole('button', { name: '开始建造' }).click();
   const canvas = page.getByLabel('项目建筑世界');
+  await selectValleyFixture(page);
   await expect(canvas).toHaveAttribute('data-environment-style', 'natural-valley');
 
   const box = await canvas.boundingBox();
@@ -58,8 +62,8 @@ test('selects a building with a light tap', async ({ page }, testInfo) => {
     if (await page.locator('.building-memory-panel').count()) break;
   }
 
-  await expect(page.getByRole('dialog', { name: '我的第一座工坊' })).toContainText('建筑记忆');
-  await expect(page.getByRole('dialog', { name: '我的第一座工坊' })).toContainText('0%');
+  await expect(page.getByRole('region', { name: '我的第一座工坊', exact: true })).toContainText('建筑记忆');
+  await expect(page.getByRole('region', { name: '我的第一座工坊', exact: true })).toContainText('0%');
   await expect(page.getByRole('button', { name: '继续专注' })).toBeVisible();
   await expect(page.getByRole('button', { name: '重置地图' })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('v11-building-selected.png'), fullPage: true });
@@ -90,7 +94,7 @@ test('retains drag gestures in the selected-building view', async ({ page }) => 
   const buildingEntry = page.getByRole('button', { name: '查看建筑记忆：我的第一座工坊' });
   await buildingEntry.focus();
   await buildingEntry.press('Enter');
-  await expect(page.getByRole('dialog', { name: '我的第一座工坊' })).toBeVisible();
+  await expect(page.getByRole('region', { name: '我的第一座工坊', exact: true })).toBeVisible();
   const box = await canvas.boundingBox();
   if (!box) throw new Error('World canvas has no layout box');
   const before = Number(await canvas.getAttribute('data-camera-azimuth'));

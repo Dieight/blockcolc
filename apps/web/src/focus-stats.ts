@@ -36,13 +36,22 @@ export function focusSessionCountByDate(history: FocusHistory): Map<ISODate, num
   return countByDate;
 }
 
-export function focusHeatmapLevel(minutes: number): 0 | 1 | 2 | 3 | 4 | 5 {
-  if (minutes <= 0) return 0;
-  if (minutes < 90) return 1;
-  if (minutes < 180) return 2;
-  if (minutes < 270) return 3;
-  if (minutes < 360) return 4;
-  return 5;
+export function focusHeatmapLevel(minutes: number): 0 | 1 | 2 | 3 | 4 {
+  if (!Number.isFinite(minutes) || minutes <= 0) return 0;
+  if (minutes < 180) return 1;
+  if (minutes < 360) return 2;
+  if (minutes < 540) return 3;
+  return 4;
+}
+
+export interface FocusDateRange { start: ISODate; end: ISODate }
+export function focusRangeDayCount(range: FocusDateRange): number {
+  // UTC here measures calendar dates, never elapsed local hours (including DST).
+  addLocalDays(range.start, 0);
+  addLocalDays(range.end, 0);
+  const days = (Date.parse(`${range.end}T00:00:00Z`) - Date.parse(`${range.start}T00:00:00Z`)) / 86_400_000 + 1;
+  if (!Number.isSafeInteger(days) || days < 1) throw new Error('invalid focus date range');
+  return days;
 }
 
 export interface FocusWindowSummary {
@@ -93,8 +102,9 @@ export function projectFocusAllocation(state: DomainState, endDate: ISODate, day
   if (!Number.isSafeInteger(days) || days < 1) throw new Error('days must be a positive integer');
   const startDate = addLocalDays(endDate, 1 - days);
   const milliseconds = new Map<string, number>();
+  const dates = new Map(state.focusHistory.map(session => [session.id,focusSessionLocalDate(session)]));
   for (const session of projectFocusAttribution(state).sessions) {
-    const date = localDateOf(session.endedAt, session.timeZoneAtStart);
+    const date = dates.get(session.sessionId) ?? localDateOf(session.endedAt, session.timeZoneAtStart);
     if (date < startDate || date > endDate || session.actualDurationMs <= 0) continue;
     const key = session.projectId ?? 'unallocated';
     milliseconds.set(key, (milliseconds.get(key) ?? 0) + session.actualDurationMs);

@@ -1,10 +1,12 @@
 import { expect, test, type Locator } from "@playwright/test";
 import { showWorldOverview } from './world-overview';
+import { selectValleyFixture } from './valley-fixture';
 
 test("keeps the complete natural terrain inside safe clip planes at maximum zoom", async ({ page }, testInfo) => {
   await page.clock.install({ time: new Date("2026-07-26T12:00:00+08:00") });
   await page.goto("/");
   await page.getByRole("button", { name: "开始建造" }).click();
+  await selectValleyFixture(page);
   const canvas = page.getByLabel("项目建筑世界");
   await expect(canvas).toHaveAttribute("data-terrain-generation-version", "4");
   // Clouds span the full visible terrain, not just the settlement core (V16 regression guard).

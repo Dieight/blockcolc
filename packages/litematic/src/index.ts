@@ -118,6 +118,7 @@ interface DecodedVoxel extends Position {
 
 interface ParsedRegion {
   preview: LitematicRegionPreview;
+  minimum: Position;
   palette: PaletteEntry[];
   packedStates: unknown[];
   entities: number;
@@ -201,7 +202,8 @@ export async function parseLitematic(
       }
     });
 
-    const { signedSize, position, dimensions, volume } = region.preview;
+    const { dimensions, volume } = region.preview;
+    const { minimum } = region;
     const bitsPerEntry = Math.max(2, Math.ceil(Math.log2(region.palette.length)));
     const expectedLongs = Math.ceil((volume * bitsPerEntry) / 64);
     if (region.packedStates.length !== expectedLongs) {
@@ -215,9 +217,9 @@ export async function parseLitematic(
       const localZ = Math.floor(index / dimensions.width) % dimensions.depth;
       const localY = Math.floor(index / (dimensions.width * dimensions.depth));
       const world = {
-        x: position.x + (signedSize.x < 0 ? -localX : localX),
-        y: position.y + (signedSize.y < 0 ? -localY : localY),
-        z: position.z + (signedSize.z < 0 ? -localZ : localZ),
+        x: minimum.x + localX,
+        y: minimum.y + localY,
+        z: minimum.z + localZ,
       };
       const key = coordinateKey(world);
       if (isAir(state.name)) {
@@ -249,9 +251,13 @@ export async function parseLitematic(
   const voxels = assignBuildOrder(normalized);
   const title = stringValue(metadata.Name, "Untitled Litematic");
   const contentHash = stableContentHash(uncompressed);
+  // Earlier imports mirrored negative selections. A separate deterministic ID lets
+  // users reimport the corrected geometry without overwriting saved project snapshots.
+  const coordinateRevision = parsedRegions.some(({ preview: { signedSize } }) =>
+    signedSize.x < 0 || signedSize.y < 0 || signedSize.z < 0) ? "-coords2" : "";
   const blueprint = validateBlueprint({
     schemaVersion: 1,
-    id: options.blueprintId?.trim() || `litematic-${contentHash}`,
+    id: options.blueprintId?.trim() || `litematic-${contentHash}${coordinateRevision}`,
     title,
     bounds: boundsFor(voxels),
     voxels,
@@ -309,6 +315,13 @@ function parseRegion(name: string, raw: unknown, limits: LitematicLimits): Parse
   const packedStates = arrayValue(region.BlockStates, `Regions.${name}.BlockStates`);
   return {
     preview: { name, position, signedSize, dimensions, paletteEntries: palette.length, volume },
+    // Size records the selection direction; BlockStates and block entities always
+    // use positive axes from the minimum corner (Litematica SchematicRegion).
+    minimum: {
+      x: position.x + Math.min(0, signedSize.x + 1),
+      y: position.y + Math.min(0, signedSize.y + 1),
+      z: position.z + Math.min(0, signedSize.z + 1),
+    },
     palette,
     packedStates,
     entities: optionalArrayLength(region.Entities, `Regions.${name}.Entities`),
@@ -622,16 +635,14 @@ function attachMovingPistonMovedStates(
   blocks: Map<string, DecodedVoxel>,
   getNumericTagType: (entity: RecordValue, field: PistonEntityNumericField) => number | undefined,
 ): void {
-  const { position, signedSize, dimensions } = region.preview;
+  const { dimensions } = region.preview;
+  const { minimum } = region;
   for (const raw of region.tileEntities) {
     if (!isRecord(raw) || raw.id !== "minecraft:piston") continue;
     const x = raw.x; const y = raw.y; const z = raw.z;
     if (!integerValueOrNull(x) || !integerValueOrNull(y) || !integerValueOrNull(z)
       || x < 0 || x >= dimensions.width || y < 0 || y >= dimensions.height || z < 0 || z >= dimensions.depth) continue;
-    const blockId = position.x + (signedSize.x < 0 ? -x : x);
-    const blockY = position.y + (signedSize.y < 0 ? -y : y);
-    const blockZ = position.z + (signedSize.z < 0 ? -z : z);
-    const voxel = blocks.get(coordinateKey(blockId, blockY, blockZ));
+    const voxel = blocks.get(coordinateKey(minimum.x + x, minimum.y + y, minimum.z + z));
     if (voxel?.state.name !== "minecraft:moving_piston") continue;
     const movedState = parsePistonMovedState(raw);
     if (movedState === null) continue;
@@ -706,7 +717,8 @@ function parsePistonMovedState(entity: RecordValue): NonNullable<BlueprintVoxel[
 }
 
 function attachSignAndCampfireData(region: ParsedRegion, blocks: Map<string, DecodedVoxel>, directSignComponents: boolean): void {
-  const { position, signedSize, dimensions } = region.preview;
+  const { dimensions } = region.preview;
+  const { minimum } = region;
   for (const raw of region.tileEntities) {
     if (!isRecord(raw)) continue;
     const entityId = raw.id;
@@ -718,9 +730,9 @@ function attachSignAndCampfireData(region: ParsedRegion, blocks: Map<string, Dec
     if (!integerValueOrNull(x) || !integerValueOrNull(y) || !integerValueOrNull(z)
       || x < 0 || x >= dimensions.width || y < 0 || y >= dimensions.height || z < 0 || z >= dimensions.depth) continue;
     const world = {
-      x: position.x + (signedSize.x < 0 ? -x : x),
-      y: position.y + (signedSize.y < 0 ? -y : y),
-      z: position.z + (signedSize.z < 0 ? -z : z),
+      x: minimum.x + x,
+      y: minimum.y + y,
+      z: minimum.z + z,
     };
     const key = coordinateKey(world);
     const voxel = blocks.get(key);
@@ -921,18 +933,11 @@ function dimensionsFor(bounds: BlueprintBounds): { width: number; height: number
 }
 
 function declaredDimensions(regions: readonly ParsedRegion[]): { width: number; height: number; depth: number } {
-  const extents = regions.map(({ preview }) => {
-    const end = {
-      x: preview.position.x + (preview.signedSize.x < 0 ? -(preview.dimensions.width - 1) : preview.dimensions.width - 1),
-      y: preview.position.y + (preview.signedSize.y < 0 ? -(preview.dimensions.height - 1) : preview.dimensions.height - 1),
-      z: preview.position.z + (preview.signedSize.z < 0 ? -(preview.dimensions.depth - 1) : preview.dimensions.depth - 1),
-    };
-    return {
-      minX: Math.min(preview.position.x, end.x), maxX: Math.max(preview.position.x, end.x),
-      minY: Math.min(preview.position.y, end.y), maxY: Math.max(preview.position.y, end.y),
-      minZ: Math.min(preview.position.z, end.z), maxZ: Math.max(preview.position.z, end.z),
-    };
-  });
+  const extents = regions.map(({ preview: { dimensions }, minimum }) => ({
+    minX: minimum.x, maxX: minimum.x + dimensions.width - 1,
+    minY: minimum.y, maxY: minimum.y + dimensions.height - 1,
+    minZ: minimum.z, maxZ: minimum.z + dimensions.depth - 1,
+  }));
   return dimensionsFor({
     minX: Math.min(...extents.map((extent) => extent.minX)), maxX: Math.max(...extents.map((extent) => extent.maxX)),
     minY: Math.min(...extents.map((extent) => extent.minY)), maxY: Math.max(...extents.map((extent) => extent.maxY)),

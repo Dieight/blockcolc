@@ -1,0 +1,9 @@
+/* Shared glyph and progress primitives; feature layout stays with its owner. */
+.pixel-icon{display:inline-block;flex-shrink:0;vertical-align:middle;pointer-events:none}
+.pixel-progress-wrap{min-width:0;width:100%}
+.pixel-progress{display:grid;grid-template-columns:repeat(var(--pixel-cells),minmax(0,1fr));gap:3px;min-width:0;width:100%;height:8px}
+.pixel-progress>i{display:block;overflow:hidden;background:var(--line);border-radius:1px}
+.pixel-progress>i>b{display:block;height:100%;background:var(--focus);transition:width .24s ease-out}
+.pixel-progress-rounds{height:14px;gap:4px}
+.pixel-progress-scale{display:block;margin-top:6px;color:var(--muted);font-size:12px;line-height:1.4}
+@media(prefers-reduced-motion:reduce){.pixel-progress>i>b{transition:none}}

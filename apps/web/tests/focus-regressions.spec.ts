@@ -100,6 +100,10 @@ test("an app-switch-limit exit keeps the marathon at the same round", async ({ p
   await page.clock.install({ time: new Date("2026-08-03T08:00:00Z") });
   await createDefaultProject(page);
   await configureOneMinuteRounds(page);
+  await page.getByRole('button', { name: '设置', exact: true }).click();
+  await page.getByLabel('开启专注完整性').check();
+  await expect.poll(async () => (await readPersistedDomainState(page)).state.focusIntegrityPolicy.enabled).toBe(true);
+  await page.getByRole('button', { name: '计时', exact: true }).click();
   await page.getByRole("button", { name: "调整本次计划" }).click();
   const sheet = await pickEndTime1605(page);
   await sheet.getByRole("button", { name: "确认计划" }).click();
@@ -118,6 +122,8 @@ test("an app-switch-limit exit keeps the marathon at the same round", async ({ p
       Object.defineProperty(document, "hidden", { configurable: true, get: () => true });
       document.dispatchEvent(new Event("visibilitychange"));
     });
+    // Start the simulated dwell after the durable background command commits.
+    await expect.poll(async () => (await readPersistedDomainState(page)).state.activeFocusSession?.integrity.backgroundReason).toBe('web-visibility');
     await page.clock.fastForward(3_200);
     await page.evaluate(() => {
       Object.defineProperty(document, "hidden", { configurable: true, get: () => false });

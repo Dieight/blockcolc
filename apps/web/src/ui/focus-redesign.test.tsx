@@ -39,13 +39,17 @@ describe('shared focus face and clock gesture', () => {
 });
 
 describe('statistics template contracts', () => {
-  it('uses area-proportional dots, keeps zero days distinct, and never plots future facts', () => {
+  it('uses fixed pixel bands, keeps zero days distinct, and disables future dates', () => {
     const days = [{date:'2026-09-07',minutes:25,sessions:1,future:false}, {date:'2026-09-08',minutes:100,sessions:2,future:false}, {date:'2026-09-09',minutes:0,sessions:0,future:false}, {date:'2026-09-10',minutes:500,sessions:4,future:true}];
-    const html = renderToStaticMarkup(<FocusCalendarChart days={days} today="2026-09-09"/>);
+    const html = renderToStaticMarkup(<FocusCalendarChart days={days} today="2026-09-09" selection={{start:'2026-09-07',end:'2026-09-09'}} onSelectionChange={() => {}}/>);
     expect(html).toContain('data-chart-template="F10"');
-    expect(html).toContain('r="2.3"'); expect(html).toContain('r="4.6"');
-    expect(html).toContain('is-empty'); expect(html).not.toContain('data-minutes="500"');
+    expect([...html.matchAll(/class="calendar-pixel"/g)]).toHaveLength(4);
+    expect(html).toContain('data-level="0"'); expect(html).toContain('aria-disabled="true"');
+    expect(html).not.toContain('data-minutes="500"');
     expect(html).not.toContain('type="date"');
+    expect(html).not.toContain('calendar-selection');
+    expect(html).not.toContain('is-selected');
+    expect([...html.matchAll(/aria-selected="true"/g)]).toHaveLength(3);
     expect(html).toContain('calendar-day-hit');
     expect(html).toContain('tabindex="0"');
   });
@@ -56,7 +60,8 @@ describe('statistics template contracts', () => {
     expect(html).not.toContain('chart-tick');
     expect(html).toContain('完整长中文标题'); expect(html).toContain('50 分');
     expect(html).toContain('完整长中文标题 · 1 小时 40 分钟 · 66.7%');
-    expect(html).toContain('aria-label="专注时间占比。完整长中文标题 · 1 小时 40 分钟 · 66.7%；另一个任务 · 50 分钟 · 33.3%。');
+    expect(html).toContain('aria-label="近 30 天专注时间占比。完整长中文标题 · 1 小时 40 分钟 · 66.7%；另一个任务 · 50 分钟 · 33.3%。');
+    expect(html).toContain('allocation-cluster-name'); expect(html).toContain('allocation-cluster-time');
     expect([...html.matchAll(/data-allocation-unit="true"/g)]).toHaveLength(100);
   });
   it('keeps zero and extreme values honest without cross-chart definitions', () => {

@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import type { DomainState } from '@blockcolc/domain';
 import { projectTodayFocusTimeline, type TodayFocusSeries } from './today-focus-timeline';
 import './styles/minimal-today.css';
+import { PixelClock, PixelFlag } from './ui/PixelIcon';
 
 function displaySeries(series: TodayFocusSeries[]): TodayFocusSeries[] {
   const known = series.filter(row => !row.unallocated).sort((a, b) => b.totalMs - a.totalMs || a.key.localeCompare(b.key));
@@ -49,8 +50,8 @@ export function MinimalTodayPanel({ state, date }: { state: DomainState; date: s
   const outline = occupiedPerHour.map((count, hour) => `${hour === 0 ? 'M' : 'L'}${x(hour)},${chartBase - count * pixelHeight} L${x(hour + 1)},${chartBase - count * pixelHeight}`).join(' ');
   return <section className="minimal-today" aria-label="今日专注时间轴">
     <header className="minimal-today-heading">
-      <div><span>今日专注</span><strong>{duration(data.totalMs)}</strong></div>
-      <p><strong>{data.completedRounds}</strong><span>{data.targetRounds === null ? '轮' : ` / ${data.targetRounds} 轮`}</span></p>
+      <div><span><PixelClock size={14}/>今日专注</span><strong>{duration(data.totalMs)}</strong></div>
+      <p><PixelFlag size={14}/><strong>{data.completedRounds}</strong><span>{data.targetRounds === null ? '轮' : ` / ${data.targetRounds} 轮`}</span></p>
     </header>
     <svg className="minimal-today-chart" viewBox="0 0 400 120" role="img"
       aria-label={`今日实际专注 ${duration(data.totalMs)}，横轴零点至二十四点，每小时最多堆叠四格，每格代表该小时内一段实际专注的十五分钟，颜色代表小任务或习惯。`}>

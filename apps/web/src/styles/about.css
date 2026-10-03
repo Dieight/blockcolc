@@ -1,0 +1,18 @@
+/* About owns its layout, including both project and dependency licenses. */
+.about-dialog{padding:24px 20px 18px;border-radius:12px;color:var(--ink)}
+.about-brand{display:flex;align-items:center;gap:14px;padding-right:32px;margin-bottom:16px}
+.about-brand>.pixel-icon{color:var(--focus);flex:0 0 auto}
+.about-brand h2{display:grid;gap:3px;margin:0;font-size:22px;line-height:1.3}
+.about-brand h2>span{font-size:12px;font-weight:500;letter-spacing:.1em;color:var(--muted)}
+.about-dialog .about-version{margin:5px 0 0;font-size:11px;font-variant-numeric:tabular-nums;color:var(--muted)}
+.about-dialog .about-description{font-size:13px;line-height:1.65;color:var(--muted)}
+.about-dialog dl{margin:18px 0 12px}
+.about-dialog dl>div{display:grid;grid-template-columns:72px minmax(0,1fr);align-items:center;gap:8px;min-height:48px;padding:4px 0;border-top:1px solid var(--line)}
+.about-dialog dt{font-size:12px;color:var(--muted)}
+.about-dialog dd{margin:0;font-size:12px;line-height:1.5;overflow-wrap:anywhere}
+.about-dialog dd>a{display:inline-flex;align-items:center;gap:7px;min-height:44px;color:var(--focus);text-decoration:none;font-weight:600}
+.about-dialog dd>a svg{width:14px;height:14px}
+.about-dialog .legal-note{font-size:11px;line-height:1.6;color:var(--muted);margin:8px 0 14px}
+.about-dialog .check-update{display:flex;align-items:center;justify-content:center;gap:8px;min-height:44px;width:100%;border:1px solid var(--line);border-radius:4px;background:var(--surface-subtle);color:var(--focus);font-size:13px;font-weight:600}
+.about-dialog .check-update .pixel-icon{width:18px;height:18px}
+.about-dialog .update-result{margin:12px 0 0;font-size:12px;line-height:1.5}

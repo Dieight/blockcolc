@@ -5,8 +5,8 @@ export const FOCUS_PREFERENCES_KEY = 'blockcolc-focus-preferences-v1';
 export function defaultFocusPreferences(): FocusPreferences {
   return {
     focusMinutes: 45, habitFocusMinutes: 45, habitTargetRounds: 10, breakMinutes: 5,
-    lightingQuality: 'auto', constructionOutlineVisibility: 'current',
-    showWorldCoordinates: false, focusGlassTransparency: 50, themeMode: 'system',
+    lightingQuality: 'cinematic', constructionOutlineVisibility: 'current',
+    showWorldCoordinates: false, focusGlassTransparency: 100, themeMode: 'system',
     returnToFocusReminders: true,
     autoContinueFocus: false,
     realWeatherEnabled: false,
@@ -35,7 +35,7 @@ export function parseFocusPreferences(input: unknown): FocusPreferences {
     breakMinutes: integer(value.breakMinutes, defaults.breakMinutes, 0, 60),
     lightingQuality: value.lightingQuality === 'performance' || value.lightingQuality === 'balanced'
       || value.lightingQuality === 'cinematic' || value.lightingQuality === 'auto'
-      ? value.lightingQuality : value.visualExperiment === 'water' || value.visualExperiment === 'mist-beam' ? 'cinematic' : 'auto',
+      ? value.lightingQuality : defaults.lightingQuality,
     constructionOutlineVisibility: value.constructionOutlineVisibility === 'off'
       || value.constructionOutlineVisibility === 'all' || value.constructionOutlineVisibility === 'current'
       ? value.constructionOutlineVisibility : 'current',

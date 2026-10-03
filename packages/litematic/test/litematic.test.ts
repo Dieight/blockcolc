@@ -99,6 +99,55 @@ describe("Litematic decoding boundaries", () => {
     }
   });
 
+  it.each(Array.from({ length: 8 }, (_, mask) => mask))("keeps container axes and block facing for selection direction %i", async (mask) => {
+    const palette: PaletteInput[] = [
+      "minecraft:stone", "minecraft:oak_planks", "minecraft:red_wool", "minecraft:glass",
+      { name: "minecraft:oak_stairs", properties: { facing: "north", half: "bottom", shape: "inner_left" } },
+      { name: "minecraft:lantern", properties: { hanging: "false" } },
+      { name: "minecraft:oak_log", properties: { axis: "z" } }, "minecraft:gold_block",
+    ];
+    const values = Array.from({ length: 8 }, (_, index) => index);
+    const size = { x: mask & 1 ? -2 : 2, y: mask & 2 ? -2 : 2, z: mask & 4 ? -2 : 2 };
+    const position = { x: 10 + (mask & 1 ? 1 : 0), y: 20 + (mask & 2 ? 1 : 0), z: 30 + (mask & 4 ? 1 : 0) };
+    const bytes = makeLitematic({ regions: { selection: makeRegion({ position, size, palette, values }) } });
+    const { blueprint } = await parseLitematic(bytes);
+    for (const [index, state] of palette.entries()) {
+      const voxel = blueprint.voxels.find(({ x, y, z }) => x === index % 2 && y === Math.floor(index / 4) && z === Math.floor(index / 2) % 2);
+      expect(voxel?.sourceBlockId).toBe(typeof state === "string" ? state : state.name);
+      expect(voxel?.sourceBlockState).toEqual(typeof state === "string" ? undefined : state.properties);
+    }
+    expect(blueprint.id.endsWith("-coords2")).toBe(mask !== 0);
+    expect((await parseLitematic(bytes)).blueprint).toEqual(blueprint);
+    expect((await parseLitematic(bytes, { blueprintId: "stable-builtin-id" })).blueprint.id).toBe("stable-builtin-id");
+  });
+
+  it("merges overlapping negative selections from the minimum corner, including air", async () => {
+    const { blueprint } = await parseLitematic(makeLitematic({ regions: {
+      "a-base": makeRegion({ position: { x: 0, y: 0, z: 0 }, size: { x: 4, y: 1, z: 1 }, palette: ["minecraft:stone"], values: [0, 0, 0, 0] }),
+      "b-overlay": makeRegion({ position: { x: 1, y: 0, z: 0 }, size: { x: -2, y: 1, z: 1 }, palette: ["minecraft:air", "minecraft:glass"], values: [0, 1] }),
+    } }));
+    expect(blueprint.voxels.map(({ x, sourceBlockId }) => [x, sourceBlockId]).sort()).toEqual([
+      [0, "minecraft:glass"], [1, "minecraft:stone"], [2, "minecraft:stone"],
+    ]);
+  });
+
+  it("places sign, campfire and piston data at container coordinates in a three-axis negative region", async () => {
+    const { blueprint, preview } = await parseLitematic(makeLitematic({ regions: { entities: makeRegion({
+      position: { x: 7, y: 9, z: 11 }, size: { x: -2, y: -2, z: -2 },
+      palette: ["minecraft:stone", "minecraft:oak_wall_sign", "minecraft:campfire", "minecraft:moving_piston"],
+      values: [0, 1, 0, 0, 0, 2, 3, 0],
+      tileEntities: [
+        blockTileEntity("minecraft:sign", 1, 0, 0, { front_text: nbt.compound({ messages: nbt.list(8, [nbt.string('{"text":"Ground floor"}')]) }) }),
+        blockTileEntity("minecraft:campfire", 1, 1, 0, { Items: nbt.list(10, [nbt.compound({ Slot: nbt.byte(0), id: nbt.string("minecraft:bread"), count: nbt.byte(1) })]) }),
+        pistonTileEntity(0, 1, 1, nbt.compound({ Name: nbt.string("minecraft:oak_log"), Properties: nbt.compound({ axis: nbt.string("x") }) })),
+      ],
+    }) } }));
+    expect(blueprint.voxels.find(({ sign }) => sign)).toMatchObject({ x: 1, y: 0, z: 0, sign: { front: { lines: ["Ground floor"] } } });
+    expect(blueprint.voxels.find(({ campfire }) => campfire)).toMatchObject({ x: 1, y: 1, z: 0, campfire: { slots: [{ slot: 0, itemId: "minecraft:bread", count: 1 }] } });
+    expect(blueprint.voxels.find(({ movingPistonMovedState }) => movingPistonMovedState)).toMatchObject({ x: 0, y: 1, z: 1, movingPistonMovedState: { blockId: "minecraft:oak_log", properties: { axis: "x" } } });
+    expect(preview.compatibility.ignoredTileEntities).toBe(0);
+  });
+
   it("orders newly imported structure through connected supports before upper frame blocks", async () => {
     const input = makeLitematic({ regions: { supported: makeRegion({
       position: { x: 0, y: 0, z: 0 }, size: { x: 1, y: 3, z: 1 },
@@ -217,8 +266,8 @@ describe("Litematic decoding boundaries", () => {
 
     const result = await parseLitematic(input);
     const movingPistons = result.blueprint.voxels.filter((voxel) => voxel.sourceBlockId === "minecraft:moving_piston");
-    expect(movingPistons.find((voxel) => voxel.x === 1)?.movingPistonMovedState).toEqual({ blockId: "minecraft:oak_log" });
-    expect(movingPistons.find((voxel) => voxel.x === 0)?.movingPistonMovedState).toEqual({ blockId: "minecraft:stone" });
+    expect(movingPistons.find((voxel) => voxel.x === 0)?.movingPistonMovedState).toEqual({ blockId: "minecraft:oak_log" });
+    expect(movingPistons.find((voxel) => voxel.x === 1)?.movingPistonMovedState).toEqual({ blockId: "minecraft:stone" });
     expect(movingPistons.every((voxel) => voxel.movingPistonMovedState?.blockId !== "minecraft:diamond_block")).toBe(true);
     expect(result.preview.compatibility).toMatchObject({
       ignoredTileEntities: 1,

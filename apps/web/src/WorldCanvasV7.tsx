@@ -3,11 +3,11 @@ import type { ApplicationService } from '@blockcolc/application';
 import type { WorldEnvironmentStyle } from '@blockcolc/domain';
 import type { AstronomyContext, BlueprintV1, ConstructionOutlineVisibility, ExternalWeatherVisualOverride, VoxelLightingQuality, VoxelRenderer } from '@blockcolc/voxel';
 import type { ResourcePackRepository, ResourcePackSelectionMetadata } from '@blockcolc/resource-pack-indexeddb';
-import { Map as MapIcon, RotateCcw, Hammer } from 'lucide-react';
+import { PixelMap as MapIcon, PixelReset as RotateCcw, PixelHammer as Hammer } from './ui/PixelIcon';
 import { LoadingPage, type LoadingStage } from './LoadingPage';
 import { waitForInitialEnvironment } from './initial-environment';
 import { useWorldGlass } from './use-world-glass';
-import { BuildingMemoryPanel, createBuildingMemory, conditionLabel } from './BuildingMemoryPanel';
+import { conditionLabel } from './BuildingMemoryPanel';
 import { loadVoxelModule, useBlueprintCatalog, blueprintName, resourcePackAtlasMaximumSizeForTest } from './voxel-runtime';
 import { toVoxelWorlds, decorationDatesByProject } from './world-projection';
 import { startRendererGeneration, scheduleAfterPaint } from './renderer-generation';
@@ -19,7 +19,37 @@ import type { WorldDebugProjection } from './world-debug';
 import { closeFocusSubmissionObservation, commitFocusSubmissionProjection, isFocusSubmissionDiagnosticsEnabled, observeFocusSubmissionFrame, peekFocusSubmissionProjection } from './submission-performance';
 import { finishQualityLifecycleBoot, recordQualityLifecyclePhase } from './quality-lifecycle-performance';
 
-export const WorldCanvasV7 = memo(function WorldCanvasV7({service,resourcePacks,lightingQuality,constructionOutlineVisibility,showWorldCoordinates,environmentStyle,worldSeed,terrainGenerationVersion,constructionFeedback=0,sessionActive=false,immersivePresentation=sessionActive,immersiveBand={bottom:0,right:0},glassClarity=50,externalWeatherOverride=null,astronomyContext=null,worldDebug=null,initialEnvironmentPending=false,openingProjectId=null,focusedProjectId,memoryProjectId,onSelectProject,onInitialProjectFocus,onClearWorldFocus,onCloseMemory,onContinueProject,switchBlockedReason,visible,onPickTerrain,pickedCell}:{service:ApplicationService;resourcePacks:ResourcePackRepository;lightingQuality:VoxelLightingQuality;constructionOutlineVisibility:ConstructionOutlineVisibility;showWorldCoordinates:boolean;environmentStyle:WorldEnvironmentStyle;worldSeed:string;terrainGenerationVersion:4;constructionFeedback?:number;sessionActive?:boolean;immersivePresentation?:boolean;immersiveBand?:{bottom:number;right:number};glassClarity?:number;externalWeatherOverride?:ExternalWeatherVisualOverride|null;astronomyContext?:AstronomyContext|null;worldDebug?:WorldDebugProjection|null;initialEnvironmentPending?:boolean;openingProjectId?:string|null;focusedProjectId:string|null;memoryProjectId:string|null;onSelectProject:(projectId:string)=>void;onInitialProjectFocus?:(projectId:string)=>void;onClearWorldFocus:()=>void;onCloseMemory:()=>void;onContinueProject:(projectId:string)=>Promise<void>;switchBlockedReason?:string;visible:boolean;onPickTerrain:(position:{x:number;y:number;z:number})=>void;pickedCell:{x:number;y:number;z:number}|null}) {
+interface WorldCanvasProps {
+  service: ApplicationService;
+  /** The service is mutable; memo must observe committed domain changes. */
+  stateRevision: number;
+  resourcePacks: ResourcePackRepository;
+  lightingQuality: VoxelLightingQuality;
+  constructionOutlineVisibility: ConstructionOutlineVisibility;
+  showWorldCoordinates: boolean;
+  environmentStyle: WorldEnvironmentStyle;
+  worldSeed: string;
+  terrainGenerationVersion: 4;
+  constructionFeedback?: number;
+  sessionActive?: boolean;
+  immersivePresentation?: boolean;
+  immersiveBand?: { bottom: number; right: number };
+  glassClarity?: number;
+  externalWeatherOverride?: ExternalWeatherVisualOverride | null;
+  astronomyContext?: AstronomyContext | null;
+  worldDebug?: WorldDebugProjection | null;
+  initialEnvironmentPending?: boolean;
+  openingProjectId?: string | null;
+  focusedProjectId: string | null;
+  onSelectProject: (projectId: string) => void;
+  onInitialProjectFocus?: (projectId: string) => void;
+  onClearWorldFocus: () => void;
+  visible: boolean;
+  onPickTerrain: (position: { x: number; y: number; z: number }) => void;
+  pickedCell: { x: number; y: number; z: number } | null;
+}
+
+export const WorldCanvasV7 = memo(function WorldCanvasV7({service,resourcePacks,lightingQuality,constructionOutlineVisibility,showWorldCoordinates,environmentStyle,worldSeed,terrainGenerationVersion,constructionFeedback=0,sessionActive=false,immersivePresentation=sessionActive,immersiveBand={bottom:0,right:0},glassClarity=50,externalWeatherOverride=null,astronomyContext=null,worldDebug=null,initialEnvironmentPending=false,openingProjectId=null,focusedProjectId,onSelectProject,onInitialProjectFocus,onClearWorldFocus,visible,onPickTerrain,pickedCell}:WorldCanvasProps) {
   const projectionToken=peekFocusSubmissionProjection();
   const projectionStartedAt=projectionToken===null?0:performance.now();
   const world=service.worldProjection();
@@ -404,8 +434,6 @@ export const WorldCanvasV7 = memo(function WorldCanvasV7({service,resourcePacks,
       current.resetCamera();
     }
   },[openingProjectId]);
-  const memoryProject=world.projects.find(project=>project.project.id===memoryProjectId);
-  const memory=memoryProject?createBuildingMemory(state,memoryProject,blueprintLabel(memoryProject.building.blueprintId,memoryProject.building.importedBlueprint?.title)):null;
   const loadingStatus=!ready?(resourcePackError?'世界初始化失败，请重新打开此页面或刷新后重试。':bootStage==='environment'?'正在校准光照与天气…':bootStage==='scene'?'正在准备地形与建筑…':'正在读取世界资源…'):resourcePackLoading?'正在更新世界材质…':environmentUpdating?'正在更新世界画面…':null;
   return <>
     <figure className={focusedProjectId?'world is-project-focused':'world'}>
@@ -428,7 +456,6 @@ export const WorldCanvasV7 = memo(function WorldCanvasV7({service,resourcePacks,
       </div>}
       {visible&&constructionFeedback>0&&<div key={constructionFeedback} className="construction-feedback" role="status"><Hammer/><span>材料已送达，继续建造</span><i/><i/><i/></div>}
     </figure>
-    {visible&&!immersivePresentation&&memory&&<BuildingMemoryPanel memory={memory} switchBlockedReason={memory.isActive?undefined:switchBlockedReason} onClose={onCloseMemory} onContinue={()=>void onContinueProject(memory.projectId)}/>}
     {loadingStatus&&<LoadingPage stage={resourcePackError?'error':!ready?bootStage:resourcePackLoading?'resources':'environment'} status={loadingStatus}/>}
   </>;
 });

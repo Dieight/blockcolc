@@ -18,17 +18,20 @@ test("replaces the old visual experiments with persistent adaptive lighting pres
   await page.getByRole("button", { name: "开始建造" }).click();
 
   const canvas = page.getByLabel("项目建筑世界");
-  await expect(canvas).toHaveAttribute("data-requested-lighting-quality", "auto");
+  await expect(canvas).toHaveAttribute("data-requested-lighting-quality", "cinematic");
   await expect(canvas).toHaveAttribute("data-continuous-rendering", "false");
 
   await page.getByRole("button", { name: "设置" }).click();
   const quality = page.getByRole("group", { name: "光影质量" });
+  await expect(quality.getByRole("button", { name: "精致" })).toHaveAttribute("aria-pressed", "true");
+  await quality.getByRole("button", { name: "自动" }).click();
   await expect(quality.getByRole("button", { name: "自动" })).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByText("更高档位增加耗电")).toBeVisible();
   const constructionOutline = page.getByRole("group", { name: "施工轮廓" });
   await expect(constructionOutline.getByRole("button", { name: "当前" })).toHaveAttribute("aria-pressed", "true");
   await constructionOutline.getByRole("button", { name: "关闭" }).click();
   await page.getByRole("button", { name: "计时" }).click();
+  await expect(canvas).toHaveAttribute("data-requested-lighting-quality", "auto");
   await expect(canvas).toHaveAttribute("data-construction-outline-visibility", "off");
   await expect(canvas).toHaveAttribute("data-planned-outline-voxel-count", "0");
   await page.getByRole("button", { name: "设置" }).click();

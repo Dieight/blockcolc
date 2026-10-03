@@ -1,133 +1,50 @@
-.world-building-index {
-  position: absolute;
-  z-index: 9;
-  left: max(12px, var(--safe-left));
-  top: max(60px, calc(var(--safe-top) + 12px));
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
+.world-building-index{position:absolute;z-index:9;left:max(12px,var(--safe-left));top:max(60px,calc(var(--safe-top) + 12px));width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+.world-building-index:focus-within{width:min(360px,calc(100% - 24px));height:auto;overflow:visible;clip-path:none;display:grid;gap:4px;padding:8px;border:1px solid var(--world-glass-border);border-radius:6px;background:var(--world-glass-background);box-shadow:var(--world-glass-shadow);backdrop-filter:var(--world-glass-filter);-webkit-backdrop-filter:var(--world-glass-filter);white-space:normal}
+.world-building-index button{min-height:44px;border:1px solid rgba(255,255,255,.14);border-radius:4px;background:transparent;color:#fff;text-align:left}
+
+/* Memory is a workbench state, not a modal or a second surface over it. */
+.world-screen:not(.is-focusing):not(.has-report) .focus-workbench-panel.is-memory{display:flex;align-self:stretch;justify-self:stretch;margin:0;max-width:none;min-height:0;height:100%;overflow:auto;overscroll-behavior:contain;scrollbar-width:thin;padding:18px 20px;background:var(--surface);color:var(--ink)}
+.building-memory-panel{min-width:0;min-height:100%;width:100%;display:flex;flex-direction:column;color:var(--ink)}
+.building-memory-panel header{position:sticky;top:0;z-index:1;display:flex;align-items:center;justify-content:space-between;gap:8px;padding-bottom:2px;background:var(--surface)}
+.building-memory-panel header>div{min-width:0;flex:1}
+.building-memory-caption{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:12px;line-height:1.5}
+.building-memory-caption .pixel-icon{width:16px;height:16px;color:var(--focus)}
+.building-memory-panel h2{margin:3px 0 0;font-size:21px;line-height:1.25;font-weight:650;overflow-wrap:anywhere}
+.building-memory-close{min-width:44px;min-height:44px;flex:0 0 auto;display:flex;align-items:center;justify-content:center;gap:6px;padding:6px 0 6px 8px;border:0;background:transparent;color:var(--muted);font-size:12px}
+.building-memory-close .pixel-icon{width:18px;height:18px}
+.building-memory-progress{margin-top:10px}
+.building-memory-progress>div:first-child{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:4px}
+.building-memory-progress strong{font-size:18px;font-weight:650;font-variant-numeric:tabular-nums}
+.building-memory-progress span,.building-memory-progress small{color:var(--muted);font-size:12px;line-height:1.5;overflow-wrap:anywhere}
+.building-memory-progress small{display:block;margin-top:3px}
+.building-memory-facts{flex:1 0 auto;display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);grid-auto-rows:minmax(50px,1fr);gap:8px 12px;margin:12px 0 0}
+.building-memory-facts>div{min-width:0;display:flex;flex-direction:column;justify-content:center;gap:4px;border-top:1px solid var(--line);padding:6px 0}
+.building-memory-panel dt{color:var(--muted);font-size:12px;line-height:1.5}
+.building-memory-panel dd{margin:0;font-size:13px;line-height:1.5;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.building-memory-investment dd,.building-memory-rounds dd{display:flex;align-items:baseline;gap:4px;flex-wrap:wrap}
+.building-memory-investment strong{font-size:30px;line-height:1.1;font-weight:650;letter-spacing:-.03em}
+.building-memory-rounds strong{font-size:30px;line-height:1.1;font-weight:600}
+.building-memory-investment span,.building-memory-rounds span{color:var(--muted);font-size:12px}
+.building-memory-next{display:flex;align-items:baseline;gap:8px;margin:7px 0 0;padding:5px 0 0;border-top:1px solid var(--line)}
+.building-memory-next span{color:var(--muted);font-size:12px;flex-shrink:0}
+.building-memory-next strong{font-size:14px;font-weight:600;line-height:1.5;overflow-wrap:anywhere}
+.building-memory-action{width:100%;min-height:48px;flex-shrink:0;margin-top:10px;display:flex;align-items:center;justify-content:center;gap:8px;border:0;border-radius:6px;background:var(--surface-active);color:var(--focus);box-shadow:inset 0 -2px 0 color-mix(in srgb,var(--focus) 20%,transparent);font-size:15px;font-weight:650}
+.building-memory-action .pixel-icon{width:20px;height:20px}
+.building-memory-action:disabled{opacity:.55;box-shadow:none}
+.building-memory-blocked,.building-memory-monument,.building-memory-error{margin:5px 0 0;font-size:12px;color:var(--muted);line-height:1.45;overflow-wrap:anywhere}
+.building-memory-error{color:var(--danger)}
+@media(prefers-reduced-motion:no-preference){.building-memory-panel{animation:building-memory-enter .18s ease-out both}}
+@keyframes building-memory-enter{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+@media(min-width:700px) and (max-height:620px){
+  .world-screen:not(.is-focusing):not(.has-report) .focus-workbench-panel.is-memory{padding:12px 16px}
+  .building-memory-panel h2{font-size:19px}
+  .building-memory-progress{margin-top:4px}
+  .building-memory-facts{margin-top:8px;gap:6px 12px;grid-auto-rows:minmax(44px,auto)}
+  .building-memory-next{margin-top:5px}
+  .building-memory-investment strong,.building-memory-rounds strong{font-size:26px}
 }
-
-.world-building-index:focus-within {
-  width: min(360px, calc(100% - 24px));
-  height: auto;
-  overflow: visible;
-  clip-path: none;
-  display: grid;
-  gap: 4px;
-  padding: 8px;
-  border: 1px solid var(--world-glass-border);
-  border-radius: 6px;
-  background: var(--world-glass-background);
-  box-shadow: var(--world-glass-shadow);
-  backdrop-filter: var(--world-glass-filter);
-  -webkit-backdrop-filter: var(--world-glass-filter);
-  white-space: normal;
-}
-
-.world-building-index button {
-  min-height: 44px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 4px;
-  background: transparent;
-  color: #fff;
-  text-align: left;
-}
-
-.building-memory-layer {
-  position: fixed;
-  z-index: 31;
-  inset: 0;
-  background: rgba(8, 14, 11, 0.18);
-  backdrop-filter: blur(1.5px);
-  -webkit-backdrop-filter: blur(1.5px);
-}
-
-.building-memory-panel {
-  position: absolute;
-  z-index: 1;
-  left: var(--safe-left);
-  right: var(--safe-right);
-  bottom: calc(68px + var(--safe-bottom));
-  width: auto;
-  max-height: min(70dvh, 580px);
-  overflow: auto;
-  overscroll-behavior: contain;
-  padding: 16px;
-  border: 1px solid var(--world-glass-border);
-  border-radius: 10px 10px 0 0;
-  background: var(--world-glass-background);
-  color: #fff;
-  box-shadow: var(--world-glass-shadow);
-  backdrop-filter: var(--world-glass-filter);
-  -webkit-backdrop-filter: var(--world-glass-filter);
-}
-
-.building-memory-panel header,
-.building-memory-progress > div:first-child,
-.building-memory-panel dl > div {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.building-memory-panel header > div { min-width: 0; }
-.building-memory-panel header span,
-.building-memory-next span { color: var(--world-overlay-muted); font-size: 11px; }
-.building-memory-panel h2 { margin: 2px 0 0; overflow: hidden; font-size: 18px; text-overflow: ellipsis; white-space: nowrap; }
-.building-memory-close { width: 44px; height: 44px; flex: 0 0 44px; display: grid; place-items: center; border: 0; background: transparent; color: #fff; }
-.building-memory-close:focus-visible { outline: 2px solid #7fd6a1; outline-offset: -4px; }
-.building-memory-close svg { width: 19px; }
-.building-memory-progress { margin-top: 12px; }
-.building-memory-progress strong { font-size: 28px; font-variant-numeric: tabular-nums; }
-.building-memory-progress span,
-.building-memory-progress small { color: var(--world-overlay-muted); font-size: 11px; }
-.building-memory-progress .meter { height: 4px; margin: 8px 0; background: rgba(255, 255, 255, 0.18); }
-.building-memory-progress .meter i { background: #7fd6a1; }
-.building-memory-panel dl { margin: 14px 0 0; }
-.building-memory-panel dl > div { min-height: 30px; border-top: 1px solid rgba(255, 255, 255, 0.1); }
-.building-memory-panel dt { color: var(--world-overlay-muted); font-size: 12px; }
-.building-memory-panel dd { margin: 0; font-size: 12px; font-weight: 700; }
-.building-memory-next { display: grid; gap: 3px; margin: 12px 0 0; }
-.building-memory-next strong { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
-.building-memory-action { width: 100%; min-height: 46px; margin-top: 14px; border: 0; border-radius: 6px; background: #6fce96; color: #0c1410; font-weight: 800; }
-.building-memory-action:disabled { background: #66756d; color: #d9e2dd; }
-.building-memory-blocked,
-.building-memory-monument { margin: 8px 0 0; color: var(--world-overlay-muted); font-size: 11px; line-height: 1.45; }
-
-@media (min-width: 700px) {
-  .building-memory-panel {
-    left: auto;
-    top: calc(58px + var(--safe-top));
-    right: var(--safe-right);
-    bottom: auto;
-    width: min(410px, calc(100vw - 128px));
-    max-height: calc(100dvh - 58px - var(--safe-top) - var(--safe-bottom));
-    border-radius: 0 0 0 10px;
-  }
-}
-
-@media (max-height: 620px) and (orientation: landscape) {
-  .building-memory-panel {
-    left: auto;
-    top: calc(58px + var(--safe-top));
-    right: var(--safe-right);
-    bottom: auto;
-    width: min(400px, calc(100vw - 24px));
-    max-height: calc(100dvh - 58px - var(--safe-top) - var(--safe-bottom));
-    padding: 12px;
-    border-radius: 0 0 0 10px;
-  }
-  .building-memory-panel header { min-height: 40px; }
-  .building-memory-close { width: 40px; height: 40px; flex-basis: 40px; }
-  .building-memory-progress { margin-top: 6px; }
-  .building-memory-progress strong { font-size: 23px; }
-  .building-memory-panel dl { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 8px; }
-  .building-memory-panel dl > div { min-width: 0; min-height: 44px; display: grid; align-content: center; justify-content: start; gap: 2px; }
-  .building-memory-panel dd { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .building-memory-next { margin-top: 8px; }
-  .building-memory-action { min-height: 44px; margin-top: 8px; }
+/* The landscape grid must not grow to the memory's intrinsic content height.
+ * Long names can scroll inside the workbench without extending the viewport. */
+@media(min-width:700px) and (max-height:600px){
+  .world-screen:not(.is-focusing):not(.has-report):has(.focus-workbench-panel.is-memory){height:calc(100dvh - 58px - var(--safe-top));grid-template-rows:minmax(0,1fr)}
 }

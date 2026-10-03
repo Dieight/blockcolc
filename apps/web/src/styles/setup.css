@@ -1,7 +1,12 @@
 /* Project setup and shared loading presentation. */
 .setup-kind{display:flex;gap:2px;margin:0 0 18px;border:0;background:none;padding:0}
-.setup-kind button{min-height:44px;padding:9px 14px;border:0;background:transparent;border-radius:6px;color:#58635d;font-weight:500}
-.setup-kind button[aria-pressed="true"]{color:#17211c;font-weight:750;text-decoration:underline;text-decoration-thickness:2px;text-decoration-color:#276749;text-underline-offset:7px}
+.setup-title{display:flex;align-items:center;gap:10px}
+.setup-title>.pixel-icon{width:24px;height:24px;color:var(--focus);flex:0 0 auto}
+.setup-title h1{margin:0;font-size:23px;line-height:1.35}
+.setup-heading>p{margin:10px 0 20px;color:var(--muted);font-size:13px;line-height:1.6}
+.setup-kind button{display:flex;align-items:center;gap:7px;min-height:44px;padding:9px 12px;border:0;border-bottom:2px solid transparent;background:transparent;border-radius:0;color:var(--muted);font-size:13px;font-weight:500}
+.setup-kind button[aria-pressed="true"]{color:var(--focus);font-weight:750;border-bottom-color:var(--focus);text-decoration:none}
+.setup-actions .setup-submit{display:flex;align-items:center;justify-content:center;gap:8px;border-radius:6px}
 .setup-cancel{min-width:64px;border:0;background:none;color:#58635d;font-weight:700}
 .setup-actions>button:first-child:not(.primary){min-width:64px;border:0;background:none;color:#58635d;font-weight:700}
 .setup-error{margin:10px 0 0;color:#b4232c;font-size:13px}
@@ -9,7 +14,7 @@
 .setup-subtasks-head{display:flex;align-items:center;justify-content:space-between;min-height:28px;font-size:13px;font-weight:700}
 .setup-subtasks-head .settings-text-action{min-height:32px;font-size:13px}
 .setup-subtask-row{display:grid;grid-template-columns:30px minmax(0,1fr) 44px;gap:8px;align-items:center}
-.setup-subtask-order{width:28px;height:28px;display:grid;place-items:center;border-radius:4px;background:#e2ebe5;color:#276749;font-weight:800}
+.setup-subtask-order{width:28px;height:28px;display:grid;place-items:center;border-radius:0;background:var(--surface-subtle);color:var(--focus);font-size:12px;font-weight:700;font-variant-numeric:tabular-nums}
 .setup-subtask-row .native-ime-entry input{width:100%;min-height:44px;padding:10px 12px;border:1px solid #aeb8b1;border-radius:6px;background:#fff;color:#17211c;font-size:15px}
 .setup-subtask-delete{width:44px;height:44px;padding:0;border:0;background:none;color:#b4232c;display:grid;place-items:center}
 .setup-subtask-delete svg{width:18px}

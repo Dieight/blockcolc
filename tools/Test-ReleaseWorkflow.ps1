@@ -3,8 +3,9 @@ param()
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Release-Common.ps1')
+& (Join-Path $PSScriptRoot 'Test-FullGatePolicy.ps1')
 
-Invoke-External -FilePath 'node' -Arguments @('--test', (Join-Path $PSScriptRoot 'check-ui-assets.test.mjs'), (Join-Path $PSScriptRoot 'web-release-report.test.mjs'))
+Invoke-External -FilePath 'node' -Arguments @('--test', (Join-Path $PSScriptRoot 'check-ui-assets.test.mjs'), (Join-Path $PSScriptRoot 'web-release-report.test.mjs'), (Join-Path $PSScriptRoot 'full-run-policy.test.mjs'))
 
 function Assert-True {
     param([Parameter(Mandatory)][bool]$Condition, [Parameter(Mandatory)][string]$Message)
@@ -24,6 +25,9 @@ function Assert-Throws {
     }
     throw "Expected failure matching '$MessagePattern', but the action passed."
 }
+
+$rootPackage = Get-Content -LiteralPath (Join-Path (Split-Path -Parent $PSScriptRoot) 'package.json') -Raw | ConvertFrom-Json
+Assert-True -Condition ($rootPackage.scripts.'test:web:release' -match '\s--\s*$') -Message 'Nested npm release scripts must forward runner flags after their own -- separator.'
 
 $hashA = ('a' * 64) -join ''
 Assert-True -Condition ((Get-ApkBuildChannel -ManifestTree 'E: application') -eq 'standard') -Message 'Legacy standard marker'

@@ -170,10 +170,17 @@ test('opening camera movement never opens memory and is not replayed by route ch
   await expect(canvas).toHaveAttribute('data-world-rebuild-count', rebuilds!);
 });
 
-test('minimal cold opening travels from the maximum to minimum settlement zoom', async ({ page }) => {
+for (const [environment, label, expectedMaximum] of [
+  ['ocean-island', '海洋小岛', 1.14],
+  ['natural-valley', '自然山谷', 0.9],
+] as const) test(`minimal cold opening travels from the maximum to minimum settlement zoom (${environment})`, async ({ page }) => {
   test.setTimeout(90_000);
   await createProject(page);
   await page.getByRole('button', { name: '设置', exact: true }).click();
+  const environmentChoice = page.getByRole('group', { name: '聚落环境' }).getByRole('button', { name: label, exact: true });
+  if (environment === 'ocean-island') await expect(environmentChoice).toHaveAttribute('aria-pressed', 'true');
+  else await environmentChoice.click();
+  await expect(environmentChoice).toHaveAttribute('aria-pressed', 'true');
   await page.getByRole('checkbox', { name: '开启极简模式' }).check();
   await page.getByRole('button', { name: '计时', exact: true }).click();
   await expect(page.locator('.minimal-clock-gesture')).toBeVisible();
@@ -181,13 +188,16 @@ test('minimal cold opening travels from the maximum to minimum settlement zoom',
   const canvas = page.getByLabel('项目建筑世界');
   await expect(canvas).toHaveAttribute('data-initial-reveal-started-count', '1', { timeout: 45_000 });
   await expect(canvas).toHaveAttribute('data-initial-reveal-completed-count', '1', { timeout: 15_000 });
+  await expect(canvas).toHaveAttribute('data-environment-style', environment);
   await expect(canvas).toHaveAttribute('data-opening-reveal-project-target', 'settlement');
   const [start, end, minimum, maximum, current] = await Promise.all([
     canvas.getAttribute('data-opening-reveal-from-distance'), canvas.getAttribute('data-opening-reveal-to-distance'),
     canvas.getAttribute('data-camera-minimum-distance-ratio'), canvas.getAttribute('data-camera-maximum-distance-ratio'),
     canvas.getAttribute('data-camera-distance-ratio'),
   ]);
-  expect(Number(start) / Number(end)).toBeCloseTo(2, 2);
+  expect(Number(minimum)).toBe(0.45);
+  expect(Number(maximum)).toBe(expectedMaximum);
+  expect(Number(start) / Number(end)).toBeCloseTo(expectedMaximum / 0.45, 2);
   expect(Number(current)).toBeCloseTo(Number(minimum), 2);
   expect(Number(start) / Number(end)).toBeCloseTo(Number(maximum) / Number(minimum), 2);
   expect(await page.getByRole('button', { name: '关闭建筑记忆' }).count()).toBe(0);

@@ -117,6 +117,7 @@ describe("backup safety", () => {
       if (!result.ok) throw new Error(result.message);
       state = result.state;
     };
+    run({ type: "ConfigureFocusIntegrity", enabled: true, maxEffectiveExcursions: 3 });
     run({ type: "StartFocus", sessionId: "focus-integrity", subtaskId: "subtask-1", plannedDurationMs: 60_000 });
     run({ type: "RecordFocusBackgrounded", reason: "app-switch" });
     clock.advance(3_001);

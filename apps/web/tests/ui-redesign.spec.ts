@@ -1,4 +1,5 @@
 import {expect,test,type Page,type Locator} from '@playwright/test';
+import {selectLastCalendarDays} from './select-calendar-days';
 import {expandGlassSetting} from './expand-glass-setting';
 import {gzipSync} from 'node:zlib';
 import {testNbt as nbt,writeJavaNbt} from '../../../packages/litematic/test/nbt-fixture.js';
@@ -67,21 +68,21 @@ test('glass adjustment affects only immersive clocks, not reading surfaces',asyn
  expect(samples[0]!.plan.filter).toEqual(samples[0]!.menu.filter);
 });
 
-test('fixed calendar is outside the range section and task cards share hierarchy',async({page})=>{
+test('fixed calendar shares the summary card and task cards share hierarchy',async({page})=>{
  await page.goto('/');
  await page.getByRole('button',{name:'开始建造',exact:true}).click();
  await page.getByRole('button',{name:'统计',exact:true}).click();
  const range=page.getByRole('region',{name:'按时间范围统计'});
- await expect(range.locator('.focus-calendar-chart')).toHaveCount(0);
+ await expect(range.locator('.focus-calendar-chart')).toHaveCount(1);
  const calendar=page.locator('.focus-calendar-chart');
  const dates=await calendar.locator('[data-date]').evaluateAll(elements=>elements.map(element=>element.getAttribute('data-date')));
- await page.getByRole('button',{name:'近 7 天',exact:true}).click();
+ await selectLastCalendarDays(page,7);
  expect(await calendar.locator('[data-date]').evaluateAll(elements=>elements.map(element=>element.getAttribute('data-date')))).toEqual(dates);
  await page.getByRole('button',{name:'任务',exact:true}).click();
  const surfaces=await page.locator('.tasks-page .task-surface').evaluateAll(elements=>elements.map(element=>{const css=getComputedStyle(element);return {background:css.backgroundColor,radius:css.borderRadius};}));
  expect(surfaces.length).toBeGreaterThanOrEqual(4);
  expect(surfaces.every(surface=>surface.background===surfaces[0]!.background&&surface.radius===surfaces[0]!.radius)).toBe(true);
- const summary=page.locator('.task-management-disclosure summary');
+ const summary=page.locator('.project-portfolio-toggle');
  await summary.click();
  expect(await summary.evaluate(element=>getComputedStyle(element).getPropertyValue('-webkit-tap-highlight-color'))).toBe('rgba(0, 0, 0, 0)');
  await summary.focus();
@@ -91,6 +92,8 @@ test('fixed calendar is outside the range section and task cards share hierarchy
 });
 
 test('minimal idle panel swaps content by horizontal gesture without resizing its glass surface',async({page})=>{
+ // Gesture/layout checks use settled frames; animation has separate coverage.
+ await page.emulateMedia({reducedMotion:'reduce'});
  await page.setViewportSize({width:360,height:800});
  await page.goto('/');
  await page.getByRole('button',{name:'开始建造',exact:true}).click();
@@ -175,13 +178,13 @@ for(const viewport of viewports)for(const theme of ['浅色','深色']){
   await page.getByRole('button',{name:'统计',exact:true}).click();
   await expect(page.getByRole('heading',{name:'专注轨迹'})).toBeVisible();
   await expect(page.locator('.achievements-disclosure')).not.toHaveAttribute('open','');
-  await page.getByRole('button',{name:'近 7 天',exact:true}).click();
-  await expect(page.locator('.stats-duration')).toContainText('近 7 天');
+  const selectedRange=await selectLastCalendarDays(page,7);
+  await expect(page.locator('.stats-duration')).toContainText(selectedRange);
   await noOverflow(page);
   await page.screenshot({path:info.outputPath('statistics.png'),fullPage:true,animations:'disabled'});
   await page.getByRole('button',{name:'任务',exact:true}).click();
   await expect(page.getByRole('button',{name:'查看建筑',exact:true})).toBeVisible();
-  await page.locator('.task-management-disclosure summary').click();
+  await page.locator('.project-portfolio-toggle').click();
   await expect(page.getByRole('button',{name:'删除当前任务',exact:true})).toBeVisible();
   await noOverflow(page);
   await page.screenshot({path:info.outputPath('tasks.png'),fullPage:true,animations:'disabled'});

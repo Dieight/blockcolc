@@ -94,7 +94,7 @@ test('one planned round ends directly after its natural progress report', async 
   await expect(reportUnlockDialog).toBeVisible();
   await reportUnlockDialog.getByRole('button', { name: '全部关闭' }).click();
   await expect(reportUnlockDialog).toHaveCount(0);
-  await expect(page.locator('.focus-calendar-chart .chart-dot:not(.is-empty)')).toHaveCount(1);
+  await expect(page.locator('.focus-calendar-chart .calendar-day:not([data-level="0"]):not([data-future="true"])')).toHaveCount(1);
 });
 
 test('keeps compact heatmap month labels from overlapping', async ({ page }, testInfo) => {
@@ -242,9 +242,9 @@ test('keeps work-page scroll-end clearance compact above mobile navigation', asy
     });
     expect(layout.paddingBottom).toBe(14);
     if (layout.scrollable) {
-      expect(layout.clearance).toBeGreaterThanOrEqual(8);
+      expect(layout.clearance, tab).toBeGreaterThanOrEqual(8);
       // scrollHeight is integer-rounded while DOM rectangles retain subpixels.
-      expect(layout.clearance).toBeLessThanOrEqual(36 + 1);
+      expect(layout.clearance, tab).toBeLessThanOrEqual(36 + 1);
     }
   }
 });
@@ -329,7 +329,8 @@ test('about page exposes local-first, repository and manual update information',
 
   const dialog = page.getByRole('dialog', { name: '方块钟 Blockcolc' });
   await expect(dialog).toContainText(`版本 ${currentVersion}`);
-  await expect(dialog).toContainText('无账号、无云同步、无后台分析');
+  await expect(dialog).toContainText('任务、记录与蓝图默认保存在本机');
+  await expect(dialog.getByText('默认本地保存；外部服务按设置启用', { exact: true })).toBeVisible();
   await expect(dialog.getByRole('link', { name: /GitHub/ })).toHaveAttribute('href', /github\.com\/Dieight\/blockcolc/);
   await expect(dialog.getByRole('link', { name: /Apache-2.0/ })).toHaveAttribute('href', 'https://github.com/Dieight/blockcolc/blob/main/LICENSE');
   await expect(dialog.getByRole('link', { name: /SunCalc · BSD-2-Clause/ })).toHaveAttribute('href', 'licenses/suncalc.txt');
@@ -358,6 +359,8 @@ test('planned focus days can be changed and persist locally', async ({ page }, t
 });
 
 test('zero-minute break persists and early completion ends without a break', async ({ page }) => {
+  // This reload/settlement case owns persistence, not ambient weather motion.
+  await page.emulateMedia({ reducedMotion: 'reduce' });
   await createDefaultProject(page);
   await page.getByRole('button', { name: '设置' }).click();
   const breakMinutes = page.getByLabel('每轮休息分钟');

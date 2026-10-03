@@ -3,6 +3,11 @@ import { createInitialState, execute, type DomainCommand, type DomainState } fro
 import type { RoundPlan } from '../src/round-plan';
 import { preparePlanCancellation } from './focus-plan-controls';
 
+// These cases own restored business state. Animated-world coverage remains in
+// the renderer suite; a quiet world prevents fake-clock advances/reloads from
+// competing with ambient software-WebGL frames in the two-worker core batch.
+test.beforeEach(async ({ page }) => { await page.emulateMedia({ reducedMotion: 'reduce' }); });
+
 const startAt = Date.parse('2026-09-06T08:00:00Z');
 function fixture(kind: 'finite' | 'habit', complete = false, orphan = false) {
   let state = createInitialState('Asia/Shanghai');
@@ -26,6 +31,7 @@ function fixture(kind: 'finite' | 'habit', complete = false, orphan = false) {
 
 async function seed(page: Page, state: DomainState, plan: RoundPlan | null) {
   await page.goto('/');
+  await page.clock.runFor(32);
   await expect(page.locator('html')).toHaveAttribute('data-bootstrap-state', 'ready');
   await page.evaluate(async ({ state, plan }) => {
     const database = await new Promise<IDBDatabase>((resolve, reject) => {
@@ -38,7 +44,11 @@ async function seed(page: Page, state: DomainState, plan: RoundPlan | null) {
         const transaction = database.transaction('appState', 'readwrite');
         const store = transaction.objectStore('appState');
         const current = store.get('current');
-        current.onsuccess = () => store.put({ id: 'current', revision: (current.result?.revision ?? 0) + 1, state });
+        current.onsuccess = () => store.put({ id: 'current', revision: (current.result?.revision ?? 0) + 1,
+          // Keep the installed resource catalog. Replacing only business facts
+          // must not manufacture a six-import cold start on every seeded run.
+          state: { ...state, decorationBlueprintResources: current.result?.state?.decorationBlueprintResources
+            ?? state.decorationBlueprintResources } });
         transaction.oncomplete = () => resolve();
         transaction.onerror = () => reject(transaction.error);
         transaction.onabort = () => reject(transaction.error);
@@ -48,7 +58,16 @@ async function seed(page: Page, state: DomainState, plan: RoundPlan | null) {
     if (plan) localStorage.setItem('blockcolc-round-plan-v1', JSON.stringify(plan));
     else localStorage.removeItem('blockcolc-round-plan-v1');
   }, { state, plan });
+  await reloadRestoredWorld(page);
+}
+
+async function reloadRestoredWorld(page: Page) {
   await page.reload();
+  // The controlled clock also owns the first paint frame and its zero-delay
+  // timer. Flush that pair, then wait for the storage restore receipt before
+  // testing the focus face; navigation's load event is not that receipt.
+  await page.clock.runFor(32);
+  await expect(page.locator('html')).toHaveAttribute('data-bootstrap-state', 'ready');
 }
 
 async function snapshot(page: Page): Promise<DomainState> {
@@ -76,7 +95,7 @@ for (const kind of ['finite', 'habit'] as const) {
     await page.clock.fastForward(61_000);
     await expect(page.getByRole('button', { name: '跳过休息' })).toBeVisible();
     expect((await snapshot(page)).projects.find(p => p.id === 'h')?.habit?.completedFocusSessionIds).toEqual([]);
-    await page.reload();
+    await reloadRestoredWorld(page);
     await expect(page.getByRole('button', { name: '跳过休息' })).toBeVisible();
     await page.getByRole('button', { name: '跳过休息' }).click();
     await page.getByRole('button', { name: '开始下一轮' }).click();
@@ -94,7 +113,7 @@ for (const kind of ['finite', 'habit'] as const) {
     const settled = await snapshot(page);
     expect(settled.projects.find(p => p.id === 'h')?.habit?.completedFocusSessionIds).toHaveLength(1);
     expect(settled.focusHistory.every(session => session.settledAt !== undefined)).toBe(true);
-    await page.reload();
+    await reloadRestoredWorld(page);
     await expect(report).toBeHidden();
     await expect(page.getByRole('button', { name: '开始 1 轮' })).toBeVisible();
   });
@@ -105,12 +124,12 @@ for (const kind of ['finite', 'habit'] as const) {
     await seed(page, data.state, null);
     const report = page.locator('.marathon-progress-report');
     await expect(report).toContainText('1 轮专注已结束');
-    await page.reload();
+    await reloadRestoredWorld(page);
     await expect(report).toContainText('1 轮专注已结束');
     await report.getByRole('button', { name: '提交本次推进' }).click();
     await expect(report).toBeHidden();
     expect((await snapshot(page)).focusHistory[0]?.settledAt).toBeDefined();
-    await page.reload();
+    await reloadRestoredWorld(page);
     await expect(report).toBeHidden();
   });
 }
@@ -124,7 +143,7 @@ test('a deleted host with no targets can explicitly settle retained rounds befor
   await report.getByRole('button', { name: '结束计划' }).click();
   await expect(report).toBeHidden();
   expect((await snapshot(page)).focusHistory[0]?.settledAt).toBeDefined();
-  await page.reload();
+  await reloadRestoredWorld(page);
   await expect(report).toBeHidden();
   await expect(page.getByRole('button', { name: '开始建造' })).toBeVisible();
 });
@@ -219,7 +238,7 @@ test('cancelling during a later active round records the note and reports only t
   expect(interrupted.actualDurationMs).toBe(Date.parse(interrupted.interruptedAt) - Date.parse(interrupted.startedAt));
   expect(interrupted.actualDurationMs).toBeGreaterThanOrEqual(10_000);
   expect(interrupted.actualDurationMs).toBeLessThan(interrupted.plannedDurationMs);
-  await page.reload();
+  await reloadRestoredWorld(page);
   await expect(report).toContainText('测试：改为处理更紧急的工作');
   await report.getByRole('button', { name: '提交本次推进' }).click();
   await expect(report).toBeHidden();

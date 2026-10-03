@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { FocusInterruptionCategory } from '@blockcolc/domain';
-import { X } from 'lucide-react';
+import { PixelClose as X, PixelClock, PixelFlag, PixelMinus, PixelPlus, PixelPlay } from './ui/PixelIcon';
 import { ChoiceMenu } from './ChoiceMenu';
 import { marathonEndInstant } from './marathon-end-time';
 import { MAX_MARATHON_ROUNDS, planRoundsForDuration } from './round-plan';
@@ -11,6 +11,19 @@ const CANCEL_REASONS: ReadonlyArray<{ value: FocusInterruptionCategory; label: s
   { value: 'fatigue', label: '需要休息' }, { value: 'priority-changed', label: '优先级变化' },
   { value: 'device-or-app', label: '设备或应用问题' }, { value: 'other', label: '其他' },
 ];
+
+function PlanMode({mode,locked,onChange}: {mode:'rounds'|'marathon';locked:boolean;onChange:(mode:'rounds'|'marathon')=>void}) {
+  return <div className="plan-mode" role="group" aria-label="排程方式">
+    <button type="button" aria-pressed={mode==='rounds'} disabled={locked} onClick={()=>onChange('rounds')}><PixelFlag/>固定轮次</button>
+    <button type="button" aria-pressed={mode==='marathon'} disabled={locked} onClick={()=>onChange('marathon')}><PixelClock/>按结束时间</button>
+  </div>;
+}
+
+function RoundChoices({rounds,locked,habit=false,onChange}: {rounds:number;locked:boolean;habit?:boolean;onChange:(rounds:number)=>void}) {
+  return <div className="round-picker" aria-label={habit?'习惯专注轮数':'专注轮数'}><span>计划轮数</span><div>{[1,2,3,4].map(value=><button key={value} type="button" aria-pressed={rounds===value} disabled={locked} onClick={()=>onChange(value)}>
+    <span><strong>{value}</strong> 轮</span><span className="plan-round-pixels" aria-hidden="true">{Array.from({length:value},(_,index)=><i key={index}/>)}</span>
+  </button>)}</div></div>;
+}
 
 function CancelPlanReason({ onCancelPlan, initialNote = '', initialReason = null }: { onCancelPlan: (reason: FocusInterruptionCategory | null, note: string) => Promise<boolean>; initialNote?: string; initialReason?: FocusInterruptionCategory | null }) {
   const [reason, setReason] = useState<FocusInterruptionCategory | ''>(initialReason ?? '');
@@ -71,24 +84,18 @@ export function FocusPlanSheet({ subtasks, selectedId, rounds, focusMinutes, bre
   };
   return <div className="dialog-backdrop plan-sheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
     <section className="focus-plan-sheet" role="dialog" aria-modal="true" aria-labelledby="focus-plan-title">
-      <div className="sheet-heading"><div><span className="eyebrow">本次计划</span><h2 id="focus-plan-title">安排下一轮</h2></div><button type="button" className="dialog-close" aria-label="关闭本次计划" onClick={onClose}><X/></button></div>
-      <div className="plan-mode" role="group" aria-label="排程方式">
-        <button type="button" aria-pressed={mode === 'rounds'} disabled={locked} onClick={() => onModeChange('rounds')}>固定轮次</button>
-        <button type="button" aria-pressed={mode === 'marathon'} disabled={locked} onClick={() => onModeChange('marathon')}>按结束时间</button>
-      </div>
+      <div className="sheet-heading"><div><span className="eyebrow">本次计划</span><h2 id="focus-plan-title"><PixelClock/>安排下一轮</h2></div><button type="button" className="dialog-close" aria-label="关闭本次计划" onClick={onClose}><X/></button></div>
+      <PlanMode mode={mode} locked={locked} onChange={onModeChange}/>
       {mode === 'rounds' ? <>
         <ChoiceMenu label="本次专注" value={selectedId} disabled={locked} onChange={onSelect} options={subtasks.map((subtask) => ({ id: subtask.id, label: subtask.title, detail: `已完成 ${Math.round(subtask.progressBasisPoints / 100)}%` }))}/>
-        <div className="round-picker" aria-label="专注轮数"><span>计划轮数</span><div>{[1, 2, 3, 4].map((value) => <button key={value} type="button" aria-pressed={rounds === value} disabled={locked} onClick={() => onRoundsChange(value)}>{value} 轮</button>)}</div></div>
+        <RoundChoices rounds={rounds} locked={locked} onChange={onRoundsChange}/>
         <p className="plan-sheet-note">每轮 {focusMinutes} 分钟专注{breakMinutes > 0 ? `；多轮之间休息 ${breakMinutes} 分钟。` : '；休息已关闭。'}{note}</p>
       </> : <>
-        {/* DF-UI-07: shared end-time entry (same display component as the
-         * minimal sheet). The draft keeps the app's padded HH:mm shape; an
-         * empty keystroke is ignored instead of writing a fabricated zero. */}
-        {/* 用户回滚指示：统一回到点按步进选择器 */}
+        {/* 时、分按键更新同一个 HH:mm 草稿，沿用原排程计算。 */}
         <div className="marathon-end-picker" role="group" aria-label="结束时间">
-          <div className="time-stepper"><span>时</span><button type="button" aria-label="减少结束小时" disabled={locked} onClick={() => stepEndTime(-60)}>−</button><strong aria-label="结束小时">{pad2(draftHour)}</strong><button type="button" aria-label="增加结束小时" disabled={locked} onClick={() => stepEndTime(60)}>+</button></div>
+          <div className="time-stepper"><span>时</span><button type="button" aria-label="减少结束小时" disabled={locked} onClick={() => stepEndTime(-60)}><PixelMinus/></button><strong aria-label="结束小时">{pad2(draftHour)}</strong><button type="button" aria-label="增加结束小时" disabled={locked} onClick={() => stepEndTime(60)}><PixelPlus/></button></div>
           <span className="time-colon" aria-hidden="true">:</span>
-          <div className="time-stepper"><span>分</span><button type="button" aria-label="减少结束分钟" disabled={locked} onClick={() => stepEndTime(-5)}>−</button><strong aria-label="结束分钟">{pad2(draftMinute)}</strong><button type="button" aria-label="增加结束分钟" disabled={locked} onClick={() => stepEndTime(5)}>+</button></div>
+          <div className="time-stepper"><span>分</span><button type="button" aria-label="减少结束分钟" disabled={locked} onClick={() => stepEndTime(-5)}><PixelMinus/></button><strong aria-label="结束分钟">{pad2(draftMinute)}</strong><button type="button" aria-label="增加结束分钟" disabled={locked} onClick={() => stepEndTime(5)}><PixelPlus/></button></div>
         </div>
         {endMs === null
           ? <p className="plan-sheet-error">请先选择结束时间。</p>
@@ -96,7 +103,7 @@ export function FocusPlanSheet({ subtasks, selectedId, rounds, focusMinutes, bre
             ? <p className="plan-sheet-error">从现在到 {formatClockTime(endMs)} 不足一轮专注（{focusMinutes} 分钟），请选择更晚的时间。</p>
             : <p className="plan-sheet-note">到 {formatClockTime(endMs)} 共约 {Math.max(1, Math.round((endMs - Date.now()) / 60000))} 分钟：安排 {schedule.rounds} 轮专注{schedule.breaks > 0 ? `、${schedule.breaks} 次休息` : ''}，全部结束后再统一汇报推进了哪些小任务。{capped ? `时间超过上限 ${MAX_MARATHON_ROUNDS} 轮，按前 ${schedule.rounds} 轮（约 ${formatDurationSummary(schedule.usableMs)}）排程。` : ''}{note}</p>}
       </>}
-      {locked ? <CancelPlanReason onCancelPlan={onCancelPlan} initialNote={cancellationNote} initialReason={cancellationReason}/> : <button type="button" className="primary" disabled={mode === 'marathon' && !marathonValid} onClick={onConfirm}>确认计划</button>}
+      {locked ? <CancelPlanReason onCancelPlan={onCancelPlan} initialNote={cancellationNote} initialReason={cancellationReason}/> : <button type="button" className="primary plan-confirm" disabled={mode === 'marathon' && !marathonValid} onClick={onConfirm}><PixelPlay/>确认计划</button>}
     </section>
   </div>;
 }
@@ -134,23 +141,17 @@ export function HabitFocusPlanSheet({ rounds, focusMinutes, breakMinutes, locked
   const note = locked ? ' 当前计划已开始，只能取消整个计划；取消后可重新安排。' : '';
   return <div className="dialog-backdrop plan-sheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
     <section className="focus-plan-sheet" role="dialog" aria-modal="true" aria-labelledby="habit-focus-plan-title">
-      <div className="sheet-heading"><div><span className="eyebrow">本次计划</span><h2 id="habit-focus-plan-title">安排习惯专注</h2></div><button type="button" className="dialog-close" aria-label="关闭本次计划" onClick={onClose}><X/></button></div>
-      <div className="plan-mode" role="group" aria-label="排程方式">
-        <button type="button" aria-pressed={mode === 'rounds'} disabled={locked} onClick={() => onModeChange('rounds')}>固定轮次</button>
-        <button type="button" aria-pressed={mode === 'marathon'} disabled={locked} onClick={() => onModeChange('marathon')}>按结束时间</button>
-      </div>
+      <div className="sheet-heading"><div><span className="eyebrow">本次计划</span><h2 id="habit-focus-plan-title"><PixelClock/>安排习惯专注</h2></div><button type="button" className="dialog-close" aria-label="关闭本次计划" onClick={onClose}><X/></button></div>
+      <PlanMode mode={mode} locked={locked} onChange={onModeChange}/>
       {mode === 'rounds' ? <>
-        <div className="round-picker" aria-label="习惯专注轮数"><span>计划轮数</span><div>{[1, 2, 3, 4].map((value) => <button key={value} type="button" aria-pressed={rounds === value} disabled={locked} onClick={() => onRoundsChange(value)}>{value} 轮</button>)}</div></div>
+        <RoundChoices rounds={rounds} locked={locked} habit onChange={onRoundsChange}/>
         <p className="plan-sheet-note">每轮 {focusMinutes} 分钟专注{breakMinutes > 0 ? `；多轮之间休息 ${breakMinutes} 分钟。` : '；休息已关闭。'}每个完成或提前完成的轮次都会推进当前建筑。{note}</p>
       </> : <>
-        {/* DF-UI-07: shared end-time entry (same display component as the
-         * minimal sheet). The draft keeps the app's padded HH:mm shape; an
-         * empty keystroke is ignored instead of writing a fabricated zero. */}
-        {/* 用户回滚指示：统一回到点按步进选择器 */}
+        {/* 时、分按键更新同一个 HH:mm 草稿，沿用原排程计算。 */}
         <div className="marathon-end-picker" role="group" aria-label="结束时间">
-          <div className="time-stepper"><span>时</span><button type="button" aria-label="减少结束小时" disabled={locked} onClick={() => stepEndTime(-60)}>−</button><strong aria-label="结束小时">{pad2(draftHour)}</strong><button type="button" aria-label="增加结束小时" disabled={locked} onClick={() => stepEndTime(60)}>+</button></div>
+          <div className="time-stepper"><span>时</span><button type="button" aria-label="减少结束小时" disabled={locked} onClick={() => stepEndTime(-60)}><PixelMinus/></button><strong aria-label="结束小时">{pad2(draftHour)}</strong><button type="button" aria-label="增加结束小时" disabled={locked} onClick={() => stepEndTime(60)}><PixelPlus/></button></div>
           <span className="time-colon" aria-hidden="true">:</span>
-          <div className="time-stepper"><span>分</span><button type="button" aria-label="减少结束分钟" disabled={locked} onClick={() => stepEndTime(-5)}>−</button><strong aria-label="结束分钟">{pad2(draftMinute)}</strong><button type="button" aria-label="增加结束分钟" disabled={locked} onClick={() => stepEndTime(5)}>+</button></div>
+          <div className="time-stepper"><span>分</span><button type="button" aria-label="减少结束分钟" disabled={locked} onClick={() => stepEndTime(-5)}><PixelMinus/></button><strong aria-label="结束分钟">{pad2(draftMinute)}</strong><button type="button" aria-label="增加结束分钟" disabled={locked} onClick={() => stepEndTime(5)}><PixelPlus/></button></div>
         </div>
         {endMs === null
           ? <p className="plan-sheet-error">请先选择结束时间。</p>
@@ -158,7 +159,7 @@ export function HabitFocusPlanSheet({ rounds, focusMinutes, breakMinutes, locked
             ? <p className="plan-sheet-error">从现在到 {formatClockTime(endMs)} 不足一轮习惯专注（{focusMinutes} 分钟），请选择更晚的时间。</p>
             : <p className="plan-sheet-note">到 {formatClockTime(endMs)} 共约 {Math.max(1, Math.round((endMs - Date.now()) / 60000))} 分钟：以普通任务设置的 {focusMinutes} 分钟为一轮，安排 {schedule.rounds} 轮习惯专注{schedule.breaks > 0 ? `、${schedule.breaks} 次休息` : ''}。每轮完成后直接推进当前建筑，结束后不进入普通任务的统一汇报。{capped ? `时间超过上限 ${MAX_MARATHON_ROUNDS} 轮，按前 ${schedule.rounds} 轮（约 ${formatDurationSummary(schedule.usableMs)}）排程。` : ''}{note}</p>}
       </>}
-      {locked ? <CancelPlanReason onCancelPlan={onCancelPlan} initialNote={cancellationNote} initialReason={cancellationReason}/> : <button type="button" className="primary" disabled={mode === 'marathon' && !marathonValid} onClick={onConfirm}>确认计划</button>}
+      {locked ? <CancelPlanReason onCancelPlan={onCancelPlan} initialNote={cancellationNote} initialReason={cancellationReason}/> : <button type="button" className="primary plan-confirm" disabled={mode === 'marathon' && !marathonValid} onClick={onConfirm}><PixelPlay/>确认计划</button>}
     </section>
   </div>;
 }

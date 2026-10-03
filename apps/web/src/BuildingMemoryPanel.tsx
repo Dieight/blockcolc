@@ -1,7 +1,8 @@
 import { projectFocusAttribution, projectMonumentFocus, type ApplicationService, type ProjectWorldProjection } from '@blockcolc/application';
-import { X } from 'lucide-react';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { focusSessionLocalDate } from './focus-stats';
+import { PixelClose, PixelCube, PixelPlay } from './ui/PixelIcon';
+import { PixelProgress } from './ui/PixelProgress';
 
 type AppState = ReturnType<ApplicationService['snapshot']>;
 
@@ -82,46 +83,61 @@ export function BuildingMemoryPanel({
   memory: BuildingMemory;
   switchBlockedReason?: string;
   onClose: () => void;
-  onContinue: () => void;
+  onContinue: () => void | Promise<void>;
 }) {
   const titleId = `building-memory-${memory.projectId}`;
   const closeRef = useRef<HTMLButtonElement>(null);
+  const [continuing, setContinuing] = useState(false);
+  const [continueError, setContinueError] = useState('');
   useEffect(() => {
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     closeRef.current?.focus({ preventScroll: true });
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
+      if (event.key === 'Escape') { event.preventDefault(); onClose(); }
     };
     window.addEventListener('keydown', closeOnEscape);
-    return () => window.removeEventListener('keydown', closeOnEscape);
+    return () => {
+      window.removeEventListener('keydown', closeOnEscape);
+      if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true });
+    };
   }, [memory.projectId, onClose]);
+  const continueProject = async () => {
+    if (continuing || switchBlockedReason) return;
+    setContinuing(true);
+    setContinueError('');
+    try { await onContinue(); }
+    catch { setContinueError('未能切换任务，请重试。'); }
+    finally { setContinuing(false); }
+  };
 
-  return <div className="building-memory-layer" role="presentation" onPointerDown={event=>{if(event.target===event.currentTarget)onClose();}}><section className="building-memory-panel" role="dialog" aria-modal="true" aria-labelledby={titleId}>
+  return <section className="building-memory-panel" role="region" aria-labelledby={titleId}>
     <header>
       <div>
-        <span>建筑记忆</span>
+        <span className="building-memory-caption"><PixelCube/>建筑记忆 · {memory.statusLabel}</span>
         <h2 id={titleId}>{memory.title}</h2>
       </div>
-      <button ref={closeRef} type="button" className="building-memory-close" aria-label="关闭建筑记忆" onClick={onClose}><X /></button>
+      <button ref={closeRef} type="button" className="building-memory-close" aria-label="关闭建筑记忆" onClick={onClose}><PixelClose/><span>返回</span></button>
     </header>
     <div className="building-memory-progress">
-      <div><strong>{memory.completionPercent}%</strong><span>{memory.statusLabel} · {memory.conditionLabel}</span></div>
-      <div className="meter" aria-label={`建造进度 ${memory.completionPercent}%`}><i style={{ width: `${memory.completionPercent}%` }} /></div>
-      <small>{memory.blueprintLabel} · {memory.constructionStage}</small>
+      <div><span>{memory.blueprintLabel} · {memory.constructionStage}</span><strong>{memory.completionPercent}%</strong></div>
+      <PixelProgress value={memory.completionPercent} label={`建造进度 ${memory.completionPercent}%`}/>
+      <small>{memory.conditionLabel}</small>
     </div>
-    <dl>
-      <div><dt>累计实际投入</dt><dd>{memory.focusMinutes > 0 ? `${memory.focusMinutes} 分钟` : '尚无记录'}</dd></div>
-      <div><dt>完成轮次</dt><dd>{memory.completedRounds} 轮</dd></div>
+    <dl className="building-memory-facts">
+      <div className="building-memory-investment"><dt>累计实际投入</dt><dd>{memory.focusMinutes > 0 ? <><strong>{memory.focusMinutes}</strong><span> 分钟</span></> : <span>尚无记录</span>}</dd></div>
+      <div className="building-memory-rounds"><dt>完成轮次</dt><dd><strong>{memory.completedRounds}</strong><span> 轮</span></dd></div>
       <div><dt>中断投入</dt><dd>{memory.interruptedRounds > 0 ? `${memory.interruptedRounds} 条 · ${memory.interruptedMinutes} 分钟` : '无'}</dd></div>
       <div><dt>最近一次专注</dt><dd>{memory.lastFocusDate ?? '尚无记录'}</dd></div>
     </dl>
     {memory.unknownRounds > 0 && <p className="building-memory-blocked" role="note">另有 {memory.unknownRounds} 条记录无法追溯{memory.unknownMinutes > 0 ? `（${memory.unknownMinutes} 分钟）` : ''}，未分摊。</p>}
     {memory.nextStep && <p className="building-memory-next"><span>下一步</span><strong>{memory.nextStep}</strong></p>}
-    {!memory.isMonument && <button type="button" className="building-memory-action" disabled={Boolean(switchBlockedReason)} onClick={onContinue}>
-      {memory.isActive ? '继续专注' : '继续这个任务'}
+    {!memory.isMonument && <button type="button" className="building-memory-action" disabled={continuing || Boolean(switchBlockedReason)} aria-busy={continuing} onClick={() => void continueProject()}>
+      <PixelPlay/>{continuing ? '正在切换…' : memory.isActive ? '继续专注' : '继续这个任务'}
     </button>}
+    {continueError && <p className="building-memory-error" role="alert">{continueError}</p>}
     {switchBlockedReason && <p className="building-memory-blocked" role="status">{switchBlockedReason}</p>}
     {memory.isMonument && <p className="building-memory-monument">已完成并保留为聚落记忆。投入分布见统计页“纪念建筑”。</p>}
-  </section></div>;
+  </section>;
 }
 
 export function conditionLabel(value: number) {

@@ -90,6 +90,20 @@ describe("world environment settings", () => {
 });
 
 describe("building blueprint library", () => {
+  it("keeps old project geometry while a corrected import is saved under its revised identity", () => {
+    const f = fixture();
+    const legacy = importedBlueprint("litematic-old-content");
+    expect(f.run({ type: "ImportBuildingBlueprint", blueprint: legacy }).ok).toBe(true);
+    expect(f.run({ type: "CreateProject", projectId: "legacy-project", title: "Saved project", blueprintId: legacy.id,
+      importedBlueprint: legacy, subtasks: [{ id: "legacy-task", title: "Build" }] }).ok).toBe(true);
+    const corrected = { ...legacy, id: `${legacy.id}-coords2`, voxels: legacy.voxels.map(voxel => ({ ...voxel, x: 1 - voxel.x })) };
+    expect(f.run({ type: "ImportBuildingBlueprint", blueprint: corrected }).ok).toBe(true);
+    expect(f.run({ type: "ImportBuildingBlueprint", blueprint: corrected })).toMatchObject({ ok: true, events: [] });
+    const restored = parseDomainState(JSON.parse(JSON.stringify(f.state())));
+    expect(restored.buildingBlueprintResources.map(resource => resource.id)).toEqual([legacy.id, corrected.id]);
+    expect(restored.projects[0]?.importedBlueprint).toEqual(legacy);
+  });
+
   it("stores a display name and renames it without mutating the blueprint snapshot", () => {
     const f = fixture();
     const blueprint = importedBlueprint("library-house");
@@ -691,8 +705,21 @@ describe("focus completion and goals", () => {
 });
 
 describe("focus integrity", () => {
-  it("defaults to enabled with failure on the third effective excursion", () => {
-    const f = fixture(); f.create("p1", ["a"]);
+  const integrityFixture = () => {
+    const f = fixture();
+    f.run({type:"ConfigureFocusIntegrity",enabled:true,maxEffectiveExcursions:3});
+    return f;
+  };
+  it("uses ocean-island and disabled integrity for new installs, retaining saved world and policy", () => {
+    const state = createInitialState();
+    expect(state.worldSettings.environmentStyle).toBe('ocean-island');
+    expect(state.focusIntegrityPolicy.enabled).toBe(false);
+    state.worldSettings.environmentStyle = 'natural-valley';
+    state.focusIntegrityPolicy.enabled = true;
+    expect(parseDomainState(state)).toEqual(state);
+  });
+  it("interrupts on the third effective excursion after explicit opt-in", () => {
+    const f = integrityFixture(); f.create("p1", ["a"]);
     expect(f.state().focusIntegrityPolicy).toEqual({ enabled: true, maxEffectiveExcursions: 3, excursionThresholdSeconds: 3 });
     f.run({ type: "StartFocus", sessionId: "focus", subtaskId: "a", plannedDurationMs: 60_000 });
 
@@ -719,7 +746,7 @@ describe("focus integrity", () => {
   });
 
   it("does not count a return at exactly three seconds but counts one millisecond later", () => {
-    const f = fixture(); f.create("p1", ["a"]);
+    const f = integrityFixture(); f.create("p1", ["a"]);
     f.run({ type: "StartFocus", sessionId: "focus", subtaskId: "a", plannedDurationMs: 60_000 });
     f.run({ type: "RecordFocusBackgrounded", reason: "app-switch" });
     f.clock.advance(3_000);
@@ -733,7 +760,7 @@ describe("focus integrity", () => {
   });
 
   it("persists one-shot and lock-screen exemptions without incrementing the count", () => {
-    const f = fixture(); f.create("p1", ["a"]);
+    const f = integrityFixture(); f.create("p1", ["a"]);
     f.run({ type: "StartFocus", sessionId: "focus", subtaskId: "a", plannedDurationMs: 60_000 });
     expect(f.run({ type: "GrantFocusLifecycleExemption" })).toMatchObject({
       ok: true, events: [{ type: "FocusLifecycleExemptionGranted", sessionId: "focus" }],
@@ -752,7 +779,7 @@ describe("focus integrity", () => {
   });
 
   it("completes normally at endsAt before applying the excursion limit", () => {
-    const f = fixture(); f.create("p1", ["a"]);
+    const f = integrityFixture(); f.create("p1", ["a"]);
     f.run({ type: "StartFocus", sessionId: "focus", subtaskId: "a", plannedDurationMs: 10_000 });
     for (let count = 0; count < 2; count += 1) {
       f.run({ type: "RecordFocusBackgrounded", reason: "app-switch" });

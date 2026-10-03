@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { FocusInterruptionCategory } from '@blockcolc/domain';
-import { X, Square, Check } from 'lucide-react';
+import { PixelClose as X, PixelStop as Square, PixelCheck as Check } from './ui/PixelIcon';
 
 const INTERRUPTION_OPTIONS:readonly {value:FocusInterruptionCategory|null;label:string}[]=[
   {value:'external-interruption',label:'外部打扰'}, {value:'task-blocked',label:'任务受阻'},

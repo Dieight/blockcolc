@@ -2,6 +2,9 @@ import { expect, test } from "@playwright/test";
 import { executeAndReloadPersistedCommand, readPersistedDomainState } from "./persisted-domain-state";
 import { preparePlanCancellation } from './focus-plan-controls';
 
+// These checks own schedule/settlement recovery, not weather animation.
+test.beforeEach(async ({ page }) => { await page.emulateMedia({ reducedMotion: 'reduce' }); });
+
 // V22: the end-time (marathon) plan persists independently of the current task.
 // Confirmation moves directly to the shared immersive ready face; canceling
 // settles finished rounds into one cross-project report where habit rounds are

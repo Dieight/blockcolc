@@ -1,8 +1,9 @@
 [CmdletBinding()]
-param([string]$DeliveryRoundId)
+param([string]$DeliveryRoundId, [switch]$CollectFailures)
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Release-Common.ps1')
+. (Join-Path $PSScriptRoot 'Full-GatePolicy.ps1')
 
 $context = Get-ReleaseContext
 $artifactDirectory = Join-Path $context.Root "artifacts\release\v$($context.VersionName)"
@@ -11,40 +12,49 @@ $candidateApk = Join-Path $artifactDirectory $context.ApkName
 $evidencePath = Join-Path $artifactDirectory 'release-evidence.json'
 Assert-ReleaseArchiveWritable -EvidencePath $evidencePath
 $gateDurations = [ordered]@{}
+$gateFailures = [System.Collections.Generic.List[object]]::new()
+# Keep the existing sequential gates and timings; only the failure policy varies.
+function Invoke-RequestedGate {
+    param([string]$Name, [System.Collections.IDictionary]$Durations, [scriptblock]$Action)
+    Invoke-FullGateStep -Name $Name -Durations $Durations -Failures $gateFailures -Action $Action -CollectFailures:$CollectFailures
+}
 $webGateStartedAt = $null
 
 Push-Location $context.Root
 try {
     Assert-StagedState
     Assert-ReleaseWorkPacketComplete -Context $context
-    Invoke-TimedReleaseStep -Name 'version' -Durations $gateDurations -Action {
+    Invoke-RequestedGate -Name 'version' -Durations $gateDurations -Action {
         Invoke-External -FilePath 'node' -Arguments @('tools/sync-version.mjs', '--check')
     }
-    Invoke-TimedReleaseStep -Name 'releaseWorkflow' -Durations $gateDurations -Action {
+    Invoke-RequestedGate -Name 'releaseWorkflow' -Durations $gateDurations -Action {
         & (Join-Path $PSScriptRoot 'Test-ReleaseWorkflow.ps1')
     }
-    Invoke-TimedReleaseStep -Name 'fixtures' -Durations $gateDurations -Action {
+    Invoke-RequestedGate -Name 'fixtures' -Durations $gateDurations -Action {
         & (Join-Path $PSScriptRoot 'Test-FixtureHashes.ps1')
     }
-    Invoke-TimedReleaseStep -Name 'uiAssets' -Durations $gateDurations -Action {
+    Invoke-RequestedGate -Name 'uiAssets' -Durations $gateDurations -Action {
         Invoke-External -FilePath 'node' -Arguments @('tools/check-ui-assets.mjs', '--check')
     }
-    Invoke-TimedReleaseStep -Name 'typecheck' -Durations $gateDurations -Action {
-        Invoke-External -FilePath 'npm' -Arguments @('run', 'typecheck')
+    Invoke-RequestedGate -Name 'typecheck' -Durations $gateDurations -Action {
+        Invoke-FullWorkspaceChecks -Root $context.Root -ScriptName 'typecheck' -CollectFailures:$CollectFailures
     }
-    Invoke-TimedReleaseStep -Name 'unit' -Durations $gateDurations -Action {
-        Invoke-External -FilePath 'npm' -Arguments @('test')
+    Invoke-RequestedGate -Name 'unit' -Durations $gateDurations -Action {
+        Invoke-FullWorkspaceChecks -Root $context.Root -ScriptName 'test' -CollectFailures:$CollectFailures
     }
-    Invoke-TimedReleaseStep -Name 'extendedUnit' -Durations $gateDurations -Action {
-        Invoke-External -FilePath 'npm' -Arguments @('run', 'test:extended')
+    Invoke-RequestedGate -Name 'extendedUnit' -Durations $gateDurations -Action {
+        $limit = if ($CollectFailures) { '--bail=0' } else { '--bail=1' }
+        Invoke-External -FilePath 'npm' -Arguments @('run', 'test:extended', '-w', '@blockcolc/voxel', '--', $limit)
     }
-    Invoke-TimedReleaseStep -Name 'storageE2e' -Durations $gateDurations -Action {
-        Invoke-External -FilePath 'npm' -Arguments @('run', 'test:e2e', '-w', '@blockcolc/storage-indexeddb', '--', '--workers=1')
+    Invoke-RequestedGate -Name 'storageE2e' -Durations $gateDurations -Action {
+        $failureLimit = if ($CollectFailures) { '--max-failures=0' } else { '--max-failures=1' }
+        Invoke-External -FilePath 'npm' -Arguments @('run', 'test:e2e', '-w', '@blockcolc/storage-indexeddb', '--', '--workers=1', $failureLimit)
     }
-    Invoke-TimedReleaseStep -Name 'coreLoopE2e' -Durations $gateDurations -Action {
-        Invoke-External -FilePath 'npm' -Arguments @('run', 'test:e2e', '-w', '@blockcolc/core-loop-browser', '--', '--workers=1')
+    Invoke-RequestedGate -Name 'coreLoopE2e' -Durations $gateDurations -Action {
+        $failureLimit = if ($CollectFailures) { '--max-failures=0' } else { '--max-failures=1' }
+        Invoke-External -FilePath 'npm' -Arguments @('run', 'test:e2e', '-w', '@blockcolc/core-loop-browser', '--', '--workers=1', $failureLimit)
     }
-    Invoke-TimedReleaseStep -Name 'webE2e' -Durations $gateDurations -Action {
+    Invoke-RequestedGate -Name 'webE2e' -Durations $gateDurations -Action {
         $script:webGateStartedAt = [DateTime]::UtcNow
         $previousDeadline = [Environment]::GetEnvironmentVariable('E2E_COMPLETION_DEADLINE_MS', 'Process')
         try {
@@ -53,15 +63,35 @@ try {
             # activates the documented physical-device ownership of the one
             # synchronous 3D drag probe.
             $env:E2E_COMPLETION_DEADLINE_MS = '2400000'
-            Invoke-External -FilePath 'npm' -Arguments @('run', 'test:web:release')
+            $webArguments = @('run', 'test:web:release')
+            if ($CollectFailures) { $webArguments += @('--', '--collect-all-failures') }
+            Invoke-External -FilePath 'npm' -Arguments $webArguments
         }
         finally {
             if ($null -eq $previousDeadline) { Remove-Item Env:E2E_COMPLETION_DEADLINE_MS -ErrorAction SilentlyContinue }
             else { $env:E2E_COMPLETION_DEADLINE_MS = $previousDeadline }
         }
     }
-    Invoke-TimedReleaseStep -Name 'androidBuild' -Durations $gateDurations -Action {
+    Invoke-RequestedGate -Name 'androidBuild' -Durations $gateDurations -Action {
         & (Join-Path $PSScriptRoot 'Build-AndroidRelease.ps1') -QualityGateAlreadyPassed
+    }
+
+    if ($gateFailures.Count -gt 0) {
+        $failedDirectory = Join-Path $context.Root 'artifacts\test-gates\full-release'
+        New-Item -ItemType Directory -Path $failedDirectory -Force | Out-Null
+        $failedReport = Join-Path $failedDirectory ((Get-Date).ToUniversalTime().ToString('yyyyMMdd-HHmmss-fff') + '-failed.json')
+        Write-ReleaseEvidence -Path $failedReport -Evidence ([ordered]@{
+            status = 'failed'; failurePolicy = 'collect-all'; failures = @($gateFailures.ToArray())
+            versionName = $context.VersionName; versionCode = $context.VersionCode
+            stagedTree = (Invoke-External -FilePath 'git' -Arguments @('write-tree') -Capture | Select-Object -First 1).ToString().Trim()
+            stagedDiffSha256 = Get-StagedDiffSha256
+            testFingerprintSha256 = Get-StagedTestFingerprintSha256
+            gateDurationsSeconds = $gateDurations
+            gateResults = @($gateDurations.Keys | ForEach-Object {
+                [ordered]@{ name = $_; status = if ($gateFailures.name -contains $_) { 'failed' } else { 'passed' } }
+            })
+        })
+        throw "Full run found $($gateFailures.Count) failed gates. No release candidate prepared. Report: $failedReport"
     }
 
     $buildMetadata = Assert-ApkMetadata -Path $buildApk -Context $context
@@ -98,6 +128,7 @@ try {
     $evidence = [ordered]@{
         schemaVersion = 4
         phase = 'prepared'
+        failurePolicy = if ($CollectFailures) { 'collect-all' } else { 'fail-fast' }
         preparedAt = (Get-Date).ToUniversalTime().ToString('o')
         versionName = $context.VersionName
         versionCode = $context.VersionCode

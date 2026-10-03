@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { selectLastCalendarDays } from './select-calendar-days';
 
 async function createDefaultProject(page: import('@playwright/test').Page) {
   await page.goto('/');
@@ -33,7 +34,10 @@ async function revealFocusControls(page: import('@playwright/test').Page) {
 test('keeps the global task portfolio collapsed until requested', async ({ page }, testInfo) => {
   await createDefaultProject(page);
   await page.getByRole('button', { name: '任务', exact: true }).click();
-  await expect(page.getByRole('button', { name: /任务总览/ })).toHaveCount(0);
+  const singleProjectPortfolio = page.getByRole('button', { name: /任务总览/ });
+  await expect(singleProjectPortfolio).toHaveCount(1);
+  await expect(singleProjectPortfolio).toHaveAttribute('aria-expanded', 'false');
+  await expect(page.locator('.project-portfolio-body')).toHaveCount(0);
   await page.getByRole('button', { name: '新增任务' }).click();
   await page.getByLabel('大型任务').fill('第二项长期工作');
   await page.getByRole('button', { name: '清空小任务' }).click();
@@ -73,8 +77,8 @@ test('explains interrupted time in recent rhythm, project allocation, building m
   await unlockDialog.getByRole('button', { name: '全部关闭' }).click();
   await expect(unlockDialog).toHaveCount(0);
   await page.clock.fastForward(5_100);
-  await page.getByRole('button', {name:'近 7 天',exact:true}).click();
-  await expect(page.locator('.stats-duration')).toContainText('近 7 天');
+  const selectedRange=await selectLastCalendarDays(page,7);
+  await expect(page.locator('.stats-duration')).toContainText(selectedRange);
   await expect(page.locator('.stats-duration')).toContainText('1 小时 15 分钟');
   await expect(page.locator('.project-allocation')).toContainText('我的第一座工坊');
   await expect(page.locator('.project-allocation').getByRole('img')).toHaveAccessibleName(/1 小时 15 分钟/);

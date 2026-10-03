@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import { Check, ChevronDown } from 'lucide-react';
+import { PixelCheck as Check, PixelChevron as ChevronDown } from './ui/PixelIcon';
 
 export interface ChoiceOption { id:string; label:string; detail?:string }
 

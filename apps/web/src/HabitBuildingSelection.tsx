@@ -2,7 +2,7 @@ import { useState } from 'react';
 import type { ApplicationCommand, ApplicationResult, ApplicationService } from '@blockcolc/application';
 import type { BlueprintCatalogEntry, BlueprintV1 } from '@blockcolc/voxel';
 import type { ResourcePackRepository } from '@blockcolc/resource-pack-indexeddb';
-import { Hammer } from 'lucide-react';
+import { PixelHammer as Hammer } from './ui/PixelIcon';
 import { useBlueprintCatalog } from './voxel-runtime';
 import { BlueprintPicker } from './BlueprintPicker';
 import { shouldPersistBlueprintSnapshot, toImportedBlueprint } from './blueprint-adapter';

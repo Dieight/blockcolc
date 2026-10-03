@@ -6,9 +6,9 @@ import { describe, expect, it } from 'vitest';
 const sourceRoot = dirname(fileURLToPath(import.meta.url));
 const styleRoot = resolve(sourceRoot, 'styles');
 const expectedImports = [
-  'tokens.css', 'base.css', 'foundation.css', 'settings.css', 'workbench.css',
+  'tokens.css', 'base.css', 'pixel-ui.css', 'foundation.css', 'settings.css', 'workbench.css',
   'tasks-stats.css', 'setup.css', 'world.css', 'minimal-mode.css', 'theme.css',
-  'focus-report.css', 'building-memory.css', 'glass-overlays.css', 'world-debug.css',
+  'focus-report.css', 'building-memory.css', 'glass-overlays.css', 'about.css', 'focus-plan.css', 'world-debug.css',
 ];
 
 describe('style architecture', () => {

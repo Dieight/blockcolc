@@ -3,7 +3,8 @@ import type { FormEvent, ReactNode } from 'react';
 import type { ApplicationCommand, ApplicationResult, ApplicationService } from '@blockcolc/application';
 import type { LitematicImportResult } from '@blockcolc/litematic';
 import { localDateOf, projectProgressBasisPoints } from '@blockcolc/domain';
-import { BarChart3, Clock3, ExternalLink, FileUp, Info, ListTodo, Plus, RefreshCw, Settings, TreePine, Trophy, X } from 'lucide-react';
+import { ExternalLink, FileUp } from 'lucide-react';
+import { PixelChart as BarChart3, PixelClock as Clock3, PixelTasks as ListTodo, PixelPlus as Plus, PixelReset as RefreshCw, PixelSettings as Settings, PixelSprout as TreePine, PixelTrophy as Trophy, PixelClose as X, PixelCube, PixelRepeat, PixelHammer } from './ui/PixelIcon';
 import type { BlueprintCatalogEntry, BlueprintV1 } from '@blockcolc/voxel';
 import type { ResourcePackRepository } from '@blockcolc/resource-pack-indexeddb';
 import { LoadingPage } from './LoadingPage';
@@ -230,13 +231,13 @@ export function App({ service, resourcePacks }: { service: ApplicationService; r
     {creatingProject ? creationSetup : <>
       {!active && (tab === 'world' || tab === 'tasks') && (orphanedDeferredHost
         ? <div className="world-screen is-focusing orphaned-focus-report">
-          <div className="world-stage"><WorldCanvasV7 service={service} resourcePacks={resourcePacks}
+          <div className="world-stage"><WorldCanvasV7 service={service} stateRevision={service.stateRevision()} resourcePacks={resourcePacks}
             lightingQuality={preferences.lightingQuality} constructionOutlineVisibility={preferences.constructionOutlineVisibility}
             showWorldCoordinates={preferences.showWorldCoordinates} environmentStyle={state.worldSettings.environmentStyle}
             worldSeed={state.worldSettings.worldSeed} terrainGenerationVersion={state.worldSettings.terrainGenerationVersion}
             immersivePresentation externalWeatherOverride={worldWeather.override} astronomyContext={worldWeather.astronomyContext ?? null}
-            worldDebug={worldDebugProjection} focusedProjectId={null} memoryProjectId={null}
-            onSelectProject={()=>{}} onClearWorldFocus={()=>{}} onCloseMemory={()=>{}} onContinueProject={async()=>{}}
+            worldDebug={worldDebugProjection} focusedProjectId={null}
+            onSelectProject={()=>{}} onClearWorldFocus={()=>{}}
             visible={worldVisible} onPickTerrain={()=>{}} pickedCell={null}/></div>
           <section className="focus-panel"><MarathonProgressReport variant={minimalWanted ? 'minimal' : 'immersive'} key={orphanedDeferredHost} state={state} hostProjectId={orphanedDeferredHost} run={run} onSubmitted={() => { createRoundPlanStore(() => window.localStorage).write(null); refresh(); }}/></section>
         </div>
@@ -246,7 +247,7 @@ export function App({ service, resourcePacks }: { service: ApplicationService; r
       <RoutePane active={tab === 'settings'} route="settings"><Suspense fallback={<LoadingPage status="正在打开设置…"/>}><SettingsScreen active={tab === 'settings'} service={service} resourcePacks={resourcePacks} state={state} run={run} refresh={refreshAfterReplacement} preferences={preferences} onPreferencesChange={changePreferences} worldWeather={worldWeather} worldDebug={worldDebug} onWorldDebugChange={setWorldDebug}/></Suspense></RoutePane>
     </>}
   </>;
-  return <div className={immersiveFocus?'app-shell focus-immersive':'app-shell'}>{!immersiveFocus&&<header className="topbar"><div><span className="brand-mark">方块钟</span><span className="brand-en">Blockcolc</span></div><button className="today" type="button" aria-label="关于方块钟" onClick={()=>setAboutOpen(true)}><TreePine size={16}/>{new Intl.DateTimeFormat('zh-CN',{month:'short',day:'numeric'}).format(new Date())}</button></header>}
+  return <div className={immersiveFocus?'app-shell focus-immersive':'app-shell'}>{!immersiveFocus&&<header className="topbar"><div className="app-brand"><PixelCube/><div><span className="brand-mark">方块钟</span><span className="brand-en">Blockcolc</span></div></div><button className="today" type="button" aria-label="关于方块钟" onClick={()=>setAboutOpen(true)}><TreePine size={16}/>{new Intl.DateTimeFormat('zh-CN',{month:'short',day:'numeric'}).format(new Date())}</button></header>}
     <main data-active-route={tab}>{content}</main>
     {message && <div className={message.action?'toast has-action':'toast'} role="status">{message.text}{message.action&&<button type="button" className="toast-action" onClick={()=>{const target=message.action!.target;setMessage(null);navigateTo(target);}}>{message.action.label}</button>}</div>}
     {!immersiveFocus&&<nav className="bottom-nav" aria-label="主导航"><NavButton active={tab==='world'} icon={<Clock3/>} label="计时" onClick={()=>{if(creatingProject)setCreatingProject(false);navigateTo('world');}}/><NavButton active={tab==='tasks'} icon={<ListTodo/>} label="任务" onClick={()=>navigateTo('tasks')}/><NavButton active={tab==='stats'} icon={<BarChart3/>} label="统计" onClick={()=>navigateTo('stats')}/><NavButton active={tab==='settings'} icon={<Settings/>} label="设置" onClick={()=>navigateTo('settings')}/></nav>}
@@ -282,15 +283,15 @@ function ProjectSetup({run,resourcePacks,buildingBlueprints,existingProjects,dra
       {existingProjects.map(project => <button type="button" key={project.id} onClick={() => void resume(project.id)}><span><strong>{project.title}</strong><small>{project.kind === 'habit' ? `习惯 · ${project.habit?.awaitingNextBuilding ? '等待选择下一建筑' : `${project.habit?.completedFocusSessionIds.length ?? 0} / ${project.habit?.targetRounds ?? 10} 轮`}` : `${Math.round(projectProgressBasisPoints(project) / 100)}% · ${project.subtasks.length} 个小任务`}</small></span><span>切换</span></button>)}
     </div>}
     <form onSubmit={submit}>
-      <header className="setup-heading"><h1>{firstRun ? '建立你的第一项任务' : onCancel ? '新增任务' : '建立新任务'}</h1><p>{kind === 'habit' ? '每次专注都会推进习惯建筑，完成后继续选择下一座。' : '每项大型任务会在村落中留下自己的一栋建筑。'}</p></header>
-      <div className="setup-kind" role="group" aria-label="任务类型"><button type="button" disabled={submitting} aria-pressed={kind === 'finite'} onClick={() => onDraftChange({ kind: 'finite' })}>普通大型任务</button><button type="button" disabled={submitting} aria-pressed={kind === 'habit'} onClick={() => onDraftChange({ kind: 'habit' })}>习惯任务</button></div>
+      <header className="setup-heading"><div className="setup-title"><PixelCube/><h1>{firstRun ? '建立你的第一项任务' : onCancel ? '新增任务' : '建立新任务'}</h1></div><p>{kind === 'habit' ? '让日常坚持，一座接一座地建造。' : '拆成小任务，一步步建成自己的建筑。'}</p></header>
+      <div className="setup-kind" role="group" aria-label="任务类型"><button type="button" disabled={submitting} aria-pressed={kind === 'finite'} onClick={() => onDraftChange({ kind: 'finite' })}><PixelCube size={18}/>普通大型任务</button><button type="button" disabled={submitting} aria-pressed={kind === 'habit'} onClick={() => onDraftChange({ kind: 'habit' })}><PixelRepeat size={18}/>习惯任务</button></div>
       <div className="setup-fields">
         <label>{kind === 'habit' ? '习惯名称' : '大型任务'}<NativeImeTextEntry targetRef={titleInput} name="projectTitle" defaultValue={draft.title} onValueChange={title => onDraftChange({ title })}/></label>
         {kind === 'finite' ? <SubtaskRowsEditor initialText={draft.subtasksText} readerRef={readSubtasks} onChange={subtasksText => onDraftChange({ subtasksText })}/> : <div className="habit-target-summary"><span>每座建筑</span><strong>{habitTargetRounds} 轮专注</strong><small>统一在设置中调整；创建后，本周期内不会改变。</small></div>}
       </div>
       {selected ? <BlueprintPicker resourcePacks={resourcePacks} options={options} selected={selected} onSelect={id => onDraftChange({ blueprintId: id, ...(!imported || id !== imported.blueprint.id ? { importRole: 'building' } : {}) })} importControl={importControl}/> : <div className="blueprint-loading" role="status">正在准备建筑预览...</div>}
       {submitError&&<p className="setup-error" role="alert">{submitError}</p>}
-      <div className="setup-actions">{onCancel && <button type="button" className="setup-cancel" disabled={submitting} onClick={onCancel}>取消</button>}{importRole === 'decoration' && imported ? <button className="primary setup-submit" type="button" disabled={submitting||importing || Boolean(decorationLimitError)} onClick={() => void addDecoration()}>加入装饰池</button> : <button className="primary setup-submit" type="submit" disabled={submitting||!selected || importing || !Number.isInteger(habitTargetRounds) || habitTargetRounds < 10 || habitTargetRounds > 30 || (kind === 'finite' && draft.subtasksText.split('\n').map(x => x.trim()).filter(Boolean).length === 0)}>{submitting?'正在创建…':'开始建造'}</button>}</div>
+      <div className="setup-actions">{onCancel && <button type="button" className="setup-cancel" disabled={submitting} onClick={onCancel}>取消</button>}{importRole === 'decoration' && imported ? <button className="primary setup-submit" type="button" disabled={submitting||importing || Boolean(decorationLimitError)} onClick={() => void addDecoration()}><PixelCube size={18}/>加入装饰池</button> : <button className="primary setup-submit" type="submit" disabled={submitting||!selected || importing || !Number.isInteger(habitTargetRounds) || habitTargetRounds < 10 || habitTargetRounds > 30 || (kind === 'finite' && draft.subtasksText.split('\n').map(x => x.trim()).filter(Boolean).length === 0)}><PixelHammer size={18}/>{submitting?'正在创建…':'开始建造'}</button>}</div>
     </form>
   </section>;
 }
@@ -350,12 +351,11 @@ function AboutDialog({onClose}:{onClose:()=>void}){
   return <div className="dialog-backdrop" role="presentation">
     <section className="confirm-dialog about-dialog" role="dialog" aria-modal="true" aria-labelledby="about-title">
       <button ref={closeRef} className="dialog-close" aria-label="关闭关于页面" onClick={onClose}><X/></button>
-      <Info className="about-icon"/><h2 id="about-title">方块钟 Blockcolc</h2>
-      <p className="about-version">版本 {APP_VERSION}</p>
-      <p>本地优先的专注计时器。任务、专注记录、蓝图和资源包默认只保存在你的设备上。</p>
+      <header className="about-brand"><PixelCube size={36}/><div><h2 id="about-title">方块钟 <span>blockcolc</span></h2><p className="about-version">版本 {APP_VERSION}</p></div></header>
+      <p className="about-description">把时间，慢慢建成一座聚落。任务、记录与蓝图默认保存在本机。</p>
       <dl>
         <div><dt>项目仓库</dt><dd><a href={REPOSITORY_URL} target="_blank" rel="noreferrer">GitHub <ExternalLink/></a></dd></div>
-        <div><dt>隐私</dt><dd>无账号、无云同步、无后台分析</dd></div>
+        <div><dt>隐私</dt><dd>默认本地保存；外部服务按设置启用</dd></div>
         <div><dt>项目许可</dt><dd><a href={`${REPOSITORY_URL}/blob/main/LICENSE`} target="_blank" rel="noreferrer">Apache-2.0 <ExternalLink/></a></dd></div>
         <div><dt>天文计算</dt><dd><a href="licenses/suncalc.txt" target="_blank" rel="noreferrer">SunCalc · BSD-2-Clause <ExternalLink/></a></dd></div>
       </dl>

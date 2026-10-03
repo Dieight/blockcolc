@@ -3,12 +3,17 @@
 .workbench-heading>div:first-child{min-width:0}
 .workbench-heading h1{margin:0;font-size:22px;font-weight:700;line-height:1.25;overflow-wrap:anywhere}
 .workbench-heading h1{min-width:0;flex:1}
-.workbench-heading-actions{display:flex;align-items:center;gap:4px;flex:0 0 auto}
+.workbench-heading-actions{display:flex;align-items:center;gap:0;flex:0 0 auto}
+.workbench-heading-actions .task-switch-action{width:44px;min-width:44px;height:44px;padding:0;gap:0;justify-content:center}
+.workbench-heading-actions .task-switch-action span{display:none}
+.workbench-heading-actions .task-switch-action .pixel-icon{width:22px;height:22px;transform:translateX(-3px)}
+.workbench-heading-actions .minimal-entry .pixel-icon{transform:translateX(3px)}
 .task-switch-action{min-height:44px;flex:0 0 auto;display:inline-flex;align-items:center;gap:6px;padding:0 4px;border:0;background:none;color:#276749;font-weight:700}
 .task-switch-action svg{width:18px}
-.workbench-context{border:0;border-left:3px solid #4b8a5c;border-radius:0;background:transparent;padding:2px 0 2px 12px;display:grid;gap:5px;grid-template-columns:minmax(0,1fr)}
-.workbench-context span,.workbench-context small{color:#58635d;font-size:12px;line-height:1.4}
-.workbench-context strong{min-width:0;font-size:21px;font-weight:700;color:#17211c;line-height:1.3;overflow-wrap:anywhere;white-space:normal}
+.workbench-context{position:relative;border:0;border-radius:0;background:transparent;padding:2px 0 2px 16px;display:grid;gap:5px;grid-template-columns:minmax(0,1fr)}
+.workbench-context::before{content:"";position:absolute;left:0;top:7px;width:6px;height:6px;background:var(--focus);box-shadow:0 9px 0 color-mix(in srgb,var(--focus) 45%,transparent),0 18px 0 var(--line)}
+.workbench-context span,.workbench-context small{color:var(--muted);font-size:12px;line-height:1.4}
+.workbench-context strong{min-width:0;font-size:21px;font-weight:700;color:var(--ink);line-height:1.3;overflow-wrap:anywhere;white-space:normal}
 .plan-summary{min-height:44px;width:100%;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:0;border:0;background:none;color:#17211c;text-align:left;font-size:13px}
 .plan-summary span:first-child{color:#58635d}
 .plan-summary span:last-child{color:#276749;font-weight:700}

@@ -3,7 +3,9 @@ import type { ApplicationCommand, ApplicationResult, ApplicationService } from '
 import { completedPomodorosOn, dailyGoalForDate, localDateOf, type FocusInterruptionCategory } from '@blockcolc/domain';
 import type { ResourcePackRepository } from '@blockcolc/resource-pack-indexeddb';
 import { localDateForDate, weatherForLocalDate, type WeatherState } from '@blockcolc/voxel/environment';
-import { Minimize2, ListTodo, AlertTriangle, Clock3, Square } from 'lucide-react';
+import { AlertTriangle } from 'lucide-react';
+import { PixelTasks as ListTodo, PixelClock as Clock3, PixelStop as Square, PixelPlay, PixelMinimize as Minimize2 } from './ui/PixelIcon';
+import { BuildingMemoryPanel, createBuildingMemory } from './BuildingMemoryPanel';
 import type { FocusPreferences } from './app-types';
 import type { RecordedIntegrityNotice } from './application-lifecycle';
 import { useBackLayer } from './back-layer';
@@ -493,9 +495,22 @@ export function WorldScreenV7({ service, resourcePacks, run, refresh, onReconcil
   useBackLayer(Boolean(ending), () => { closeEnding(); return true; });
   useBackLayer(Boolean(planOpen), () => { closePlan(); return true; });
 
+  const memoryProjection = visible && !isImmersiveLayout && memoryProjectId
+    ? service.worldProjection().projects.find(project => project.project.id === memoryProjectId)
+    : undefined;
+  const memory = memoryProjection ? createBuildingMemory(state, memoryProjection,
+    state.buildingBlueprintResources.find(resource => resource.id === memoryProjection.building.blueprintId)?.displayName
+      ?? memoryProjection.building.importedBlueprint?.title
+      ?? blueprintName(blueprintCatalog, memoryProjection.building.blueprintId)) : null;
+  const switchBlockedReason = session ? '结束本轮专注后才能切换任务。'
+    : pending.length > 0 ? '先完成当前任务的进度汇报，再切换任务。' : undefined;
+  useLayoutEffect(() => {
+    if (focusPanelRef.current) focusPanelRef.current.scrollTop = 0;
+  }, [memory?.projectId]);
+
   return <div data-minimal-mode={minimal ? 'true' : 'false'} className={isImmersiveLayout ? 'world-screen is-focusing' : marathonReportPhase ? 'world-screen has-report' : activePendingBlocksWorkbench ? 'world-screen has-report' : activeHabitAwaitingBlocksWorkbench ? 'world-screen is-choosing-habit-building' : 'world-screen'}>
     <div className="world-stage">
-      <WorldCanvasV7 service={service} resourcePacks={resourcePacks} lightingQuality={preferences.lightingQuality}
+      <WorldCanvasV7 service={service} stateRevision={service.stateRevision()} resourcePacks={resourcePacks} lightingQuality={preferences.lightingQuality}
         constructionOutlineVisibility={preferences.constructionOutlineVisibility} showWorldCoordinates={preferences.showWorldCoordinates}
         environmentStyle={state.worldSettings.environmentStyle} worldSeed={state.worldSettings.worldSeed}
         terrainGenerationVersion={state.worldSettings.terrainGenerationVersion} constructionFeedback={constructionFeedback}
@@ -504,14 +519,20 @@ export function WorldScreenV7({ service, resourcePacks, run, refresh, onReconcil
         externalWeatherOverride={worldWeather.override} astronomyContext={worldWeather.astronomyContext ?? null} worldDebug={worldDebug}
         initialEnvironmentPending={initialEnvironmentPending(preferences.realWeatherEnabled, worldWeather)}
         openingProjectId={minimalWanted || marathonPlan || planMode === 'marathon' ? null : active.project.id}
-        focusedProjectId={focusedProjectId} memoryProjectId={memoryProjectId} onSelectProject={onFocusWorldProject} onInitialProjectFocus={onInitialProjectFocus}
-        onClearWorldFocus={onClearWorldFocus} onCloseMemory={onCloseWorldMemory}
-        onContinueProject={async(projectId)=>{if(projectId!==active.project.id){const result=await run({type:'SwitchActiveProject',projectId});if(!result?.ok)return;}onCloseWorldMemory();}}
-        switchBlockedReason={session?'结束本轮专注后才能切换任务。':pending.length>0?'先完成当前任务的进度汇报，再切换任务。':undefined}
+        focusedProjectId={focusedProjectId} onSelectProject={onFocusWorldProject} onInitialProjectFocus={onInitialProjectFocus}
+        onClearWorldFocus={onClearWorldFocus}
         visible={visible} onPickTerrain={setPickedCell} pickedCell={pickedCell}/>
       <WorldWeatherAttribution view={worldWeather} localConditionText={localWeatherConditionLabel(localWeather.kind)}/>
     </div>
-    {visible && <section ref={focusPanelRef} className="focus-panel focus-workbench-panel" onPointerUp={(event) => handlePanelTap({ target: event.target, clientX: event.clientX, clientY: event.clientY })}>
+    {visible && <section ref={focusPanelRef} className={`focus-panel focus-workbench-panel${memory ? ' is-memory' : ''}`} onPointerUp={(event) => { if (!memory) handlePanelTap({ target: event.target, clientX: event.clientX, clientY: event.clientY }); }}>
+      {memory ? <BuildingMemoryPanel key={memory.projectId} memory={memory} switchBlockedReason={memory.isActive ? undefined : switchBlockedReason}
+        onClose={onCloseWorldMemory} onContinue={async () => {
+          if (memory.projectId !== active.project.id) {
+            const result = await run({ type: 'SwitchActiveProject', projectId: memory.projectId });
+            if (!result.ok) return;
+          }
+          onCloseWorldMemory();
+        }}/> : <>
       <MinimalPanelWeatherOverlay active={minimalIdle} weather={panelWeather ? { kind: panelWeather.kind,
         precipitationIntensity: panelWeather.precipitationIntensity, visualPrecipitationIntensity: panelWeather.visualPrecipitationIntensity, seed: panelWeather.seed,
         thunderstorm: panelWeather.thunderstorm } : null}/>
@@ -556,7 +577,7 @@ export function WorldScreenV7({ service, resourcePacks, run, refresh, onReconcil
             : session ? <div className={`immersive-controls${controlsLeaving ? ' is-leaving' : ''}`}>{(controlsVisible || controlsLeaving)
               ? <button className="destructive primary" onClick={() => void setEnding(true)}><Square/>结束本次专注</button>
               : <p className={hintVisible ? 'immersive-hint' : 'immersive-hint is-faded'} role="status">双击下方空白处唤出结束按钮</p>}</div>
-            : <button className="primary" disabled={startDisabled} onClick={() => void startFocus()}><Clock3/>{startLabel}</button>}/>
+            : <button className="primary" disabled={startDisabled} onClick={() => void startFocus()}><PixelPlay/>{startLabel}</button>}/>
       </>}
       {/* 用户指示：极简专注运行中直接复用各模式共用的沉浸 UI，不再提供
        * "返回完整模式"按钮，专注期间的临时退出页面整体移除。 */}
@@ -564,6 +585,7 @@ export function WorldScreenV7({ service, resourcePacks, run, refresh, onReconcil
       {minimalIdle && minimalFlow.error && <p role="alert" className="minimal-clock-error">{minimalFlow.error}</p>}
       {minimalRest && continueError && <p role="alert" className="minimal-clock-error">{continueError}</p>}
       {planStorageError && <p role="alert" className="plan-sheet-note is-invalid">{planStorageError}</p>}
+      </>}
     </section>}
     {ending && session && (
       <div className={endingLeaving ? 'dialog-leave' : undefined}>

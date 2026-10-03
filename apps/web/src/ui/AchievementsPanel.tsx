@@ -1,4 +1,5 @@
-import { Check } from 'lucide-react';
+import { PixelCheck as Check, PixelTrophy } from './PixelIcon';
+import { PixelProgress } from './PixelProgress';
 import { useEffect, useRef } from 'react';
 import { useBackLayer } from '../back-layer';
 
@@ -34,11 +35,11 @@ export function AchievementsPanel({ entries, emptyHint = '还没有可展示的�
       ? <p className="achievements-empty" role="status">{emptyHint}</p>
       : <ul className="achievements-list">
         {entries.map((entry) => <li key={entry.id} className={entry.unlocked ? 'achievement unlocked' : 'achievement'}>
-          <div className="achievement-copy"><strong>{entry.title}</strong><small>{entry.description}</small></div>
+          <PixelTrophy className="achievement-emblem"/><div className="achievement-copy"><strong>{entry.title}</strong><small>{entry.description}</small></div>
           {entry.unlocked
             ? <span className="achievement-unlocked"><Check/> {entry.unlockedAt ? new Date(entry.unlockedAt).toLocaleDateString('zh-CN') : '已解锁'}</span>
             : <span className="achievement-progress">
-              <i className="achievement-meter" role="meter" aria-label={`进度 ${entry.progress} / ${entry.target} ${entry.unit}`} aria-valuemin={0} aria-valuemax={Math.max(entry.target, entry.progress)} aria-valuenow={Math.min(entry.progress, Math.max(entry.target, entry.progress))}><b style={{ width: `${Math.max(0, Math.min(100, entry.target > 0 ? (entry.progress / entry.target) * 100 : 0))}%` }}/></i>
+              <PixelProgress role="meter" className="achievement-meter" label={`进度 ${entry.progress} / ${entry.target} ${entry.unit}`} value={entry.progress} max={Math.max(1, entry.target)}/>
               <small aria-hidden="true">{entry.progress} / {entry.target} {entry.unit}</small>
             </span>}
         </li>)}
@@ -54,7 +55,7 @@ export function AchievementsPanel({ entries, emptyHint = '还没有可展示的�
 export function AchievementsSection({ entries }: { entries?: ReadonlyArray<AchievementEntry> }) {
   if (entries === undefined) return null;
   return <details className="achievements-disclosure">
-    <summary><span>成就</span><small>{entries.filter(entry => entry.unlocked).length} / {entries.length} 已解锁</small></summary>
+    <summary><PixelTrophy/><span>成就</span><small>{entries.filter(entry => entry.unlocked).length} / {entries.length} 已解锁</small></summary>
     <AchievementsPanel entries={entries}/>
   </details>;
 }

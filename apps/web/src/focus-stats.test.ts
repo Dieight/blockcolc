@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createInitialState, type FocusSession } from '@blockcolc/domain';
-import { dailyGoalTargetForWindow, effectiveFocusMillisecondsByDate, focusHeatmapLevel, focusHourDistribution, focusSessionCountByDate, focusSessionEndedAt, focusSessionLocalDate, focusWindowSummary, projectFocusAllocation, settlementTotals } from './focus-stats';
+import { dailyGoalTargetForWindow, effectiveFocusMillisecondsByDate, focusHeatmapLevel, focusHourDistribution, focusSessionCountByDate, focusSessionEndedAt, focusSessionLocalDate, focusWindowSummary, projectFocusAllocation, settlementTotals, focusRangeDayCount } from './focus-stats';
 
 const base = {
   projectId: 'project',
@@ -23,10 +23,13 @@ describe('effective focus statistics', () => {
     expect(focusSessionLocalDate(history[1]!)).toBe('2026-08-05');
   });
 
-  it('maps heatmap minutes at the V13 thresholds', () => {
-    expect([0, 1, 89, 90, 179, 180, 269, 270, 359, 360].map(focusHeatmapLevel)).toEqual([
-      0, 1, 1, 2, 2, 3, 3, 4, 4, 5,
-    ]);
+  it('maps four absolute three-hour bands, including fractional boundaries and over twelve hours', () => {
+    expect([NaN, -1, 0, 1, 179.99, 180, 359.99, 360, 539.99, 540, 720, 5000].map(focusHeatmapLevel)).toEqual([0,0,0,1,1,2,2,3,3,4,4,4]);
+  });
+  it('counts inclusive selected calendar days across DST and rejects reversed ranges', () => {
+    expect(focusRangeDayCount({start:'2026-03-07',end:'2026-03-09'})).toBe(3);
+    expect(focusRangeDayCount({start:'2026-10-02',end:'2026-10-02'})).toBe(1);
+    expect(() => focusRangeDayCount({start:'2026-10-03',end:'2026-10-02'})).toThrow();
   });
 
   it('counts focus sessions per local date, ignoring zero-time interruptions', () => {

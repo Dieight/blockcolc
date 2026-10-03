@@ -8,18 +8,18 @@ test('integrity switch settles on the last intent through rapid toggles and pers
   await page.getByRole('button', { name: '开始建造' }).click();
   await page.getByRole('button', { name: '设置' }).click();
   const integrity = page.getByLabel('开启专注完整性');
-  await expect(integrity).toBeChecked();
+  await expect(integrity).not.toBeChecked();
   // Rapid bidirectional toggles: the queued commands must settle on the last
   // click's intent, not on whichever response lands first.
   await integrity.click();
   await integrity.click();
-  await expect(integrity).toBeChecked();
-  await integrity.click();
   await expect(integrity).not.toBeChecked();
-  // The disabled state survives a warm route switch (kept-mounted panes).
+  await integrity.click();
+  await expect(integrity).toBeChecked();
+  // The explicitly enabled state survives a warm route switch (kept-mounted panes).
   await page.getByRole('button', { name: '计时' }).click();
   await page.getByRole('button', { name: '设置' }).click();
-  await expect(integrity).not.toBeChecked();
+  await expect(integrity).toBeChecked();
 });
 
 test('daily goal switch toggles both ways inside its sheet', async ({ page }) => {

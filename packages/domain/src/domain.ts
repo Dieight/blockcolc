@@ -41,11 +41,11 @@ export function createInitialState(timeZone = "UTC", restWeekdays: number[] = [0
       damagePerMissedPlannedDayBasisPoints: null,
     },
     projectConditions: [],
-    focusIntegrityPolicy: { enabled: true, maxEffectiveExcursions: 3, excursionThresholdSeconds: FOCUS_INTEGRITY_GRACE_MS / 1000 },
+    focusIntegrityPolicy: { enabled: false, maxEffectiveExcursions: 3, excursionThresholdSeconds: FOCUS_INTEGRITY_GRACE_MS / 1000 },
     decorationBlueprintResources: [],
     decorationRewards: [],
     buildingBlueprintResources: [],
-    worldSettings: { worldSeed: "world-default", terrainGenerationVersion: 4, environmentStyle: "natural-valley" },
+    worldSettings: { worldSeed: "world-default", terrainGenerationVersion: 4, environmentStyle: "ocean-island" },
   };
 }
 

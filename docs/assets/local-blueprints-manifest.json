@@ -91,8 +91,8 @@
       },
       "nonAirBlocks": 765,
       "asset": "packages/voxel/src/local-blueprints/buildings/builtin-local-dieight-xilian-figurine.json",
-      "assetBytes": 81599,
-      "assetSha256": "1941710f4ba098cdc21172df04d0c2da363f4df01c0016d8cf48c776f5aa3e8b"
+      "assetBytes": 81632,
+      "assetSha256": "80bbbffa6526f90196be41c56895a53e878a69ab7df1e266bfc18f3576398404"
     },
     {
       "source": "Dieight的神秘附魔台.litematic",
@@ -199,8 +199,8 @@
       },
       "nonAirBlocks": 1226,
       "asset": "packages/voxel/src/local-blueprints/buildings/builtin-local-gyp-ritual-sword.json",
-      "assetBytes": 158321,
-      "assetSha256": "070cc69903ff782e8a429e1f00bdec151ac6fe868341c545ac30b77601768d79"
+      "assetBytes": 158571,
+      "assetSha256": "19f1f366afa3761a4700842bc3a71a0763000a432b4a61cabf2e7643a9d30342"
     },
     {
       "source": "GYPpro的樱花仓库熔炉.litematic",

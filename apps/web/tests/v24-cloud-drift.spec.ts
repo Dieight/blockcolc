@@ -1,4 +1,5 @@
 import { expect, test, type Locator } from "@playwright/test";
+import { selectValleyFixture } from './valley-fixture';
 
 // V24 contract: pointer cancellation releases interaction immediately, while a
 // missing terminal event is recovered by the renderer's stale-pointer guard.
@@ -7,6 +8,7 @@ test("interacting clears on pointercancel and stale pointers", async ({ page }) 
   test.setTimeout(90_000);
   await page.goto("/");
   await page.getByRole("button", { name: "开始建造" }).click();
+  await selectValleyFixture(page);
   const canvas = page.getByLabel("项目建筑世界");
   await expect(canvas).toHaveAttribute("data-environment-style", "natural-valley");
   await expect.poll(async () => Number(await canvas.getAttribute("data-render-triangles"))).toBeGreaterThan(1_000);

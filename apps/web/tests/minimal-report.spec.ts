@@ -33,13 +33,17 @@ async function reportFixture(page: Page, theme: 'light' | 'dark') {
     });
     await new Promise<void>((resolve, reject) => {
       const tx = db.transaction('appState', 'readwrite'), store = tx.objectStore('appState'), current = store.get('current');
-      current.onsuccess = () => store.put({ id: 'current', revision: (current.result?.revision ?? 0) + 1, state });
+      current.onsuccess = () => store.put({ id: 'current', revision: (current.result?.revision ?? 0) + 1,
+        // This fixture restores reporting facts, not a fresh catalog import.
+        state: { ...state, decorationBlueprintResources: current.result?.state?.decorationBlueprintResources
+          ?? state.decorationBlueprintResources } });
       tx.oncomplete = () => resolve(); tx.onerror = () => reject(tx.error);
     }); db.close();
     localStorage.setItem('blockcolc-focus-preferences-v1', JSON.stringify(preferences));
     localStorage.setItem('blockcolc-round-plan-v1', JSON.stringify(plan));
   }, { state, plan, preferences: { ...defaultFocusPreferences(), minimalMode: true, themeMode: theme, lightingQuality: 'performance' } });
   await page.reload();
+  await expect(page.locator('html')).toHaveAttribute('data-bootstrap-state', 'ready');
 }
 
 test('minimal glass reporting stays usable in both themes and five viewports, retaining a failed draft', async ({ page }, info) => {

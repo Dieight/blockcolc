@@ -80,5 +80,9 @@ describe('building memory', () => {
     expect(html).toContain('另有 2 条记录无法追溯（50 分钟），未分摊。');
     expect(html).toContain('投入分布见统计页“纪念建筑”。');
     expect(html).not.toContain('详细的小任务投入分布');
+    expect(html).toContain('role="region"');
+    expect(html).toContain('pixel-progress');
+    expect(html).not.toContain('aria-modal');
+    expect(html).not.toContain('building-memory-layer');
   });
 });

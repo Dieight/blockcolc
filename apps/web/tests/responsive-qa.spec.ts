@@ -53,6 +53,8 @@ async function revealFocusControls(page: import('@playwright/test').Page) {
   throw new Error('Focus controls did not reveal after repeated double-taps');
 }
 test('keeps setup and the focus world usable across the target viewport matrix', async ({ page }, testInfo) => {
+  // Own layout and real gestures at every size, not the ambient-motion loop.
+  await page.emulateMedia({ reducedMotion: 'reduce' });
   // Ten full-page world screenshots across five viewports plus the immersive
   // reveal cycle exceed the default budget once the local gate machine drifts
   // into its slower thermal state.

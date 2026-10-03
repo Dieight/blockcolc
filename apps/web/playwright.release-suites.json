@@ -29,13 +29,13 @@
   "suites": [
     {
       "name": "core",
-      "workers": 2,
+      "workers": 1,
       "specs": [
         "automatic-continuation.spec.ts",
         "local-blueprint-builtins.spec.ts",
+        "blueprint-orientation.spec.ts",
         "focus-native-bundle.spec.ts",
         "focus-regressions.spec.ts",
-        "minimal-focus-continuity.spec.ts",
         "minimal-achievement-entry.spec.ts",
         "switch-contracts.spec.ts",
         "navigation-cache.spec.ts",
@@ -51,9 +51,10 @@
     },
     {
       "name": "visual",
-      "workers": 2,
+      "workers": 1,
       "specs": [
         "building-memory.spec.ts",
+        "pixel-ui.spec.ts",
         "responsive-qa.spec.ts",
         "ui-redesign.spec.ts",
         "settings-layout.spec.ts",
@@ -71,6 +72,7 @@
       "name": "renderer",
       "workers": 1,
       "specs": [
+        "minimal-focus-continuity.spec.ts",
         "litematic-csp.spec.ts",
         "resource-pack.spec.ts",
         "world-scenery.spec.ts",

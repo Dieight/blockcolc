@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { showWorldOverview } from './world-overview';
+import { selectValleyFixture } from './valley-fixture';
 
 // Local assets are optional on clean checkouts; identify packaged choices by
 // their stable IDs rather than a list of author names.
@@ -256,7 +257,7 @@ test('renders a monument with the active building and restores both after deleti
   await expect(page.getByText('林边聚落 · 2 栋')).toBeVisible();
 
   await openTasks(page);
-  await page.locator('.task-management-disclosure summary').click();
+  await page.locator('.project-portfolio-toggle').click();
   await page.getByRole('button', { name: '删除当前任务' }).click();
   await page.getByRole('alertdialog', { name: '删除这项任务？' }).getByRole('button', { name: '删除任务' }).click();
   await page.getByRole('button', { name: '设置' }).click();
@@ -408,6 +409,7 @@ test('keeps the world renderer resident across tab switches', async ({ page }) =
   await page.goto('/');
   await page.getByRole('button', { name: '开始建造' }).click();
   const canvas = page.getByLabel('项目建筑世界');
+  await selectValleyFixture(page);
   await expect(canvas).toHaveAttribute('data-environment-style', 'natural-valley');
 
   const box = await canvas.boundingBox();
@@ -458,6 +460,8 @@ test('persists focus and break preferences and exposes period statistics', async
   await page.getByRole('button', { name: '开始建造' }).click();
   await page.getByRole('button', { name: '设置' }).click();
   await expect(page.getByLabel('普通任务专注分钟')).toHaveValue('45');
+  await expect(page.getByLabel('开启专注完整性')).not.toBeChecked();
+  await page.getByLabel('开启专注完整性').check();
   await expect(page.getByLabel('开启专注完整性')).toBeChecked();
   await expect(page.getByLabel('允许有效离开次数')).toHaveValue('3');
   // Empty drafts restore their current value when the field loses focus.
@@ -807,7 +811,7 @@ test('keeps large-project deletion unavailable during an immersive active focus'
   await expect(page.getByRole('button', { name: '删除当前任务' })).toHaveCount(0);
   await interruptFocus(page);
   await openTasks(page);
-  await page.locator('.task-management-disclosure summary').click();
+  await page.locator('.project-portfolio-toggle').click();
   const deleteProject = page.getByRole('button', { name: '删除当前任务' });
   await expect(deleteProject).toBeEnabled();
 });
@@ -815,6 +819,7 @@ test('keeps large-project deletion unavailable during an immersive active focus'
 test('leaves immersive UI after lifecycle reconciliation interrupts focus', async ({ page }) => {
   await createDefaultProject(page);
   await page.getByRole('button', { name: '设置' }).click();
+  await page.getByLabel('开启专注完整性').check();
   await page.getByLabel('允许有效离开次数').fill('1');
   await page.getByLabel('允许有效离开次数').blur();
   await page.getByRole('button', { name: '计时' }).click();
@@ -841,7 +846,7 @@ test('leaves immersive UI after lifecycle reconciliation interrupts focus', asyn
 test('deletes a completed-idle project with rollback and restores it from settings', async ({ page }) => {
   await createDefaultProject(page);
   await openTasks(page);
-  await page.locator('.task-management-disclosure summary').click();
+  await page.locator('.project-portfolio-toggle').click();
   await page.getByRole('button', { name: '删除当前任务' }).click();
   const dialog = page.getByRole('alertdialog', { name: '删除这项任务？' });
   await expect(dialog).toBeVisible();
