@@ -50,8 +50,13 @@ describe('shared solar/weather sky field',()=>{
   s.update({...base,sunAltitudeDeg:-25},clear,true,true,1);expect(s.tick(41_000,true)).toBe(false);expect(s.uniforms.bcSkyMeteor.value).toBe(-1);
  });
  it('uses a computed lunar phase for local-source nights rather than a permanent full moon',()=>{
-  const fresh=sunStateForLocalTime(new Date('2026-10-10T16:00:00Z'));
-  const full=sunStateForLocalTime(new Date('2026-10-26T16:00:00Z'));
+  // Keep the solar state fixed: the ISO timestamps below are UTC, while the
+  // local-source sun helper intentionally follows the machine's local clock.
+  // The moon-phase comparison should not turn into a timezone-dependent
+  // sunrise/daylight test on CI.
+  const localNight=(date:Date)=>({...sunStateForLocalTime(date),sunAltitudeDeg:-25,moonVisibility:1});
+  const fresh=localNight(new Date('2026-10-10T16:00:00Z'));
+  const full=localNight(new Date('2026-10-26T16:00:00Z'));
   expect(fresh.moonIllumination).toBeLessThan(.02);
   expect(full.moonIllumination).toBeGreaterThan(.97);
   expect(nightSkyVisibility(fresh,clear,false).galaxy).toBeGreaterThan(nightSkyVisibility(full,clear,false).galaxy);
