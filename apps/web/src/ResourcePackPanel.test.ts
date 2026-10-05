@@ -36,9 +36,10 @@ describe('resource-pack picker import',()=>{
 
   it('keeps setup guidance concise while retaining local, backup, and fallback boundaries',()=>{
     const html=renderToStaticMarkup(createElement(ResourcePackPanel,{active:true,repository:mockRepository()}));
-    expect(html).toContain('可导入资源包 ZIP 或 Java 26.3 客户端 JAR');
-    expect(html).toContain('外观优先，基础包补缺');
-    expect(html).toContain('方块钟不内置或上传，JSON 备份不含资源包');
+    expect(html).toContain('导入 ZIP 或 Java 26.3 JAR');
+    expect(html).toContain('外观优先、基础包补缺');
+    expect(html).toContain('资源需自备并有权使用，不上传、不含在备份中');
+    expect(html).toContain('缺失部分用原创材质');
     expect(html).toContain('尚未读取本机资源包。');
     expect(html).not.toContain('正在使用');
     expect(html).not.toContain('纹理与 Java 方块模型。可指定一个外观包');

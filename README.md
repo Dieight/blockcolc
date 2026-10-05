@@ -57,6 +57,7 @@ Minecraft 是 Mojang Studios 的商标。本项目与 Mojang Studios 或 Microso
 | Capacitor、Kotlin | Android 宿主、通知、生命周期、定位和文件桥接 | [Capacitor](https://github.com/ionic-team/capacitor)、[Kotlin](https://github.com/JetBrains/kotlin) |
 | IndexedDB | 本地任务、资源和恢复快照 | [MDN 文档](https://developer.mozilla.org/en-US/docs/Web/API/IndexedDB_API) |
 | SunCalc 2.0.2 | 太阳/月亮位置、月相与亮边角度计算 | [SunCalc](https://github.com/mourner/suncalc)、[BSD-2-Clause 许可](apps/web/public/licenses/suncalc.txt) |
+| lunar-typescript 1.8.6 | 离线农历节日日期换算 | [lunar-typescript](https://github.com/6tail/lunar-typescript)、[MIT 许可](apps/web/public/licenses/lunar-typescript/LICENSE.txt) |
 | fflate | 本地 ZIP/GZIP 解压，用于资源包和 Litematic | [fflate](https://github.com/101arrowz/fflate) |
 | Lucide | 界面图标 | [Lucide](https://github.com/lucide-icons/lucide) |
 | Vite、Vitest、Playwright | 构建、单元测试和浏览器交互验证 | [Vite](https://github.com/vitejs/vite)、[Vitest](https://github.com/vitest-dev/vitest)、[Playwright](https://github.com/microsoft/playwright) |

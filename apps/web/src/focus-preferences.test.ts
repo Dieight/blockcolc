@@ -2,6 +2,15 @@ import { describe, expect, it } from 'vitest';
 import { defaultFocusPreferences, FOCUS_PREFERENCES_KEY, loadFocusPreferences, parseFocusPreferences, saveFocusPreferences } from './focus-preferences';
 
 describe('local focus preferences', () => {
+  it('migrates neutral world colour and persists independent bounded controls', () => {
+    const neutral = { saturation: 100, brightness: 100, contrast: 100 };
+    expect(parseFocusPreferences({ focusMinutes: 25, breakMinutes: 5 }).worldColorAdjustment).toEqual(neutral);
+    expect(parseFocusPreferences({ focusMinutes: 25, breakMinutes: 5, worldColorAdjustment: { saturation: 'bad', brightness: 200, contrast: -10 } }).worldColorAdjustment)
+      .toEqual({ saturation: 100, brightness: 120, contrast: 80 });
+    let saved = '';
+    saveFocusPreferences({ setItem: (_key, value) => { saved = value; } }, { ...defaultFocusPreferences(), worldColorAdjustment: { saturation: 135, brightness: 90, contrast: 115 } });
+    expect(loadFocusPreferences({ getItem: () => saved }).worldColorAdjustment).toEqual({ saturation: 135, brightness: 90, contrast: 115 });
+  });
   it('uses the approved new-install defaults without overwriting explicit saved options', () => {
     expect(defaultFocusPreferences()).toMatchObject({focusGlassTransparency:100,lightingQuality:'cinematic',constructionOutlineVisibility:'current',themeMode:'system',autoContinueFocus:false,returnToFocusReminders:true,minimalMode:false});
     expect(parseFocusPreferences({...defaultFocusPreferences(),focusGlassTransparency:50,lightingQuality:'balanced',constructionOutlineVisibility:'all',themeMode:'light',autoContinueFocus:true,returnToFocusReminders:false,minimalMode:true})).toMatchObject({focusGlassTransparency:50,lightingQuality:'balanced',constructionOutlineVisibility:'all',themeMode:'light',autoContinueFocus:true,returnToFocusReminders:false,minimalMode:true});

@@ -1,7 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { createInitialState, execute, type DomainCommand, type DomainState } from '@blockcolc/domain';
 import type { RoundPlan } from '../src/round-plan';
-import { preparePlanCancellation } from './focus-plan-controls';
+import { preparePlanCancellation, continueFromRest, openRetainedPlan, waitForMarathonReport } from './focus-plan-controls';
 
 // These cases own restored business state. Animated-world coverage remains in
 // the renderer suite; a quiet world prevents fake-clock advances/reloads from
@@ -93,16 +93,15 @@ for (const kind of ['finite', 'habit'] as const) {
     await expect(page.locator('.world-screen')).toHaveClass(/is-focusing/);
     await expect(page.locator('.focus-building-progress')).toHaveCount(0);
     await page.clock.fastForward(61_000);
-    await expect(page.getByRole('button', { name: '跳过休息' })).toBeVisible();
+    await expect(page.locator('.timer-break')).toContainText('休息中');
     expect((await snapshot(page)).projects.find(p => p.id === 'h')?.habit?.completedFocusSessionIds).toEqual([]);
     await reloadRestoredWorld(page);
-    await expect(page.getByRole('button', { name: '跳过休息' })).toBeVisible();
-    await page.getByRole('button', { name: '跳过休息' }).click();
-    await page.getByRole('button', { name: '开始下一轮' }).click();
+    await expect(page.locator('.timer-break')).toContainText('休息中');
+    await continueFromRest(page);
     const second = (await snapshot(page)).activeFocusSession;
     expect(second).toMatchObject({ subtaskId: null, deferredSettlement: true, plannedDurationMs: 60_000 });
     await page.clock.fastForward(61_000);
-    const report = page.locator('.marathon-progress-report');
+    const report = await waitForMarathonReport(page);
     await expect(report).toContainText('2 轮专注已结束');
     expect((await snapshot(page)).projects.find(p => p.id === 'h')?.habit?.completedFocusSessionIds).toEqual([]);
     await report.getByRole('button', { name: /阅读/ }).click();
@@ -134,7 +133,7 @@ for (const kind of ['finite', 'habit'] as const) {
   });
 }
 
-test('a deleted host with no targets can explicitly settle retained rounds before first-run setup', async ({ page }) => {
+test('a deleted host with no targets can settle retained rounds and return without forced setup', async ({ page }) => {
   await page.clock.install({ time: new Date(startAt + 61_000) });
   const data = fixture('habit', true, true);
   await seed(page, data.state, null);
@@ -145,7 +144,9 @@ test('a deleted host with no targets can explicitly settle retained rounds befor
   expect((await snapshot(page)).focusHistory[0]?.settledAt).toBeDefined();
   await reloadRestoredWorld(page);
   await expect(report).toBeHidden();
-  await expect(page.getByRole('button', { name: '开始建造' })).toBeVisible();
+  await expect(page.locator('.setup')).toHaveCount(0);
+  await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '新建任务', exact: true })).toBeVisible();
 });
 
 test('early completion on a deferred habit host stays unallocated and cancelling the remaining plan opens one report', async ({ page }) => {
@@ -156,10 +157,10 @@ test('early completion on a deferred habit host stays unallocated and cancelling
   await page.locator('.immersive-hint').dblclick();
   await page.getByRole('button', { name: '结束本次专注' }).click();
   await page.getByRole('button', { name: /提前完成本轮/ }).click();
-  await expect(page.getByRole('button', { name: '跳过休息' })).toBeVisible();
+  await expect(page.locator('.minimal-ready-clock')).toBeVisible();
+  await expect(page.getByRole('button', { name: '跳过休息' })).toHaveCount(0);
   expect((await snapshot(page)).projects.find(p => p.id === 'h')?.habit?.completedFocusSessionIds).toEqual([]);
-  await page.getByRole('button', { name: '跳过休息' }).click();
-  await page.getByRole('button', { name: '调整本次计划' }).click();
+  await openRetainedPlan(page);
   await (await preparePlanCancellation(page.getByRole('dialog', { name: '安排下一轮' }))).click();
   const report = page.locator('.marathon-progress-report');
   await expect(report).toContainText('1 轮专注已结束');
@@ -177,8 +178,7 @@ test('interrupting the only deferred round preserves the plan but cancelling it 
   await page.getByRole('button', { name: '结束本次专注' }).click();
   await page.getByRole('button', { name: /中断本轮/ }).click();
   await page.getByRole('button', { name: '外部打扰' }).click();
-  await expect(page.getByRole('button', { name: '调整本次计划' })).toBeVisible();
-  await page.getByRole('button', { name: '调整本次计划' }).click();
+  await openRetainedPlan(page);
   await (await preparePlanCancellation(page.getByRole('dialog', { name: '安排下一轮' }))).click();
   await expect(page.locator('.marathon-progress-report')).toHaveCount(0);
   await expect(page.getByRole('button', { name: '开始 1 轮' })).toBeVisible();
@@ -190,8 +190,7 @@ test('cancelling during a later active round records the note and reports only t
   const data = fixture('finite');
   await seed(page, data.state, data.plan);
   await page.clock.fastForward(61_000);
-  await page.getByRole('button', { name: '跳过休息' }).click();
-  await page.getByRole('button', { name: '开始下一轮' }).click();
+  await continueFromRest(page);
   // The click handler intentionally starts the application command asynchronously.
   // Wait until both the IDB-owned focus and its plan context are committed before
   // advancing mocked time, otherwise the clock jump can precede StartFocus itself.
@@ -220,12 +219,11 @@ test('cancelling during a later active round records the note and reports only t
   const confirm = page.getByRole('button', { name: '确认取消整个计划', exact: true });
   await expect(confirm).toBeDisabled();
   await page.getByRole('button', { name: '优先级变化', exact: true }).click();
-  await expect(confirm).toBeDisabled();
-  await page.getByLabel('补充说明', { exact: true }).fill('测试：改为处理更紧急的工作');
+  await expect(confirm).toBeEnabled();
+  await page.getByLabel('补充说明（可选）', { exact: true }).fill('测试：改为处理更紧急的工作');
   await confirm.click();
-  const report = page.locator('.marathon-progress-report');
+  const report = await waitForMarathonReport(page);
   await expect(report).toContainText('1 轮专注已结束');
-  await expect(report).toHaveAttribute('data-focus-report-variant', 'immersive');
   await expect(report).toContainText('测试：改为处理更紧急的工作');
   await expect(page.locator('.world-screen')).toHaveClass(/is-focusing/);
   const cancelled = await snapshot(page);

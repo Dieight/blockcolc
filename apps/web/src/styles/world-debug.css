@@ -1,5 +1,15 @@
-.world-debug-settings select{width:auto;max-width:52%;min-height:44px;padding:8px 12px}
+.world-debug-weather{width:min(52%,180px);min-width:120px}
+.world-debug-weather .choice-menu{margin:0}
+.world-debug-weather .choice-menu-label{display:none}
+.world-debug-weather .choice-menu-trigger{min-height:44px;padding:8px 10px;font-size:.875rem}
+.world-debug-weather .choice-menu-options{max-height:280px;overflow-y:auto}
+.choice-menu-options.is-floating{position:fixed;right:auto;margin:0;z-index:100;overscroll-behavior:contain}
 .world-debug-time{width:126px;min-height:44px;padding:8px}
+.world-debug-time .minimal-clock-gesture .timer-value{font-size:28px;line-height:1.2}
+.world-debug-time .minimal-clock-hint{font-size:10px;line-height:1.3}
+.world-debug-time .minimal-clock-gesture{padding:0;min-height:44px;text-align:right}
+.world-debug-settings .choice-menu:has([aria-label='调试节日']){width:min(52%,180px);margin:0}
+.world-debug-settings .choice-menu:has([aria-label='调试节日']) .choice-menu-label{display:none}
 .world-debug-follow{display:flex;align-items:center;gap:6px;min-height:44px;font-size:.75rem;color:var(--muted)}
 .world-debug-follow input{width:18px;height:18px;padding:0;accent-color:var(--focus)}
 .world-debug-decay{display:flex;align-items:center;gap:8px;width:min(50%,220px);font-size:.8125rem;font-variant-numeric:tabular-nums}

@@ -1,4 +1,6 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
+import { chooseDebugWeather, chooseDebugTime } from './world-debug-controls';
+import { waitForPreparedWorld } from './world-ready';
 import { readPersistedDomainState } from './persisted-domain-state';
 
 async function pinchZoom(page: Page, canvas: Locator, startDistance: number, endDistance: number) {
@@ -29,9 +31,7 @@ async function pinchZoom(page: Page, canvas: Locator, startDistance: number, end
 async function createProject(page: Page) {
   await page.goto('/');
   await page.getByRole('button', { name: '开始建造' }).click();
-  const canvas = page.getByLabel('项目建筑世界');
-  await expect(canvas).toHaveAttribute('data-first-nonempty-frame-ms', /\d/);
-  return canvas;
+  return waitForPreparedWorld(page);
 }
 
 test('temporary weather and time overrides restore normal sources without changing domain facts', async ({ page }, testInfo) => {
@@ -43,9 +43,9 @@ test('temporary weather and time overrides restore normal sources without changi
   const originalWeather = await canvas.getAttribute('data-weather-kind');
   await page.getByRole('button', { name: '设置', exact: true }).click();
   await page.getByLabel('临时调试世界', { exact: true }).check();
-  await page.getByLabel('天气', { exact: true }).selectOption('rain');
+  await chooseDebugWeather(page, 'rain');
   await page.getByLabel('指定时间', { exact: true }).check();
-  await page.getByLabel('世界调试时间', { exact: true }).fill('00:00');
+  await chooseDebugTime(page, '00:00');
   await page.getByRole('button', { name: '计时', exact: true }).click();
   await expect(canvas).toHaveAttribute('data-weather-kind', 'rain');
   await expect.poll(async () => Number(await canvas.getAttribute('data-rain-drop-count'))).toBeGreaterThan(0);
@@ -79,15 +79,15 @@ test('weather and astronomy share one visible sky while storm reaches the glass 
   await page.getByRole('button', { name: '设置', exact: true }).click();
   await page.getByLabel('临时调试世界', { exact: true }).check();
   await page.getByLabel('指定时间', { exact: true }).check();
-  await page.getByLabel('世界调试时间', { exact: true }).fill('13:00');
-  await page.getByLabel('天气', { exact: true }).selectOption('clear');
+  await chooseDebugTime(page, '13:00');
+  await chooseDebugWeather(page, 'clear');
   await page.getByRole('button', { name: '计时', exact: true }).click();
   await expect(canvas).toHaveAttribute('data-day-phase', 'day');
   const clearClouds = Number(await canvas.getAttribute('data-cloud-block-count'));
   await canvas.screenshot({ path: testInfo.outputPath('weather-clear-day.png') });
 
   await page.getByRole('button', { name: '设置', exact: true }).click();
-  await page.getByLabel('天气', { exact: true }).selectOption('cloudy');
+  await chooseDebugWeather(page, 'cloudy');
   await page.getByRole('button', { name: '计时', exact: true }).click();
   await expect(canvas).toHaveAttribute('data-weather-kind', 'cloudy');
   const cloudyClouds = Number(await canvas.getAttribute('data-cloud-block-count'));
@@ -95,7 +95,7 @@ test('weather and astronomy share one visible sky while storm reaches the glass 
   await canvas.screenshot({ path: testInfo.outputPath('weather-cloudy-day.png') });
 
   await page.getByRole('button', { name: '设置', exact: true }).click();
-  await page.getByLabel('天气', { exact: true }).selectOption('mist');
+  await chooseDebugWeather(page, 'mist');
   await page.getByRole('button', { name: '计时', exact: true }).click();
   await expect(canvas).toHaveAttribute('data-weather-kind', 'mist');
   const mistClouds = Number(await canvas.getAttribute('data-cloud-block-count'));
@@ -103,7 +103,7 @@ test('weather and astronomy share one visible sky while storm reaches the glass 
   await canvas.screenshot({ path: testInfo.outputPath('weather-mist-day.png') });
 
   await page.getByRole('button', { name: '设置', exact: true }).click();
-  await page.getByLabel('天气', { exact: true }).selectOption('storm');
+  await chooseDebugWeather(page, 'storm');
   await page.getByRole('checkbox', { name: '开启极简模式' }).check();
   await page.getByRole('button', { name: '计时', exact: true }).click();
   await expect(canvas).toHaveAttribute('data-weather-kind', 'rain');
@@ -122,7 +122,7 @@ test('snow settles on the minimal glass without covering the clock', async ({ pa
   const canvas = await createProject(page);
   await page.getByRole('button', { name: '设置', exact: true }).click();
   await page.getByLabel('临时调试世界', { exact: true }).check();
-  await page.getByLabel('天气', { exact: true }).selectOption('snow');
+  await chooseDebugWeather(page, 'snow');
   await page.getByRole('checkbox', { name: '开启极简模式' }).check();
   await page.getByRole('button', { name: '计时', exact: true }).click();
   await expect(canvas).toHaveAttribute('data-weather-kind', 'snow');
@@ -307,7 +307,7 @@ test('glass drizzle does not intercept either direction of an actual touch swipe
   await createProject(page);
   await page.getByRole('button', { name: '设置', exact: true }).click();
   await page.getByLabel('临时调试世界', { exact: true }).check();
-  await page.getByLabel('天气', { exact: true }).selectOption('rain');
+  await chooseDebugWeather(page, 'rain');
   await page.getByRole('checkbox', { name: '开启极简模式' }).check();
   await page.getByRole('button', { name: '计时', exact: true }).click();
   const panel = page.locator('.minimal-idle-carousel');

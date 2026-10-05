@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { chooseDebugWeather } from './world-debug-controls';
 import { fixBusinessDate } from './fixed-business-date';
 
 // Keep the suite filename so the release runner still covers the changed contract.
@@ -9,7 +10,7 @@ test('glass no longer warps orbiting terrain and keeps clock input and reduced-t
   await page.getByRole('button', { name: '设置', exact: true }).click();
   await page.getByLabel('开启极简模式', { exact: true }).check();
   await page.getByLabel('临时调试世界', { exact: true }).check();
-  await page.getByLabel('天气', { exact: true }).selectOption('clear');
+  await chooseDebugWeather(page, 'clear');
   await page.getByRole('button', { name: '计时', exact: true }).click();
   const world = page.getByLabel('项目建筑世界', { exact: true });
   await expect.poll(async () => Number(await world.getAttribute('data-render-frame-count'))).toBeGreaterThan(0);

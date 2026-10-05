@@ -16,6 +16,9 @@ import {
 import type {
   BackupImportPreview,
   BackupRepository,
+  DailyBackupRepository,
+  DailyBackupSummary,
+  DailyBackupCollection,
   BreakCompletionNotification,
   Clock,
   FocusCompletionNotification,
@@ -31,6 +34,8 @@ export interface ApplicationDependencies {
   repository: StateRepository;
   /** The same persistence implementation, when it supports complete-state backup operations. */
   backupRepository?: BackupRepository;
+  dailyBackupRepository?: DailyBackupRepository;
+  holidayBlueprint?: (id:string,title:string)=>NonNullable<DomainState['projects'][number]['importedBlueprint']>;
   notifications: NotificationPort;
   clock: Clock;
   ids: IdGenerator;
@@ -106,7 +111,7 @@ export class ApplicationService {
   worldProjection(): WorldProjection {
     const cached = this.worldProjectionCache;
     if (cached !== null && cached.epoch === this.stateEpoch) return cached.value;
-    const value = projectWorldState(this.state);
+    const value = projectWorldState(this.state,this.dependencies.holidayBlueprint);
     this.worldProjectionCache = { epoch: this.stateEpoch, value };
     return value;
   }
@@ -264,6 +269,29 @@ export class ApplicationService {
 
   listRollbackBackups(): Promise<RollbackBackupSummary[]> {
     return this.serial(async () => this.backups().listRollbackBackups());
+  }
+
+  /** Read-only history work must not queue in front of focus/settlement writes. */
+  createDailyBackup(date: string): Promise<DailyBackupSummary | null> {
+    return this.dependencies.dailyBackupRepository?.createDailyBackup(date) ?? Promise.resolve(null);
+  }
+
+  listDailyBackups(): Promise<DailyBackupCollection | null> {
+    return this.dependencies.dailyBackupRepository?.listDailyBackups() ?? Promise.resolve(null);
+  }
+
+  exportDailyBackup(backupId: string): Promise<string> {
+    if (!this.dependencies.dailyBackupRepository) return Promise.reject(new Error('每日留档暂不可用。'));
+    return this.dependencies.dailyBackupRepository.exportDailyBackup(backupId);
+  }
+
+  restoreDailyBackup(backupId: string): Promise<ApplicationResult> {
+    return this.serial(async () => {
+      if (!this.dependencies.dailyBackupRepository) throw new Error('每日留档暂不可用。');
+      const staleSessionId = this.state.activeFocusSession?.id ?? null;
+      await this.dependencies.dailyBackupRepository.restoreDailyBackup(backupId, this.revision);
+      return this.synchronizeAfterReplacement(staleSessionId);
+    });
   }
 
   restoreRollback(backupId: string): Promise<ApplicationResult> {

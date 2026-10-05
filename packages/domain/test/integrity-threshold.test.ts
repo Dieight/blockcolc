@@ -48,7 +48,8 @@ describe("configurable integrity excursion threshold", () => {
   it("migrates schema 11 without modifying ongoing or deferred session facts", () => {
     const f = fixture(); f.start(); f.run({ type: "RecordFocusBackgrounded", reason: "app-switch" });
     const session = { ...f.state().activeFocusSession!, subtaskId: null, marathon: true as const, deferredSettlement: true as const };
-    const raw = { ...f.state(), activeFocusSession: session, schemaVersion: 11, focusIntegrityPolicy: { enabled: false, maxEffectiveExcursions: 5 } };
+    const {holidayRewards:_holidayRewards,...oldState}=f.state();
+    const raw = { ...oldState, activeFocusSession: session, schemaVersion: 11, focusIntegrityPolicy: { enabled: false, maxEffectiveExcursions: 5 } };
     expect(parseDomainState(raw)).toEqual({ ...f.state(), activeFocusSession: session, focusIntegrityPolicy: { ...raw.focusIntegrityPolicy, excursionThresholdSeconds: 3 } });
     expect(() => parseDomainState({ ...raw, focusIntegrityPolicy: { ...raw.focusIntegrityPolicy, extra: true } })).toThrow();
     expect(() => parseDomainState({ ...raw, schemaVersion: 12 })).toThrow();

@@ -1,3 +1,4 @@
+import { holidaysOnDate } from './holidays.js';
 import {
   assertISODate,
   assertValidTimeZone,
@@ -5,7 +6,7 @@ import {
   localDateOf,
 } from "./calendar.js";
 import { parseDecorationBlueprint, parseImportedBlueprint } from "./validation.js";
-import { FOCUS_INTEGRITY_GRACE_MS } from "./model.js";
+import { FOCUS_INTEGRITY_GRACE_MS, MAX_BUILDING_BLUEPRINTS } from "./model.js";
 import type {
   Clock,
   CommandResult,
@@ -24,7 +25,7 @@ import type {
 export function createInitialState(timeZone = "UTC", restWeekdays: number[] = [0, 6]): DomainState {
   assertCalendar(timeZone, restWeekdays);
   return {
-    schemaVersion: 12,
+    schemaVersion: 13,
     projects: [],
     habitBuildings: [],
     activeProjectId: null,
@@ -44,6 +45,7 @@ export function createInitialState(timeZone = "UTC", restWeekdays: number[] = [0
     focusIntegrityPolicy: { enabled: false, maxEffectiveExcursions: 3, excursionThresholdSeconds: FOCUS_INTEGRITY_GRACE_MS / 1000 },
     decorationBlueprintResources: [],
     decorationRewards: [],
+    holidayRewards: [],
     buildingBlueprintResources: [],
     worldSettings: { worldSeed: "world-default", terrainGenerationVersion: 4, environmentStyle: "ocean-island" },
   };
@@ -700,7 +702,7 @@ function handle(state: DomainState, command: DomainCommand, clock: Clock): Comma
       return ok(state, [{ type: "CalendarConfigured" }]);
     }
     case "ConfigureWorldEnvironment": {
-      if (command.environmentStyle !== "natural-valley" && command.environmentStyle !== "classic-island" && command.environmentStyle !== "ocean-island") {
+      if (command.environmentStyle !== "natural-valley" && command.environmentStyle !== "classic-island" && command.environmentStyle !== "ocean-island" && command.environmentStyle !== 'mosaic-coast') {
         throw new Error("Invalid world environment style");
       }
       if (state.worldSettings.environmentStyle === command.environmentStyle) return ok(state, []);
@@ -766,7 +768,7 @@ function handle(state: DomainState, command: DomainCommand, clock: Clock): Comma
         existing.blueprint = blueprint;
         return ok(state, [{ type: "BuildingBlueprintImported", resourceId: blueprint.id }]);
       }
-      if (state.buildingBlueprintResources.length >= 12) throw new Error("Building blueprint library is limited to 12 entries");
+      if (state.buildingBlueprintResources.length >= MAX_BUILDING_BLUEPRINTS) throw new Error(`Building blueprint library is limited to ${MAX_BUILDING_BLUEPRINTS} entries`);
       state.buildingBlueprintResources.push({ id: blueprint.id, displayName: blueprint.title, blueprint, importedAt: now });
       return ok(state, [{ type: "BuildingBlueprintImported", resourceId: blueprint.id }]);
     }
@@ -896,11 +898,30 @@ function applyRepair(state: DomainState, projectId: string, at: string, events: 
 }
 
 function reachGoalForDate(state: DomainState, date: string, at: string, events: DomainEvent[], completingProjectId?: string): void {
+  if (completingProjectId) grantHolidayRewards(state,date,at,completingProjectId,events);
   const goal = ensureDailyGoalForDate(state, date);
   if (!goal.enabled || goal.reachedAt || completedPomodorosOn(state, date) < goal.targetPomodoros) return;
   goal.reachedAt = at;
   events.push({ type: "DailyGoalReached", date });
   grantDecorationReward(state, date, at, events, completingProjectId);
+}
+
+function grantHolidayRewards(state:DomainState,date:string,at:string,projectId:string,events:DomainEvent[]):void {
+  const session=state.focusHistory.at(-1);
+  if(!session || session.status==='interrupted' || session.completedLocalDate!==date || session.projectId!==projectId)return;
+  const project=state.projects.find(p=>p.id===projectId);
+  if(!project)return;
+  const completedBuilding=state.habitBuildings.find(b=>b.focusSessionIds.includes(session.id));
+  const settlementIndex=completedBuilding?.settlementIndex??project.settlementIndex;
+  for(const holiday of holidaysOnDate(date)) {
+    if(state.holidayRewards.some(r=>r.holidayId===holiday.id&&r.year===holiday.year))continue;
+    const ordinal=state.holidayRewards.filter(r=>r.settlementIndex===settlementIndex).length;
+    const angle=(ordinal+1)*2.399963229728653;
+    const radius=84+Math.sqrt(ordinal)*22;
+    state.holidayRewards.push({holidayId:holiday.id,year:holiday.year,date,projectId,settlementIndex,
+      sourceSessionId:session.id,awardedAt:at,position:{x:Math.round(Math.cos(angle)*radius),z:Math.round(Math.sin(angle)*radius)},rotationQuarterTurns:ordinal%4 as 0|1|2|3});
+    events.push({type:'HolidayRewardGranted',holidayId:holiday.id,year:holiday.year,projectId});
+  }
 }
 
 function grantDecorationReward(state: DomainState, date: string, at: string, events: DomainEvent[], completingProjectId?: string): void {

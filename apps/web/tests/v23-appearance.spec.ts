@@ -76,6 +76,10 @@ test('statistics keep the heatmap first, aggregate daily goals and share their a
 });
 
 test("immersive glass transparency persists and keeps an adaptive dark material", async ({ page }, testInfo) => {
+  // Two cold starts, both slider endpoints and a final WebGL capture are one
+  // retained workflow. Trace: all assertions passed; the capture ended at 32 s.
+  // Keep the 5 s assertions; give this multi-launch workflow its own budget.
+  test.setTimeout(60_000);
   await page.setViewportSize({ width: 412, height: 915 });
   await createDefaultProject(page);
   const worldHudMaterial = await page.locator(".world-hud span").first().evaluate((element) => ({
@@ -149,7 +153,8 @@ test("immersive glass transparency persists and keeps an adaptive dark material"
 
   await transparency.fill("80");
   await expect(transparency).toHaveValue("80");
-  await expect(page.locator(".glass-transparency-control")).toContainText("80%");
+  await expect(page.locator(".glass-transparency-setting > summary .glass-transparency-value")).toContainText("80%");
+  await expect(page.locator(".glass-transparency-expanded .glass-transparency-value")).toHaveCount(0);
   await page.getByRole("button", { name: "深色" }).click();
 
   await page.reload();

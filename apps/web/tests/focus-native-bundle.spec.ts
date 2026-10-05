@@ -1,14 +1,15 @@
 import { expect, test, type Page } from '@playwright/test';
+import { waitForPreparedWorld } from './world-ready';
 
 /**
- * Focus/native bundle probes are intentionally isolated from the legacy
- * cross-feature suites. They are source-level release probes for F02/F14/F16/
- * F17; this turn does not run the shared Web E2E gate or a device build.
+ * Focus/native source-level regression probes for F02/F14/F16/F17.
+ * Actual device/OEM behavior remains covered by the separate native matrix.
  */
 async function createFirstProject(page: Page): Promise<void> {
   await page.goto('/');
   await expect(page.getByRole('heading', { name: '建立你的第一项任务' })).toBeVisible();
   await page.getByRole('button', { name: '开始建造' }).dblclick();
+  await waitForPreparedWorld(page);
   await expect(page.getByRole('button', { name: '开始 1 轮' })).toBeVisible();
 }
 
@@ -56,9 +57,11 @@ test.describe('focus/native bundle F02/F14/F16/F17', () => {
     await expect(page.locator('.world-screen')).toHaveClass(/is-focusing/);
     await expect(page.locator('.timer-break')).toContainText('休息中');
     await expect(page.getByRole('button', { name: '返回完整模式' })).toHaveCount(0);
-    await page.getByRole('button', { name: '跳过休息' }).click();
-    await expect(page.locator('.timer-ready')).toContainText('剩余专注总时间');
-    await expect(page.locator('.timer-ready')).toContainText('01:00');
+    // All modes share the quiet rest clock. Its double-tap explicitly starts
+    // the next round; natural expiry, not a removed skip button, enters ready.
+    await page.clock.fastForward(61_000);
+    await expect(page.locator('.minimal-ready-clock')).toContainText('剩余专注总时间');
+    await expect(page.locator('.minimal-ready-clock')).toContainText('01:00');
     await expect(page.getByRole('button', { name: '返回完整模式' })).toHaveCount(0);
   });
 

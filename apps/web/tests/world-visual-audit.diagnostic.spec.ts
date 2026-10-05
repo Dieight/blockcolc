@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { chooseDebugWeather } from './world-debug-controls';
 import type { VoxelRenderer } from '@blockcolc/voxel';
 import { fixBusinessDate } from './fixed-business-date';
 
@@ -107,7 +108,7 @@ test('records fixed night and low-drizzle frames for every requested lighting ti
   await page.getByLabel('临时调试世界', { exact: true }).check();
   await page.getByLabel('指定时间', { exact: true }).check();
   await page.getByLabel('世界调试时间', { exact: true }).fill('00:00');
-  await page.getByLabel('天气', { exact: true }).selectOption('clear');
+  await chooseDebugWeather(page, 'clear');
   const records: unknown[] = [];
   for (const tier of [
     { value: 'performance', label: '流畅' },
@@ -123,7 +124,7 @@ test('records fixed night and low-drizzle frames for every requested lighting ti
     const clear = await canvas.screenshot({ path: testInfo.outputPath(`night-${tier.value}.png`) });
     const active = await canvas.getAttribute('data-active-lighting-quality');
     await page.getByRole('button', { name: '设置', exact: true }).click();
-    await page.getByLabel('天气', { exact: true }).selectOption('rain');
+    await chooseDebugWeather(page, 'rain');
     await page.getByRole('button', { name: '计时', exact: true }).click();
     await expect(canvas).toHaveAttribute('data-weather-kind', 'rain');
     await expect(canvas).toHaveAttribute('data-environment-transition-active', 'false');
@@ -133,7 +134,7 @@ test('records fixed night and low-drizzle frames for every requested lighting ti
       visualIntensity: await canvas.getAttribute('data-weather-visual-precipitation-intensity'),
       fixture: 'deterministic-uuid-world', browserOnly: true, visuallyReviewed: false });
     await page.getByRole('button', { name: '设置', exact: true }).click();
-    await page.getByLabel('天气', { exact: true }).selectOption('clear');
+    await chooseDebugWeather(page, 'clear');
   }
   await testInfo.attach('night-drizzle-tier-observations', {
     body: Buffer.from(JSON.stringify(records, null, 2)), contentType: 'application/json',

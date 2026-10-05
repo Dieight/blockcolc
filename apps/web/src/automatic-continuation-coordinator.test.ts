@@ -8,6 +8,8 @@ import {
   createAutomaticContinuationCoordinator,
 } from './automatic-continuation';
 import { automaticContinuationEventId, automaticContinuationSessionId, type RoundPlan } from './round-plan';
+import { createFocusFlow } from './focus-flow';
+import { defaultFocusPreferences } from './focus-preferences';
 
 const BASE = Date.parse('2026-09-23T09:00:00.000Z');
 const AUTH = 'authorization-coordinator-test';
@@ -105,18 +107,20 @@ async function harness(initialMarathon = true) {
   let autoEnabled = true;
   const deadlines = deadlinePort(() => now);
   const writePlan = vi.fn((next: RoundPlan | null) => { plan = next; });
+  const refresh = vi.fn();
   const coordinator = createAutomaticContinuationCoordinator({
     service,
     deadlines: deadlines.port,
     readPlan: () => plan,
     writePlan,
+    refresh,
     preferences: () => ({ autoContinueFocus: autoEnabled, focusMinutes: 1, habitFocusMinutes: 1, breakMinutes: 2 }),
     nowMs: () => now,
     setTimer: () => 0 as unknown as ReturnType<typeof setTimeout>,
     clearTimer: () => undefined,
   });
   return {
-    service, project, subtaskId, firstSession, deadlines, coordinator, writePlan,
+    service, project, subtaskId, firstSession, deadlines, coordinator, writePlan, refresh,
     plan: () => plan,
     setPlan: (next: RoundPlan | null) => { plan = next; },
     setAutoEnabled: (enabled: boolean) => { autoEnabled = enabled; },
@@ -127,6 +131,29 @@ async function harness(initialMarathon = true) {
 }
 
 describe('automatic continuation coordinator', () => {
+  it.each(['early','interrupt'] as const)('does not restart a zero-break chain at its commit subscription after manual %s',async outcome=>{
+    const f=await harness(),schedule=f.plan()!;
+    const started=await f.service.dispatch({type:'StartFocus',projectId:f.project.id,subtaskId:f.subtaskId,plannedDurationMs:60_000,marathon:true});
+    if(!started.ok||!started.state.activeFocusSession)throw new Error('setup start failed');
+    f.setPlan({...schedule,status:'focus',currentSessionId:started.state.activeFocusSession.id,automaticContinuation:{authorizationId:AUTH,focusDurationMs:60_000,breakDurationMs:0}});
+    await f.coordinator.start();await f.coordinator.reconcile();
+    const autoStart=vi.spyOn(f.service,'startScheduledFocus');f.advance(10_000);
+    const flow=createFocusFlow({snapshot:()=>f.service.snapshot(),dispatch:command=>f.service.dispatch(command),readPlan:f.plan,writePlan:f.writePlan,
+      preferences:()=>({...defaultFocusPreferences(),focusMinutes:1,breakMinutes:0,autoContinueFocus:true}),
+      draft:()=>({rounds:3,mode:'marathon',endAt:'10:00',selectedId:f.subtaskId}),nowMs:()=>BASE+70_000,
+      resume:async()=>{await f.service.resume();},closeEnding:()=>{},closePlan:()=>{},resetDraftMode:()=>{},constructionFeedback:()=>{}});
+    try{
+      if(outcome==='early')await flow.completeEarly();else await flow.interruptFocus(null);
+      await f.coordinator.reconcile();f.setNow(BASE+120_000);await f.coordinator.onResume();
+      expect(autoStart).not.toHaveBeenCalled();expect(f.service.snapshot().activeFocusSession).toBeNull();
+      expect(f.plan()).toMatchObject({status:'ready',completedRounds:outcome==='early'?2:1});expect(f.plan()?.automaticContinuation).toBeUndefined();
+    }finally{await f.coordinator.stop();}
+  });
+  it('does not refresh an idle presentation for an unrelated commit, but publishes resume recovery', async () => {
+    const h = await harness(); h.setPlan(null);
+    await h.coordinator.reconcile(); expect(h.refresh).not.toHaveBeenCalled();
+    await h.coordinator.onResume(); expect(h.refresh).toHaveBeenCalledTimes(1);
+  });
   it('catches up a locked marathon across multiple absolute focus and break intervals without duplicate sessions', async () => {
     const f = await harness();
     f.setNow(BASE + 7 * 60_000);

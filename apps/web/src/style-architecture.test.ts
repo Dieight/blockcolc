@@ -9,6 +9,7 @@ const expectedImports = [
   'tokens.css', 'base.css', 'pixel-ui.css', 'foundation.css', 'settings.css', 'workbench.css',
   'tasks-stats.css', 'setup.css', 'world.css', 'minimal-mode.css', 'theme.css',
   'focus-report.css', 'building-memory.css', 'glass-overlays.css', 'about.css', 'focus-plan.css', 'world-debug.css',
+  'holidays.css', 'pixel-trial.css', 'physical-slider.css',
 ];
 
 describe('style architecture', () => {

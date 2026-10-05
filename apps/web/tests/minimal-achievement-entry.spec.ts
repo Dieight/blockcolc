@@ -1,5 +1,6 @@
 import {expect,test,type Locator,type Page} from '@playwright/test';
 import type {DomainState} from '@blockcolc/domain';
+import {waitForPreparedWorld} from './world-ready';
 
 // This capability test includes setup, two cold loads and a complete focus /
 // settlement loop over software WebGL; keep its budget separate from one-step tests.
@@ -40,6 +41,7 @@ test('settings launches minimal focus, persists it, settles once and shows real 
  await page.clock.install({time:new Date('2026-09-06T08:00:00Z')});
  await minimal(page);
  await page.reload();
+ await waitForPreparedWorld(page);
  await expect(page.locator('.minimal-clock-gesture')).toBeVisible();
  await expect(page.getByRole('navigation',{name:'主导航'})).toBeHidden();
  await page.locator('.minimal-clock-gesture').press('ArrowUp');
@@ -75,6 +77,7 @@ test('settings launches minimal focus, persists it, settles once and shows real 
  await expect(achievements).toContainText('第一块基石');
  await expect(achievements.locator('.achievement.unlocked').first()).toBeVisible();
  await page.reload();
+ await waitForPreparedWorld(page);
  await expect(page.locator('.minimal-clock-gesture')).toBeVisible();
  await expect(page.locator('.toast')).toHaveCount(0);
 });

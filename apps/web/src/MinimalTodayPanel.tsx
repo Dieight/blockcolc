@@ -60,13 +60,15 @@ export function MinimalTodayPanel({ state, date }: { state: DomainState; date: s
         {hourPixels.filter(pixel => pixel.milliseconds > 0).map((pixel, level) => {
           const y = chartBase - (level + 1) * pixelHeight;
           const row = pixel.owner >= 0 ? rows[pixel.owner] : undefined;
-          return <rect key={level} x={x(hour) + 0.5} y={y + 0.5} width={pixelWidth - 1} height={pixelHeight - 1}
+          return <rect key={level} className="minimal-today-cell" x={x(hour) + 0.5} y={y + 0.5} width={pixelWidth - 1} height={pixelHeight - 1}
             fill={row ? seriesColor(row, pixel.owner) : 'var(--muted)'} shapeRendering="crispEdges">
             <title>{row ? `${row.title} · ${duration(pixel.milliseconds)}` : `未分配 · ${duration(pixel.milliseconds)}`}</title>
           </rect>;
         })}
       </g>)}
       {occupiedPerHour.some(Boolean) && <path d={outline} fill="none" className="minimal-today-outline" />}
+      <line x1={chartLeft} x2={chartRight} y1={chartBase} y2={chartBase} className="minimal-today-baseline"/>
+      {Array.from({length:25},(_,hour)=><path key={hour} d={`M${x(hour)},${chartBase}v${hour%6===0?5:2}`} className="minimal-today-tick"/>)}
       {[0, 6, 12, 18, 24].map(hour => <text key={hour} x={x(hour)} y="115" textAnchor={hour === 0 ? 'start' : hour === 24 ? 'end' : 'middle'}>{String(hour).padStart(2, '0')}</text>)}
     </svg>
     {rows.length === 0 ? <p className="minimal-today-empty">今天的专注会留在这里</p> : <ul className="minimal-today-legend">

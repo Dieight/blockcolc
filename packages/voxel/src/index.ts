@@ -31,3 +31,4 @@ export * from './terrain-profile';
 export * from './astronomy';
 export * from './astronomy-visual';
 export * from './scenery';
+export * from './world-color-adjustment';

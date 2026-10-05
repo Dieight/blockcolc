@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
+import { chooseDebugWeather } from './world-debug-controls';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { syntheticFlowerPack } from './synthetic-flower-pack';
@@ -222,7 +223,7 @@ test('captures WebGL link, error, and context state at natural flower routing st
   await page.getByLabel('临时调试世界', { exact: true }).check();
   await page.getByLabel('指定时间', { exact: true }).check();
   await page.getByLabel('世界调试时间', { exact: true }).fill('12:00');
-  await page.getByLabel('天气', { exact: true }).selectOption('clear');
+  await chooseDebugWeather(page, 'clear');
   await mark('world-without-pack-no-gesture');
   await page.getByRole('button', { name: '计时', exact: true }).click();
   const canvas = page.getByLabel('项目建筑世界');

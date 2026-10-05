@@ -2,9 +2,11 @@ import type { VillagePlacement, RoadCell } from "./village";
 import { terrainHeightAt } from "./village";
 import { createTerrainMeshBuffers } from './terrain-mesh';
 import { terrainGenerationProfile, type NaturalValleyTerrainProfile, type OceanIslandTerrainProfile } from './terrain-profile';
+import { sampleMosaicTerrain } from './mosaic-terrain';
 
-export type TerrainMaterial = "grass" | "dirt" | "stone" | "water";
-export type TerrainEnvironmentStyle = "natural-valley" | "classic-island" | "ocean-island";
+export const TERRAIN_MATERIALS = ['grass','dirt','stone','water','sand','snow','ice','terracotta'] as const;
+export type TerrainMaterial = typeof TERRAIN_MATERIALS[number];
+export type TerrainEnvironmentStyle = "natural-valley" | "classic-island" | "ocean-island" | 'mosaic-coast';
 export type TerrainGenerationVersion = 1 | 2 | 3 | 4;
 
 export interface NaturalTreePlacement {
@@ -23,6 +25,8 @@ export interface MergedGeometryData {
   triangleCount: number;
   bounds: { minX: number; maxX: number; minY: number; maxY: number; minZ: number; maxZ: number };
   framingBounds: { minX: number; maxX: number; minZ: number; maxZ: number };
+  /** Physical near-cell coverage, independent of camera framing and LOD scale. */
+  nearDetailBounds: { minX: number; maxX: number; minZ: number; maxZ: number };
   naturalTrees: readonly NaturalTreePlacement[];
   terrainGenerationVersion: TerrainGenerationVersion;
   lodCellCounts: { near: number; middle: number; far: number };
@@ -95,7 +99,7 @@ export function createSteppedTerrainData(
   const outerZ = Math.max(Math.abs(extent.minZ), Math.abs(extent.maxZ)) + 9;
   // Keep the island round while enclosing every accepted building footprint.
   const radius = Math.max(26, minimumRadius?.x ?? 0, minimumRadius?.z ?? 0, Math.hypot(outerX, outerZ));
-  const natural = options.environmentStyle === "natural-valley";
+  const natural = options.environmentStyle === "natural-valley" || options.environmentStyle === 'mosaic-coast';
   const worldSeed = options.worldSeed ?? "world-default";
   const seedHash = stableHash(worldSeed);
   const terrainGenerationVersion = options.terrainGenerationVersion ?? 4;
@@ -107,9 +111,14 @@ export function createSteppedTerrainData(
     const profile = terrainGenerationProfile('ocean-island', radius, terrainGenerationVersion);
     return createOceanIslandTerrainDataV1(placements, roads, additionalPads, radius, seedHash, profile as OceanIslandTerrainProfile, sharedGroundHeightAt);
   }
-  if (natural && (terrainGenerationVersion === 2 || terrainGenerationVersion === 3 || terrainGenerationVersion === 4)) {
-    const profile = terrainGenerationProfile('natural-valley', radius, terrainGenerationVersion, options.refinedFar);
-    return createNaturalTerrainDataV2(placements, roads, additionalPads, radius, seedHash, terrainGenerationVersion, profile as NaturalValleyTerrainProfile, sharedGroundHeightAt);
+  if (natural && (options.environmentStyle === 'mosaic-coast' || terrainGenerationVersion === 2 || terrainGenerationVersion === 3 || terrainGenerationVersion === 4)) {
+    const generation = options.environmentStyle === 'mosaic-coast' ? 4 : terrainGenerationVersion as 2|3|4;
+    const base = terrainGenerationProfile('natural-valley', radius, generation, options.refinedFar) as NaturalValleyTerrainProfile;
+    const align=(n:number)=>Math.ceil(n/16)*16;
+    const middle=align(Math.max(base.nearExtent+32,base.middleExtent*.8));
+    const profile = options.environmentStyle==='mosaic-coast'?{...base,middleExtent:middle,
+      farExtent:align(Math.max(middle+80,base.farExtent*.8)),farFineExtent:align(Math.max(middle,base.farFineExtent*.8))}:base;
+    return createNaturalTerrainDataV2(placements, roads, additionalPads, radius, seedHash, generation, profile as NaturalValleyTerrainProfile, sharedGroundHeightAt, options.environmentStyle === 'mosaic-coast');
   }
   const cells = new Map<string, number>();
   // The outer ring must still cover the farthest supported phone framing. Keep
@@ -181,6 +190,7 @@ export function createSteppedTerrainData(
     framingBounds: natural
       ? { minX: -radius, maxX: radius, minZ: -radius, maxZ: radius }
       : { minX: -radiusX, maxX: radiusX, minZ: -radiusZ, maxZ: radiusZ },
+    nearDetailBounds: { minX: -radiusX, maxX: radiusX, minZ: -radiusZ, maxZ: radiusZ },
     naturalTrees,
     terrainGenerationVersion,
     lodCellCounts: { near: cells.size, middle: 0, far: 0 },
@@ -303,6 +313,7 @@ function createNaturalTerrainDataV2(
   terrainGenerationVersion: 2 | 3 | 4,
   profile: NaturalValleyTerrainProfile,
   roadGroundHeightAt: (x: number, z: number) => number = terrainHeightAt,
+  mosaic = false,
 ): MergedGeometryData {
   const { nearExtent, middleExtent, farExtent, farFineExtent, refinedFar, farCellSize } = profile;
   // Every ring boundary must land exactly on the next ring's cell lattice or
@@ -323,8 +334,8 @@ function createNaturalTerrainDataV2(
   // 16-unit skirt. Legacy generators retain their original profile.
   const support = createV2SupportContext(placements, roads, additionalPads, roadGroundHeightAt);
   const hydrologyExtent = Math.min(farExtent, 560);
-  const hydrologyV2 = terrainGenerationVersion === 2 ? createV2Hydrology(hydrologyExtent, seedHash, support) : null;
-  const hydrologyV3 = terrainGenerationVersion === 3 || terrainGenerationVersion === 4
+  const hydrologyV2 = !mosaic && terrainGenerationVersion === 2 ? createV2Hydrology(hydrologyExtent, seedHash, support) : null;
+  const hydrologyV3 = !mosaic && (terrainGenerationVersion === 3 || terrainGenerationVersion === 4)
     ? createV3Hydrology(hydrologyExtent, seedHash, support, terrainGenerationVersion)
     : null;
   const { positions, indicesByMaterial, sideIndices, addTop: addQuad, addSide: addSideQuad } = createTerrainMeshBuffers();
@@ -341,13 +352,36 @@ function createNaturalTerrainDataV2(
   const landSampleCache = new Map<string, V2TerrainSample>();
   const cellSampleCache = new Map<string, V2TerrainSample>();
 
+  // Relief belongs to the world position, not the resolution of its mesh.
+  // The old coarse-only lift began at a circular distance while the LOD bands
+  // are squares: corner cells jumped up by 20 blocks at the coarse boundary.
+  const withDistantRelief = (sample: V2TerrainSample, x: number, z: number): V2TerrainSample => {
+    if (mosaic || terrainGenerationVersion !== 4 || sample.waterKind !== 'none' || (sample.mountainSignal ?? 0) <= .02) return sample;
+    const distance = Math.max(Math.abs(x), Math.abs(z));
+    const envelope = smoothstep(middleExtent, farExtent * .8, distance);
+    const lift = envelope * smoothstep(.05, .5, sample.mountainSignal ?? 0) * 22;
+    return lift > .001 ? { ...sample, height: Math.round(Math.min(48, sample.height + lift)) } : sample;
+  };
+
+  const sampleMosaic = (x:number,z:number):V2TerrainSample => {
+    const generated=sampleMosaicTerrain(x,z,seedHash,coreRadius);
+    const supported=sampleV2Support(x,z,support),blend=supported.influence;
+    // Keep only the actual foundation/road constraints. Mixing the old valley
+    // height field back into the whole central radius carved a tall-sided bowl.
+    const height=Math.round(generated.height*(1-blend)+supported.height*blend);
+    const material=blend>.18?'grass':generated.material;
+    return{height,material,supportInfluence:blend,moisture:generated.biome==='badlands'?.02:.6,
+      waterKind:material==='water'?'lake':'none'};
+  };
+
   const sampleAt = (x: number, z: number): V2TerrainSample => {
     const key = `${x}:${z}`;
     const cached = sampleCache.get(key);
     if (cached) return cached;
-    const sample = hydrologyV3
+    const raw = mosaic ? sampleMosaic(x,z) : hydrologyV3
       ? sampleNaturalTerrainV3(x, z, seedHash, support, hydrologyV3)
       : sampleNaturalTerrainV2(x, z, seedHash, support, hydrologyV2!);
+    const sample = withDistantRelief(raw, x, z);
     sampleCache.set(key, sample);
     return sample;
   };
@@ -356,36 +390,21 @@ function createNaturalTerrainDataV2(
     const key = `${x}:${z}`;
     const cached = landSampleCache.get(key);
     if (cached) return cached;
-    const sample = sampleNaturalTerrainV3(x, z, seedHash, support, hydrologyV3!, false);
+    const sample = mosaic ? sampleMosaic(x,z) : withDistantRelief(sampleNaturalTerrainV3(x, z, seedHash, support, hydrologyV3!, false), x, z);
     landSampleCache.set(key, sample);
     return sample;
   };
 
-  const sampleCellAt = (x: number, z: number, size: number): V2TerrainSample => {
-    if (terrainGenerationVersion !== 4 || size < 8) return sampleAt(x, z);
+  const sampleCoarseAt = (x: number, z: number, size: number): V2TerrainSample => {
     const key = `${x}:${z}:${size}`;
     const cached = cellSampleCache.get(key);
     if (cached) return cached;
     // Far LOD cells sample the broad terrain so mountains and
     // water read as coherent big blocks instead of aliased pillars.
-    const broad0 = hydrologyV3
+    const broad0 = mosaic ? sampleMosaic(x,z) : hydrologyV3
       ? sampleNaturalTerrainV3(x, z, seedHash, support, hydrologyV3, true, true)
       : sampleNaturalTerrainV2(x, z, seedHash, support, hydrologyV2!, true, true);
-    // The far ring is seen at a grazing angle, so the terrain's real relief
-    // reads as a thin flat sheet and the distant view looks empty. Raise the
-    // broad land by the terrain's own mountain potential (0..1) under a smooth
-    // outward envelope: big mountain masses grow at the horizon while plains
-    // and water keep their levels. The envelope starts at zero exactly at the
-    // middle ring, so no cliff appears at the ring boundary.
-    let broad = broad0;
-    if (broad.waterKind === "none" && (broad.mountainSignal ?? 0) > 0.02) {
-      const distance = Math.hypot(x, z);
-      const envelope = smoothstep(middleExtent, farExtent * 0.8, distance);
-      if (envelope > 0.001) {
-        const lift = envelope * smoothstep(0.05, 0.5, broad.mountainSignal ?? 0) * 22;
-        if (lift > 0.001) broad = { ...broad, height: Math.round(Math.min(48, broad.height + lift)) };
-      }
-    }
+    const broad = withDistantRelief(broad0, x, z);
     if (broad.waterKind === "none") {
       cellSampleCache.set(key, broad);
       return broad;
@@ -401,6 +420,46 @@ function createNaturalTerrainDataV2(
     const sample = matchingWaterSamples >= requiredCoverage ? broad : sampleLandAt(x, z);
     cellSampleCache.set(key, sample);
     return sample;
+  };
+
+  const sampleCellAt = (x: number, z: number, size: number): V2TerrainSample => {
+    if (terrainGenerationVersion !== 4) return sampleAt(x, z);
+    if (size >= 8) return sampleCoarseAt(x, z, size);
+    const sample = sampleAt(x, z);
+    const boundary = refinedFar ? farFineExtent : middleExtent;
+    const weightX = smoothstep(boundary - 32, boundary - size / 2, Math.abs(x));
+    const weightZ = smoothstep(boundary - 32, boundary - size / 2, Math.abs(z));
+    if ((weightX === 0 && weightZ === 0) || sample.waterKind !== 'none' || sample.supportInfluence >= .18) return sample;
+    const key = `${x}:${z}:${size}`;
+    const cached = cellSampleCache.get(key);
+    if (cached) return cached;
+    const snap = (coordinate: number) => Math.floor(coordinate / farCellSize) * farCellSize + farCellSize / 2;
+    let heightSum = 0, weights = 0, blend = 0;
+    const targets: Array<{ weight: number; height: number }> = [];
+    // A short transition band joins each fine border cell to the actual coarse
+    // neighbour's datum. At a corner use both edges; never fill a river or move
+    // a task foundation just to hide a mesh boundary.
+    for (const [weight, cx, cz] of [
+      [weightX, Math.sign(x) * (boundary + farCellSize / 2), snap(z)],
+      [weightZ, snap(x), Math.sign(z) * (boundary + farCellSize / 2)],
+    ] as const) {
+      if (weight === 0) continue;
+      const neighbour = sampleCoarseAt(cx, cz, farCellSize);
+      if (neighbour.waterKind !== 'none') continue;
+      targets.push({ weight, height: neighbour.height });
+    }
+    for (const target of targets) {
+      // A cell directly on one border must match that border, even when it is
+      // also inside the other edge's transition band. Averaging the two raw
+      // weights made a new short wall beside each corner. Only the one corner
+      // cell shared by both borders needs to bridge the two different heights.
+      const otherWeight = targets.length === 2 ? targets.find(other => other !== target)!.weight : 0;
+      const weight = target.weight === 1 && otherWeight === 1 ? 1 : target.weight * (1 - otherWeight);
+      heightSum += target.height * weight; weights += weight; blend = Math.max(blend, target.weight);
+    }
+    const result = weights === 0 ? sample : { ...sample, height: Math.round(sample.height * (1 - blend) + heightSum / weights * blend) };
+    cellSampleCache.set(key, result);
+    return result;
   };
 
   const addCell = (x: number, z: number, size: number, lod: keyof typeof lodCellCounts): void => {
@@ -453,16 +512,17 @@ function createNaturalTerrainDataV2(
     triangleCount: indexCount / 3,
     bounds: { minX: -farExtent, maxX: farExtent, minY: minHeight - 0.5, maxY: maxHeight + 0.5, minZ: -farExtent, maxZ: farExtent },
     framingBounds: { minX: -coreRadius, maxX: coreRadius, minZ: -coreRadius, maxZ: coreRadius },
+    nearDetailBounds: { minX: -nearExtent, maxX: nearExtent, minZ: -nearExtent, maxZ: nearExtent },
     naturalTrees,
     terrainGenerationVersion,
     lodCellCounts,
     hydrology: {
-      networkCount: hydrologyV3?.networkCount ?? hydrologyV2!.rivers.length,
-      basinCount: hydrologyV3?.lakes.length ?? hydrologyV2!.lakes.length,
+      networkCount: hydrologyV3?.networkCount ?? hydrologyV2?.rivers.length ?? 0,
+      basinCount: hydrologyV3?.lakes.length ?? hydrologyV2?.lakes.length ?? 0,
       riverCellCount,
       lakeCellCount,
-      riverSegmentCount: hydrologyV3?.segments.length ?? hydrologyV2!.rivers.reduce((sum, river) => sum + Math.max(0, river.points.length - 1), 0),
-      outletCount: hydrologyV3?.outletCount ?? hydrologyV2!.rivers.length,
+      riverSegmentCount: hydrologyV3?.segments.length ?? hydrologyV2?.rivers.reduce((sum, river) => sum + Math.max(0, river.points.length - 1), 0) ?? 0,
+      outletCount: hydrologyV3?.outletCount ?? hydrologyV2?.rivers.length ?? 0,
       maxUphillWaterStep: hydrologyV3?.maxUphillWaterStep ?? 0,
       protectedWaterCellCount,
       waterSurfaceArea,
@@ -829,6 +889,7 @@ function createOceanIslandTerrainDataV1(
     triangleCount: indexCount / 3,
     bounds: { minX: -farExtent, maxX: farExtent, minY: minHeight - 0.5, maxY: maxHeight + 0.5, minZ: -farExtent, maxZ: farExtent },
     framingBounds: { minX: -coreRadius, maxX: coreRadius, minZ: -coreRadius, maxZ: coreRadius },
+    nearDetailBounds: { minX: -nearExtent, maxX: nearExtent, minZ: -nearExtent, maxZ: nearExtent },
     naturalTrees,
     terrainGenerationVersion: 4,
     lodCellCounts,
@@ -963,10 +1024,7 @@ function closeV2CornerSlits(
       }
     }
   };
-  collectTops(indicesByMaterial.grass);
-  collectTops(indicesByMaterial.dirt);
-  collectTops(indicesByMaterial.stone);
-  collectTops(indicesByMaterial.water);
+  for (const indices of Object.values(indicesByMaterial)) collectTops(indices);
   const cornerSpans = new Map<string, Span[]>();
   const register = (x: number, z: number, bottom: number, top: number) => {
     const k = key(x, z);

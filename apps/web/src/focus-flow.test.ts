@@ -1,12 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import { ApplicationService, type ApplicationCommand, type NotificationCapability, type StateRepository } from '@blockcolc/application';
 import type { DomainState } from '@blockcolc/domain';
-import { createFocusFlow } from './focus-flow';
+import { createFocusFlow, type FocusPlanDraft } from './focus-flow';
 import { defaultFocusPreferences } from './focus-preferences';
 import type { RoundPlan } from './round-plan';
 import { unsettledMarathonSessions } from './marathon-settlement';
 
-async function fixture(kind: 'finite' | 'habit' = 'finite') {
+async function fixture(kind: 'finite' | 'habit' = 'finite', separateEditor = false) {
   let now = new Date('2026-09-08T00:00:00Z').getTime();
   let persisted: DomainState | null = null;
   let revision = 0;
@@ -34,19 +34,91 @@ async function fixture(kind: 'finite' | 'habit' = 'finite') {
   let plan: RoundPlan | null = null;
   const preferences = { ...defaultFocusPreferences(), focusMinutes: 1, habitFocusMinutes: 2, breakMinutes: 5 };
   const draft = { rounds: 2, mode: 'rounds' as 'rounds' | 'marathon', endAt: '12:00', selectedId: project.subtasks[0]?.id ?? null };
+  const editingDraft = separateEditor ? { ...draft } : draft;
+  const commitDraft = vi.fn((next: FocusPlanDraft) => Object.assign(draft, next));
   const dispatch = vi.fn((command: ApplicationCommand) => service.dispatch(command));
   const writePlan = vi.fn((next: RoundPlan | null) => { plan = next; });
   const resume = vi.fn(async () => { await service.resume(); });
   const closePlan = vi.fn();
   const flow = createFocusFlow({ snapshot: () => service.snapshot(), dispatch, resume, readPlan: () => plan, writePlan,
     preferences: () => preferences, draft: () => draft, nowMs: () => now,
+    planDraft: () => editingDraft, commitDraft,
     closeEnding: vi.fn(), closePlan, resetDraftMode: () => { draft.mode = 'rounds'; }, constructionFeedback: vi.fn() });
   const schedule = (deferred = false, rounds = 2) => { plan = { projectId: project.id, subtaskId: deferred ? null : project.subtasks[0]?.id ?? null, mode: 'marathon', ...(deferred ? { deferredSettlement: true as const } : {}), status: 'ready', totalRounds: rounds, completedRounds: 0, reportedSessionIds: [] }; };
-  return { service, project, preferences, draft, flow, dispatch, writePlan, resume, closePlan, schedule,
+  return { service, project, preferences, draft, editingDraft, commitDraft, flow, dispatch, writePlan, resume, closePlan, schedule,
     plan: () => plan, setPlan: (next: RoundPlan | null) => { plan = next; }, advance: (ms: number) => { now += ms; }, failSave: () => { failSave = true; } };
 }
 
 describe('focus flow orchestration', () => {
+  it.each(['finite','habit'] as const)('cancels an unstarted %s marathon directly, without recording a reason or a session',async kind=>{
+    const f=await fixture(kind,true);f.editingDraft.mode='marathon';await f.flow.confirmPlan();
+    const before=f.service.snapshot();f.dispatch.mockClear();f.writePlan.mockClear();
+    expect(await f.flow.cancelPlan(null,'')).toBe(true);
+    expect(f.plan()).toBeNull();expect(f.draft.mode).toBe('rounds');
+    expect(f.service.snapshot()).toEqual(before);expect(f.dispatch).not.toHaveBeenCalled();
+    expect(f.writePlan.mock.calls).toEqual([[null]]);
+  });
+  it('returns an interrupted single ordinary round to the initial workbench without automatic authorization', async () => {
+    const f = await fixture(); f.draft.rounds = 1; f.preferences.autoContinueFocus = true; f.preferences.breakMinutes = 0;
+    await f.flow.startFocus(); f.advance(1000); await f.flow.interruptFocus(null);
+    expect(f.plan()).toBeNull(); expect(f.service.snapshot().activeFocusSession).toBeNull();
+    await f.flow.startFocus();
+    expect(f.service.snapshot().activeFocusSession).not.toBeNull();
+    expect(f.plan()).toMatchObject({status:'focus',completedRounds:0,totalRounds:1});
+  });
+  it('cancels a running plan with a reason and no optional note, retaining completed rounds for reporting', async () => {
+    const f = await fixture(); f.schedule(true); f.preferences.breakMinutes = 0; f.preferences.autoContinueFocus = true;
+    await f.flow.startFocus(); f.advance(1000); await f.flow.completeEarly();
+    await f.flow.startFocus(); f.advance(1000);
+    expect(await f.flow.cancelPlan('priority-changed', '')).toBe(true);
+    expect(f.service.snapshot().activeFocusSession).toBeNull();
+    expect(f.service.snapshot().focusHistory.at(-1)).toMatchObject({status:'interrupted',interruptionCategory:'priority-changed'});
+    expect(f.service.snapshot().focusHistory.at(-1)).not.toHaveProperty('interruptionNote');
+    expect(f.plan()).toMatchObject({status:'report',completedRounds:1});
+    expect(f.plan()?.automaticContinuation).toBeUndefined();
+  });
+  it.each(['finite', 'habit'] as const)('keeps an unconfirmed %s editor out of the start action', async kind => {
+    const f = await fixture(kind, true);
+    f.editingDraft.mode = 'marathon'; f.editingDraft.rounds = 4;
+    await f.flow.startFocus();
+    expect(f.draft.mode).toBe('rounds');
+    expect(f.plan()).toMatchObject({ totalRounds: 2, status: 'focus' });
+    expect(f.plan()?.mode).not.toBe('marathon');
+    expect(f.service.snapshot().activeFocusSession!.plannedDurationMs).toBe(kind === 'habit' ? 120000 : 60000);
+    expect(f.commitDraft).not.toHaveBeenCalled();
+  });
+  it.each(['finite', 'habit'] as const)('applies %s end-time choices only after confirming and saving the plan', async kind => {
+    const f = await fixture(kind, true);
+    f.editingDraft.mode = 'marathon';
+    await f.flow.confirmPlan();
+    expect(f.plan()).toMatchObject({ mode: 'marathon', status: 'ready', completedRounds: 0 });
+    expect(f.draft.mode).toBe('marathon');
+    expect(f.commitDraft).toHaveBeenCalledTimes(1);
+    expect(f.closePlan).toHaveBeenCalledTimes(1);
+    expect(f.service.snapshot().activeFocusSession).toBeNull();
+    await f.flow.startFocus();
+    expect(f.service.snapshot().activeFocusSession!.plannedDurationMs).toBe(60000);
+  });
+  it('does not apply or close an invalid or unsaved end-time editor', async () => {
+    const f = await fixture('finite', true);
+    f.editingDraft.mode = 'marathon'; f.editingDraft.endAt = 'invalid';
+    await f.flow.confirmPlan();
+    expect(f.commitDraft).not.toHaveBeenCalled(); expect(f.closePlan).not.toHaveBeenCalled();
+    f.editingDraft.endAt = '12:00';
+    f.writePlan.mockImplementation(() => { throw Error('quota'); });
+    await expect(f.flow.confirmPlan()).rejects.toThrow('quota');
+    expect(f.draft.mode).toBe('rounds'); expect(f.plan()).toBeNull();
+    expect(f.commitDraft).not.toHaveBeenCalled(); expect(f.closePlan).not.toHaveBeenCalled();
+  });
+  it('applies fixed round choices at confirmation without starting a session', async () => {
+    const f = await fixture('finite', true);
+    f.editingDraft.rounds = 3;
+    await f.flow.confirmPlan();
+    expect(f.draft.rounds).toBe(3); expect(f.plan()).toBeNull();
+    expect(f.service.snapshot().activeFocusSession).toBeNull();
+    await f.flow.startFocus();
+    expect(f.plan()?.totalRounds).toBe(3);
+  });
   it('continues a deferred break directly and ignores a repeated confirmation', async () => {
     const f = await fixture(); f.schedule(true);
     await f.flow.startFocus(); f.advance(1000); await f.flow.completeEarly();
@@ -72,13 +144,13 @@ describe('focus flow orchestration', () => {
     await expect(f.flow.continueFromBreak()).rejects.toThrow('quota');
     expect(f.dispatch).toHaveBeenCalledTimes(1);
     expect(f.service.snapshot().activeFocusSession).not.toBeNull();
-    expect(f.plan()?.status).toBe('break');
+    expect(f.plan()?.status).toBe('ready');
   });
   it('does not create another round after the final break or from a report', async () => {
     const f = await fixture();
     await f.service.dispatch({type:'AddSubtask',title:'Next task'});
     await f.flow.startFocus(); f.advance(1000); await f.flow.completeEarly();
-    expect(f.plan()).toMatchObject({status:'break',endAfterBreak:true});
+    expect(f.plan()).toBeNull(); // Completing an ordinary finite task ends its schedule.
     f.dispatch.mockClear(); await f.flow.continueFromBreak();
     expect(f.plan()).toBeNull(); expect(f.dispatch).not.toHaveBeenCalled();
     f.schedule(true,1); await f.flow.startFocus(); f.advance(1000); await f.flow.completeEarly();
@@ -99,7 +171,7 @@ describe('focus flow orchestration', () => {
     f.schedule(true);
     await f.flow.startFocus(); f.advance(1000);
     await f.flow.completeEarly();
-    expect(f.plan()).toMatchObject({ status: 'break', completedRounds: 1, deferredSettlement: true });
+    expect(f.plan()).toMatchObject({ status: 'ready', completedRounds: 1, deferredSettlement: true });
     expect(f.service.snapshot().projects[0]!.habit?.completedFocusSessionIds.length ?? 0).toBe(0);
     await f.flow.cancelPlan('other', '结束当前安排');
     expect(f.plan()?.status).toBe('report');
@@ -182,7 +254,8 @@ describe('focus flow orchestration', () => {
     expect(f.service.snapshot().focusHistory[0]!.status).toBe('completed');
   });
   it('does not retry or cancel committed domain focus after an auxiliary plan write failure', async () => {
-    const f = await fixture(); f.writePlan.mockImplementation(() => { throw Error('quota'); });
+    const f = await fixture();
+    f.writePlan.mockImplementationOnce(next => f.setPlan(next)).mockImplementationOnce(() => { throw Error('quota'); });
     await expect(f.flow.startFocus()).rejects.toThrow('quota');
     expect(f.service.snapshot().activeFocusSession).not.toBeNull();
     expect(f.dispatch).toHaveBeenCalledTimes(1);
@@ -194,6 +267,21 @@ describe('focus flow orchestration', () => {
     expect(f.plan()).toBe(before);
     expect(f.service.snapshot().activeFocusSession).toBeNull();
     expect(f.flow.busy).toBe(false);
+  });
+  it('does not dispatch a start if its ready write-ahead context cannot persist', async () => {
+    const f=await fixture();f.writePlan.mockImplementationOnce(()=>{throw Error('quota');});
+    await expect(f.flow.startFocus()).rejects.toThrow('quota');
+    expect(f.dispatch).not.toHaveBeenCalled();expect(f.service.snapshot().activeFocusSession).toBeNull();
+  });
+  it.each(['interruptFocus','completeEarly'] as const)('revokes auto continuation before %s publishes committed state',async method=>{
+    const f=await fixture();f.preferences.autoContinueFocus=true;f.preferences.breakMinutes=0;f.schedule(true,3);
+    await f.flow.startFocus();expect(f.plan()?.automaticContinuation).toBeDefined();f.advance(1000);
+    const observations:unknown[]=[];const unsubscribe=f.service.subscribeCommitted(()=>observations.push(f.plan()?.automaticContinuation));
+    if(method==='interruptFocus')await f.flow.interruptFocus(null);else await f.flow.completeEarly();
+    unsubscribe();expect(observations.length).toBeGreaterThan(0);expect(observations.every(value=>value===undefined)).toBe(true);
+    expect(f.plan()).toMatchObject({status:'ready',completedRounds:method==='interruptFocus'?0:1});
+    expect(f.service.snapshot().activeFocusSession).toBeNull();
+    await f.flow.startFocus();expect(f.service.snapshot().activeFocusSession).not.toBeNull();expect(f.plan()?.status).toBe('focus');
   });
   it('ignores double submission while dispatch is pending, without another queue', async () => {
     const f = await fixture();

@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { readFileSync } from 'node:fs';
+import { startNextRound } from './focus-plan-controls';
 
 const currentVersion = (JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string }).version;
 
@@ -52,11 +53,10 @@ test('one-round early completion records the task and ends the plan without a br
 
   await expect(page.getByText('任务已完成 · 休息中')).toBeHidden();
   // V21: the materials-delivered beat waits for a committed progress choice; an
-  // early completion has none, so the toast stays quiet while the pulse still
-  // fires for the round.
+  // early completion has no explicit report, so both toast and construction
+  // pulse stay quiet. It still commits the completed task and history below.
   await expect(page.locator('.construction-feedback')).toHaveCount(0);
-  // IF-01: the round completion fires a bounded construction pulse on the world.
-  await expect(page.getByLabel('项目建筑世界')).toHaveAttribute('data-construction-pulse-count', /[1-9]/);
+  await expect(page.getByLabel('项目建筑世界')).toHaveAttribute('data-construction-pulse-count', '0');
   await expect(page.getByLabel('项目建筑世界')).toHaveAttribute('data-continuous-rendering', 'false');
   await expect(page.getByRole('button', { name: '开始 1 轮' })).toBeVisible();
   await expect(page.locator('.workbench-context small')).toContainText('今日 1 / 8 轮');
@@ -136,7 +136,7 @@ test('keeps each multi-round progress report before its configured break', async
   await page.getByRole('button', { name: '推进至 25%' }).click();
   await expect(page.locator('.focus-task-context strong').filter({ hasText: '休息中' })).toBeVisible();
   await page.clock.fastForward(61_000);
-  await page.getByRole('button', { name: '开始下一轮' }).click();
+  await startNextRound(page);
   await page.clock.fastForward(61_000);
   await expect(page.getByRole('heading', { name: '这次工作推进到哪里？' })).toBeVisible();
 });

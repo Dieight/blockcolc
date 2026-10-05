@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { chooseDebugWeather, chooseDebugTime } from './world-debug-controls';
 
 // V20 contract: the world may run an ambient loop (cloud drift, tree sway) only
 // while its pane is visible and the tab is foreground; a hidden pane must stop it.
@@ -112,8 +113,8 @@ test("moves clouds and trees across idle frames when the ambient gate is open", 
   await page.getByRole("button", { name: "设置", exact: true }).click();
   await page.getByLabel("临时调试世界", { exact: true }).check();
   await page.getByLabel("指定时间", { exact: true }).check();
-  await page.getByLabel("世界调试时间", { exact: true }).fill("13:00");
-  await page.getByLabel("天气", { exact: true }).selectOption("cloudy");
+  await chooseDebugTime(page, '13:00');
+  await chooseDebugWeather(page, 'cloudy');
   await page.getByRole("button", { name: "计时", exact: true }).click();
   await expect(canvas).toHaveAttribute("data-weather-kind", "cloudy");
   await canvas.dispatchEvent("wheel", { deltaY: 2_000, deltaMode: 0 });

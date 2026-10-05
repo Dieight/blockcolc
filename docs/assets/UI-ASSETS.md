@@ -37,4 +37,8 @@ node tools/check-ui-assets.mjs --write
 - `res/drawable*` 下的启动画面 PNG：完整摘要已记录，但生成来源仍未确认；不声称它们由应用图标母版派生。
 - 自适应图标 XML/背景色资源：引用与摘要已登记；它们是静态 Android 资源，不是 Python 生成器输出。
 
-导航和常用建造操作使用 `apps/web/src/ui/PixelIcon.tsx` 的共用 12 格 SVG 字形；每枚图标只有一条填充路径，沿用 demo 中的像素方向，不依赖外部素材或 Canvas 重绘。导入、警告等尚未替换的功能图标保留 `lucide-react`。世界材质为程序生成；用户导入资源包与用户蓝图不属于应用 UI 母版，按产品文档中各自来源和许可边界处理。
+导航和常用建造操作使用 `apps/web/src/ui/PixelIcon.tsx` 的共用 12 格 SVG 字形，沿用 demo 的像素方向。品牌另用 16 格彩色字形，红色果皮包住凹入的浅色表盘，与批准的启动图标方向一致，SVG 外围透明、不嵌入带底色的 PNG；不改原生桌面图标。刷新统一为双向像素箭头，通用忙碌指示是三枚像素圆的共享 SVG mask。它们不依赖外部素材或 Canvas 重绘。导入、警告等功能图标保留 `lucide-react`。世界材质为程序生成；用户导入资源包与用户蓝图按产品文档的来源和许可边界处理。
+
+v2.5.6 字体试版使用可离线分发的缝合像素字体，来源、原件摘要和 OFL-1.1 许可见[字体记录](pixel-font-v2.5.6.md)。字体与完整许可随包提供，未覆盖字形回退到系统字体。
+
+节日挂件由 `HolidayEmblem.tsx` 的整数 SVG 网格原创绘制，二十种小建筑由 `holiday-buildings.ts` 生成，不下载或封装 MC 节日资产。历法使用 lunar-typescript 1.8.6，完整 MIT 声明在 `apps/web/public/licenses/lunar-typescript/LICENSE.txt`；天空星河与极光为本项目方向场 shader，未移植 Voxy 代码。

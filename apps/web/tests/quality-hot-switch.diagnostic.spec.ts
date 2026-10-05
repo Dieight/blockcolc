@@ -365,7 +365,8 @@ async function setDebugScene(page: Page, time: string): Promise<void> {
   await page.getByRole('button', { name: '设置', exact: true }).click();
   const enabled = page.getByLabel('临时调试世界');
   if (!(await enabled.isChecked())) await enabled.check();
-  await page.locator('#world-debug-weather').selectOption('rain');
+  await page.locator('#world-debug-weather .choice-menu-trigger').click();
+  await page.getByRole('listbox', { name: '调试天气' }).getByRole('option', { name: '小雨', exact: true }).click();
   const specifiedTime = page.getByLabel('指定时间');
   if (!(await specifiedTime.isChecked())) await specifiedTime.check();
   await page.getByLabel('世界调试时间').fill(time);

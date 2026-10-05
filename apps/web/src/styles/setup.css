@@ -41,19 +41,23 @@
 .interruption-bar{height:6px;border-radius:3px;background:#efe3d5;overflow:hidden}
 .interruption-bar b{display:block;height:100%;border-radius:3px;background:#a0652b}
 /* Shared loader; only its preparation caption changes between stages. */
-.boot-page{position:fixed;inset:0;z-index:30;display:grid;place-items:center;background:#f3f5f2;padding:24px;text-align:center}
+.boot-page{position:fixed;inset:0;z-index:190;display:grid;place-items:center;background:#f3f5f2;padding:24px;text-align:center}
 .boot-page-inner{display:flex;flex-direction:column;align-items:center;gap:14px;animation:world-boot-in .18s ease-out}
 .boot-page-mark{font-weight:800;font-size:20px;color:#17211c}
 .boot-page-mark small{display:block;font-size:11px;font-weight:400;color:#8a938d;letter-spacing:.14em;text-transform:uppercase;margin-top:2px}
 .boot-page-status{margin:0;font-size:14px;color:#58635d}
 .boot-page-stage{font-size:11px;color:var(--focus);letter-spacing:.12em;margin-top:12px}
-.boot-page-model{width:120px;height:100px;display:grid;place-items:center;perspective:480px}
-.boot-page-site{position:relative;width:62px;height:62px;transform-style:preserve-3d;transform:rotateX(58deg) rotateZ(-45deg)}
-.boot-cube{position:absolute;left:0;top:0;width:18px;height:18px;background:var(--focus);transform-style:preserve-3d;transform:translate3d(var(--cube-x),var(--cube-y),0);animation:world-boot-cube 3s ease-in-out infinite;animation-delay:var(--cube-delay)}
-.boot-cube::before,.boot-cube::after{content:"";position:absolute;width:18px;height:10px;background:color-mix(in srgb,var(--focus) 70%,var(--app-bg));transform-origin:bottom left;backface-visibility:hidden}
-.boot-cube::before{bottom:0;left:0;transform:rotateX(-90deg)}
-.boot-cube::after{bottom:0;right:0;transform-origin:bottom right;transform:rotateX(-90deg) rotateY(90deg);background:color-mix(in srgb,var(--focus) 48%,var(--app-bg))}
-@media(prefers-reduced-motion:reduce){.boot-cube,.boot-page-inner{animation:none}}
+.boot-page-model{width:176px;height:158px;display:grid;place-items:center}
+.boot-site{width:160px;height:144px;overflow:visible}
+.boot-ground{fill:color-mix(in srgb,var(--focus) 18%,var(--app-bg))}.boot-shadow{fill:#17211c12}
+.boot-wall-left{fill:#bf5545}.boot-wall-right{fill:#934639}.boot-roof{fill:#7e9b77}.boot-dial{fill:#f5eddc}
+.boot-hand{fill:#304a3b}.boot-tree{fill:#729867}.boot-crate{fill:#bc975d}.boot-spark{fill:#edc45b}.boot-scan{display:none}
+/* The scene is rasterised once. Only this HTML layer rotates on the compositor;
+   no animated SVG subtrees need to repaint while storage/terrain occupy JS. */
+.boot-page-model{position:relative;contain:layout paint}
+.boot-page-model::after{content:'';position:absolute;right:12px;top:8px;width:26px;height:26px;background:var(--focus);-webkit-mask:var(--pixel-orbit-mask) center/contain no-repeat;mask:var(--pixel-orbit-mask) center/contain no-repeat;animation:control-spin 1.2s linear infinite;will-change:transform}
+.boot-page[data-load-stage='storage'] .boot-roof,.boot-page[data-load-stage='resources'] .boot-dial{opacity:.45}
+[data-cold-startup='true'] .app-shell .boot-page{visibility:hidden}
+@media(prefers-reduced-motion:reduce){.boot-page-model::after,.boot-page-inner{animation:none;will-change:auto}.boot-spark,.boot-scan{opacity:0}}
 @keyframes world-boot-in{from{opacity:0}to{opacity:1}}
-@keyframes world-boot-cube{0%,70%,100%{transform:translate3d(var(--cube-x),var(--cube-y),0);opacity:1}30%{transform:translate3d(var(--cube-x),var(--cube-y),18px);opacity:.55}}
 .daily-goal-workbench{margin-bottom:26px}

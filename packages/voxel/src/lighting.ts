@@ -1,4 +1,5 @@
 import { applyNightReadability } from "./night-readability";
+import { moonIlluminationAt } from './astronomy';
 import type { BlueprintVoxel } from "./blueprint";
 
 export type DayPhase = "night" | "astronomical-twilight" | "nautical-twilight" | "civil-twilight" | "dawn" | "day" | "dusk";
@@ -221,6 +222,7 @@ export function sunStateForLocalTime(date: Date): SunState {
   const skyHorizonColor = mixColor(skyColor, 0xe49a75, horizonWarmth * 0.42);
   const skyLowerColor = mixColor(mixColor(0x182536, 0xc8d5d2, dayFactor), 0xc77b68, horizonWarmth * 0.3);
   const cloudColor = mixColor(mixColor(0x344256, 0xe7ece8, dayFactor), 0xf0b28e, horizonWarmth * 0.3);
+  const lunar=moonIlluminationAt(date);
 
   const state: SunState = {
     phase,
@@ -229,6 +231,7 @@ export function sunStateForLocalTime(date: Date): SunState {
     moonPosition,
     sunVisibility,
     moonVisibility,
+    ...(lunar?{moonIllumination:lunar.fraction,moonPhase:lunar.phase,moonWaxing:lunar.waxing,moonBrightLimbAngleDeg:lunar.angleDeg}:{}),
     starVisibility,
     intensity: mix(0.92, 1.48 + Math.max(0, elevation) * 0.9, dayFactor),
     color: mixColor(mixColor(0x9db7d9, 0xfff1ce, dayFactor), 0xffae68, horizonWarmth * 0.72),

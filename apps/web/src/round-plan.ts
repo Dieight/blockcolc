@@ -1,12 +1,20 @@
 import type { DomainState, FocusInterruptionCategory } from '@blockcolc/domain';
 import { unsettledMarathonSessions } from './marathon-settlement';
 
+/** A confirmed but never-started schedule has no work or interruption to explain. */
+export function isUnstartedMarathonPlan(plan:RoundPlan|null,hasActiveSession=false):boolean {
+  return Boolean(plan?.mode==='marathon'&&plan.status==='ready'&&!hasActiveSession
+    &&!plan.hasStarted&&!plan.currentSessionId&&plan.completedRounds===0&&plan.reportedSessionIds.length===0);
+}
+
 export interface RoundPlan {
   projectId: string;
   subtaskId: string | null;
   totalRounds: number;
   completedRounds: number;
   status: 'focus' | 'break' | 'ready' | 'report';
+  /** Distinguishes a confirmed draft from a manually paused first round. */
+  hasStarted?: true;
   breakEndsAt?: string;
   /** Exact adopted break start; legacy plans may omit it. */
   breakStartedAt?: string;
@@ -146,7 +154,6 @@ export function parseRoundPlan(value: unknown, projectId: string): RoundPlan | n
   const cancellationNote = typeof candidate.cancellationNote === 'string' && candidate.cancellationNote.trim().length > 0
     && candidate.cancellationNote.trim().length <= 200 ? candidate.cancellationNote.trim() : undefined;
   if (candidate.cancellationNote !== undefined && cancellationNote === undefined) return null;
-  if (candidate.cancellationRequested === true && cancellationNote === undefined) return null;
   const automaticContinuation = parseAutomaticContinuation(candidate.automaticContinuation, completedRounds);
   if (candidate.automaticContinuation !== undefined && automaticContinuation === null) return null;
   return {
@@ -155,6 +162,7 @@ export function parseRoundPlan(value: unknown, projectId: string): RoundPlan | n
     totalRounds,
     completedRounds,
     status: candidate.status,
+    ...(candidate.hasStarted === true ? { hasStarted: true } : {}),
     ...(breakEndsAt ? { breakEndsAt } : {}),
     ...(candidate.status === 'break' && breakStartedAt ? { breakStartedAt } : {}),
     ...(candidate.endAfterBreak === true ? { endAfterBreak: true } : {}),
@@ -388,6 +396,13 @@ export function reconcileRoundPlan(
       ...(active.deferredSettlement === true ? { mode: 'marathon', deferredSettlement: true } : {}),
     } : null;
   }
+  // Recovery observes the same manual pause as the live flow, including a crash
+  // after domain persistence but before its final plan write.
+  const recoveringSessionId = plan.currentSessionId;
+  if (plan.automaticContinuation && recoveringSessionId && state.focusHistory.some(session =>
+    session.id === recoveringSessionId && session.status === 'completed-early')) {
+    plan = { ...plan, automaticContinuation: undefined };
+  }
   const reserved = plan.automaticContinuation?.reservation;
   if (reserved) {
     const activeReserved = active?.id === reserved.sessionId;
@@ -484,14 +499,14 @@ export function reconcileRoundPlan(
           : session.projectId === plan.projectId && session.subtaskId === plan.subtaskId);
   if (!latest) return null;
   if (latest.status === 'interrupted') {
-    // V23: an interrupted marathon round keeps the end-time schedule at the same
-    // round so the next focus resumes here — an integrity-limit exit behaves
-    // exactly like a user interrupt. Classic per-round plans drop the schedule.
-    if (isMarathon) {
+    // Manual/integrity interruption pauses this round. Only explicit StartFocus
+    // can authorize another run; recovery must not recreate consent.
+    if (plan.totalRounds > 1 || isMarathon) {
       const { automaticContinuation: _automaticContinuation, ...withoutAutomaticContinuation } = plan;
       return {
         ...withoutAutomaticContinuation,
         status: 'ready',
+        hasStarted: true,
         breakStartedAt: undefined,
         breakEndsAt: undefined,
         endAfterBreak: undefined,
@@ -506,6 +521,18 @@ export function reconcileRoundPlan(
     ? Math.max(plan.completedRounds, plan.reportedSessionIds.length)
     : plan.completedRounds + 1;
   const reportedSessionIds = alreadyRecorded ? plan.reportedSessionIds : [...plan.reportedSessionIds, latest.id];
+  if (latest.status === 'completed-early') {
+    const { automaticContinuation: _automaticContinuation, ...paused } = plan;
+    if (!isMarathon && project?.kind !== 'habit') return null;
+    if (nextCompletedRounds >= plan.totalRounds) {
+      return isMarathon && !(project?.kind === 'habit' && plan.deferredSettlement !== true)
+        ? { ...paused, completedRounds: nextCompletedRounds, reportedSessionIds, status: 'report',
+          currentSessionId: undefined, breakStartedAt: undefined, breakEndsAt: undefined, endAfterBreak: undefined }
+        : null;
+    }
+    return { ...paused, completedRounds: nextCompletedRounds, reportedSessionIds, status: 'ready',
+      currentSessionId: undefined, breakStartedAt: undefined, breakEndsAt: undefined, endAfterBreak: undefined };
+  }
   // A normally completed focus is authoritative at its planned absolute end,
   // even if process recovery observes it later. Early completion is factual at
   // its user-confirmed completion instant.
@@ -625,6 +652,7 @@ export function roundPlansEqual(left: RoundPlan | null, right: RoundPlan | null)
     && left.totalRounds === right.totalRounds
     && left.completedRounds === right.completedRounds
     && left.status === right.status
+    && left.hasStarted === right.hasStarted
     && left.breakEndsAt === right.breakEndsAt
     && left.breakStartedAt === right.breakStartedAt
     && left.endAfterBreak === right.endAfterBreak

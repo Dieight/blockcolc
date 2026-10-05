@@ -49,6 +49,9 @@ describe("original procedural materials", () => {
     expect(originalPatternForBlockId("minecraft:white_carpet", "accent")).toBe("fabric");
     expect(originalPatternForBlockId("minecraft:red_cushion", "accent")).toBe("fabric");
     expect(originalPatternForBlockId("minecraft:poplar_log", "wood")).toBe("bark");
+    expect(originalPatternForBlockId("minecraft:fire_coral_block", "accent")).toBe("stone");
+    expect(originalPatternForBlockId("minecraft:fire_coral_fan", "accent")).toBe("foliage");
+    expect(originalPatternForBlockId("example:fire_coral_block", "accent")).toBe("smooth");
     expect(originalPatternForBlockId("oak_log", "wood")).toBe("bark");
     expect(originalPatternForBlockId("red_stained_glass", "glass")).toBe("glass");
   });

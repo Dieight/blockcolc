@@ -8,6 +8,24 @@ import {
 } from "../src/fallback-visual";
 
 describe("runtime fallback visuals", () => {
+  it("keeps living reef colours distinct underwater without colouring dead or modded corals", () => {
+    const colours = [0x3c66cb, 0xd969aa, 0xa348c6, 0xce493e, 0xe5cb4b];
+    const families = ["tube", "brain", "bubble", "fire", "horn"];
+    for (const [index, family] of families.entries()) {
+      for (const suffix of ["", "_block", "_fan", "_wall_fan"]) {
+        const path = `${family}_coral${suffix}`;
+        const live = fallbackVisualStyleForVoxel({ materialId: "accent", sourceBlockId: `minecraft:${path}` });
+        expect(live).toMatchObject({ color: colours[index], transparent: false, opacity: 1 });
+        expect(parseFallbackVisualKey(live.key)).toEqual(live);
+        expect(fallbackVisualStyleForVoxel({ materialId: "accent", sourceBlockId: `minecraft:dead_${path}` }).color).toBe(0x8a8b81);
+        expect(fallbackVisualStyleForVoxel({ materialId: "accent", sourceBlockId: `example:${path}` }))
+          .toEqual(fallbackVisualStyleForVoxel({ materialId: "accent" }));
+      }
+    }
+    expect(fallbackVisualStyleForVoxel({ materialId: "accent", sourceBlockId: "minecraft:sea_pickle" }).color).toBe(0x809f48);
+    expect(fallbackVisualStyleForVoxel({ materialId: "accent", sourceBlockId: "example:sea_pickle" }))
+      .toEqual(fallbackVisualStyleForVoxel({ materialId: "accent" }));
+  });
   it('keeps wooden stairs/slabs in their wood species palette and farmland in soil colors', () => {
     for (const shape of ['stairs', 'slab']) {
       const oak = fallbackVisualStyleForVoxel({ materialId: 'roof', sourceBlockId: `minecraft:oak_${shape}` });

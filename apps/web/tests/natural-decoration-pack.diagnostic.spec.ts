@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
+import { chooseDebugWeather } from './world-debug-controls';
 import { syntheticFlowerPack } from './synthetic-flower-pack';
 import { readPersistedDomainState } from './persisted-domain-state';
 import { fixBusinessDate } from './fixed-business-date';
@@ -74,7 +75,7 @@ for (const environment of [
     await page.getByLabel('临时调试世界', { exact: true }).check();
     await page.getByLabel('指定时间', { exact: true }).check();
     await page.getByLabel('世界调试时间', { exact: true }).fill('12:00');
-    await page.getByLabel('天气', { exact: true }).selectOption('clear');
+    await chooseDebugWeather(page, 'clear');
     await page.getByRole('button', { name: '计时', exact: true }).click();
     const canvas = page.getByLabel('项目建筑世界');
     await expect(canvas).toHaveAttribute('data-environment-style', environment.value);

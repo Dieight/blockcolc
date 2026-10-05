@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { shiftClockSelection, minimalRoundDetentOffsetPx, MinimalClockGesture } from './MinimalClockGesture';
+import { shiftClockSelection, minimalRoundDetentOffsetPx, clockDragSteps, MinimalClockGesture } from './MinimalClockGesture';
 import { FocusFace } from './FocusFace';
 import { FocusAllocationChart, FocusCalendarChart, MonumentFocusChart } from './FocusStatsCharts';
 import { AchievementsSection } from './AchievementsPanel';
@@ -32,9 +32,19 @@ describe('shared focus face and clock gesture', () => {
   });
   it('adds a short bounded drag resistance per crossed round and cannot accumulate into a lock', () => {
     expect(minimalRoundDetentOffsetPx(0)).toBe(0);
-    expect(minimalRoundDetentOffsetPx(1)).toBe(10);
-    expect(minimalRoundDetentOffsetPx(3)).toBe(30);
-    expect(minimalRoundDetentOffsetPx(24)).toBe(120);
+    expect(minimalRoundDetentOffsetPx(1)).toBe(18);
+    expect(minimalRoundDetentOffsetPx(3)).toBe(54);
+    expect(minimalRoundDetentOffsetPx(24)).toBe(216);
+  });
+  it('cannot turn a short reversed drag into a forward time step at a round detent', () => {
+    for (const resistance of [0, 18, 54, 216]) {
+      for (let delta = -240; delta <= 240; delta++) {
+        expect(clockDragSteps(delta, resistance) * delta).toBeGreaterThanOrEqual(0);
+      }
+    }
+    expect(Math.abs(clockDragSteps(-6, 18))).toBe(0);
+    expect(clockDragSteps(-36, 18)).toBe(-2);
+    expect(clockDragSteps(36, 18)).toBe(2);
   });
 });
 

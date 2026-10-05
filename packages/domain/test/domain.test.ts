@@ -6,6 +6,7 @@ import {
   dailyGoalForDate,
   execute,
   localDateOf,
+  MAX_BUILDING_BLUEPRINTS,
   parseDomainState,
   projectProgressBasisPoints,
   type ImportedBlueprintV1,
@@ -123,6 +124,19 @@ describe("building blueprint library", () => {
     expect(f.run({ type: "RenameBuildingBlueprint", blueprintId: blueprint.id, displayName: " " })).toMatchObject({
       ok: false, code: "INVALID_INPUT",
     });
+  });
+  it("accepts 36 library blueprints and rejects the 37th without changing saved resources", () => {
+    const f = fixture();
+    expect(MAX_BUILDING_BLUEPRINTS).toBe(36);
+    for (let index = 0; index < 36; index++) expect(f.run({ type: "ImportBuildingBlueprint", blueprint: importedBlueprint(`library-${index}`) }).ok).toBe(true);
+    const full = f.state();
+    expect(full.buildingBlueprintResources).toHaveLength(36);
+    expect(parseDomainState(JSON.parse(JSON.stringify(full)))).toEqual(full);
+    expect(f.run({ type: "ImportBuildingBlueprint", blueprint: importedBlueprint("library-extra") })).toMatchObject({ ok: false, code: "INVALID_INPUT" });
+    expect(f.state()).toBe(full);
+    expect(f.run({ type: "ImportBuildingBlueprint", blueprint: importedBlueprint("library-0") })).toMatchObject({ ok: true, events: [] });
+    const extra = { ...full.buildingBlueprintResources[0]!, id: "library-extra", blueprint: importedBlueprint("library-extra") };
+    expect(() => parseDomainState({ ...full, buildingBlueprintResources: [...full.buildingBlueprintResources, extra] })).toThrow("at most 36 entries");
   });
 });
 

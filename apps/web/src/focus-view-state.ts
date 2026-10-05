@@ -21,8 +21,8 @@ export function deriveFocusViewState(input: FocusViewInput) {
   const marathonPlan = plan?.mode === 'marathon';
   const planHostProject = marathonPlan ? state.projects.find(project => project.id === plan.projectId) : active;
   const planHostIsHabit = planHostProject?.kind === 'habit' && plan?.deferredSettlement !== true;
-  const activePendingBlocksWorkbench = input.hasPendingReport && !marathonPlan;
-  const marathonReportPhase = plan?.status === 'report' && !planHostIsHabit;
+  const activePendingBlocksWorkbench = !session && input.hasPendingReport && !marathonPlan;
+  const marathonReportPhase = !session && plan?.status === 'report' && !planHostIsHabit;
   const isBreak = plan?.status === 'break' && !!plan.breakEndsAt;
   const minimal = canPresentMinimalFocus(state, plan, minimalWanted, activePendingBlocksWorkbench);
   const lastFocus = state.focusHistory[state.focusHistory.length - 1];
@@ -34,12 +34,10 @@ export function deriveFocusViewState(input: FocusViewInput) {
     phase, plan, session, planHostProject, planHostIsHabit, marathonPlan, marathonReportPhase,
     isBreak, minimal, minimalBreak: minimal && isBreak,
     minimalIdle: minimal && !session && !plan,
-    // Focus, break and ready are one surface for every plan mode. The old
-    // workbench break/ready branch made ordinary plans diverge from minimal and
-    // marathon, and also left the navigation visible while a break was active.
-    // `fullDeferredPresentation` is retained for callers that need the value,
-    // but it no longer reintroduces a second focus surface.
-    isImmersiveLayout: minimal || phase === 'focus' || phase === 'break' || phase === 'ready' || phase === 'report',
+    // A confirmed marathon waits on the normal workbench until explicit Start.
+    // Once begun, even a paused first round stays on the shared immersive face.
+    isImmersiveLayout: minimal || phase === 'focus' || phase === 'break' || phase === 'report'
+      || phase === 'ready' && (plan?.hasStarted === true || (plan?.completedRounds ?? 0) > 0),
     endsAt: session?.endsAt ?? (isBreak ? plan?.breakEndsAt : undefined),
     activePendingBlocksWorkbench,
     activeHabitAwaitingBlocksWorkbench: active?.kind === 'habit' && active.habit?.awaitingNextBuilding === true && !marathonPlan && !minimal,

@@ -1242,6 +1242,19 @@ describe("backup orchestration", () => {
   });
 });
 
+it('persists annual rewards atomically, retries a failed completion and projects the saved plot only', async () => {
+  const clock=new TestClock(new Date('2026-11-01T08:00:00Z')),repository=new MemoryRepository();
+  const blueprint=(id:string,title:string)=>({schemaVersion:1 as const,id,title,bounds:{minX:0,maxX:0,minY:0,maxY:0,minZ:0,maxZ:0},voxels:[{x:0,y:0,z:0,materialId:'stone' as const,stage:'foundation' as const,buildOrder:0}]});
+  const service=await ApplicationService.initialize({repository,notifications:new FakeNotifications(),clock,ids:new SequentialIds(),holidayBlueprint:blueprint,initialTimeZone:'UTC'});
+  const project=await createProject(service,['Work']);await service.dispatch({type:'StartFocus',subtaskId:project.subtasks[0]!.id,plannedDurationMs:60_000});
+  clock.set('2026-11-01T08:01:00Z');repository.failNextSave=true;
+  await expect(service.dispatch({type:'CompleteFocus'})).rejects.toBeInstanceOf(ApplicationPersistenceError);
+  expect(service.snapshot().holidayRewards).toEqual([]);expect(service.snapshot().activeFocusSession).not.toBeNull();expect(repository.persisted!.holidayRewards).toEqual([]);
+  await service.dispatch({type:'CompleteFocus'});expect(repository.persisted!.holidayRewards).toHaveLength(2);expect(service.worldProjection().projects[0]!.importedDecorations).toHaveLength(2);
+  const reload=await ApplicationService.initialize({repository,notifications:new FakeNotifications(),clock,ids:new SequentialIds(),holidayBlueprint:blueprint});
+  expect(reload.worldProjection()).toEqual(service.worldProjection());await reload.resume();expect(reload.snapshot().holidayRewards).toHaveLength(2);
+});
+
 async function waitUntil(predicate: () => boolean): Promise<void> {
   for (let attempt = 0; attempt < 100; attempt += 1) {
     if (predicate()) return;

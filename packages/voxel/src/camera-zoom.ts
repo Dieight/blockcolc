@@ -13,7 +13,7 @@ export const CAMERA_ZOOM_DISTANCE_RATIOS = {
   closeViewMaximum: 1.35,
 } as const;
 
-export function cameraZoomBounds(fittedDistance: number, mode: CameraZoomMode, environment?: 'natural-valley' | 'classic-island' | 'ocean-island'): CameraZoomBounds {
+export function cameraZoomBounds(fittedDistance: number, mode: CameraZoomMode, environment?: 'natural-valley' | 'classic-island' | 'ocean-island' | 'mosaic-coast'): CameraZoomBounds {
   const minimumRatio = mode === "focused"
     ? CAMERA_ZOOM_DISTANCE_RATIOS.focusedMinimum
     : mode === "preview"

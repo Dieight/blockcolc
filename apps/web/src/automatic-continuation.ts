@@ -317,7 +317,10 @@ export function createAutomaticContinuationCoordinator(ports: AutomaticContinuat
         if (!plan) {
           await cancelObservedAuthorization();
           await acknowledgeCommittedEvents(options.trigger, startedSessionIds, state);
-          ports.refresh?.();
+          // A plain commit subscriber must not republish an idle shell for
+          // someone else's command (or remove its in-button success receipt).
+          // Resume/catch-up still owns publication of recovered state.
+          if (options.resume || startedSessionIds.length > 0) ports.refresh?.();
           return remember({ startedSessionIds, retryable: false });
         }
 

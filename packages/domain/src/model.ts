@@ -1,6 +1,8 @@
 export type ISODate = string;
 export type ISOInstant = string;
 
+export const MAX_BUILDING_BLUEPRINTS = 36;
+
 export interface Clock {
   now(): Date;
 }
@@ -243,13 +245,25 @@ export interface DecorationReward {
   rotationQuarterTurns: 0 | 1 | 2 | 3;
 }
 
+export interface HolidayReward {
+  holidayId: import('./holidays.js').HolidayId;
+  year: number;
+  date: ISODate;
+  projectId: string;
+  settlementIndex: number;
+  sourceSessionId: string;
+  awardedAt: ISOInstant;
+  position: {x:number;z:number};
+  rotationQuarterTurns: 0|1|2|3;
+}
+
 export interface FocusIntegrityPolicy {
   enabled: boolean;
   maxEffectiveExcursions: number;
   excursionThresholdSeconds: number;
 }
 
-export type WorldEnvironmentStyle = "natural-valley" | "classic-island" | "ocean-island";
+export type WorldEnvironmentStyle = "natural-valley" | "classic-island" | "ocean-island" | 'mosaic-coast';
 
 export interface WorldSettings {
   worldSeed: string;
@@ -258,7 +272,7 @@ export interface WorldSettings {
 }
 
 export interface DomainState {
-  schemaVersion: 12;
+  schemaVersion: 13;
   projects: Project[];
   habitBuildings: HabitBuildingMonument[];
   activeProjectId: string | null;
@@ -273,6 +287,7 @@ export interface DomainState {
   focusIntegrityPolicy: FocusIntegrityPolicy;
   decorationBlueprintResources: DecorationBlueprintResource[];
   decorationRewards: DecorationReward[];
+  holidayRewards: HolidayReward[];
   buildingBlueprintResources: BuildingBlueprintResource[];
   worldSettings: WorldSettings;
 }
@@ -352,7 +367,8 @@ export type DomainEvent =
   | { type: "BuildingBlueprintRenamed"; resourceId: string; displayName: string }
   | { type: "BuildingBlueprintDeleted"; resourceId: string }
   | { type: "WorldEnvironmentConfigured"; environmentStyle: WorldEnvironmentStyle }
-  | { type: "DecorationRewardGranted"; date: ISODate; projectId: string; resourceId: string };
+  | { type: "DecorationRewardGranted"; date: ISODate; projectId: string; resourceId: string }
+  | { type: 'HolidayRewardGranted'; holidayId: import('./holidays.js').HolidayId; year:number; projectId:string };
 
 export type DomainErrorCode =
   | "PROJECT_ALREADY_EXISTS"

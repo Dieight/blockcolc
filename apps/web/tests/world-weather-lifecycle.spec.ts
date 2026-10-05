@@ -138,6 +138,16 @@ test('cold opening waits for opted-in astronomy and a real environment frame bef
   }))), contentType: 'application/json' });
 });
 
+test('returning to the timer never requests location again before the existing sync interval',async({page})=>{
+  test.setTimeout(90_000);await installWeatherBridge(page,false);await openWorld(page);
+  await page.getByRole('button',{name:'设置',exact:true}).click();await page.getByLabel('同步现实天气',{exact:true}).check();
+  await expect.poll(async()=>(await bridgeCalls(page)).filter(m=>m==='getAstronomy').length).toBe(1);
+  await page.getByRole('button',{name:'计时',exact:true}).click();
+  const before=(await bridgeCalls(page)).filter(m=>m==='getCurrentWeather'||m==='getAstronomy');
+  for(const tab of ['任务','计时','统计','计时','设置','计时'])await page.getByRole('button',{name:tab,exact:true}).click();
+  expect((await bridgeCalls(page)).filter(m=>m==='getCurrentWeather'||m==='getAstronomy')).toEqual(before);
+});
+
 test('an old astronomy response cannot restore opted-out coordinates or poison the next enabled interval', async ({ page }) => {
   test.setTimeout(90_000);
   await installWeatherBridge(page, true);

@@ -10,6 +10,8 @@ export function useFocusFlow(ports: FocusFlowPorts) {
     resume: () => latest.current.resume(), readPlan: () => latest.current.readPlan(),
     writePlan: plan => latest.current.writePlan(plan), preferences: () => latest.current.preferences(),
     draft: () => latest.current.draft(), nowMs: () => latest.current.nowMs(),
+    planDraft: () => latest.current.planDraft?.() ?? latest.current.draft(),
+    commitDraft: draft => latest.current.commitDraft?.(draft),
     closeEnding: () => latest.current.closeEnding(), closePlan: () => latest.current.closePlan(),
     resetDraftMode: () => latest.current.resetDraftMode(), constructionFeedback: () => latest.current.constructionFeedback(),
   }), []);

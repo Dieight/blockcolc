@@ -23,6 +23,8 @@
     "submission-performance.diagnostic.spec.ts",
     "v21-right-band-probe.spec.ts",
     "v24-voidscan.spec.ts",
+    "v256-world.diagnostic.spec.ts",
+    "v256-sky-seam.diagnostic.spec.ts",
     "void-probe.spec.ts",
     "world-visual-audit.diagnostic.spec.ts"
   ],
@@ -46,6 +48,13 @@
         "v22-integrity-ended.spec.ts",
         "v22-marathon-lane.spec.ts",
         "v24-marathon-settle.spec.ts",
+        "v256-settlement-recovery.spec.ts",
+        "v256-revision2.spec.ts",
+        "v256-revision3.spec.ts",
+        "v256-revision4.spec.ts",
+        "v256-revision5.spec.ts",
+        "v256-receipt-colour.spec.ts",
+        "v256-holiday-daily.spec.ts",
         "statistics-repair.spec.ts"
       ]
     },
@@ -58,6 +67,7 @@
         "responsive-qa.spec.ts",
         "ui-redesign.spec.ts",
         "settings-layout.spec.ts",
+        "v256-ui.spec.ts",
         "daily-goal-sheet.spec.ts",
         "focus-allocation.spec.ts",
         "minimal-report.spec.ts",

@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
+import { useReportReceipt } from './use-report-receipt';
 import type { ApplicationCommand, ApplicationResult, ApplicationService } from '@blockcolc/application';
 import type { FocusInterruptionCategory } from '@blockcolc/domain';
 import { PixelCheck as Check } from './ui/PixelIcon';
@@ -11,19 +12,32 @@ export function focusReportSurfaceClass(variant: FocusReportVariant = 'embedded'
   return `focus-report-surface${variant !== 'embedded' ? ' focus-report-surface--immersive' : ''}${variant === 'minimal' ? ' focus-report-surface--minimal' : ''}`;
 }
 
-export async function submitFocusProgressReport({command,run,onSubmitted}:{command:Extract<ApplicationCommand,{type:'ReportSubtaskProgress'}>;run:(command:ApplicationCommand,options?:CommandRunnerOptions)=>Promise<ApplicationResult>;onSubmitted:()=>void}):Promise<ApplicationResult>{
+export async function submitFocusProgressReport({command,run,onSubmitted,acknowledge}:{command:Extract<ApplicationCommand,{type:'ReportSubtaskProgress'}>;run:(command:ApplicationCommand,options?:CommandRunnerOptions)=>Promise<ApplicationResult>;onSubmitted:()=>void;acknowledge?:()=>Promise<void>}):Promise<ApplicationResult>{
   const submissionToken=beginFocusSubmission('progress');
-  const result=await run(command,{submissionToken});
+  const result=await run(command,{submissionToken, ...(acknowledge ? { acknowledge } : {})});
   if(result.ok)onSubmitted();
   return result;
 }
 
-export function ProgressReportV7({active,run,onSubmitted,variant='embedded',cancellationReason,cancellationNote}:{active:NonNullable<ReturnType<ApplicationService['activeProjectProjection']>>;run:(c:ApplicationCommand,options?:CommandRunnerOptions)=>Promise<ApplicationResult>;onSubmitted:(sessionId:string)=>void;variant?:FocusReportVariant;cancellationReason?:FocusInterruptionCategory|null;cancellationNote?:string}) {
+export function ProgressReportV7({active,run,onSubmitted,variant='embedded',cancellationReason,cancellationNote,onBusyChange}:{active:NonNullable<ReturnType<ApplicationService['activeProjectProjection']>>;run:(c:ApplicationCommand,options?:CommandRunnerOptions)=>Promise<ApplicationResult>;onSubmitted:(sessionId:string)=>void;variant?:FocusReportVariant;cancellationReason?:FocusInterruptionCategory|null;cancellationNote?:string;onBusyChange?:(busy:boolean)=>void}) {
   const session=active.unreportedCompletedSessions[0]!;
   const task=active.project.subtasks.find((subtask)=>subtask.id===session.subtaskId)!;
   const options=[task.progressBasisPoints,2500,5000,7500,10000].filter((value,index,all)=>value>=task.progressBasisPoints&&all.indexOf(value)===index);
-  const submit=async(value:number)=>{await submitFocusProgressReport({command:{type:'ReportSubtaskProgress',subtaskId:task.id,focusSessionIds:[session.id],progressBasisPoints:value},run,onSubmitted:()=>onSubmitted(session.id)});};
-  return <div className={`report progress-report-panel ${focusReportSurfaceClass(variant)}`} data-focus-report-variant={variant}><Check/><span className="eyebrow">本轮已记录</span><h2>这次工作推进到哪里？</h2><p><strong>{task.title}</strong><br/>当前总进度 {Math.round(task.progressBasisPoints/100)}%。提交后会更新建筑的永久施工阶段。</p>{cancellationReason && <p className="plan-sheet-note">本次结束原因：{focusInterruptionCategoryLabel(cancellationReason)}</p>}{cancellationNote && <p className="plan-sheet-note">补充说明：{cancellationNote}</p>}<div className="report-options">{options.map((value)=><button key={value} onClick={()=>void submit(value)}>{value===task.progressBasisPoints?`保持 ${value/100}%`:value===10000?'完成小任务':`推进至 ${value/100}%`}</button>)}</div></div>;
+  const [selected, setSelected] = useState<number | null>(null);
+  const busy = useRef(false);
+  const { delivered, acknowledge } = useReportReceipt();
+  const submit = async (value: number) => {
+    if (busy.current) return;
+    busy.current = true; setSelected(value); onBusyChange?.(true);
+    let saved = false;
+    try {
+      const result = await submitFocusProgressReport({ command: { type: 'ReportSubtaskProgress', subtaskId: task.id,
+        focusSessionIds: [session.id], progressBasisPoints: value }, run, acknowledge, onSubmitted: () => onSubmitted(session.id) });
+      saved = result.ok;
+    } catch { /* The runner reports failure; retain the draft. */ }
+    finally { onBusyChange?.(false); if (!saved) { busy.current = false; setSelected(null); } }
+  };
+  return <div className={`report progress-report-panel ${focusReportSurfaceClass(variant)}`} data-focus-report-variant={variant}><Check/><span className="eyebrow">本轮已记录</span><h2>这次工作推进到哪里？</h2><p><strong>{task.title}</strong><br/>当前 {Math.round(task.progressBasisPoints/100)}%</p>{cancellationReason && <p className="plan-sheet-note">结束原因：{focusInterruptionCategoryLabel(cancellationReason)}</p>}{cancellationNote && <p className="plan-sheet-note">{cancellationNote}</p>}<div className="report-options">{options.map(value => <button key={value} disabled={selected !== null} aria-busy={selected === value && !delivered} data-action-state={selected === value && delivered ? 'success' : undefined} onClick={() => void submit(value)}><span className="action-label" key={selected === value ? delivered ? 'delivered' : 'saving' : 'idle'}>{selected === value ? delivered ? '材料已送达！' : '正在保存…' : value === task.progressBasisPoints ? `保持 ${value/100}%` : value === 10000 ? '完成小任务' : `推进至 ${value/100}%`}</span></button>)}</div></div>;
 }
 
 type MarathonReportCommand = Extract<ApplicationCommand, { type: 'ReportMarathonFocus' }>;
@@ -100,18 +114,19 @@ export async function submitMarathonReportOnce({
   }
 }
 
-export function submitFocusMarathonReport({busyRef,setBusy,canSubmit,run,command,onSubmitted}:{
+export function submitFocusMarathonReport({busyRef,setBusy,canSubmit,run,command,onSubmitted,acknowledge}:{
   busyRef:{current:boolean};
   setBusy:(busy:boolean)=>void;
   canSubmit:boolean;
   run:(command:ApplicationCommand,options?:CommandRunnerOptions)=>Promise<ApplicationResult>;
   command:MarathonReportCommand|null;
   onSubmitted:()=>void;
+  acknowledge?:()=>Promise<void>;
 }):Promise<'submitted'|'failed'|'ignored'>{
   const submissionToken=command===null||busyRef.current||!canSubmit?null:beginFocusSubmission('marathon');
   return submitMarathonReportOnce({
     busyRef,setBusy,canSubmit,command,onSubmitted,
-    run:nextCommand=>run(nextCommand,{submissionToken}),
+    run:nextCommand=>run(nextCommand,{submissionToken, ...(acknowledge ? { acknowledge } : {})}),
   });
 }
 
@@ -126,7 +141,7 @@ export function submitFocusMarathonReport({busyRef,setBusy,canSubmit,run,command
  * plan return straight to the classic lane even after earlier rounds were
  * allocated to habits (the old code re-surfaced them as if unreported).
  */
-export function MarathonProgressReport({ state, hostProjectId, run, onSubmitted, variant = 'embedded', cancellationReason, cancellationNote }: {
+export function MarathonProgressReport({ state, hostProjectId, run, onSubmitted, variant = 'embedded', cancellationReason, cancellationNote, onBusyChange }: {
   state: ReturnType<ApplicationService['snapshot']>;
   hostProjectId: string;
   run: (command: ApplicationCommand, options?: CommandRunnerOptions) => Promise<ApplicationResult>;
@@ -134,6 +149,7 @@ export function MarathonProgressReport({ state, hostProjectId, run, onSubmitted,
   variant?: FocusReportVariant;
   cancellationReason?: import('@blockcolc/domain').FocusInterruptionCategory | null;
   cancellationNote?: string;
+  onBusyChange?: (busy: boolean) => void;
 }) {
   // Every round of this plan that still awaits settlement — completed or
   // early-completed marathon rounds that neither a previous settlement nor an
@@ -150,6 +166,7 @@ export function MarathonProgressReport({ state, hostProjectId, run, onSubmitted,
   const [habitRounds, setHabitRounds] = useState<Record<string, number>>({});
   const [taskRounds, setTaskRounds] = useState<Record<string, number>>({});
   const [busy, setBusy] = useState(false);
+  const { delivered, acknowledge } = useReportReceipt();
   const busyRef = useRef(false);
   const toggleProject = (projectId: string) => setExpanded((previous) => {
     const next = new Set(previous);
@@ -254,9 +271,10 @@ export function MarathonProgressReport({ state, hostProjectId, run, onSubmitted,
       .filter((entry) => entry.rounds > 0);
     await submitFocusMarathonReport({
       busyRef,
-      setBusy,
+      setBusy: value => { setBusy(value); onBusyChange?.(value); },
       canSubmit,
       run,
+      acknowledge,
       command: totalRounds === 0 ? null : {
         type: 'ReportMarathonFocus',
         entries,
@@ -276,12 +294,13 @@ export function MarathonProgressReport({ state, hostProjectId, run, onSubmitted,
     {minimal && <p className="minimal-report-caption">把专注留在做过的事上</p>}
     {reasonLabel && <p className="plan-sheet-note">本次结束原因：{reasonLabel}</p>}
     {cancellationNote && <p className="plan-sheet-note">补充说明：{cancellationNote}</p>}
-    {minimal ? <details className="minimal-report-help"><summary>轮次如何记录</summary><p>每轮只归属一个目标，按完成顺序计入实际时长；未选择的轮次记为未分配。保持原进度也可记录投入。</p></details>
-      : <p>展开任务选择要推进的小任务，并为每个目标明确计入轮数；每轮只归属一个目标。习惯与普通任务共用同一轮次池，按最早完成顺序分配；没有分配的轮次会明确记为未分配。</p>}
+    {minimal ? <details className="minimal-report-help"><summary>轮次如何记录</summary><p>每轮只计入一个目标，按完成顺序记录时长。未选择则记为未分配；保持进度也可计入轮次。</p></details>
+      : <p>选择小任务或习惯并分配轮数，每轮只计入一个目标。按完成顺序记录时长，未选择则记为未分配。</p>}
+    <fieldset className="report-controls" disabled={busy}>
     {totalRounds === 0
       ? <p className="plan-sheet-note">这次没有需要汇报的轮次，直接结束计划即可。</p>
       : !hasTargets
-        ? <p className="plan-sheet-note">没有可推进的任务：所有小任务都已完成，习惯建筑也都在等待选择下一座。直接结束计划即可。</p>
+        ? <p className="plan-sheet-note">暂无可推进的任务，可直接结束计划。</p>
         : <div className="marathon-settlement-list">
             {habits.map((project) => {
               const habit = project.habit!;
@@ -320,12 +339,13 @@ export function MarathonProgressReport({ state, hostProjectId, run, onSubmitted,
               </section>
             ))}
           </div>}
-    {missingTaskRounds > 0 && <p className="plan-sheet-note" role="alert">已选择推进的小任务还没有计入轮数；请为每个目标至少增加 1 轮，或取消推进选择。</p>}
+    {missingTaskRounds > 0 && <p className="plan-sheet-note" role="alert">已选任务至少计入 1 轮，或取消推进。</p>}
     {totalRounds > 0 && allocatedRounds === totalRounds && <p className="plan-sheet-note">全部轮次已明确分配，仍会一次性提交。</p>}
     {totalRounds > 0 && hasTargets && allocatedRounds < totalRounds && entries.length === 0 && <p className="plan-sheet-note">还有 {totalRounds - allocatedRounds} 轮未分配，可直接提交并明确记为未分配。</p>}
+    </fieldset>
     <div className="marathon-report-footer">
       {minimal && totalRounds > 0 && <p className="minimal-report-allocation" aria-live="polite"><span>已分配 {allocatedRounds} / {totalRounds} 轮</span><span>{totalRounds - allocatedRounds} 轮未分配</span></p>}
-      <button type="button" className="primary marathon-report-submit" disabled={busy || (totalRounds > 0 && hasTargets && !canSubmit)} onClick={() => void submit()}>{totalRounds > 0 && hasTargets ? '一次提交本次推进' : '直接结束计划'}</button>
+      <button type="button" className="primary marathon-report-submit" aria-busy={busy && !delivered} data-action-state={delivered ? 'success' : undefined} disabled={busy || (totalRounds > 0 && hasTargets && !canSubmit)} onClick={() => void submit()}><span className="action-label" key={delivered ? 'delivered' : busy ? 'saving' : 'idle'}>{delivered ? '材料已送达！' : busy ? '正在保存…' : totalRounds > 0 && hasTargets ? '一次提交本次推进' : '直接结束计划'}</span></button>
     </div>
   </div>;
 }

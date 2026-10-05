@@ -5,11 +5,20 @@ import type * as THREE from 'three';
 type Probe = { upper:number; lower:number; count:number; capacity:number; area:number; spanY:number; cameraY:number; maxY:number; groundRelative:boolean };
 type Scope = typeof window & { __blockcolcVoxelTest:typeof import('@blockcolc/voxel'); densityRenderer:VoxelRenderer; densityProbe?:Probe };
 
+// This standalone shader-uniform probe measures the CSS camera volume, not
+// high-DPI raster performance. Keep its software WebGL surface at CSS resolution;
+// real touch/frame-budget coverage remains in the separate motion/interaction specs.
+test.use({ deviceScaleFactor: 1 });
+
 test('ordinary and immersive precipitation cover every cardinal view and keep physical density while zooming', async ({ page }, info) => {
   test.setTimeout(150_000);
   await page.goto('/');
   await page.waitForFunction(() => !!(window as Scope).__blockcolcVoxelTest);
   await page.evaluate(async () => {
+    // The three onboarding previews are unrelated to this standalone world.
+    // Hiding their host suspends them rather than competing for software GPU frames.
+    const appRoot = document.getElementById('root');
+    if (appRoot) appRoot.style.display = 'none';
     const scope = window as Scope, voxel = scope.__blockcolcVoxelTest;
     const temporary = new voxel.LightingPostProcessor({capabilities:{maxSamples:0}} as THREE.WebGLRenderer);
     const scene = (temporary as unknown as {quadScene:THREE.Scene}).quadScene;
@@ -66,21 +75,40 @@ test('ordinary and immersive precipitation cover every cardinal view and keep ph
   });
   const canvas=page.getByLabel('降水密度验证');
   const observations:{mode:string;kind:string;angle:number;zoom:string;probe:Probe}[]=[];
+  // Derive each gesture from the last commanded target, not the still-easing
+  // sampled camera. Otherwise tiny residuals accumulate across 24 gestures.
+  let commandedAzimuth = Number(await canvas.getAttribute('data-camera-azimuth'));
   for(const mode of ['ordinary','immersive']) {
     await canvas.evaluate((node,value)=>{node.style.height=value==='ordinary'?'300px':'760px';},mode);
     await page.evaluate(value=>(window as Scope).densityRenderer.setImmersiveBandFraction(value==='immersive'?.38:0,0),mode);
     for(const kind of ['rain','storm','snow']) {
+      const renderedBefore=Number(await canvas.getAttribute('data-render-frame-count'));
       await page.evaluate(value=>(window as Scope).densityRenderer.setExternalWeatherOverride({kind:value==='snow'?'snow':'rain',thunderstorm:value==='storm',cloudIntensity:.8,precipitationIntensity:value==='storm'?.8:.25}),kind);
+      // Wait for this weather's completed first draw before measuring gestures.
+      // Software WebGL can compile the precipitation program during that draw;
+      // a dataset written by setExternalWeatherOverride is not a rendered frame.
+      await expect.poll(async()=>Number(await canvas.getAttribute('data-render-frame-count')),
+        {timeout:15_000}).toBeGreaterThan(renderedBefore);
       const uploads=await canvas.getAttribute(kind==='snow'?'data-snow-matrix-upload-count':'data-rain-matrix-upload-count');
       const rebuilds=await canvas.getAttribute('data-world-rebuild-count');
       for(const angle of [0,Math.PI/2,Math.PI,Math.PI*1.5]) {
-        await canvas.evaluate((node,target)=>{
-          const current=Number(node.dataset.cameraAzimuth),dx=(target-current)/.011;
+        commandedAzimuth=await canvas.evaluate((node,{from,target})=>{
+          // Equivalent cardinal headings use the shortest arc. A full backward
+          // turn between 270 and 0 degrees only spends software-GPU easing
+          // frames; it does not add density coverage.
+          const nearestTarget=target+Math.round((from-target)/(Math.PI*2))*Math.PI*2;
+          // Browser pointer coordinates are pixel-quantized. Carry the actual
+          // delivered command, not the ideal angle, to avoid accumulated drift.
+          const dx=Math.round((nearestTarget-from)/.011);
           node.dispatchEvent(new PointerEvent('pointerdown',{pointerId:5,clientX:80,clientY:100,bubbles:true}));
           node.dispatchEvent(new PointerEvent('pointermove',{pointerId:5,clientX:80+dx,clientY:100,bubbles:true}));
           node.dispatchEvent(new PointerEvent('pointerup',{pointerId:5,clientX:80+dx,clientY:100,bubbles:true}));
-        },angle);
-        await expect.poll(async()=>Math.abs(Number(await canvas.getAttribute('data-camera-azimuth'))-angle)).toBeLessThan(.01);
+          return from+dx*.011;
+        },{from:commandedAzimuth,target:angle});
+        await expect.poll(async()=>{
+          const delta=Number(await canvas.getAttribute('data-camera-azimuth'))-angle;
+          return Math.abs(Math.atan2(Math.sin(delta),Math.cos(delta)));
+        }).toBeLessThan(.01);
         for(const zoom of ['far','near']) {
           await canvas.dispatchEvent('wheel',{deltaY:zoom==='far'?100_000:-100_000});
           await page.waitForTimeout(350);

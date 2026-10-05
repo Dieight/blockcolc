@@ -1,8 +1,8 @@
 import { expect, test } from "@playwright/test";
 import { readPersistedDomainState } from './persisted-domain-state';
-import { preparePlanCancellation } from './focus-plan-controls';
+import { choosePlanEndTime, preparePlanCancellation, startNextRound, openRetainedPlan, waitForMarathonReport } from './focus-plan-controls';
 
-// Temporary V23 reproduction/regression probes (remove before release).
+// Retained regressions for settlement ownership, integrity and name layout.
 
 async function createDefaultProject(page: import("@playwright/test").Page) {
   await page.goto("/");
@@ -24,9 +24,7 @@ async function configureOneMinuteRounds(page: import("@playwright/test").Page) {
 async function pickEndTime1605(page: import("@playwright/test").Page) {
   const sheet = page.getByRole("dialog", { name: "安排下一轮" });
   await sheet.getByRole("button", { name: "按结束时间" }).click();
-  await page.getByLabel("减少结束小时").click();
-  await page.getByLabel("减少结束小时").click();
-  await page.getByLabel("增加结束分钟").click();
+  await choosePlanEndTime(sheet, '16:05');
   await expect(sheet).toContainText(/轮专注/);
   return sheet;
 }
@@ -67,14 +65,14 @@ test("habit-settled rounds are never re-offered by a later plan cancel", async (
   await page.getByRole("button", { name: /^开始到/ }).click();
   await page.clock.fastForward(61_000);
   await expect(page.getByRole("button", { name: "开始下一轮" })).toBeVisible();
-  await page.getByRole("button", { name: "调整本次计划" }).click();
+  await openRetainedPlan(page);
   await (await preparePlanCancellation(sheet)).click();
-  await expect(page.getByRole("heading", { name: "把这次推进汇报给哪些任务？" })).toBeVisible();
+  const report = await waitForMarathonReport(page);
   await page.locator(".marathon-settlement-head").first().click();
   await expect(page.locator(".habit-round-stepper")).toBeVisible();
   await page.getByRole("button", { name: "增加计入轮数" }).click();
   await page.getByRole("button", { name: "提交本次推进" }).click();
-  await expect(page.getByRole("heading", { name: "把这次推进汇报给哪些任务？" })).toBeHidden();
+  await expect(report).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "我的第一座工坊" })).toBeVisible();
 
   // NEW marathon: confirm, complete round 1, cancel. The report must offer only
@@ -85,12 +83,12 @@ test("habit-settled rounds are never re-offered by a later plan cancel", async (
   await page.getByRole("button", { name: /^开始到/ }).click();
   await page.clock.fastForward(61_000);
   await expect(page.getByRole("button", { name: "开始下一轮" })).toBeVisible();
-  await page.getByRole("button", { name: "调整本次计划" }).click();
+  await openRetainedPlan(page);
   await (await preparePlanCancellation(sheet2)).click();
-  await expect(page.getByRole("heading", { name: "把这次推进汇报给哪些任务？" })).toBeVisible();
+  await waitForMarathonReport(page);
   await expect(page.locator(".marathon-progress-report .eyebrow")).toContainText("1 轮专注已结束");
   await page.getByRole("button", { name: "提交本次推进" }).click();
-  await expect(page.getByRole("heading", { name: "把这次推进汇报给哪些任务？" })).toBeHidden();
+  await expect(report).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "我的第一座工坊" })).toBeVisible();
 });
 
@@ -112,7 +110,7 @@ test("an app-switch-limit exit keeps the marathon at the same round", async ({ p
   await page.getByRole("button", { name: /^开始到/ }).click();
   await page.clock.fastForward(61_000);
   await expect(page.getByRole("button", { name: "开始下一轮" })).toBeVisible();
-  await page.getByRole("button", { name: "开始下一轮" }).click();
+  await startNextRound(page);
   await expect(page.locator(".focus-task-context strong")).toContainText(/专注中 第2\/\d+轮/);
 
   // Three web-visibility excursions exceed the default max of three; each pair
@@ -145,7 +143,7 @@ test("an app-switch-limit exit keeps the marathon at the same round", async ({ p
   await expect(page.locator(".focus-integrity-ended")).toBeVisible();
   await expect(page.locator(".focus-task-context strong")).toContainText(/准备第 2 \/ \d+ 轮/);
   await expect(page.getByRole("button", { name: "开始下一轮" })).toBeVisible();
-  await page.getByRole("button", { name: "开始下一轮" }).click();
+  await startNextRound(page);
   await expect(page.locator(".focus-task-context strong")).toContainText(/专注中 第2\/\d+轮/);
 });
 

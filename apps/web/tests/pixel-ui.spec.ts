@@ -71,7 +71,8 @@ test('pixel calendar selects one day, forward/reverse ranges, cancellation and k
   await cell('2026-09-30').click();
   await expect(chart).toHaveAttribute('data-selection-input','pointer');
   await expect(chart).toBeFocused();
-  await expect(chart).toHaveCSS('outline-width','0px');
+  // outline:none legitimately computes a medium width; only its style paints.
+  await expect(chart).toHaveCSS('outline-style','none');
   await expect(chart).toHaveCSS('box-shadow','none');
   await expectTotals('3 小时','1 / 4','1');
   await expect(page.locator('.allocation-cluster-name')).toHaveText('写作');
@@ -143,7 +144,7 @@ test('compact memory and pixel setup, goal, management and about preserve their 
   await page.getByRole('button',{name:'取消',exact:true}).click();
   await page.getByRole('button',{name:'关于方块钟'}).click();
   const about=page.getByRole('dialog',{name:/方块钟/});
-  await expect(about.locator('.about-brand [data-pixel-icon="cube"]')).toBeVisible();
+  await expect(about.locator('.about-brand [data-pixel-icon="brand"]')).toBeVisible();
   await expect(about.getByRole('link',{name:'Apache-2.0'})).toHaveAttribute('href',/\/LICENSE$/);
   await expect(about.getByRole('link',{name:'SunCalc · BSD-2-Clause'})).toHaveAttribute('href','licenses/suncalc.txt');
   await page.screenshot({path:testInfo.outputPath('pixel-about.png')});
@@ -215,17 +216,20 @@ for(const kind of ['finite','habit'] as const) test(`pixel plan sheets and paire
   await expect(sheet.getByRole('button',{name:'2 轮',exact:true})).toHaveAttribute('aria-pressed','true');
   await page.screenshot({path:info.outputPath(`pixel-plan-rounds-${kind}.png`)});
   await sheet.getByRole('button',{name:'按结束时间',exact:true}).click();
-  const hour=await sheet.getByLabel('结束小时',{exact:true}).innerText();
-  await sheet.getByRole('button',{name:'增加结束小时'}).click();
-  await expect(sheet.getByLabel('结束小时',{exact:true})).toHaveText(String((Number(hour)+1)%24).padStart(2,'0'));
-  await sheet.getByRole('button',{name:'减少结束小时'}).click();
-  await expect(sheet.getByLabel('结束小时',{exact:true})).toHaveText(hour);
-  await sheet.getByRole('button',{name:'增加结束分钟'}).click();
+  const slider=sheet.getByRole('slider',{name:'结束时间，上下滑动或按方向键调整'});
+  const original=await slider.locator('.timer-value').innerText();
+  await slider.press('ArrowUp');
+  await expect(slider.locator('.timer-value')).not.toHaveText(original);
+  await slider.press('ArrowDown');
+  await expect(slider.locator('.timer-value')).toHaveText(original);
+  await slider.press('ArrowUp');
+  await slider.press('Enter');
+  await expect(sheet).toBeVisible();
   for(const width of [360,412]) {
     await page.setViewportSize({width,height:915});
     expect(await sheet.evaluate(node=>node.scrollWidth<=node.clientWidth+1)).toBe(true);
-    const hourBox=(await sheet.getByLabel('结束小时',{exact:true}).boundingBox())!,colonBox=(await sheet.locator('.time-colon').boundingBox())!;
-    expect(Math.abs(hourBox.y+hourBox.height/2-colonBox.y-colonBox.height/2)).toBeLessThanOrEqual(1);
+    const timeBox=(await slider.locator('.timer-value').boundingBox())!,sliderBox=(await slider.boundingBox())!;
+    expect(Math.abs(timeBox.x+timeBox.width/2-sliderBox.x-sliderBox.width/2)).toBeLessThanOrEqual(1);
     await page.screenshot({path:info.outputPath(`pixel-plan-end-${kind}-${width}.png`)});
   }
   await sheet.getByRole('button',{name:'固定轮次',exact:true}).click();

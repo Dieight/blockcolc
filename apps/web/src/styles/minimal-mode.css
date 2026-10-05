@@ -11,6 +11,8 @@
  * keyboard focus so AT users can still reach and reveal the exit. */
 .minimal-exit.is-veiled{opacity:0;pointer-events:none}
 .minimal-exit.is-veiled:focus-visible{opacity:1;pointer-events:auto}
+.minimal-rest-adjust.is-veiled{opacity:0;pointer-events:none}
+.minimal-rest-adjust.is-veiled:focus-visible{opacity:1;pointer-events:auto}
 
 .minimal-sheet-backdrop{z-index:48;align-items:end;padding:12px 12px max(12px,var(--safe-bottom))}
 .minimal-end-sheet{position:relative;width:min(100%,420px);overflow:auto;padding:22px 18px 18px;border:1px solid var(--sheet-glass-border);border-radius:18px;max-height:min(82dvh,680px);background:var(--sheet-glass-background);box-shadow:var(--sheet-glass-shadow);backdrop-filter:var(--sheet-glass-filter);-webkit-backdrop-filter:var(--sheet-glass-filter);display:grid;gap:14px}

@@ -7,7 +7,7 @@ import { BuildingMemoryPanel, createBuildingMemory } from './BuildingMemoryPanel
 
 function stateFixture(): DomainState {
   return {
-    schemaVersion: 12,
+    schemaVersion: 13,
     projects: [{
       id: 'project-a', title: '写作计划', kind: 'finite', settlementIndex: 0,
       blueprintId: 'builtin-small-workshop', importedBlueprint: null,
@@ -27,7 +27,7 @@ function stateFixture(): DomainState {
     progressReports: [], dailyGoals: [], projectConditions: [{ projectId: 'project-a', conditionBasisPoints: 9_000, inactivityAnchorAt: null, assessedMissedPlannedDays: 0 }],
     decayPolicy: { enabled: false, gracePlannedDays: 3, repairMultiplierBasisPoints: 20_000, damagePerMissedPlannedDayBasisPoints: null },
     calendar: { timeZone: 'Asia/Shanghai', restWeekdays: [] }, focusIntegrityPolicy: { enabled: false, maxEffectiveExcursions: 3, excursionThresholdSeconds: 3 },
-    buildingBlueprintResources: [], decorationBlueprintResources: [], decorationRewards: [], worldSettings: { environmentStyle: 'natural-valley', worldSeed: 'test', terrainGenerationVersion: 4 },
+    buildingBlueprintResources: [], decorationBlueprintResources: [], decorationRewards: [], holidayRewards:[], worldSettings: { environmentStyle: 'natural-valley', worldSeed: 'test', terrainGenerationVersion: 4 },
   };
 }
 

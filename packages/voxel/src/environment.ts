@@ -66,7 +66,7 @@ export interface FogRange {
 
 export type DecorationKind = "tree" | "road" | "lamp" | "bench";
 
-export type EnvironmentStyle = "natural-valley" | "classic-island" | "ocean-island";
+export type EnvironmentStyle = "natural-valley" | "classic-island" | "ocean-island" | 'mosaic-coast';
 
 export interface CloudBudgetInput {
   previewMode: boolean;
@@ -77,6 +77,9 @@ export interface CloudBudgetInput {
   contentDepth: number;
   visibleWidth: number;
   visibleDepth: number;
+  /** Actual near-detail terrain envelope, not a camera zoom or building box. */
+  normalWidth?: number;
+  normalDepth?: number;
 }
 
 export interface CloudBudget {
@@ -87,6 +90,9 @@ export interface CloudBudget {
   spanZ: number;
   nearSpanX: number;
   nearSpanZ: number;
+  nearCloudCount: number;
+  farCloudCount: number;
+  farBlockScale: number;
   previewMode: boolean;
 }
 
@@ -276,6 +282,9 @@ export function cloudBudgetForView(input: CloudBudgetInput): CloudBudget {
       spanZ: Math.max(10, contentDepth * 1.15),
       nearSpanX: Math.max(12, contentWidth * 1.15),
       nearSpanZ: Math.max(10, contentDepth * 1.15),
+      nearCloudCount: cloudCount,
+      farCloudCount: 0,
+      farBlockScale: 1,
       previewMode: true,
     };
   }
@@ -288,15 +297,28 @@ export function cloudBudgetForView(input: CloudBudgetInput): CloudBudget {
   const kindDensity: Record<WeatherKind, number> = {
     clear: 0.6, cloudy: 1.6, rain: 1.4, mist: 0.45, snow: 1.15,
   };
+  const spanX = compact ? Math.max(32, visibleWidth * 1.05) : Math.max(32, visibleWidth + 24);
+  const spanZ = compact ? Math.max(28, visibleDepth * 1.05) : Math.max(28, visibleDepth + 24);
+  const nearSpanX = Math.min(spanX, finitePositive(input.normalWidth ?? NaN, Math.max(100, contentWidth * 1.6 + 100)));
+  const nearSpanZ = Math.min(spanZ, finitePositive(input.normalDepth ?? NaN, Math.max(100, contentDepth * 1.6 + 100)));
+  const nearArea = nearSpanX * nearSpanZ;
+  const farArea = Math.max(0, spanX * spanZ - nearArea);
+  const baseCount = weatherCloudCount === 0 || density === 0 ? 0 : Math.min(compact ? 64 : 128,
+    Math.max(1, Math.round(weatherCloudCount * density * Math.sqrt(spreadRatio) * kindDensity[input.weatherKind])));
+  const hasFar = farArea > nearArea * .15;
+  // Previously 65% sat over the settlement. Reduce that share by about a
+  // quarter and give at least as many connected groups to the outer terrain.
+  const nearCloudCount = baseCount === 0 ? 0 : Math.max(1, Math.floor(baseCount * (hasFar ? .48 : .8)));
+  const farCloudCount = hasFar ? Math.max(nearCloudCount, baseCount - nearCloudCount) : 0;
   return {
-    cloudCount: weatherCloudCount === 0 ? 0 : Math.min(compact ? 64 : 128,
-      Math.max(1, Math.round(weatherCloudCount * density * Math.sqrt(spreadRatio) * kindDensity[input.weatherKind]))),
+    cloudCount: nearCloudCount + farCloudCount,
     maxInstances: 1600,
     blockScale: 1,
-    spanX: compact ? Math.max(32, visibleWidth * 1.05) : Math.max(32, visibleWidth + 24),
-    spanZ: compact ? Math.max(28, visibleDepth * 1.05) : Math.max(28, visibleDepth + 24),
-    nearSpanX: Math.min(visibleWidth + 24, Math.max(100, contentWidth * 1.6 + 100)),
-    nearSpanZ: Math.min(visibleDepth + 24, Math.max(100, contentDepth * 1.6 + 100)),
+    spanX, spanZ, nearSpanX, nearSpanZ,
+    nearCloudCount, farCloudCount,
+    // Equal counts of tiny clouds cannot cover a much larger LOD envelope.
+    // Grow their horizontal footprint from physical area, never camera zoom.
+    farBlockScale: farCloudCount === 0 ? 1 : clamp(Math.sqrt(farArea / nearArea * nearCloudCount / farCloudCount), 1, 6),
     previewMode: false,
   };
 }

@@ -33,7 +33,10 @@ export function roundsForMinimalEndTime(
   const nextRound = rounds + 1;
   const nextBoundary = now + nextRound * focusMinutes * 60_000 + (nextRound - 1) * breakMinutes * 60_000;
   const shortfall = nextBoundary - endMs;
-  const shouldCompleteNextRound = shortfall >= 0 && shortfall <= 60_000;
+  const previousBoundary=now+rounds*focusMinutes*60_000+Math.max(0,rounds-1)*breakMinutes*60_000;
+  // Grace repairs a partly entered next round, never adds a whole round to an
+  // already exact boundary (notably one-minute / zero-break debug schedules).
+  const shouldCompleteNextRound = endMs>previousBoundary && shortfall>0 && shortfall<=60_000;
   const plannedRounds = rounds + (shouldCompleteNextRound ? 1 : 0);
   if (plannedRounds === 0) return null;
   const endsAtMs = shouldCompleteNextRound

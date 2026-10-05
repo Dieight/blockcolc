@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
+import { startNextRound, waitForMarathonReport } from './focus-plan-controls';
 
-// with no phantom rounds and no auto-advance wording (remove before release).
+// Retained coverage for phantom rounds and unwanted auto-advance wording.
 
 const PREFS = JSON.stringify({ focusMinutes: 1, habitFocusMinutes: 1, habitTargetRounds: 10, breakMinutes: 0, lightingQuality: "auto", constructionOutlineVisibility: "current", themeMode: "light" });
 
@@ -37,11 +38,10 @@ test("marathon settlement shows exactly the plan rounds with no auto-advance wor
   for (let round = 1; round < 3; round += 1) {
     await page.clock.fastForward(61_000);
     await expect(page.getByRole("button", { name: "开始下一轮" })).toBeVisible();
-    await page.getByRole("button", { name: "开始下一轮" }).click();
+    await startNextRound(page);
   }
   await page.clock.fastForward(61_000);
-  await expect(page.getByRole("heading", { name: "把这次推进汇报给哪些任务？" })).toBeVisible();
-  const report = page.locator(".marathon-progress-report");
+  const report = await waitForMarathonReport(page);
   await expect(report.locator(".eyebrow")).toContainText("3 轮专注已结束");
   await expect(report).not.toContainText("自动推进");
   await page.screenshot({ path: "test-results/v24-marathon-normal.png", fullPage: true });

@@ -1,4 +1,5 @@
 import { expect, type Page } from '@playwright/test';
+import { waitForPreparedWorld } from './world-ready';
 
 /** Older renderer scenarios exercise the valley, not the new-install default. */
 export async function selectValleyFixture(page: Page, options: { automaticLighting?: boolean } = {}): Promise<void> {
@@ -8,5 +9,7 @@ export async function selectValleyFixture(page: Page, options: { automaticLighti
     await page.getByRole('group', { name: '光影质量' }).getByRole('button', { name: '自动', exact: true }).click();
   }
   await page.getByRole('button', { name: '计时', exact: true }).click();
-  await expect(page.getByLabel('项目建筑世界')).toHaveAttribute('data-environment-style', 'natural-valley');
+  const canvas = await waitForPreparedWorld(page);
+  await expect(canvas).toHaveAttribute('data-environment-style', 'natural-valley');
+  await expect(canvas).toHaveAttribute('data-environment-transition-active', 'false');
 }

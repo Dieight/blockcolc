@@ -37,6 +37,10 @@ const WOOD_COLORS: Readonly<Record<string, number>> = {
   bamboo: 0xc5a746, crimson: 0x6d2635, warped: 0x2d7d78, oak: 0xb68c55, poplar: 0xa9825f,
 };
 
+const CORAL_COLORS: Readonly<Record<string, number>> = {
+  tube: 0x3c66cb, brain: 0xd969aa, bubble: 0xa348c6, fire: 0xce493e, horn: 0xe5cb4b,
+};
+
 export function fallbackVisualStyleForVoxel(
   voxel: Pick<BlueprintVoxel, "materialId" | "sourceBlockId">,
 ): FallbackVisualStyle {
@@ -51,14 +55,19 @@ export function fallbackVisualStyleForVoxel(
         : path === "heavy_weighted_pressure_plate" ? 0xb7b9b2 : undefined;
   const dyed = Object.entries(DYE_COLORS).find(([name]) => path === name || path.startsWith(`${name}_`));
   const wood = Object.entries(WOOD_COLORS).find(([name]) => path === name || path.startsWith(`${name}_`));
+  const coral = /^(dead_)?(tube|brain|bubble|fire|horn)_coral(?:_block|_fan|_wall_fan)?$/.exec(path);
   let color = BASE_COLORS[voxel.materialId] ?? 0xc3b18d;
   let response = materialResponseForVoxel(voxel);
   const pattern = originalPatternForBlockId(voxel.sourceBlockId, voxel.materialId);
   let transparent = voxel.materialId === "glass";
   let opacity = transparent ? 0.44 : 1;
 
-  if (componentPath && namespace !== "minecraft") {
+  if ((componentPath || coral || path === "sea_pickle") && namespace !== "minecraft") {
     // Unknown/modded component IDs retain the semantic material fallback.
+  } else if (coral) {
+    color = coral[1] ? 0x8a8b81 : CORAL_COLORS[coral[2]!]!;
+  } else if (path === "sea_pickle") {
+    color = 0x809f48;
   } else if (componentColor !== undefined) {
     color = componentColor;
   } else if (dyed && /(?:wool|carpet|concrete|terracotta|glazed_terracotta|glass|glass_pane|bed|banner|candle|cushion|shulker_box)/.test(path)) {

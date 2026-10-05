@@ -12,6 +12,28 @@ const success = (events: Extract<ApplicationResult, { ok: true }>['events'] = []
 const warning = { code: 'NOTIFICATION_INEXACT' as const, message: 'warning' };
 const interrupted = { type: 'FocusInterrupted' as const, sessionId: 'r', reason: 'app-switch-limit' as const, category: null };
 describe('command feedback contract', () => {
+  it('shows a receipt only after persistence and lets it finish before normal feedback/refresh', async () => {
+    const f = runner(success());
+    let finish!: () => void;
+    const acknowledge = vi.fn(() => new Promise<void>(resolve => { finish = resolve; }));
+    const pending = f.run({ type: 'CancelFocus', interruptionCategory: null }, { acknowledge });
+    await vi.waitFor(() => expect(acknowledge).toHaveBeenCalledTimes(1));
+    expect(f.service.dispatch).toHaveBeenCalledTimes(1);
+    expect(f.refresh).not.toHaveBeenCalled(); expect(f.feedback).not.toHaveBeenCalled();
+    finish(); await pending;
+    expect(f.refresh).toHaveBeenCalledTimes(1);
+    expect(f.feedback).toHaveBeenCalledTimes(1);
+  });
+  it('never acknowledges a rejected write or treats failed presentation as an uncommitted save', async () => {
+    const acknowledge = vi.fn(async () => { throw new Error('presentation failed'); });
+    const rejected = runner({ ok: false, state, code: 'FOCUS_NOT_ACTIVE', message: '拒绝', warnings: [] });
+    expect((await rejected.run({ type: 'CancelFocus', interruptionCategory: null }, { acknowledge })).ok).toBe(false);
+    expect(acknowledge).not.toHaveBeenCalled();
+    const saved = runner(success());
+    expect((await saved.run({ type: 'CancelFocus', interruptionCategory: null }, { acknowledge })).ok).toBe(true);
+    expect(saved.service.dispatch).toHaveBeenCalledTimes(1); expect(saved.refresh).toHaveBeenCalledTimes(1);
+    expect(saved.failure).not.toHaveBeenCalled();
+  });
   it('keeps integrity interruption out of the global toast, even with notification warnings', () => {
     expect(commandFeedback(success([interrupted], [warning])).message).toBeNull();
   });

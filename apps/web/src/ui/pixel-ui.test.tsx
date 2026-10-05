@@ -6,7 +6,7 @@ import { PixelProgress, pixelProgressCells } from './PixelProgress';
 describe('pixel UI primitives', () => {
   it('renders decorative glyphs as a single crisp SVG path', () => {
     const html = renderToStaticMarkup(<PixelIcon name="tasks"/>);
-    expect(html).toContain('viewBox="0 0 12 12"');
+    expect(html).toContain('viewBox="0 0 11 11"');
     expect(html).toContain('shape-rendering="crispEdges"');
     expect(html).toContain('aria-hidden="true"');
     expect(html.match(/<path/g)).toHaveLength(1);

@@ -5,6 +5,7 @@ import { addLocalDays, localDateOf } from '@blockcolc/domain';
 import { dailyGoalTargetForWindow, effectiveFocusMillisecondsByDate, focusSessionCountByDate, focusWindowSummary, projectFocusAllocation, focusRangeDayCount, type FocusDateRange } from './focus-stats';
 import { AchievementUnlockDialog, AchievementsSection, type AchievementEntry } from './ui/AchievementsPanel';
 import { FocusAllocationChart, FocusCalendarChart, formatFocusMinutes, MonumentFocusChart } from './ui/FocusStatsCharts';
+import { HolidayEmblem } from './ui/HolidayEmblem';
 
 type AppState = ReturnType<ApplicationService['snapshot']>;
 const ACHIEVEMENT_RECEIPT_KEY = 'blockcolc-achievement-display-receipts-v1';
@@ -120,7 +121,7 @@ export function StatsScreen({ state, achievementEntries, active = false }: { sta
     <header className="stats-page-heading"><div><h1>专注轨迹</h1><p className="stats-intro">专注与建造，按时间回看。</p></div></header>
     <section className="stats-period-section" aria-label="按时间范围统计">
     <section className="stats-overview" aria-label="有效专注摘要">
-      <div className="stats-duration"><span><PixelClock size={16}/>{label}的投入</span><strong>{formatFocusMinutes(summary.minutes).split(/(\d+)/).filter(Boolean).map((part,index) => <span key={index} className={/^\d+$/.test(part) ? 'stats-duration-number' : 'stats-duration-unit'}>{part}</span>)}</strong></div>
+      <div className="stats-duration"><span><PixelClock size={16}/>{label}的投入<HolidayEmblem date={today} slot={2}/></span><strong>{formatFocusMinutes(summary.minutes).split(/(\d+)/).filter(Boolean).map((part,index) => <span key={index} className={/^\d+$/.test(part) ? 'stats-duration-number' : 'stats-duration-unit'}>{part}</span>)}</strong></div>
       <div className="stats-key-facts"><div className="stats-rounds"><PixelFlag size={16}/><strong>{summary.completed + summary.early}<span className="stats-round-divider"> / </span>{targetRounds}</strong><span>有效完成轮次 / 目标完成轮次</span></div><div><PixelSprout size={16}/><strong>{summary.activeDays}</strong><span>活跃日</span></div></div>
     </section>
     <FocusCalendarChart days={days} today={today} selection={range} onSelectionChange={setSelection}/>
@@ -148,7 +149,7 @@ export function MonumentStatistics({ monuments, unallocated }: { monuments:reado
           // every card collapsed on entry and lets the browser close it again
           // without a React state race that could blank the stats route.
           return <details key={monument.id}>
-            <summary><span><strong>{monument.title}</strong><small>{sourceLabel}{monument.expectedRounds !== null ? ` · ${monument.rounds} / ${monument.expectedRounds} 轮可追溯` : ` · ${monument.rounds} 轮可追溯`}{monument.interruptedRounds > 0 ? ` · ${monument.interruptedRounds} 条中断` : ''}</small></span><b>{formatFocusMinutes(monument.minutes)}</b></summary>
+            <summary><PixelCube/><span><strong>{monument.title}</strong><small>{sourceLabel}{monument.expectedRounds !== null ? ` · ${monument.rounds} / ${monument.expectedRounds} 轮可追溯` : ` · ${monument.rounds} 轮可追溯`}{monument.interruptedRounds > 0 ? ` · ${monument.interruptedRounds} 条中断` : ''}</small></span><b>{formatFocusMinutes(monument.minutes)}</b></summary>
             <div className="monument-detail">
               <div className="monument-metrics"><div><span>实际投入</span><strong>{formatFocusMinutes(monument.minutes)}</strong></div><div><span>完成轮次</span><strong>{monument.rounds} 轮</strong></div><div><span>中断投入</span><strong>{monument.interruptedRounds > 0 ? `${monument.interruptedRounds} 条 · ${formatFocusMinutes(monument.interruptedMinutes)}` : '无'}</strong></div><div><span>完成时间</span><strong>{monument.completedAt ? new Date(monument.completedAt).toLocaleDateString('zh-CN') : '未知'}</strong></div></div>
              {monument.unknownRounds > 0 && <p className="monument-unknown" role="note">另有 {monument.unknownRounds} 条记录无法追溯{monument.unknownMinutes > 0 ? `（${formatFocusMinutes(monument.unknownMinutes)}）` : ''}，未分摊。</p>}
@@ -156,6 +157,6 @@ export function MonumentStatistics({ monuments, unallocated }: { monuments:reado
             </div>
           </details>;
       })}</div>}
-    {unallocated.rounds > 0 && <p className="monument-unallocated" role="note">另有 {[unallocated.completedRounds > 0 ? `${unallocated.completedRounds} 个完成轮次` : '', unallocated.interruptedRounds > 0 ? `${unallocated.interruptedRounds} 条中断记录` : ''].filter(Boolean).join('、')}未分配或无法追溯（共 {formatFocusMinutes(unallocated.minutes)}），未计入宿主任务或小任务占比。</p>}
+    {unallocated.rounds > 0 && <div className="achievement monument-unallocated" role="note"><PixelClock className="achievement-emblem"/><div className="achievement-copy"><strong>未分配的投入</strong><small>{[unallocated.completedRounds > 0 ? `${unallocated.completedRounds} 个完成轮次` : '', unallocated.interruptedRounds > 0 ? `${unallocated.interruptedRounds} 条中断记录` : ''].filter(Boolean).join('、')} · 无法追溯，不估算分配</small></div><b className="achievement-unlocked">{formatFocusMinutes(unallocated.minutes)}</b></div>}
   </details>;
 }

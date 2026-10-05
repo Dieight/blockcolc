@@ -7,6 +7,7 @@ import android.os.Looper;
 import android.os.SystemClock;
 import android.content.Intent;
 import android.webkit.WebView;
+import android.webkit.RenderProcessGoneDetail;
 import android.view.View;
 import android.view.WindowManager;
 import android.util.Log;
@@ -70,6 +71,19 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(WeatherPlugin.class);
         registerPlugin(FocusExportPlugin.class);
         bridgeBuilder.addWebViewListener(new WebViewListener() {
+            @Override
+            public boolean onRenderProcessGone(WebView webView, RenderProcessGoneDetail detail) {
+                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false;
+                boolean crashed = detail.didCrash();
+                Log.e("BlockcolcRuntime", "webview-renderer-gone crashed=" + crashed);
+                getSharedPreferences("blockcolc-runtime-health", MODE_PRIVATE).edit()
+                    .putLong("rendererExitAtMs", System.currentTimeMillis())
+                    .putBoolean("rendererCrashed", crashed).apply();
+                // Keep Android's termination behavior until the Bridge/WebView
+                // recovery path is verified on a device. A dead WebView cannot be reused.
+                return false;
+            }
+
             @Override
             public void onPageLoaded(WebView webView) {
                 Log.i("BlockcolcStartup", "page-loaded durationMs=" + (SystemClock.elapsedRealtime() - nativeCreatedAtMs));

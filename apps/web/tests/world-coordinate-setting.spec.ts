@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { waitForPreparedWorld } from './world-ready';
 
 test('world coordinates can be enabled for QA and disabled persistently without rebuilding', async ({ page }) => {
   test.setTimeout(60_000);
@@ -6,7 +7,7 @@ test('world coordinates can be enabled for QA and disabled persistently without 
   await page.getByLabel('大型任务').fill('坐标开关验证');
   await page.getByRole('button', { name: '开始建造' }).click();
 
-  const canvas = page.getByLabel('项目建筑世界');
+  const canvas = await waitForPreparedWorld(page);
   await expect(canvas).toHaveAttribute('data-coordinate-picking', 'false');
   await expect(canvas).toHaveAttribute('data-first-nonempty-frame-ms', /\d/);
   const initialRebuildCount = await canvas.getAttribute('data-world-rebuild-count');

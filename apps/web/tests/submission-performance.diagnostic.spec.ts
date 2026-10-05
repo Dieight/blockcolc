@@ -215,7 +215,7 @@ for (const viewport of [
   { name: 'landscape-phone', width: 915, height: 412, colorScheme: 'dark' as const },
   { name: 'portrait-tablet', width: 768, height: 1024, colorScheme: 'dark' as const },
 ]) {
-  test(`minimal submission feedback remains outside its information band on ${viewport.name}`, async ({ page }, testInfo) => {
+  test(`minimal submission receipt stays inside its submit button on ${viewport.name}`, async ({ page }, testInfo) => {
     test.setTimeout(90_000);
     await page.setViewportSize({ width: viewport.width, height: viewport.height });
     await page.emulateMedia({ colorScheme: viewport.colorScheme });
@@ -226,25 +226,25 @@ for (const viewport of [
     await row.getByRole('button', { name: '推进至 75%', exact: true }).click();
     await row.getByRole('button', { name: /增加 .*计入轮数/ }).click();
     await report.getByRole('button', { name: '一次提交本次推进', exact: true }).click();
-    const feedback = page.locator('.construction-feedback');
+    const feedback = report.getByRole('button', { name: '材料已送达', exact: true });
     await expect(feedback).toBeVisible();
     const geometry = await page.evaluate(() => {
-      const toast = document.querySelector('.construction-feedback')?.getBoundingClientRect();
+      const toast = document.querySelector('.marathon-report-submit')?.getBoundingClientRect();
       const band = document.querySelector('.focus-panel')?.getBoundingClientRect();
-      const idle = document.querySelector('.minimal-idle-carousel');
-      return toast && band && idle ? { toast: toast.toJSON(), band: band.toJSON() } : null;
+      return toast && band ? { toast: toast.toJSON(), band: band.toJSON() } : null;
     });
-    expect(geometry, 'Feedback and idle panel must coexist after the report.').not.toBeNull();
+    expect(geometry, 'Receipt must remain in the submitting report.').not.toBeNull();
     const { toast, band } = geometry!;
-    const separate = toast.x + toast.width <= band.x || band.x + band.width <= toast.x
-      || toast.y + toast.height <= band.y || band.y + band.height <= toast.y;
+    const inside = toast.x >= band.x && toast.x + toast.width <= band.x + band.width
+      && toast.y >= band.y && toast.y + toast.height <= band.y + band.height;
     await testInfo.attach('feedback-band-geometry', {
-      body: Buffer.from(JSON.stringify({ viewport, toast, band, separate,
+      body: Buffer.from(JSON.stringify({ viewport, toast, band, inside,
         scope: 'Real minimal submission and browser layout; screenshot requires separate visual review.' }, null, 2)),
       contentType: 'application/json',
     });
     await page.screenshot({ path: testInfo.outputPath(`minimal-feedback-${viewport.name}.png`) });
-    expect(separate, 'Construction feedback must not be beneath or overlap the idle information band.').toBe(true);
+    expect(inside, 'The submit receipt must be fully visible inside the information band.').toBe(true);
+    await expect(page.locator('.construction-feedback')).toHaveCount(0);
     expect(toast.x).toBeGreaterThanOrEqual(0);
     expect(toast.y).toBeGreaterThanOrEqual(0);
     expect(toast.x + toast.width).toBeLessThanOrEqual(viewport.width);

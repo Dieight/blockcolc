@@ -3,6 +3,9 @@ import { showWorldOverview } from './world-overview';
 import { selectValleyFixture } from './valley-fixture';
 
 test('switches the derived world environment without moving project data', async ({ page }, testInfo) => {
+  // This case owns environment replacement and persistence, not motion. Keep
+  // shader warm-up and both real frames; animation/gesture specs own the reveal.
+  await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.goto('/');
   await page.getByRole('button', { name: '开始建造' }).click();
   const canvas = page.getByLabel('项目建筑世界');

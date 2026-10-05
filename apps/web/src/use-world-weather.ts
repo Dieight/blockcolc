@@ -185,15 +185,14 @@ export function mapQWeatherAstronomyContext(result: QWeatherAstronomyResult): As
   return { coordinates: result.coordinate, schedule, locationSource: result.locationSource };
 }
 
-/** Resident world hook: permission is requested only after explicit opt-in and
- * while the world is visible. A failed/stale reading has no renderer override. */
+/** Resident workspace coordinator: requests require explicit opt-in and the
+ * foreground, not a timer-route visit. Failed/stale weather has no renderer override. */
 export function useWorldWeather(enabled: boolean, visible: boolean): WorldWeatherView {
   const [view, setView] = useState<WorldWeatherView>(LOCAL_WEATHER);
   const pending = useRef<{ generation: number; promise: Promise<NativeWeatherResult> } | null>(null);
   const requestGeneration = useRef(0);
   const astronomyPending = useRef<{ generation: number; promise: Promise<QWeatherAstronomyResult> } | null>(null);
   const astronomyGeneration = useRef(0);
-  const astronomyWasVisible = useRef(false);
   const astronomyLastAttempt = useRef(Number.NEGATIVE_INFINITY);
   const astronomyLastSuccess = useRef(0);
   const astronomyScheduleRef = useRef<AstronomySchedule | null>(view.astronomyContext?.schedule ?? null);
@@ -303,7 +302,6 @@ export function useWorldWeather(enabled: boolean, visible: boolean): WorldWeathe
 
   useEffect(() => {
     if (!enabled) {
-      astronomyWasVisible.current = false;
       astronomyGeneration.current += 1;
       astronomyPending.current = null;
       astronomyLastAttempt.current = Number.NEGATIVE_INFINITY;
@@ -313,7 +311,6 @@ export function useWorldWeather(enabled: boolean, visible: boolean): WorldWeathe
       return;
     }
     if (!visible) {
-      astronomyWasVisible.current = false;
       astronomyGeneration.current += 1;
       astronomyPending.current = null;
       void cancelAstronomyRequest();
@@ -361,9 +358,7 @@ export function useWorldWeather(enabled: boolean, visible: boolean): WorldWeathe
       setView(previous => ({ ...previous, astronomyContext: null,
         astronomySyncState: 'unavailable', astronomyFailureReason: result.reason }));
     };
-    const resumedVisibility = !astronomyWasVisible.current;
-    astronomyWasVisible.current = true;
-    void refresh(resumedVisibility);
+    void refresh();
     const interval = window.setInterval(() => void refresh(), 60_000);
     const onVisibilityChange = () => {
       if (document.visibilityState === 'hidden') {
@@ -373,7 +368,7 @@ export function useWorldWeather(enabled: boolean, visible: boolean): WorldWeathe
       } else {
         astronomyGeneration.current += 1;
         astronomyPending.current = null;
-        void refresh(true);
+        void refresh();
       }
     };
     document.addEventListener('visibilitychange', onVisibilityChange);

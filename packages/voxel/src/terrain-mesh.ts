@@ -11,7 +11,7 @@ export interface TerrainMeshBuffers {
 /** Shared indexed-buffer emission for every terrain environment. */
 export function createTerrainMeshBuffers(): TerrainMeshBuffers {
   const positions: number[] = [];
-  const indicesByMaterial: Record<TerrainMaterial, number[]> = { grass: [], dirt: [], stone: [], water: [] };
+  const indicesByMaterial: Record<TerrainMaterial, number[]> = { grass: [], dirt: [], stone: [], water: [], sand:[], snow:[], ice:[], terracotta:[] };
   const sideIndices: { dirt: number[]; stone: number[] } = { dirt: [], stone: [] };
   const emit = (vertices: readonly number[], indices: number[]): void => {
     const start = positions.length / 3;

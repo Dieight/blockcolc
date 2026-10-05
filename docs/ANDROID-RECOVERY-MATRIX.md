@@ -31,6 +31,8 @@
 | Home 往返 | 专注时按 Home 停留超过 3 秒后返回 | 只增加一次退出计数 | ID `42002` 保持原记录 | UI 计数 + logcat `BlockcolcLifecycle` |
 | 最近任务划走 | 休息时从最近任务划走 | 重开后按 `breakEndsAt` 恢复或结算 | 若 OEM 把划走实现为强制停止，系统可移除通知；不得承诺常驻 | 录屏 + `am force-stop`/进程证据 |
 | 可恢复进程回收 | Home 后用系统回收 WebView/进程，再从桌面打开 | 状态从 IndexedDB 恢复；相同休息计划不闪烁 | 活动 `42002` 的 break key 命中并跳过重发 | logcat + UI |
+| 主题与结算连续动作 | 深色→浅色、降低玻璃、开始后提前完成或中断；分别保留其他任务与完成最后一项 | 不白屏、不误入首次创建，原世界与记录保留 | 出错时恢复页保留数据；重开读取系统/WebView 退出信息 | JS 代码位置、`BlockcolcRender`、设置后台运行详情 |
+| 电源策略对照 | 同机同数据，用默认策略和用户手动放宽策略分别检查锁屏/后台 | 计时依据绝对时间，恢复不重复记录 | 不把电池豁免当作保活保证 | 系统退出类别、时间、内存采样；厂商与系统版本 |
 | 通知点击 | 点击休息通知主体 | 打开现有任务，保持休息阶段 | 不产生第二条通知 | UI + dumpsys |
 | 跳过休息 | 点击通知“跳过休息” | 打开应用并进入下一轮 ready，或末轮结束 | `42002/42003` 均清除 | UI + dumpsys |
 | 到点 | 保持后台直到休息结束 | 重开后进入下一轮 ready；末轮则计划结束 | `42002` timeout，`42003` 到点提醒一次 | 时间戳 + dumpsys |
@@ -42,7 +44,7 @@
 ```powershell
 $adb = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
 & $adb -s <serial> shell dumpsys notification --noredact | Select-String '42002|42003|com.blockcolc.app'
-& $adb -s <serial> logcat -d -s BreakLiveUpdate:I BlockcolcLifecycle:I BlockcolcStartup:I BlockcolcRender:I '*:S'
+& $adb -s <serial> logcat -d -s BreakLiveUpdate:I BlockcolcLifecycle:I BlockcolcStartup:I BlockcolcRender:I BlockcolcRuntime:E '*:S'
 & $adb -s <serial> shell dumpsys activity processes com.blockcolc.app
 ```
 
@@ -53,3 +55,5 @@ powershell -ExecutionPolicy Bypass -File tools/Measure-AndroidStartup.ps1 -Seria
 ```
 
 不要用 `pm clear`、卸载应用或清除 IndexedDB 来模拟进程回收；这些操作会删除用户真相，验证的是全新安装而不是恢复。
+
+v2.5.6 退出原因的证据口径见[后台恢复排查](research/2.5.6-background-recovery.md)。浏览器、编译及 lint 不能代替上述手机检查。

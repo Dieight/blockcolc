@@ -8,12 +8,13 @@ import { CapacitorFocusLifecyclePort, CapacitorNotificationPort, configureNative
 import { APPLICATION_STATE_CHANGED_EVENT, shouldPublishLifecycleRefresh, type ApplicationStateChangedDetail } from './application-lifecycle';
 import { registerBuiltinDailyRewardBlueprints } from './builtin-daily-rewards';
 import { installResourcePackColdStartProbe } from './resource-pack-cold-start-performance';
+import { holidayBuildingBlueprint } from '@blockcolc/voxel/holiday-buildings';
 export { APPLICATION_STATE_CHANGED_EVENT, type ApplicationStateChangedDetail } from './application-lifecycle';
 
 export async function bootstrap() {
   await configureNativeSystemBars();
   const repository = new IndexedDbStateRepository({ databaseName: 'blockcolc-v1' });
-  const service = await ApplicationService.initialize({ repository, backupRepository: repository, notifications: isCapacitorNative() ? new CapacitorNotificationPort() : new BrowserNotificationPort(), clock: new DateClock(), ids: new CryptoIdGenerator(), initialTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone, initialRestWeekdays: [0, 6] });
+  const service = await ApplicationService.initialize({ repository, backupRepository: repository, dailyBackupRepository: repository, holidayBlueprint:holidayBuildingBlueprint, notifications: isCapacitorNative() ? new CapacitorNotificationPort() : new BrowserNotificationPort(), clock: new DateClock(), ids: new CryptoIdGenerator(), initialTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone, initialRestWeekdays: [0, 6] });
   await service.resume();
   // The supplemental bundle is optional in clean/public builds. A failed
   // bundle load or invalid optional asset must not prevent the local clock from

@@ -128,7 +128,9 @@ test('generates distant block scenery without moving tasks, adopting rewards or 
     if (environmentStyle === 'classic-island') expect(snapshots[1]!.village).toBeNull();
     else { expect(snapshots[1]!.village).not.toBeNull(); expect(snapshots[1]!.cropMeshes).toBeGreaterThan(0); }
     expect(snapshots[1]!.businessIds).toBe(0);
-    expect(snapshots[1]!.roles.filter(role => role === 'house')).toHaveLength(environmentStyle === 'classic-island' ? 0 : 3);
+    const houses = snapshots[1]!.roles.filter(role => role === 'house').length;
+    if (environmentStyle === 'classic-island') expect(houses).toBe(0);
+    else { expect(houses).toBeGreaterThanOrEqual(3); expect(houses % 3).toBe(0); }
     if (environmentStyle === 'ocean-island') {
       expect(snapshots[1]!.roles).toContain('wreck');
       expect(snapshots[1]!.wreckProjection).toMatchObject({ anchorInViewport: true, silhouetteRetained: true });

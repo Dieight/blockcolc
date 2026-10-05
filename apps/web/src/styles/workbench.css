@@ -18,3 +18,16 @@
 .plan-summary span:first-child{color:#58635d}
 .plan-summary span:last-child{color:#276749;font-weight:700}
 @media(max-height:620px) and (orientation:landscape){.workbench-context{gap:3px}.workbench-context strong{font-size:17px}.workbench-heading h1{font-size:19px}}
+/* No active task is a normal returning-user workspace, not forced onboarding. */
+.workspace-rest{display:grid;gap:14px;padding:24px;max-width:640px;margin:auto}
+.focus-panel .workspace-rest{padding:0}
+.workspace-rest .eyebrow{display:flex;align-items:center;gap:8px}
+.workspace-rest h1,.workspace-rest p{margin:0}
+.workspace-rest p{color:var(--muted);line-height:1.6}
+.workspace-rest .workspace-resume{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:12px;border:1px solid var(--line);background:var(--surface);color:var(--ink);text-align:left;min-height:48px}
+.reward-memory-plate{position:absolute;left:16px;right:16px;bottom:12px;z-index:5;margin:auto;max-width:390px;padding:10px 12px;display:flex;align-items:center;gap:10px;color:var(--ink);background:var(--sheet-glass-background);border:1px solid var(--sheet-glass-border);box-shadow:var(--sheet-glass-shadow);backdrop-filter:var(--sheet-glass-filter);-webkit-backdrop-filter:var(--sheet-glass-filter);animation:world-boot-in .18s ease-out}
+.reward-memory-plate>div{flex:1;min-width:0}.reward-memory-plate strong{font-size:14px}.reward-memory-plate p{margin:4px 0 0;font-size:12px;line-height:1.4}.reward-memory-plate button{width:44px;height:44px;border:0;background:transparent;color:var(--ink)}
+/* Lay out and draw a hidden route under the opaque loading page, so shader and
+   first-frame work is finished before the settings action loses its busy state. */
+.world-pane.is-preparing{display:block;position:fixed;inset:calc(58px + var(--safe-top)) 0 calc(68px + var(--safe-bottom));pointer-events:none;z-index:-1}
+.app-shell[data-world-preparing='true'] .world-pane .boot-page{visibility:hidden}

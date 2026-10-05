@@ -75,6 +75,12 @@ export function builtinMaterialBlockId(materialId: string): string | undefined {
 export function originalPatternForBlockId(sourceBlockId: string | undefined, materialId: string): OriginalMaterialPattern {
   const path = sourceBlockId?.toLowerCase().split(":").pop() ?? "";
   const namespace = sourceBlockId?.includes(":") ? sourceBlockId.toLowerCase().split(":")[0] : "minecraft";
+  // Fire coral is a living reef, not a fire/emissive surface. Keep the
+  // exact vanilla families ahead of the broad material-name heuristics.
+  if (/^(?:dead_)?(?:tube|brain|bubble|fire|horn)_coral(?:_block|_fan|_wall_fan)?$/.test(path)) {
+    return namespace !== "minecraft" ? originalPatternForMaterialId(materialId)
+      : path.endsWith("_block") ? "stone" : "foliage";
+  }
   if (namespace !== "minecraft" && exactVanillaSmallComponentPaths.has(path)) return originalPatternForMaterialId(materialId);
   if (namespace !== "minecraft" && /^(?:iron_(?:door|trapdoor)|(?:waxed_)?(?:(?:exposed|weathered|oxidized)_)?copper_(?:door|trapdoor))$/.test(path)) {
     return originalPatternForMaterialId(materialId);

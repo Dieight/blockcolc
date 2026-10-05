@@ -1,6 +1,13 @@
 import * as THREE from "three";
 import { GlassWorldCompositor, type GlassSurfacePreference } from "./glass-surface";
+import { releaseOwnedMaterials } from './owned-mesh-materials';
+import { WorldColorCompositor } from './world-color-compositor';
+import { SkySpectacle, twilightPalette } from './sky-spectacle';
+import { mosaicColdDirection } from './mosaic-terrain';
+import { terrainGeometryBytes, TERRAIN_CACHE_BYTES } from './terrain-cache';
+import type { WorldColorAdjustment } from './world-color-adjustment';
 import { cloudDisplacement, patchCloudMotion } from './cloud-motion';
+import { cloudDrawCountForQuality, cloudGroupsForBudget, type CloudGroup } from './cloud-layout';
 import { patchWeatherWaterMaterial } from './water-weather';
 import { FrameRequestScheduler, PointerOwnership, type ReleasedPointer } from "./input-frame-scheduler";
 import { cameraZoomBounds, clampCameraDistance, openingZoomDistance } from "./camera-zoom";
@@ -49,8 +56,10 @@ import {
   type RoadCell,
   type VillagePlacement,
 } from "./village";
+import {supportImportedDecorations,decorationFoundationVoxels} from './decoration-support';
 import {
   createRoadGeometryData,
+  TERRAIN_MATERIALS,
   createSteppedTerrainData,
   terrainGenerationInputKey,
   settlementSupportHeightForPlacement,
@@ -147,7 +156,7 @@ import {
 } from "./original-static-shapes";
 import { initializeWorldConfiguration } from "./initial-world-configuration";
 import { ambientEnvironmentDecorations, naturalDecorationParts, naturalTreeMushroomCandidates, NATURAL_SHELF_MUSHROOM_RENDER_SCALE, visibleNaturalTreeCount, type NaturalDecorationKind, type NaturalDecorationLod, type NaturalDecorationPart } from "./natural-decorations";
-import { planWorldScenery, sceneryLod, sceneryTreeBlocks, sceneryGeometryLayers, type SceneryObject } from './scenery';
+import { planWorldScenery, sceneryLod, sceneryTreeBlocks, sceneryGeometryLayers, surfaceSampler, type SceneryObject } from './scenery';
 import { precipitationFieldForView, precipitationFieldLimits, rainCrossSectionScaleForView, stepPrecipitationClock, type PrecipitationField } from "./precipitation-field";
 import { patchPrecipitationMaterial, precipitationFrameIntervalMs, precipitationMotion, type PrecipitationUniforms } from './precipitation-motion';
 import { precipitationCountForVolume } from './precipitation-density';
@@ -421,7 +430,7 @@ export interface VoxelRenderer {
   /** First bootstrap only: stage optional atlas and adopt the initial world with one scene rebuild. */
   initializeWorlds(worlds: readonly WorldSnapshot[], pack: VoxelResourcePack | null): Promise<void>;
   /** Warm shaders and commit an initial environment frame behind the loading surface. */
-  prepareInitialPresentation(): Promise<boolean>;
+  prepareInitialPresentation(openingProjectId?: string | null): Promise<boolean>;
   setWorld(world: WorldSnapshot | null): void;
   setWorlds(worlds: readonly WorldSnapshot[]): void;
   /** Updates sky, clouds, precipitation, and ambient light without rebuilding the world. */
@@ -437,7 +446,7 @@ export interface VoxelRenderer {
   setReducedMotion(value: boolean): void;
   /** Pauses frame rendering and texture animation while the canvas pane is hidden (tab switches); resuming re-sizes and renders once. */
   setVisible(value: boolean): void;
-  /** Brief bounded glow pulse for construction events (round completed, focus started); skipped under reduced motion. */
+  /** Brief bounded glow pulse for delivered construction results; skipped under reduced motion. */
   playConstructionPulse(strength?: number): void;
   /**
    * V21 immersive composition: when a frosted band covers part of the
@@ -449,6 +458,7 @@ export interface VoxelRenderer {
   setImmersiveBandFraction(bottomFraction: number, rightFraction: number): void;
   /** Presentation-only GPU scattering; never changes text, input or world geometry. */
   setGlassSurface(preference: GlassSurfacePreference | null): void;
+  setWorldColorAdjustment(preference: WorldColorAdjustment | null): void;
   resetCamera(): void;
   resize(): void;
   getDiagnostics(): RendererDiagnostics;
@@ -613,9 +623,9 @@ function ambientNearRoad(x: number, z: number, roads: ReadonlySet<string>): bool
   return false;
 }
 
-export function terrainSurfaceRectangles(terrain: MergedGeometryData): Array<{ minX: number; maxX: number; minZ: number; maxZ: number; supportY: number; water: boolean }> {
-  const rectangles: Array<{ minX: number; maxX: number; minZ: number; maxZ: number; supportY: number; water: boolean }> = [];
-  for (const material of ["grass", "dirt", "stone", "water"] as const) {
+export function terrainSurfaceRectangles(terrain: MergedGeometryData): Array<{ minX: number; maxX: number; minZ: number; maxZ: number; supportY: number; water: boolean; material:string }> {
+  const rectangles: Array<{ minX: number; maxX: number; minZ: number; maxZ: number; supportY: number; water: boolean; material:string }> = [];
+  for (const material of TERRAIN_MATERIALS) {
     const indices = terrain.indicesByMaterial[material];
     for (let index = 0; index + 5 < indices.length; index += 6) {
       const points = [indices[index]!, indices[index + 1]!, indices[index + 2]!, indices[index + 5]!].map((vertex) => ({
@@ -632,6 +642,7 @@ export function terrainSurfaceRectangles(terrain: MergedGeometryData): Array<{ m
         // by buildings/roads, so restore that shared datum for props.
         supportY: Math.max(...points.map((point) => point.y)) + 0.5,
         water: material === "water",
+        material,
       });
     }
   }
@@ -774,6 +785,9 @@ export function createVoxelRenderer(
   const skyGeometry = new THREE.SphereGeometry(SKY_RADIUS, 24, 12);
   skyGeometry.setAttribute("color", new THREE.Float32BufferAttribute(new Float32Array(skyGeometry.getAttribute("position").count * 3), 3));
   const skyMaterial = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, depthWrite: false, depthTest: false, fog: false });
+  const skySpectacle = new SkySpectacle();
+  skySpectacle.uniforms.bcSkyColdDirection.value.set(...mosaicColdDirection(options.worldSeed ?? 'world-default'));
+  skySpectacle.patchSky(skyMaterial);
   const skyDome = new THREE.Mesh(skyGeometry, skyMaterial);
   skyDome.name = "threeLayerSkyDome";
   skyDome.renderOrder = -1000;
@@ -888,6 +902,7 @@ export function createVoxelRenderer(
   let constructionPulseCount = 0;
   let contentBounds = defaultContentBounds();
   let visibilityBounds = defaultContentBounds();
+  let cloudDetailBounds = defaultContentBounds();
   let precipitationGround = precipitationGroundForSurfaces([]);
   let precipitationGroundTexture = new THREE.DataTexture(precipitationGround.data,1,1,THREE.RedFormat,THREE.FloatType);
   precipitationGroundTexture.needsUpdate=true;
@@ -904,6 +919,8 @@ export function createVoxelRenderer(
     ? weatherForLocalDate(localDateForDate(initialDate), options.environmentStyle === 'ocean-island')
     : weatherForExternalOverride(localDateForDate(initialDate), initialWeather);
   const preparedFrameWaiters = new Set<(ready: boolean) => void>();
+  let initialPresentationPreparing = false;
+  let initialPreparationRenderCount = 0;
   let lightingTransition: { from: SunState; startedAtMs: number; durationMs: number } | null = null;
   let environmentReveal: { startedAtMs: number; durationMs: number; target: "weather" | "decay";
     objects: Array<{ mesh: THREE.Mesh; material: THREE.Material | THREE.Material[] }>;
@@ -942,11 +959,18 @@ export function createVoxelRenderer(
   let gpuRenderDurations: number[] = [];
   let gpuRenderMaxMs = 0;
   const lightingPostProcessor = new LightingPostProcessor(renderer);
+  const worldColorCompositor = new WorldColorCompositor(renderer);
   const waterSkyVisibility = { value: clearSkyVisibilityForWeather(currentWeather) };
   const glassCompositor = new GlassWorldCompositor(renderer);
   let postProcessRenderCount = 0;
   let postProcessBypassCount = 0;
   const rendererCreatedAtMs = performance.now();
+  // The DOM canvas can outlive a renderer generation. Readiness/timings belong
+  // to this generation, not the scene it previously displayed.
+  for (const key of ['openingPreparedFrames', 'initialShaderPreparationMs', 'initialPresentationPreparationMs',
+    'initialPreparationRenderCount', 'firstNonemptyFrameMs', 'openingRevealState', 'openingRevealProgress']) {
+    delete canvas.dataset[key];
+  }
   const lifecycleProbeEnabled = qualityLifecycleProbeEnabled();
   function buildQualityLifecycleAtlas(manifest: ResourcePackManifest, maximumSize: number): ResourcePackAtlas {
     const startedAt = lifecycleProbeEnabled ? performance.now() : 0;
@@ -999,6 +1023,8 @@ export function createVoxelRenderer(
   let worldRebuildTotalMs = 0;
   let worldRebuildMaxMs = 0;
   let terrainGenerationCache: { key: string; data: MergedGeometryData; renderMesh?: ReturnType<typeof compactTerrainRenderMesh> } | null = null;
+  let terrainMeshResourcePack: VoxelResourcePack | null = null;
+  let sceneryPlanCache: { key:string; plan:ReturnType<typeof planWorldScenery> } | null = null;
   let firstNonemptyFrameMs: number | null = null;
   let qualityFramePendingSinceMs: number | null = null;
   let pointerMoveCount = 0;
@@ -1062,6 +1088,8 @@ export function createVoxelRenderer(
       finishOpeningReveal("cancelled");
       return false;
     }
+    // Shader/texture work on the first frame must not consume the reveal's time.
+    if(reveal.startedAtMs<0)reveal.startedAtMs=nowMs;
     const progress = Math.min(1, Math.max(0, (nowMs - reveal.startedAtMs) / reveal.durationMs));
     const eased = smoothstep(0, 1, progress);
     cameraTarget.lerpVectors(reveal.fromTarget, reveal.toTarget, eased);
@@ -1125,7 +1153,7 @@ export function createVoxelRenderer(
       openingReveal = {
         projectId: project?.projectId ?? null,
         fromTarget, toTarget, fromDistance, toDistance,
-        startedAtMs: performance.now(), durationMs: 1_500, resolve,
+        startedAtMs: -1, durationMs: 1_500, resolve,
       };
       requestRender();
     });
@@ -1138,6 +1166,7 @@ export function createVoxelRenderer(
   let minimumCameraDistance = fittedDistance * 0.65;
   let maximumCameraDistance = fittedDistance * 1.35;
   let positionedWorlds: readonly PositionedWorldSnapshot[] = [];
+  let positionedDecorations: readonly ImportedDecorationPlacement[] = [];
   let focusedProjectId: string | null = null;
   let cameraPitch = THREE.MathUtils.degToRad(38);
   const defaultCameraPitch = THREE.MathUtils.degToRad(38);
@@ -1201,6 +1230,8 @@ export function createVoxelRenderer(
   let cloudBlockScale = 1;
   let cloudsBuiltSpanX = 0;
   let cloudsBuiltSpanZ = 0;
+  let cloudsBuiltNearSpanX = 0;
+  let cloudsBuiltNearSpanZ = 0;
   let cloudsBuiltBaseY = 0;
   const previewMode = options.previewMode === true;
   let sceneryTreeCount = 0;
@@ -1236,6 +1267,8 @@ export function createVoxelRenderer(
     centers: Float32Array;
     velocities: Float32Array;
     basePositions: Float32Array;
+    groups: readonly CloudGroup[];
+    groupEnds: readonly number[];
     spanX: number;
     spanZ: number;
     elapsedMs: number;
@@ -1276,7 +1309,8 @@ export function createVoxelRenderer(
       // Water is rendered as a surface, not a transparent volume. Keeping a
       // depth-writing surface prevents camera-facing sky stars from bleeding
       // through the terrain and reads more like a night reflection.
-      const transparent = fallbackVisual?.transparent === true || id === "glass";
+      const warmSea=terrainWater&&options.environmentStyle==='mosaic-coast';
+      const transparent = fallbackVisual?.transparent === true || id === "glass" || warmSea;
       const pattern = fallbackVisual?.pattern ?? originalPatternForMaterialId(id);
       found = new THREE.MeshStandardMaterial({
         color: fallbackVisual?.color ?? colors[id] ?? 0xffffff,
@@ -1284,12 +1318,13 @@ export function createVoxelRenderer(
         roughness: id === "glass" ? 0.1 : terrainWater ? 0.34 : response.roughness,
         metalness: id === "glass" ? 0.08 : terrainWater ? 0.05 : response.metalness,
         transparent,
-        opacity: fallbackVisual?.opacity ?? (id === "glass" ? 0.44 : 1),
+        opacity: fallbackVisual?.opacity ?? (id === "glass" ? 0.44 : warmSea ? .58 : 1),
         depthWrite: !transparent,
         emissive: terrainLava ? 0x8f1f08 : id === "glass" ? 0x315c72 : 0x000000,
         emissiveIntensity: terrainLava ? 0.68 : id === "glass" ? 0.13 : 0,
       });
       const voxelEdgeStrength = transparent ? 0.22 : fallbackVisual ? 0.12 : ["stone", "wood", "plank", "roof", "accent"].includes(id) ? 0.12 : 0;
+      if (terrainWater) skySpectacle.patchReflection(found, 2.2);
       trackMaterialEffects(found, voxelEdgeStrength);
       materials.set(id, found);
     }
@@ -1371,6 +1406,7 @@ export function createVoxelRenderer(
 
   let totalRenderedFrames = 0;
   function renderFrame(frameStarted: number): boolean {
+    if(initialPresentationPreparing)canvas.dataset.initialPreparationRenderCount=String(++initialPreparationRenderCount);
     lastWeatherFrameStartedMs = frameStarted;
     if (rainAnimation !== null || snowAnimation !== null) lastAmbientFrameStartedMs = frameStarted;
     pollNativeInput();
@@ -1392,6 +1428,7 @@ export function createVoxelRenderer(
     canvas.dataset.sceneryCullingVisibleInstances = String(groveCulling.visible);
     updateRainAnimation(frameStarted);
     updateSnowAnimation(frameStarted);
+    skySpectacle.tick(frameStarted, paneVisible && !document.hidden);
     updateCloudDrift(frameStarted, false);
     const pulseActive = frameStarted < constructionPulseUntilMs;
     let pulseGlow = 0;
@@ -1416,6 +1453,7 @@ export function createVoxelRenderer(
         renderer.setRenderTarget(null);
         renderer.render(scene, camera);
       }
+      canvas.dataset.worldColorPass = worldColorCompositor.render() ? 'active' : 'neutral';
       glassCompositor.render(immersiveBottomBand, immersiveRightBand);
       const glass = glassCompositor.getDiagnostics();
       canvas.dataset.glassMaterial = glass.mode;
@@ -1528,7 +1566,7 @@ export function createVoxelRenderer(
     requestFrame: callback => requestAnimationFrame(callback),
     cancelFrame: frameId => cancelAnimationFrame(frameId),
     now: () => performance.now(),
-    canRender: () => !disposed && paneVisible,
+    canRender: () => !disposed && paneVisible && (!initialPresentationPreparing || preparedFrameWaiters.size>0),
     render: frameStartedAtMs => {
       releaseStaleInteraction(frameStartedAtMs);
       const cameraStillMoving = renderFrame(frameStartedAtMs);
@@ -1540,7 +1578,7 @@ export function createVoxelRenderer(
       // precipitation recursively request every rAF floods software GPUs and
       // can starve compositor captures. Interaction frames still update the
       // same weather uniforms, so dragging never pauses rain or snow.
-      return interacting || nativeInputActive || cameraStillMoving || openingReveal !== null || performance.now() < constructionPulseUntilMs;
+      return !initialPresentationPreparing && (interacting || nativeInputActive || cameraStillMoving || openingReveal !== null || performance.now() < constructionPulseUntilMs);
     },
   });
 
@@ -1623,13 +1661,10 @@ export function createVoxelRenderer(
     fallbackOcclusionMeshes.clear();
     cutoutShadowMeshes.clear();
     blockEntityDisplay.reset();
-    clearGroup(terrainGroup);
     // A rebuild invalidates every per-frame animation state whose meshes just got
     // disposed: stale reveal entries must never write into freed instanced meshes.
     constructionReveals = [];
     cloudDrift = null;
-    for (const texture of terrainPackTextures) texture.dispose();
-    terrainPackTextures.length = 0;
     clearGroup(roadGroup);
     sceneryTreeCount = 0;
     clearLights();
@@ -1715,7 +1750,7 @@ export function createVoxelRenderer(
     constructionRevealPendingStart = revealPlans.size > 0;
 
     const roads = roadCellsForVillage(positioned);
-    const importedDecorations = placeImportedDecorations(
+    let importedDecorations = placeImportedDecorations(
       positioned.flatMap((world) => (world.importedDecorations ?? []).map((reward) => ({
         ...reward,
         projectId: world.projectId,
@@ -1724,15 +1759,9 @@ export function createVoxelRenderer(
       positioned,
       roads,
     );
-    const decorationPads: TerrainPad[] = importedDecorations.map((decoration) => ({
-      x: decoration.worldPosition.x,
-      z: decoration.worldPosition.z,
-      width: decoration.footprint.width,
-      depth: decoration.footprint.depth,
-      groundLevel: decoration.worldPosition.y,
-    }));
+    canvas.dataset.importedDecorationCount=String(importedDecorations.length);
     finishRebuildStage("layout");
-    const terrainPads = [...buildingPads, ...decorationPads];
+    const terrainPads = buildingPads;
     const terrainMinimumRadius = previewMode ? { x: 64, z: 64 } : undefined;
     const terrainOptions = {
       environmentStyle,
@@ -1746,24 +1775,33 @@ export function createVoxelRenderer(
       ? terrainGenerationCache!.data
       : createSteppedTerrainData(positioned, roads, terrainPads, terrainMinimumRadius, terrainOptions);
     if (!terrainCacheHit) {
-      const numericLength = terrainData.positions.length
-        + Object.values(terrainData.indicesByMaterial).reduce((sum, indices) => sum + indices.length, 0)
-        + terrainData.sideIndices.dirt.length + terrainData.sideIndices.stone.length;
-      // Keep at most one recent layout, and never pin an unusually large world.
-      terrainGenerationCache = numericLength * 8 <= 16 * 1024 * 1024
+      // A regional 24-building world is ~21 MiB. Bound one current layout,
+      // including any compact mesh below, instead of repeatedly rebuilding it.
+      terrainGenerationCache = terrainGeometryBytes(terrainData) <= TERRAIN_CACHE_BYTES
         ? { key: terrainKey, data: terrainData }
         : null;
     }
+    canvas.dataset.terrainGenerationBytes=String(terrainGeometryBytes(terrainData));
+    canvas.dataset.terrainGenerationCacheRetained=String(terrainGenerationCache!==null);
     canvas.dataset.terrainGenerationCacheHit = String(terrainCacheHit);
-    precipitationGround=precipitationGroundForSurfaces(terrainSurfaceRectangles(terrainData));
-    const previousGroundTexture=precipitationGroundTexture;
-    precipitationGroundTexture=new THREE.DataTexture(precipitationGround.data,precipitationGround.width,precipitationGround.height,THREE.RedFormat,THREE.FloatType);
-    precipitationGroundTexture.minFilter=THREE.NearestFilter;
-    precipitationGroundTexture.magFilter=THREE.NearestFilter;
-    precipitationGroundTexture.needsUpdate=true;
-    precipitationGroundUniforms.texture.value=precipitationGroundTexture;
-    precipitationGroundUniforms.bounds.value=[precipitationGround.minX,precipitationGround.minZ,precipitationGround.spanX,precipitationGround.spanZ];
-    previousGroundTexture.dispose();
+    // Progress changes buildings, not ground. Retain the sampling grid/texture
+    // when the actual terrain input is unchanged; new rewards/layouts invalidate it.
+    if (!terrainCacheHit) {
+      precipitationGround=precipitationGroundForSurfaces(terrainSurfaceRectangles(terrainData));
+      const previousGroundTexture=precipitationGroundTexture;
+      precipitationGroundTexture=new THREE.DataTexture(precipitationGround.data,precipitationGround.width,precipitationGround.height,THREE.RedFormat,THREE.FloatType);
+      precipitationGroundTexture.minFilter=THREE.NearestFilter;
+      precipitationGroundTexture.magFilter=THREE.NearestFilter;
+      precipitationGroundTexture.needsUpdate=true;
+      precipitationGroundUniforms.texture.value=precipitationGroundTexture;
+      precipitationGroundUniforms.bounds.value=[precipitationGround.minX,precipitationGround.minZ,precipitationGround.spanX,precipitationGround.spanZ];
+      previousGroundTexture.dispose();
+    }
+    canvas.dataset.precipitationGroundCacheHit = String(terrainCacheHit);
+    const rewardSupport=surfaceSampler(importedDecorations.length?terrainSurfaceRectangles(terrainData):[]);
+    importedDecorations=supportImportedDecorations(importedDecorations,rewardSupport);
+    positionedDecorations=importedDecorations;
+    canvas.dataset.rewardGroundSupport=JSON.stringify(importedDecorations.map(d=>({id:d.rewardId,x:d.worldPosition.x,y:d.worldPosition.y,z:d.worldPosition.z})));
     finishRebuildStage("terrainGeneration");
     canvas.dataset.environmentStyle = environmentStyle;
     canvas.dataset.terrainGenerationVersion = String(terrainData.terrainGenerationVersion);
@@ -1784,13 +1822,21 @@ export function createVoxelRenderer(
     canvas.dataset.terrainHydrologyMaxUphill = String(terrainData.hydrology.maxUphillWaterStep);
     canvas.dataset.terrainHydrologyProtectedWater = String(terrainData.hydrology.protectedWaterCellCount);
     canvas.dataset.terrainFarExtent = String(terrainData.bounds.maxX);
-    addTerrain(terrainData);
+    const terrainMeshCacheHit=terrainCacheHit && terrainMeshResourcePack===activeResourcePack && terrainGroup.children.length>0;
+    if(!terrainMeshCacheHit){
+      clearGroup(terrainGroup);
+      for(const texture of terrainPackTextures)texture.dispose();
+      terrainPackTextures.length=0;
+      addTerrain(terrainData);
+      terrainMeshResourcePack=activeResourcePack;
+    }
+    canvas.dataset.terrainMeshCacheHit=String(terrainMeshCacheHit);
     finishRebuildStage("terrainMesh");
     const roadGroundHeightAt = (x: number, z: number) => supportGroundHeightAt(
       x,
       z,
       positioned,
-      [...buildingPads, ...decorationPads],
+      buildingPads,
       environmentStyle,
     );
     canvas.dataset.roadCellCount = String(roads.length);
@@ -1800,14 +1846,14 @@ export function createVoxelRenderer(
     canvas.dataset.roadSupportMinY = String(roads.length === 0
       ? 0
       : Math.min(...roads.map((road) => roadGroundHeightAt(road.x, road.z))));
-    addRoads(roads, positioned, [...buildingPads, ...decorationPads], roadGroundHeightAt);
+    addRoads(roads, positioned, buildingPads, roadGroundHeightAt);
     const emissivePoints: EmissivePoint[] = [];
     addRoadLamps(roads, positioned, emissivePoints, roadGroundHeightAt);
     finishRebuildStage("roadsAndLamps");
     for (const world of positioned) addBuilding(world, emissivePoints, revealPlans.get(world.projectId) ?? null);
-    for (const decoration of importedDecorations) addImportedDecoration(decoration, emissivePoints);
+    for (const decoration of importedDecorations) addImportedDecoration(decoration, emissivePoints,decorationFoundationVoxels(decoration,rewardSupport));
     finishRebuildStage("buildings");
-    if (sceneryEnabled) addWorldScenery(positioned, roads, importedDecorations, environmentStyle, terrainData);
+    if (sceneryEnabled) addWorldScenery(positioned, roads, importedDecorations, environmentStyle, terrainData, terrainKey);
     finishRebuildStage("naturalDecorations");
     activeResourcePack?.atlas.pages.forEach((page, pageIndex) => {
       const controller = atlasAnimationControllers[pageIndex];
@@ -1877,15 +1923,18 @@ export function createVoxelRenderer(
       new THREE.Vector3(data.bounds.minX, data.bounds.minY, data.bounds.minZ),
       new THREE.Vector3(data.bounds.maxX, data.bounds.maxY, data.bounds.maxZ),
     );
-    const renderData = terrainGenerationCache?.data === data
-      ? (terrainGenerationCache.renderMesh ??= compactTerrainRenderMesh(data)) : compactTerrainRenderMesh(data);
+    const cachedTerrain=terrainGenerationCache?.data===data?terrainGenerationCache:null;
+    const renderData=cachedTerrain?.renderMesh??compactTerrainRenderMesh(data);
+    if(cachedTerrain && terrainGeometryBytes(data)+terrainGeometryBytes(renderData)<=TERRAIN_CACHE_BYTES){
+      cachedTerrain.renderMesh=renderData;
+    }
     canvas.dataset.terrainSourceTriangles = String(data.triangleCount);
     canvas.dataset.terrainRenderTriangles = String(renderData.triangleCount);
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute("position", new THREE.Float32BufferAttribute(renderData.positions, 3));
     geometry.setAttribute("uv", new THREE.Float32BufferAttribute(createPlanarQuadUvs(renderData.positions), 2));
     const combined: number[] = [];
-    const materialIds: readonly TerrainMaterialKey[] = ["grass", "dirt", "stone", "water"];
+    const materialIds = TERRAIN_MATERIALS;
     materialIds.forEach((id, materialIndex) => {
       const indices = renderData.indicesByMaterial[id];
       geometry.addGroup(combined.length, indices.length, materialIndex);
@@ -1911,9 +1960,17 @@ export function createVoxelRenderer(
     const grassPack = packTileMaterial("minecraft:grass_block", "up");
     const dirtPack = packTileMaterial("minecraft:dirt", "up");
     const stonePack = packTileMaterial("minecraft:stone", "up");
+    const ownedTerrainMaterials: THREE.Material[] = [grassPack, dirtPack, stonePack].filter((entry): entry is THREE.MeshStandardMaterial => entry !== null);
+    const climateMaterials = [['sand',0xe4d7a6],['snow_block',0xf1f7fc],['ice',0x9bd5e6],['terracotta',0xb16b4a]] as const;
+    const extras = climateMaterials.map(([block,color])=> {
+      const result = packTileMaterial(`minecraft:${block}`,'up') ?? new THREE.MeshStandardMaterial({color,roughness:block==='ice'?.18:1,metalness:block==='ice'?.12:0});
+      if(block==='ice')skySpectacle.patchReflection(result);
+      ownedTerrainMaterials.push(result); return result;
+    });
     canvas.dataset.terrainPackTextured = String(grassPack !== null || dirtPack !== null || stonePack !== null);
     const shadeSide = (base: THREE.Material): THREE.Material => {
       const clone = base.clone();
+      ownedTerrainMaterials.push(clone);
       if (clone instanceof THREE.MeshStandardMaterial || clone instanceof THREE.MeshLambertMaterial) {
         // Side textures are near-white (229 base) procedural grays. A gentle
         // multiplier still clips to pure white under the low-sun directional
@@ -1928,6 +1985,7 @@ export function createVoxelRenderer(
       flatDebugMaterial(0x8b5a2b), // dirt
       flatDebugMaterial(0x7f8c8d), // stone
       flatDebugMaterial(0x2a7fff), // water
+      flatDebugMaterial(0xe4d7a6), flatDebugMaterial(0xf1f7fc), flatDebugMaterial(0x9bd5e6), flatDebugMaterial(0xb16b4a),
       flatDebugMaterial(0xff00e0), // side dirt (magenta)
       flatDebugMaterial(0xff7b00), // side stone (orange)
     ] : [
@@ -1935,14 +1993,22 @@ export function createVoxelRenderer(
       dirtPack ?? material("dirt"),
       stonePack ?? material("terrainStone"),
       material("terrainWater"),
+      ...extras,
       shadeSide(dirtPack ?? material("dirt")),
       shadeSide(stonePack ?? material("terrainStone")),
     ]);
     mesh.receiveShadow = true;
-    mesh.castShadow = false;
+    mesh.castShadow = !options.previewMode;
     mesh.userData.terrainTriangles = renderData.triangleCount;
+    mesh.userData.ownedMaterials = ownedTerrainMaterials;
     terrainGroup.add(mesh);
     terrainMeshForPicking = mesh;
+    if(options.environmentStyle==='mosaic-coast'&&!options.debugFlatColors){
+      const bedMaterial=new THREE.MeshStandardMaterial({color:0xdad2ad,map:originalMaterialTexture('sand'),roughness:1});
+      const bed=new THREE.Mesh(new THREE.PlaneGeometry(data.bounds.maxX-data.bounds.minX,data.bounds.maxZ-data.bounds.minZ),bedMaterial);
+      bed.rotation.x=-Math.PI/2;bed.position.set((data.bounds.minX+data.bounds.maxX)/2,-6,(data.bounds.minZ+data.bounds.maxZ)/2);
+      bed.userData.ownedMaterials=[bedMaterial];bed.name='warm-sea-bed';terrainGroup.add(bed);
+    }
     addNaturalBackdrop(data);
   }
 
@@ -2196,12 +2262,13 @@ export function createVoxelRenderer(
     addDecorations(structure, world, emissivePoints);
   }
 
-  function addImportedDecoration(decoration: ImportedDecorationPlacement, emissivePoints: EmissivePoint[]): void {
+  function addImportedDecoration(decoration: ImportedDecorationPlacement, emissivePoints: EmissivePoint[],foundation:readonly BlueprintVoxel[]=[]): void {
     const root = new THREE.Group();
     root.position.set(decoration.worldPosition.x, decoration.worldPosition.y, decoration.worldPosition.z);
     root.rotation.y = decoration.rotationY;
     root.userData.rewardId = decoration.rewardId;
     root.userData.resourceId = decoration.resourceId;
+    root.name=`reward:${decoration.rewardId}`;
     const structure = new THREE.Group();
     structure.position.set(decoration.blueprintOffset.x, 0, decoration.blueprintOffset.z);
     root.add(structure);
@@ -2223,7 +2290,7 @@ export function createVoxelRenderer(
         if (sourceEmission.kind === "lantern" || sourceEmission.kind === "soul-lantern") sourceLanternPointLightCount += 1;
       }
     }
-    addStaticVoxelStructure(structure, renderVoxels);
+    addStaticVoxelStructure(structure, [...renderVoxels,...foundation]);
   }
 
   /** Shared with read-only scenery: no reward/project identity or construction state. */
@@ -2672,13 +2739,19 @@ export function createVoxelRenderer(
   function addWorldScenery(
     worlds: readonly PositionedWorldSnapshot[], roads: readonly RoadCell[],
     importedDecorations: readonly ImportedDecorationPlacement[], environmentStyle: TerrainEnvironmentStyle,
-    terrain: MergedGeometryData,
+    terrain: MergedGeometryData, terrainKey: string,
   ): void {
     const planningStartedMs = lifecycleProbeEnabled ? performance.now() : 0;
-    const plan = planWorldScenery({ environmentStyle, worldSeed: options.worldSeed ?? 'world-default',
-      surfaces: terrainSurfaceRectangles(terrain), trees: terrain.naturalTrees, roads,
+    const sceneryKey=`${terrainKey}|${importedDecorations.map(d=>`${d.rewardId}:${d.worldPosition.x}:${d.worldPosition.z}`).join(',')}`;
+    const planCacheHit=sceneryPlanCache?.key===sceneryKey;
+    const plan = planCacheHit ? sceneryPlanCache!.plan : planWorldScenery({ environmentStyle, worldSeed: options.worldSeed ?? 'world-default',
+      surfaces: terrainSurfaceRectangles(terrain), trees: terrain.naturalTrees, roads, normalBounds: terrain.nearDetailBounds,
+      mosaicCoreRadius:Math.max(Math.abs(terrain.framingBounds.minX),Math.abs(terrain.framingBounds.maxX)),
       protectedRects: [...worlds, ...importedDecorations].map(item => ({ x: item.worldPosition.x, z: item.worldPosition.z,
         width: item.footprint.width + 5, depth: item.footprint.depth + 5 })) });
+    // Do not retain oversized terrain through an unrelated scenery reference.
+    sceneryPlanCache={key:sceneryKey,plan};
+    canvas.dataset.sceneryPlanCacheHit=String(planCacheHit);
     const planningCompletedMs = lifecycleProbeEnabled ? performance.now() : 0;
     const root = new THREE.Group(); root.name = 'world-scenery';
     root.userData.sceneryVillage = plan.village;
@@ -2871,9 +2944,10 @@ export function createVoxelRenderer(
     const projectedNow = environmentDebugOverride?.date == null
       ? now
       : new Date(environmentDebugOverride.date);
-    const targetLighting = astronomyContext
+    const rawLighting = astronomyContext
       ? sunStateForAstronomy(projectedNow, astronomyContext.coordinates) ?? sunStateForLocalTime(projectedNow)
       : sunStateForLocalTime(projectedNow);
+    const targetLighting = twilightPalette(rawLighting, seededRandom(projectedNow.getFullYear()*400+Math.floor(projectedNow.getTime()/86400000))());
     const transition = lightingTransition;
     if (transition && !reducedMotion && paneVisible && !document.hidden) {
       const progress = Math.min(1, Math.max(0, (performance.now() - transition.startedAtMs) / transition.durationMs));
@@ -3037,6 +3111,7 @@ export function createVoxelRenderer(
   }
 
   function trackMaterialEffects(meshMaterial: THREE.MeshStandardMaterial, edgeStrength = 0): void {
+    skySpectacle.patchReflection(meshMaterial);
     const profile = LIGHTWEIGHT_SHADING_PROFILES[qualityTier];
     const directional = directionalLightingForState(currentLighting);
     materialEdgeStrengths.set(meshMaterial, edgeStrength);
@@ -3087,10 +3162,12 @@ export function createVoxelRenderer(
       // determined by the world seed so every world keeps its identity.
       const base = options.environmentStyle === "ocean-island"
         ? OCEAN_SEA_TONES[oceanSeaTone(options.worldSeed ?? "world-default")]
-        : 0x3e7380;
+        : options.environmentStyle==='mosaic-coast'?0x43d5ee:0x3e7380;
       water.color.setHex(base).lerp(new THREE.Color(state.skyHorizonColor), qualityTier === "high" ? 0.2 : 0.1);
       const skyVisibility = clearSkyVisibilityForWeather(currentWeather);
-      const clearRoughness = qualityTier === "high" ? 0.22 : qualityTier === "balanced" ? 0.3 : 0.48;
+      // The shared night field must remain legible in every environment/tier;
+      // texture/shadow budgets can vary without removing the reflected sky.
+      const clearRoughness = qualityTier === "high" ? 0.2 : qualityTier === "balanced" ? 0.24 : 0.28;
       water.roughness = options.debugVoidScan ? 1 : 1 - (1 - clearRoughness) * skyVisibility;
       water.metalness = (qualityTier === "high" ? 0.1 : 0.04) * skyVisibility;
       canvas.dataset.waterRoughness = water.roughness.toFixed(3);
@@ -3148,12 +3225,18 @@ export function createVoxelRenderer(
     if (!alreadyPending) shadowRefreshCount += 1;
     lastShadowRefreshReason = decision.reason;
     lastShadowSample = candidate;
+    // This counter measures accepted requests, not finished depth passes.
+    // Publish atomically, like the lighting vectors: a visible-pane resume must
+    // not look like a later drag requested the pending refresh.
+    canvas.dataset.shadowRefreshCount = String(shadowRefreshCount);
+    canvas.dataset.shadowRefreshReason = lastShadowRefreshReason;
   }
 
   function precipitationFieldForCamera(precipitationMaxY: number): PrecipitationField {
     const bounds = previewMode ? contentBounds : visibilityBounds;
     const boundsSize = bounds.getSize(new THREE.Vector3());
-    const focused = focusedProjectId === null ? undefined : positionedWorlds.find(world => world.projectId === focusedProjectId);
+    const focused = focusedProjectId === null ? undefined : positionedWorlds.find(world => world.projectId === focusedProjectId)
+      ?? positionedDecorations.find(decoration=>`reward:${decoration.rewardId}`===focusedProjectId);
     const framingBounds = focused ? focusBoundsFor(focused) : contentBounds;
     const framingSize = framingBounds.getSize(new THREE.Vector3());
     const framingSpanX = Math.max(1, framingSize.x);
@@ -3214,7 +3297,8 @@ export function createVoxelRenderer(
   }
 
   function syncPrecipitationCount(animation:PrecipitationAnimation):void {
-    animation.mesh.count=precipitationCountForVolume({referenceCount:animation.referenceCount,qualityDensity:qualityProfile.weatherDensity,
+    // Lighting quality changes shading cost, not the weather's physical density.
+    animation.mesh.count=precipitationCountForVolume({referenceCount:animation.referenceCount,qualityDensity:QUALITY_PROFILES.high.weatherDensity,
       spanX:animation.field.spanX,spanZ:animation.field.spanZ,spanY:animation.spanY,capacity:animation.particles.length,minimum:previewMode?3:0});
   }
 
@@ -3350,6 +3434,7 @@ export function createVoxelRenderer(
     // V16 expanded the world far beyond contentBounds and the sky must follow it.
     const contentSize = contentBounds.getSize(new THREE.Vector3());
     const visibleSize = visibilityBounds.getSize(new THREE.Vector3());
+    const detailSize = cloudDetailBounds.getSize(new THREE.Vector3());
     const cloudBaseBeforeWeather = previewMode
       ? Math.max(12, contentBounds.max.y + 8)
       : Math.max(20, visibilityBounds.max.y + 9);
@@ -3375,6 +3460,8 @@ export function createVoxelRenderer(
       contentDepth: contentSize.z,
       visibleWidth: visibleSize.x,
       visibleDepth: visibleSize.z,
+      normalWidth: detailSize.x,
+      normalDepth: detailSize.z,
     });
     // Rebuild when the terrain envelope changed (environment style switch resizes
     // the whole visible world), not only when the date rolls over.
@@ -3382,6 +3469,8 @@ export function createVoxelRenderer(
       && cloudsBuiltBaseY === cloudBaseBeforeWeather
       && cloudsBuiltSpanX === nextCloudBudget.spanX
       && cloudsBuiltSpanZ === nextCloudBudget.spanZ
+      && cloudsBuiltNearSpanX === nextCloudBudget.nearSpanX
+      && cloudsBuiltNearSpanZ === nextCloudBudget.nearSpanZ
       && cloudBudgetMode === (nextCloudBudget.previewMode ? "preview" : "main-world")
       && cloudBlockScale === nextCloudBudget.blockScale) return;
     clearLightning();
@@ -3413,45 +3502,17 @@ export function createVoxelRenderer(
     canvas.dataset.cloudSpanZ = String(Math.round(spanZ));
     cloudBudgetMode = cloudBudget.previewMode ? "preview" : "main-world";
     cloudBlockScale = cloudBudget.blockScale;
-    const cloudCount = cloudBudget.cloudCount;
-    // Typed clouds keep the researched shapes (cirrus wisps high up, puffy cumulus,
-    // flat stratus bands, tall storm towers) but render as crisp stacked blocks like
-    // the original voxel clouds, spread across the whole visible sky. A few distant
-    // giants hug the far horizon so the sky reads deep instead of narrow.
-    const cloudKinds: Array<"cirrus" | "cumulus" | "stratus" | "storm"> = [];
-    const cloudBlocks: number[] = [];
-    const raining = currentWeather.kind === "rain";
-    const instanceCap = cloudBudget.maxInstances;
-    const distantCount = cloudBudget.cloudCount === 0 || previewMode
-      ? 0
-      : raining ? 2 : Math.min(5, 2 + Math.round(QUALITY_PROFILES.high.weatherDensity * 2));
-    const distantBudget = distantCount * 16;
-    let totalInstances = 0;
-    for (let cloudIndex = 0; cloudIndex < cloudCount; cloudIndex += 1) {
-      const roll = random();
-      const kind = currentWeather.thunderstorm
-        ? roll < 0.94 ? "storm" : "stratus"
-        : raining ? roll < 0.68 ? "storm" : roll < 0.88 ? "cumulus" : "stratus"
-          : currentWeather.kind === "mist" ? roll < 0.88 ? "stratus" : "cirrus"
-            : currentWeather.kind === "snow" ? roll < 0.7 ? "stratus" : "cumulus"
-              : currentWeather.kind === "cloudy" ? roll < 0.55 ? "stratus" : roll < 0.8 ? "cumulus" : "cirrus"
-                : roll < 0.48 ? "cirrus" : "cumulus";
-      const blocks = previewMode ? kind === 'cirrus' ? 3 + Math.floor(random() * 3) : 4 + Math.floor(random() * 4)
-        : kind === 'cirrus' ? 5 + Math.floor(random() * 3) : kind === 'stratus' || kind === 'storm'
-          ? 10 + Math.floor(random() * 5) : 8 + Math.floor(random() * 4);
-      if (totalInstances + blocks > instanceCap - distantBudget) break;
-      cloudKinds.push(kind as "cirrus" | "cumulus" | "stratus" | "storm");
-      cloudBlocks.push(blocks);
-      totalInstances += blocks;
-    }
-    const distantBlocks: number[] = [];
-    for (let distant = 0; distant < distantCount; distant += 1) {
-      const blocks = 12 + Math.floor(random() * 8);
-      if (totalInstances + blocks > instanceCap) break;
-      distantBlocks.push(blocks);
-      totalInstances += blocks;
-    }
+    const cloudGroups = cloudGroupsForBudget(cloudBudget, currentWeather, random);
+    const totalInstances = cloudGroups.reduce((sum, group) => sum + group.blocks, 0);
     cloudBlockCount = totalInstances;
+    canvas.dataset.cloudNearSpanX = String(Math.round(cloudBudget.nearSpanX));
+    canvas.dataset.cloudNearSpanZ = String(Math.round(cloudBudget.nearSpanZ));
+    canvas.dataset.cloudNearGroupCount = String(cloudGroups.filter(group => group.region === 'near').length);
+    canvas.dataset.cloudFarGroupCount = String(cloudGroups.filter(group => group.region === 'far').length);
+    canvas.dataset.cloudBankGroupCount = String(cloudGroups.filter(group => group.kind === 'bank').length);
+    canvas.dataset.cloudFarBlockScale = cloudBudget.farBlockScale.toFixed(3);
+    canvas.dataset.cloudVisibleNearGroupCount = '0';
+    canvas.dataset.cloudVisibleFarGroupCount = '0';
     const matrix = new THREE.Matrix4();
     if (totalInstances > 0) {
     const cloudGeometry = new THREE.BoxGeometry(1, 1, 1);
@@ -3464,45 +3525,49 @@ export function createVoxelRenderer(
     clouds.name = 'world-clouds';
     clouds.frustumCulled = false;
     const quaternion = new THREE.Quaternion();
-    // V20 WX-02: every cloud remembers its block positions and its own drift
-    // rhythm so the ambient pump can move each one along a slow sine path.
+    // One advection uniform moves each connected group without matrix uploads.
     const cloudCenters = new Float32Array(totalInstances * 2);
     const cloudVelocities = new Float32Array(totalInstances * 2);
     const cloudBasePositions = new Float32Array(totalInstances * 3);
-    const localityCenter = contentBounds.getCenter(new THREE.Vector3());
+    const localityCenter = (previewMode ? contentBounds : visibilityBounds).getCenter(new THREE.Vector3());
     // The camera always looks down at the settlement, so clouds live just above
     // the terrain silhouette: near ones float in the middle of the frame and far
     // ones ride the fogged horizon. Fog is off on the material so even the far
     // clouds stay crisp white against the hazy sky instead of dissolving into it.
     let instanceIndex = 0;
-    const placeBlocks = (kind: "cirrus" | "cumulus" | "stratus" | "storm" | "distant", blocks: number, radius: number, near = false): void => {
-      const angle = random() * Math.PI * 2;
+    const groupEnds: number[] = [];
+    const placeBlocks = (group: CloudGroup): void => {
+      const { kind, blocks, horizontalScale } = group;
       const altitudeOffset = previewMode
         ? kind === "cirrus" ? 1.5 + random() * 2 : kind === "stratus" ? -0.5 + random() * 0.5 : 0
-        : kind === "cirrus" ? 5 + random() * 6 : kind === "stratus" ? -2 + random() * 2 : kind === "distant" ? -1 + random() * 2 : 0;
+        : kind === "cirrus" ? 5 + random() * 6 : kind === "stratus" || kind === 'bank' ? -2 + random() * 2 : 0;
       const center = new THREE.Vector3(
-        localityCenter.x + Math.cos(angle) * (near ? cloudBudget.nearSpanX : spanX) * .5 * radius,
+        localityCenter.x + group.x,
         cloudBase + altitudeOffset + random() * 1.5,
-        localityCenter.z + Math.sin(angle) * (near ? cloudBudget.nearSpanZ : spanZ) * .5 * radius,
+        localityCenter.z + group.z,
       );
-      const spanLocal = (kind === "distant" ? 7 : kind === "cirrus" ? 5 : kind === "stratus" ? 6 : 4.6)
+      const spanLocal = (kind === "cirrus" ? 5 : kind === "stratus" ? 6 : 4.6)
         * (previewMode ? cloudBudget.blockScale : 1);
-      const layers = kind === "distant" ? 4 + Math.floor(random() * 3) : kind === "storm" ? 3 + Math.floor(random() * 2) : kind === "cirrus" ? 1 : 2;
+      const layers = kind === "storm" ? 3 + Math.floor(random() * 2) : kind === "cirrus" || kind === 'bank' ? 1 : 2;
+      const verticalScale = Math.min(2.6, Math.sqrt(horizontalScale));
       const speed = cloudAdvectionSpeed(currentWeather) * (previewMode ? .25 : 1)
-        * (kind === 'distant' ? .62 : .8 + random() * .5);
+        * (group.region === 'far' ? .62 : .8 + random() * .5);
       const windAngle = Math.PI / 5 + (random() - .5) * .44;
       for (let block = 0; block < blocks; block += 1) {
-        const gx = previewMode ? (random() * 2 - 1) * spanLocal * (kind === 'stratus' ? .95 : .75)
-          : kind === 'cirrus' ? (block - blocks / 2) * 2.3 : (block % 4 - 1.5) * 2.9;
-        const gz = previewMode ? (random() * 2 - 1) * spanLocal * .62
-          : kind === 'cirrus' ? (random() - .5) * 1.8 : (Math.floor(block / 4) - 1) * 2.6;
+        const columns = kind === 'bank' ? 8 : 4;
+        const gx = (previewMode ? (random() * 2 - 1) * spanLocal * (kind === 'stratus' ? .95 : .75)
+          : kind === 'cirrus' ? (block - blocks / 2) * 2.3 : (block % columns - (columns - 1) / 2) * 2.9) * horizontalScale;
+        const gz = (previewMode ? (random() * 2 - 1) * spanLocal * .62
+          : kind === 'cirrus' ? (random() - .5) * 1.8 : (Math.floor(block / columns) - (Math.ceil(blocks / columns) - 1) / 2) * 2.6) * horizontalScale;
         const layer = Math.floor(random() * layers);
-        const gy = layer * (previewMode ? 0.35 : 1.0) + random() * 0.3;
-        const blockSize = ((kind === "distant" ? 3.8 : 2.3) + random() * (kind === "distant" ? 2.2 : 1.7)) * cloudBudget.blockScale;
+        const gy = (layer * (previewMode ? 0.35 : 1.0) + random() * 0.3) * verticalScale;
+        const blockSize = ((kind === 'bank' ? 3.2 : 2.3) + random() * 1.7) * cloudBudget.blockScale;
         matrix.compose(
           new THREE.Vector3(center.x + gx, center.y + gy, center.z + gz),
           quaternion,
-          new THREE.Vector3(blockSize, blockSize * (0.72 + random() * 0.3), blockSize * (0.85 + random() * 0.3)),
+          new THREE.Vector3(blockSize * horizontalScale,
+            blockSize * verticalScale * (kind === 'bank' ? .4 + random() * .15 : .72 + random() * .3),
+            blockSize * horizontalScale * (.85 + random() * .3)),
         );
         clouds.setMatrixAt(instanceIndex, matrix);
         cloudBasePositions[instanceIndex * 3] = center.x + gx;
@@ -3514,27 +3579,19 @@ export function createVoxelRenderer(
         cloudVelocities[instanceIndex * 2 + 1] = Math.sin(windAngle) * speed;
         instanceIndex += 1;
       }
+      groupEnds.push(instanceIndex);
     };
-    cloudKinds.forEach((kind, cloudIndex) => {
-      // Start right above the settlement so the short non-focus world window
-      // sees clouds too, and spread all the way to the far horizon. Small worlds
-      // (classic island) bias the spread inward so most clouds stay over the land.
-      const near = !previewMode && cloudIndex < Math.ceil(cloudKinds.length * .65);
-      const spreadBias = previewMode ? 2.4 : .5;
-      const radius = previewMode
-        ? 0.03 + 0.38 * Math.pow(random(), spreadBias)
-        : 0.03 + 0.95 * Math.pow(random(), spreadBias);
-      placeBlocks(kind, cloudBlocks[cloudIndex]!, radius, near);
-    });
-    for (const blocks of distantBlocks) placeBlocks("distant", blocks, 0.72 + random() * 0.26);
+    cloudGroups.forEach(placeBlocks);
     clouds.instanceMatrix.needsUpdate = true;
     cloudGeometry.setAttribute('cloudCenter', new THREE.InstancedBufferAttribute(cloudCenters, 2));
     cloudGeometry.setAttribute('cloudVelocity', new THREE.InstancedBufferAttribute(cloudVelocities, 2));
     canvas.dataset.cloudMatrixUploadCount = '1';
-    canvas.dataset.cloudNearGroupCount = String(previewMode ? cloudKinds.length : Math.ceil(cloudKinds.length * .65));
     clouds.userData.ownedMaterial = cloudMaterial;
+    clouds.userData.cloudGroups = cloudGroups;
+    clouds.userData.cloudGroupEnds = groupEnds;
     atmosphereGroup.add(clouds);
     cloudDrift = { mesh: clouds, uniforms: cloudUniforms, centers: cloudCenters, velocities: cloudVelocities, basePositions: cloudBasePositions,
+      groups: cloudGroups, groupEnds,
       spanX, spanZ, elapsedMs: 0, lastUpdateMs: performance.now() };
     }
     // Allocate once per weather, vary only the draw count with physical field
@@ -3608,6 +3665,8 @@ export function createVoxelRenderer(
     if (weatherChanged) startEnvironmentReveal([atmosphereGroup], "weather");
     cloudsBuiltSpanX = spanX;
     cloudsBuiltSpanZ = spanZ;
+    cloudsBuiltNearSpanX = cloudBudget.nearSpanX;
+    cloudsBuiltNearSpanZ = cloudBudget.nearSpanZ;
     cloudsBuiltBaseY = cloudBase;
     requestRender();
   }
@@ -3822,9 +3881,16 @@ export function createVoxelRenderer(
       if (!animation) continue;
       syncPrecipitationCount(animation);
     }
-    if (cloudDrift) cloudDrift.mesh.count = Math.min(cloudDrift.mesh.instanceMatrix.count,
-      Math.max(0, Math.floor(cloudDrift.mesh.instanceMatrix.count * qualityProfile.weatherDensity)));
-    starGeometry.setDrawRange(0, qualityProfile.starCount);
+    if (cloudDrift) {
+      cloudDrift.mesh.count = cloudDrawCountForQuality(cloudDrift.groupEnds, qualityProfile.weatherDensity);
+      let near = 0, far = 0;
+      for (let index = 0; index < cloudDrift.groupEnds.length && cloudDrift.groupEnds[index]! <= cloudDrift.mesh.count; index++) {
+        if (cloudDrift.groups[index]!.region === 'near') near++; else far++;
+      }
+      canvas.dataset.cloudVisibleNearGroupCount = String(near);
+      canvas.dataset.cloudVisibleFarGroupCount = String(far);
+    }
+    starGeometry.setDrawRange(0, 0);
   }
 
   function setGlowMaterialsOpacity(opacity: number): void {
@@ -3925,7 +3991,7 @@ export function createVoxelRenderer(
   }
 
   function updateAmbientMotion(nowMs: number): void {
-    if (disposed) return;
+    if (disposed || initialPresentationPreparing) return;
     releaseStaleInteraction(nowMs);
     if (paneVisible && !document.hidden && !reducedMotion && (rainAnimation !== null || snowAnimation !== null)
       && nowMs - lastWeatherFrameStartedMs >= weatherFrameIntervalMs) requestRender();
@@ -3933,6 +3999,7 @@ export function createVoxelRenderer(
     updateStormLightning(nowMs);
     updateCloudDrift(nowMs);
     updateConstructionReveals(nowMs);
+    if (skySpectacle.tick(nowMs,paneVisible&&!document.hidden)) requestAmbientRender(nowMs);
     canvas.dataset.ambientMotionActive = String(ambientMotionAllowed());
   }
 
@@ -3982,6 +4049,10 @@ export function createVoxelRenderer(
     const range = fogRangeForView(currentWeather.kind, cameraDistance, radius, options.environmentStyle === "ocean-island");
     scene.fog.near = range.near;
     scene.fog.far = range.far;
+    // Camera diagnostics are synchronous. Publish the actual fog range in the
+    // same update, rather than retaining the last lighting-period snapshot.
+    canvas.dataset.fogNear = range.near.toFixed(2);
+    canvas.dataset.fogFar = range.far.toFixed(2);
   }
 
   function updateSkyVisuals(state: SunState): void {
@@ -4009,10 +4080,16 @@ export function createVoxelRenderer(
       ? state.moonBrightLimbAngleDeg! * Math.PI / 180 : 0;
     moonSpriteMaterial.opacity = skyVisibility;
     moonSprite.visible = state.moonVisibility > 0.08 && skyVisibility > 0.08;
-    const starStrength = state.starVisibility * weatherVisual.starVisibilityScale;
+    skySpectacle.update(state,currentWeather,options.environmentStyle === 'mosaic-coast',reducedMotion,Math.max(.65,qualityProfile.starCount/MAX_STAR_COUNT));
+    const starStrength = skySpectacle.uniforms.bcSkyStars.value;
     starMaterial.color.setHex(state.skyZenithColor).lerp(new THREE.Color(0xdce8ff), THREE.MathUtils.clamp(starStrength * 0.86 + 0.14, 0, 1));
-    starGeometry.setDrawRange(0, qualityProfile.starCount);
+    // The shared directional shader replaces the old separate point map.
+    starGeometry.setDrawRange(0, 0);
     starField.visible = starStrength > 0.08;
+    canvas.dataset.nightSkyStars=starStrength.toFixed(3);
+    canvas.dataset.nightSkyGalaxy=skySpectacle.uniforms.bcSkyGalaxy.value.toFixed(3);
+    canvas.dataset.nightSkyAurora=skySpectacle.uniforms.bcSkyAurora.value.toFixed(3);
+    canvas.dataset.nightSkyReflections='directional-shared';
     if (cloudMaterial) {
       cloudMaterial.color.setHex(state.cloudColor);
       if (weatherTint !== null) cloudMaterial.color.lerp(new THREE.Color(weatherTint), weatherVisual.cloudBlend);
@@ -4025,6 +4102,10 @@ export function createVoxelRenderer(
     terrain: MergedGeometryData,
     framePreview: boolean,
   ): void {
+    cloudDetailBounds = new THREE.Box3(
+      new THREE.Vector3(terrain.nearDetailBounds.minX, 0, terrain.nearDetailBounds.minZ),
+      new THREE.Vector3(terrain.nearDetailBounds.maxX, 1, terrain.nearDetailBounds.maxZ),
+    );
       contentBounds = framePreview
       ? new THREE.Box3(new THREE.Vector3(-9, -2.5, -9), new THREE.Vector3(9, 4, 9))
       : new THREE.Box3(
@@ -4063,6 +4144,14 @@ export function createVoxelRenderer(
     ).union(contentBounds);
     const scenery = buildingGroup.getObjectByName('world-scenery');
     const shadowBounds = contentBounds.clone();
+    if(options.environmentStyle==='ocean-island'){
+      for(const surface of terrainSurfaceRectangles(terrain)){
+        if(surface.material==='water'||surface.supportY<14)continue;
+        const x=(surface.minX+surface.maxX)/2,z=(surface.minZ+surface.maxZ)/2;
+        if(x<terrain.nearDetailBounds.minX||x>terrain.nearDetailBounds.maxX||z<terrain.nearDetailBounds.minZ||z>terrain.nearDetailBounds.maxZ)continue;
+        shadowBounds.expandByPoint(new THREE.Vector3(x,surface.supportY,z));
+      }
+    }
     if (scenery) {
       const sceneryBounds = new THREE.Box3().setFromObject(scenery);
       visibilityBounds.union(sceneryBounds);
@@ -4086,7 +4175,7 @@ export function createVoxelRenderer(
     requestShadowRefresh(new Date(), true);
   }
 
-  function focusBoundsFor(world: PositionedWorldSnapshot): THREE.Box3 {
+  function focusBoundsFor(world: Pick<PositionedWorldSnapshot,'worldPosition'|'footprint'|'blueprint'>): THREE.Box3 {
     const horizontalRadius = Math.max(8, world.footprint.width * 0.78, world.footprint.depth * 0.78);
     const height = Math.max(5, world.blueprint.bounds.maxY - world.blueprint.bounds.minY + 1);
     return new THREE.Box3(
@@ -4098,7 +4187,8 @@ export function createVoxelRenderer(
   function frameScene(resetDistance: boolean, preserveView = false): void {
     const previousTarget = preserveView ? cameraTarget.clone() : null;
     const previousDistance = cameraDistance;
-    const focused = focusedProjectId === null ? undefined : positionedWorlds.find((world) => world.projectId === focusedProjectId);
+    const focused = focusedProjectId === null ? undefined : positionedWorlds.find((world) => world.projectId === focusedProjectId)
+      ?? positionedDecorations.find(decoration=>`reward:${decoration.rewardId}`===focusedProjectId);
     if (!focused) focusedProjectId = null;
     const bounds = focused ? focusBoundsFor(focused) : contentBounds;
     const size = bounds.getSize(new THREE.Vector3());
@@ -4392,7 +4482,7 @@ export function createVoxelRenderer(
     const hit = raycaster.intersectObject(buildingGroup, true).find((intersection) => {
       let object: THREE.Object3D | null = intersection.object;
       while (object && object !== buildingGroup) {
-        if (typeof object.userData.projectId === "string") return true;
+        if (typeof object.userData.projectId === "string" || typeof object.userData.rewardId==='string') return true;
         object = object.parent;
       }
       return false;
@@ -4400,6 +4490,9 @@ export function createVoxelRenderer(
     if (!hit) return;
     let object: THREE.Object3D | null = hit.object;
     while (object && object !== buildingGroup) {
+      if(typeof object.userData.rewardId==='string'){
+        options.onSelectProject(`reward:${object.userData.rewardId}`);return;
+      }
       if (typeof object.userData.projectId === "string") {
         options.onSelectProject(object.userData.projectId);
         return;
@@ -4409,6 +4502,10 @@ export function createVoxelRenderer(
   }
 
   function resetView(): void {
+    if(openingReveal)finishOpeningReveal('cancelled');
+    // Orbit cost belongs to the gesture, not this reset. A reset is never a
+    // reason to apply a delayed quality downgrade on an otherwise idle frame.
+    interactionFrameDurations=[];
     cameraAzimuth = defaultCameraAzimuth;
     cameraPitch = defaultCameraPitch;
     targetCameraAzimuth = defaultCameraAzimuth;
@@ -4565,7 +4662,8 @@ export function createVoxelRenderer(
   }
 
   function maybeDowngradeQuality(refreshedShadow: boolean): void {
-    if (qualityTier === "low") return;
+    // A HUD tap or the first compiled orbit frame is not sustained camera load.
+    if (qualityTier === "low" || !interacting || openingReveal || interactionFrameDurations.length < 24) return;
     const p95 = interactionP95();
     if (!shouldDowngradeQuality({ calls: colorRender.calls, triangles: colorRender.triangles, refreshedShadow,
       interactionSamples: interactionFrameDurations.length, interactionP95Ms: p95 })) return;
@@ -4786,6 +4884,7 @@ export function createVoxelRenderer(
     canvas.dataset.colorRenderTriangles = String(diagnostics.colorRender.triangles);
     canvas.dataset.pixelRatio = diagnostics.pixelRatio.toFixed(2);
     canvas.dataset.worldRebuildCount = String(diagnostics.worldRebuildCount);
+    canvas.dataset.constructionPulseCount = String(diagnostics.constructionPulseCount);
     canvas.dataset.renderedWorldRebuildCount = String(diagnostics.renderedWorldRebuildCount);
     if (diagnostics.lastWorldFrameCommittedAtMs !== null) {
       canvas.dataset.lastWorldFrameCommittedAtMs = String(diagnostics.lastWorldFrameCommittedAtMs);
@@ -5069,12 +5168,10 @@ export function createVoxelRenderer(
           const meshMaterials = Array.isArray(object.material) ? object.material : [object.material];
           meshMaterials.forEach((entry) => entry.dispose());
         } else {
-        const owned = object.userData.ownedMaterial as THREE.Material | undefined;
-        if (owned) {
+        releaseOwnedMaterials(object.userData, owned => {
           materialEffectPatches.delete(owned as THREE.MeshStandardMaterial);
           materialEdgeStrengths.delete(owned as THREE.MeshStandardMaterial);
-          owned.dispose();
-        }
+        });
         const ownedDepth = object.userData.ownedDepthMaterial as THREE.MeshDepthMaterial | undefined;
         if (ownedDepth) disposeAtlasDepthMaterial(ownedDepth);
         cutoutShadowMeshes.delete(object);
@@ -5200,17 +5297,33 @@ export function createVoxelRenderer(
         },
       });
     },
-    async prepareInitialPresentation() {
+    async prepareInitialPresentation(openingProjectId) {
       if (disposed) return false;
+      initialPresentationPreparing=true;initialPreparationRenderCount=0;
+      const preparationStarted=performance.now();
       lightingTransition = null;
       if (environmentReveal) finishEnvironmentReveal(true);
       updateLighting(new Date(), true);
-      await renderer.compileAsync(scene, camera);
-      if (disposed || !paneVisible || document.hidden) return false;
-      return new Promise<boolean>(resolve => {
-        preparedFrameWaiters.add(resolve);
-        requestRender();
-      });
+      // Prime actual distant/focused draw routes, including shadows and the
+      // glass/post-process target, while the single cold loader still covers us.
+      const priorFocus=focusedProjectId,priorTarget=cameraTarget.clone(),priorDistance=cameraDistance;
+      const warmFrame=()=>new Promise<boolean>(resolve=>{preparedFrameWaiters.add(resolve);requestRender();});
+      try {
+        await renderer.compileAsync(scene, camera);
+        canvas.dataset.initialShaderPreparationMs=(performance.now()-preparationStarted).toFixed(2);
+        if (disposed || !paneVisible || document.hidden) return false;
+        frameScene(true);cameraDistance=maximumCameraDistance;updateCamera();
+        if(!await warmFrame()||disposed)return false;
+        if(openingProjectId){focusedProjectId=openingProjectId;frameScene(true);}
+        else {cameraDistance=minimumCameraDistance;updateCamera();}
+        if(!await warmFrame()||disposed)return false;
+        canvas.dataset.openingPreparedFrames='2';
+        return true;
+      } finally {
+        initialPresentationPreparing=false;
+        canvas.dataset.initialPresentationPreparationMs=(performance.now()-preparationStarted).toFixed(2);
+        if(!disposed){focusedProjectId=priorFocus;frameScene(true);cameraTarget.copy(priorTarget);cameraDistance=priorDistance;updateCamera();}
+      }
     },
     setWorld(world) {
       const previous = lastWorlds;
@@ -5402,6 +5515,11 @@ export function createVoxelRenderer(
       canvas.dataset.glassMaterial = glassCompositor.getDiagnostics().mode;
       requestRender();
     },
+    setWorldColorAdjustment(preference) {
+      worldColorCompositor.setPreference(preference);
+      canvas.dataset.worldColorAdjustment = JSON.stringify(preference);
+      requestRender();
+    },
     setImmersiveBandFraction(bottomFraction, rightFraction = 0) {
       const bottom = Number.isFinite(bottomFraction) ? Math.max(0, Math.min(0.75, bottomFraction)) : 0;
       const right = Number.isFinite(rightFraction) ? Math.max(0, Math.min(0.75, rightFraction)) : 0;
@@ -5454,6 +5572,7 @@ export function createVoxelRenderer(
       clearGroup(roadGroup);
       clearGroup(atmosphereGroup, true);
       lightingPostProcessor.dispose();
+      worldColorCompositor.dispose();
       glassCompositor.dispose();
       sun.shadow.dispose();
       skyGeometry.dispose();

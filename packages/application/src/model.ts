@@ -6,7 +6,7 @@ import type {
   Project,
   ProjectCondition,
 } from "@blockcolc/domain";
-import { projectProgressBasisPoints } from "@blockcolc/domain";
+import { projectProgressBasisPoints, holidaysForYear } from "@blockcolc/domain";
 
 type GeneratedCommandType = "CreateProject" | "CreateHabitProject" | "AddSubtask" | "StartFocus" | "ReportSubtaskProgress" | "CompleteFocusEarly";
 
@@ -109,7 +109,12 @@ export function projectActiveState(state: DomainState): ActiveProjectProjection 
   };
 }
 
-export function projectWorldState(state: DomainState): WorldProjection {
+export function projectWorldState(state: DomainState, holidayBlueprint?: (id:string,title:string)=>NonNullable<Project['importedBlueprint']>): WorldProjection {
+  const seasonal=(settlementIndex:number):ProjectWorldProjection['importedDecorations']=>holidayBlueprint?state.holidayRewards.filter(r=>r.settlementIndex===settlementIndex).map(r=>{
+    const holiday=holidaysForYear(r.year).find(h=>h.id===r.holidayId)!;
+    return{rewardId:`holiday:${r.holidayId}:${r.year}`,resourceId:`builtin-holiday-${r.holidayId}-v1`,date:r.date,
+      blueprint:holidayBlueprint(r.holidayId,`${r.year} · ${holiday.buildingName}`),localPosition:structuredClone(r.position),rotationQuarterTurns:r.rotationQuarterTurns};
+  }):[];
   const projects: ProjectWorldProjection[] = state.projects.flatMap((project) => {
     if (project.status === "deleted" || (project.kind === "habit" && project.habit?.awaitingNextBuilding)) return [];
     return [{
@@ -123,7 +128,7 @@ export function projectWorldState(state: DomainState): WorldProjection {
         completionBasisPoints: projectProgressBasisPoints(project),
         conditionBasisPoints: conditionFor(state, project.id).conditionBasisPoints,
       },
-      importedDecorations: state.decorationRewards.flatMap((reward) => {
+      importedDecorations: [...seasonal(project.settlementIndex),...state.decorationRewards.flatMap((reward) => {
         if (reward.projectId !== project.id) return [];
         const resource = state.decorationBlueprintResources.find((candidate) => candidate.id === reward.resourceId);
         return resource ? [{
@@ -134,7 +139,7 @@ export function projectWorldState(state: DomainState): WorldProjection {
           localPosition: structuredClone(reward.position),
           rotationQuarterTurns: reward.rotationQuarterTurns,
         }] : [];
-      }),
+      })],
     }];
   });
   for (const building of state.habitBuildings) {
@@ -149,7 +154,7 @@ export function projectWorldState(state: DomainState): WorldProjection {
         completionBasisPoints: 10_000,
         conditionBasisPoints: 10_000,
       },
-      importedDecorations: [],
+      importedDecorations: seasonal(building.settlementIndex),
     });
   }
   return {

@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { selectValleyFixture } from './valley-fixture';
+import { waitForPreparedWorld } from './world-ready';
+import { showWorldOverview } from './world-overview';
 
 test("turns a real blueprint lamp glow on only at night and keeps it attached while rotating", async ({ page }, testInfo) => {
   await page.clock.install({ time: new Date("2026-07-26T12:00:00+08:00") });
@@ -13,7 +15,7 @@ test("turns a real blueprint lamp glow on only at night and keeps it attached wh
       document.body.innerHTML = '<canvas aria-label="灯具光晕验证" style="display:block;width:100vw;height:100vh"></canvas>';
       const { createVoxelRenderer } = (window as unknown as { __blockcolcVoxelTest: {
         createVoxelRenderer(canvas: HTMLCanvasElement, options: unknown): {
-          setWorld(world: unknown): void; resize(): void; dispose(): void;
+          setWorld(world: unknown): void; resize(): void; dispose(): void; prepareInitialPresentation(): Promise<boolean>;
         };
       } }).__blockcolcVoxelTest;
       const voxels = [] as Array<Record<string, unknown>>;
@@ -40,6 +42,7 @@ test("turns a real blueprint lamp glow on only at night and keeps it attached wh
       });
       renderer.resize();
       (window as unknown as { __lampRenderer?: typeof renderer }).__lampRenderer = renderer;
+      await renderer.prepareInitialPresentation();
     });
   };
 
@@ -73,8 +76,7 @@ test("turns a real blueprint lamp glow on only at night and keeps it attached wh
 });
 
 test("renders distinct day phases with a bounded optional post-process and no continuous loop", async ({ page }, testInfo) => {
-  // Four software-WebGL rebuilds and screenshots take roughly 30 seconds on
-  // the release machine after the preceding renderer suite has warmed it up.
+  // Four phases include three cold reloads plus their actual WebGL captures.
   test.setTimeout(60_000);
   await page.clock.install({ time: new Date("2026-07-26T06:30:00+08:00") });
   await page.goto("/");
@@ -91,8 +93,13 @@ test("renders distinct day phases with a bounded optional post-process and no co
   ] as const;
 
   for (const [name, time, phase] of phases) {
-    await page.clock.setSystemTime(new Date(time));
-    await page.reload();
+    // The prepared valley already starts at dawn. Reload only when changing
+    // phase, rather than repeating the same expensive cold start at 06:30.
+    if (name !== 'dawn') {
+      await page.clock.setSystemTime(new Date(time));
+      await page.reload();
+    }
+    await waitForPreparedWorld(page);
     await expect(canvas).toHaveAttribute("data-active-lighting-quality", /^(performance|balanced|cinematic)$/);
     const activeLighting = await canvas.getAttribute("data-active-lighting-quality");
     await expect(canvas).toHaveAttribute("data-fullscreen-pass-count", activeLighting === "cinematic" ? "4" : "0");
@@ -153,15 +160,24 @@ test("keeps a deterministic mist day readable and rotates clouds with the world"
   await page.goto("/");
   await page.getByRole("button", { name: "开始建造" }).click();
   await selectValleyFixture(page, { automaticLighting: true });
+  // Fog distances are view-dependent. Keep this settlement-wide readability
+  // guard in the real map view rather than the retained cold building close-up.
+  await showWorldOverview(page);
 
   const canvas = page.getByLabel("项目建筑世界");
   await expect(canvas).toHaveAttribute("data-weather-kind", "mist");
   await expect(canvas).toHaveAttribute("data-requested-lighting-quality", "auto");
   await expect(canvas).toHaveAttribute("data-atmosphere-follows-world", "true");
-  const fogNear = Number(await canvas.getAttribute("data-fog-near"));
-  const fogFar = Number(await canvas.getAttribute("data-fog-far"));
+  // Both diagnostics must describe the current view, not a previous lighting
+  // period. Keep the readability threshold and verify their formula together.
+  await expect.poll(async () => Number(await canvas.getAttribute("data-fog-near"))).toBeGreaterThan(40);
+  const { fogNear, fogFar, distance } = await canvas.evaluate(element => {
+    const d = (element as HTMLCanvasElement).dataset;
+    return { fogNear: Number(d.fogNear), fogFar: Number(d.fogFar), distance: Number(d.cameraDistance) };
+  });
   expect(fogNear).toBeGreaterThan(40);
   expect(fogFar - fogNear).toBeGreaterThan(60);
+  expect(fogNear).toBeCloseTo(distance - (fogFar - distance) * .11, 1);
   const before = await canvas.screenshot({ path: testInfo.outputPath("mist-readable-before.png") });
   expect(before.byteLength).toBeGreaterThan(2_000);
 

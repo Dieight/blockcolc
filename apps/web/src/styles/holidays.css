@@ -1,0 +1,13 @@
+.holiday-emblem{display:inline-flex;position:relative;vertical-align:middle;flex:none}
+.holiday-emblem-button{width:44px;height:44px;padding:6px!important;display:grid;place-items:center;border:0!important;background:transparent!important;box-shadow:none!important;color:inherit}
+.holiday-pixel{width:32px;height:32px;filter:drop-shadow(0 1px 0 #0002)}
+.holiday-intro{position:fixed;z-index:180;padding:12px 14px;background:var(--surface);color:var(--ink);border:1px solid var(--line);box-shadow:0 6px 24px #0003;animation:holiday-intro-in .16s ease-out}
+.holiday-intro>div{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.holiday-intro strong{font-size:15px}.holiday-intro button{width:44px;height:44px;margin:-8px -8px -8px 0;background:transparent;border:0;font-size:22px}.holiday-intro p{margin:8px 0 0;font-size:13px;line-height:1.6}
+.workbench-context:has(.holiday-emblem){position:relative;padding-right:58px}.workbench-context>.holiday-emblem{position:absolute;right:0;top:2px}
+.holiday-panel-slot{position:absolute;top:8px;right:12px;z-index:3}.daily-goal-festival-line{display:flex;align-items:center;gap:8px}.daily-goal-festival-line>.daily-goal-progress{flex:1}.daily-goal-festival-line>.holiday-emblem{margin-left:auto}
+.stats-duration>span{position:relative}.stats-duration>span>.holiday-emblem{position:absolute;right:0;top:50%;transform:translateY(-50%);z-index:2}
+.daily-goal-festival-line .holiday-emblem-button{width:76px;height:76px}
+.daily-goal-festival-line .holiday-pixel{width:64px;height:64px}
+@keyframes holiday-intro-in{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+@media(prefers-reduced-motion:reduce){.holiday-intro{animation:none}}

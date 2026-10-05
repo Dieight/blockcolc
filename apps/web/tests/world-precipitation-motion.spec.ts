@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { chooseDebugWeather, chooseDebugTime } from './world-debug-controls';
 import { fixBusinessDate } from './fixed-business-date';
 import { showWorldOverview } from './world-overview';
 import type * as THREE from 'three';
@@ -47,8 +48,8 @@ test('rain and layered snow keep falling during actual touch rotation and freeze
     await page.getByRole('button', { name: '设置', exact: true }).click();
     await page.getByLabel('临时调试世界', { exact: true }).check();
     await page.getByLabel('指定时间', { exact: true }).check();
-    await page.getByLabel('世界调试时间', { exact: true }).fill('12:00');
-    await page.getByLabel('天气', { exact: true }).selectOption(kind);
+    await chooseDebugTime(page, '12:00');
+    await chooseDebugWeather(page, kind);
     await page.getByRole('button', { name: '计时', exact: true }).click();
     await expect(canvas).toHaveAttribute('data-weather-kind', kind);
     await expect(canvas).toHaveAttribute('data-environment-transition-active', 'false');

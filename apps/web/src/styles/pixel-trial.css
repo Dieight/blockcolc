@@ -1,0 +1,59 @@
+@font-face{font-family:'Fusion Pixel';src:url('/fonts/fusion-pixel-12px-zh-hans.woff2') format('woff2');font-weight:400;font-style:normal;font-display:swap}
+:root{--ui-font:'Fusion Pixel',system-ui,-apple-system,'Segoe UI',sans-serif;font-family:var(--ui-font)}
+[data-font='system']{--ui-font:system-ui,-apple-system,'Segoe UI','Microsoft YaHei',sans-serif}
+body,:is(.app-shell,.dialog-backdrop,.choice-menu-options,.fatal) :is(button,input,textarea,select,text,code,kbd){font-family:var(--ui-font)}
+.minimal-today-chart text{font-family:var(--ui-font)}
+
+/* v2.5.6 typography/card trial. Round switches and range thumbs keep their affordance. */
+:is(.app-shell,.dialog-backdrop,.choice-menu-options,.fatal) :is(button,.settings-list,.focus-chart,.stats-period-section,.stats-archive-section,.task-surface,.report,.daily-goal,.current-work,.workbench-context,.focus-panel,.confirm-dialog,.daily-goal-sheet,.minimal-end-sheet,.about-dialog,.focus-plan-sheet,.task-editor-row,.project-portfolio-row,.import-preview,.resource-pack-original,.resource-pack-list li,.backup-panel,.resource-pack-panel,.building-blueprint-panel,.building-blueprint-list li,.blueprint-preview,.blueprint-loading,.blueprint-option,.achievement,.achievements-empty,.monument-statistics,.achievements-disclosure,.monument-list details,.achievement-unlock-dialog,.achievement-unlock-dialog>ul>li,.settlement-totals,.import-role,.text-toggle,.native-ime-entry input,.native-ime-entry textarea,.number-field input){border-radius:0}
+.choice-menu-options{border-radius:0}
+.app-shell.focus-immersive .world-screen.is-focusing .focus-panel{border-radius:0}
+.app-shell :is(.world-hud span,.world-pick-chip,.world-integrity-chip,.completion-ceremony,.ceremony-rays,.loading-page,.loading-card,.building-memory-panel,.building-memory-surface,.file-button){border-radius:0}
+
+/* Default appearance remains owned by each component; these shared states never add a second backdrop. */
+button{cursor:pointer;transition:filter .12s ease,opacity .12s ease;touch-action:manipulation;-webkit-tap-highlight-color:transparent}
+@media(hover:hover){button:not(:disabled):not([aria-disabled='true']):hover{filter:brightness(.96)}}
+button:not(:disabled):not([aria-disabled='true']):active{filter:brightness(.9)}
+button:disabled,button[aria-disabled='true']{cursor:not-allowed;filter:none;opacity:.48}
+button[aria-busy='true']{cursor:wait;opacity:.85}
+button[data-action-state='success']:disabled{opacity:1;filter:none;cursor:default}
+.planned-days button[aria-pressed='true']:disabled:not([aria-busy='true']){opacity:1}
+:root{--pixel-orbit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M11 0h2v1h1v1h1v2h-1v1h-1v1h-2v-1h-1v-1H9V2h1V1h1zM19 15h2v1h1v1h1v2h-1v1h-1v1h-2v-1h-1v-1h-1v-2h1v-1h1zM3 15h2v1h1v1h1v2H6v1H5v1H3v-1H2v-1H1v-2h1v-1h1z'/%3E%3C/svg%3E")}
+:is(button,.file-button,.resource-pack-import)[aria-busy='true']::after{content:'';flex:0 0 auto;display:inline-block;width:20px;height:20px;border:0;border-radius:0;background:currentColor;box-shadow:none;margin:0;-webkit-mask:var(--pixel-orbit-mask) center/contain no-repeat;mask:var(--pixel-orbit-mask) center/contain no-repeat;animation:control-spin 1.1s linear infinite;will-change:transform}
+@media(prefers-reduced-motion:reduce){button{transition:none}button[aria-busy='true']::after{animation:none}}
+/* Glass keeps its material intact on press; no native tap tint or grey inset box. */
+:is(.focus-panel,.glass-overlay,.focus-plan-sheet,.focus-report-surface,.world-hud,.immersive-view-controls,.settings-list,.about-dialog) button{ -webkit-tap-highlight-color:transparent }
+:is(.focus-panel,.glass-overlay,.focus-plan-sheet,.focus-report-surface,.world-hud,.immersive-view-controls,.settings-list,.about-dialog) button:is(:hover,:active){filter:none;box-shadow:none}
+.focus-report-surface button:active{transform:none;background-color:transparent}
+/* Round/expand controls retain their glass rather than a transient grey press. */
+.focus-panel .focus-report-surface :is(.marathon-report-options,.round-allocation-control) button:is(:active,:focus){background:transparent;outline:0;filter:none;box-shadow:none}
+.focus-panel .focus-report-surface .marathon-report-options button[aria-pressed='true']{background:transparent;box-shadow:inset 0 -2px 0 var(--focus)}
+.focus-panel .focus-report-surface :is(.marathon-settlement-toggle,.marathon-settlement-head):is(:active,:focus){background:transparent;outline:0;box-shadow:none;filter:none}
+button[aria-label^='刷新']{position:relative}
+button[aria-label^='刷新']:disabled,.check-update:disabled{opacity:1;filter:none}
+button[aria-label^='刷新'][aria-busy='true']::after,.check-update[aria-busy='true']::after{display:none}
+button[aria-label^='刷新'][aria-busy='true'] [data-pixel-icon='reset'],button[aria-label^='刷新'][aria-busy='true'] .refresh-motion{animation:control-spin .85s linear infinite;transform-origin:50% 50%;will-change:transform}
+button[aria-label^='刷新'][aria-busy='true'] .refresh-motion [data-pixel-icon='reset']{animation:none;will-change:auto}
+.refresh-motion{display:inline-flex;width:20px;height:20px;align-items:center;justify-content:center;flex:0 0 auto}
+.check-update{min-width:10em;min-height:44px;position:relative}
+.circle-busy[aria-busy='true']>svg{display:none}
+@keyframes control-spin{to{transform:rotate(360deg)}}
+/* Pointer focus is not keyboard focus. Keep keyboard cues, without Android tap boxes. */
+[data-input-mode='pointer'] :is(button,[role='button'],[role='slider'],svg[role='grid'],.file-button):is(:focus,:focus-visible),[data-input-mode='pointer'] .file-button:focus-within{outline:none!important}
+[data-input-mode='pointer'] :is(.bottom-nav,.plan-mode,.text-toggle,.world-color-control) button:is(:active,:focus){box-shadow:none;filter:none}
+.bottom-nav button{-webkit-user-select:none;user-select:none}
+/* Glass hierarchy comes from size/weight, not grey text over a changing world. */
+:is(.focus-panel,.glass-overlay,.focus-plan-sheet,.focus-report-surface,.minimal-end-sheet,.choice-menu-options,.settings-list,.about-dialog,.reward-memory-plate,.world-hud,.immersive-view-controls,.building-memory-panel,.toast){--muted:var(--ink)}
+.focus-report-surface--minimal :is(small,.eyebrow,.minimal-report-help,.round-allocation-caption,.marathon-report-rounds,.plan-sheet-note){color:var(--ink);opacity:1}
+.report.focus-report-surface--minimal .minimal-report-allocation{color:var(--ink)}
+.focus-panel .focus-plan-sheet .plan-mode button[aria-pressed='true']{background:transparent;box-shadow:inset 0 -2px 0 var(--focus)}
+.world-screen[data-world-ready='false']>.focus-panel{visibility:hidden;pointer-events:none}
+.bottom-nav .pixel-icon{width:24px;height:24px}
+.pixel-brand image{image-rendering:pixelated}
+:is(.file-button,.focus-calendar-chart,.calendar-day){-webkit-tap-highlight-color:transparent}
+.file-button:focus-within:not(:has(input:focus-visible)),.focus-calendar-chart:focus:not([data-selection-input='keyboard']){outline:none;box-shadow:none}
+.file-button:focus-within{outline:none;box-shadow:none}
+.file-button:has(input:focus-visible){text-decoration:underline;text-underline-offset:3px}
+.calendar-legend button:is(:active,:focus){outline:0;box-shadow:none;filter:none}
+.calendar-legend button:focus-visible{text-decoration:underline;text-underline-offset:3px}
+@media(prefers-reduced-motion:reduce){button[aria-label^='刷新'][aria-busy='true'] :is([data-pixel-icon='reset'],.refresh-motion),:is(button,.file-button,.resource-pack-import)[aria-busy='true']::after{animation:none;will-change:auto}}

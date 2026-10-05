@@ -2,9 +2,14 @@ import { useRef, useState } from 'react';
 import { FocusTimer } from '../FocusTimer';
 import { minimalRoundThresholdCrossings } from '../minimal-focus';
 
-/** Physical-feeling drag detent: each boundary adds 10px of bounded resistance. */
+/** A whole round adds a distinct, bounded drag detent, shared by all time pickers. */
 export function minimalRoundDetentOffsetPx(crossedThresholdCount: number): number {
-  return Math.min(12, Math.max(0, Math.floor(crossedThresholdCount))) * 10;
+  return Math.min(12, Math.max(0, Math.floor(crossedThresholdCount))) * 18;
+}
+
+/** Resistance may stop a drag, but must never reverse its direction. */
+export function clockDragSteps(deltaPx: number, detentPx: number): number {
+  return Math.sign(deltaPx) * Math.round(Math.max(0, Math.abs(deltaPx) - detentPx) / 12);
 }
 
 /** Five-minute steps, minute-aligned, bounded to the next 24 hours. No persistence. */
@@ -15,17 +20,33 @@ export function shiftClockSelection(current: number | null, steps: number, now: 
   return candidate <= now ? null : Math.min(Math.floor((now + 24 * 60 * 60_000) / 60_000) * 60_000, candidate);
 }
 
-export function MinimalClockGesture({ clockText, busy, focusMinutes = 25, breakMinutes = 5, onConfirm }: {
-  clockText: string; busy: boolean; focusMinutes?: number; breakMinutes?: number; onConfirm: (endMs: number) => void;
+export function MinimalClockGesture({ clockText, busy, focusMinutes = 25, breakMinutes = 5, onConfirm, value, onChange, confirmation = 'double-tap', clockOnly = false, ariaLabel }: {
+  clockText: string; busy: boolean; focusMinutes?: number; breakMinutes?: number; onConfirm?: (endMs: number) => void;
+  value?: number | null; onChange?: (endMs: number | null) => void; confirmation?: 'double-tap' | 'button';
+  clockOnly?: boolean; ariaLabel?: string;
 }) {
-  const [selection, setSelection] = useState<number | null>(null);
+  const [localSelection, setLocalSelection] = useState<number | null>(null);
+  const selection = value === undefined ? localSelection : value;
+  const setSelection = (next: number | null | ((previous: number | null) => number | null)) => {
+    const resolved = typeof next === 'function' ? next(selection) : next;
+    if (value === undefined) setLocalSelection(resolved);
+    onChange?.(resolved);
+  };
   const drag = useRef<{ id: number; x:number; y: number; lastY: number; base: number | null; lastSelection: number | null; feedbackRounds: Set<number>; detentRounds: Set<number>; detentPx: number; direction: -1 | 0 | 1; moved: boolean; axis: 'horizontal' | 'vertical' | null } | null>(null);
   const tap = useRef<{ at: number; x: number; y: number } | null>(null);
   const selected = selection === null ? null : new Date(selection);
   const text = selected ? `${String(selected.getHours()).padStart(2, '0')}:${String(selected.getMinutes()).padStart(2, '0')}` : clockText;
-  const day = selected?.toDateString() === new Date().toDateString() ? '今天' : '明天';
-  return <div className="minimal-clock-gesture" role="button" tabIndex={busy ? -1 : 0} aria-disabled={busy}
-    aria-label={selected ? `专注到${day} ${text}，双击或按 Enter 开始专注` : `当前时间 ${text}，上下滑动或按方向键选择结束时间`}
+  const day = !selected || selected.toDateString() === new Date().toDateString() ? '今天' : '明天';
+  const shift = (base:number|null,steps:number,now:number) => {
+    if(!clockOnly)return shiftClockSelection(base,steps,now);
+    const date=new Date(base??now);const minutes=((date.getHours()*60+date.getMinutes()+steps*5)%1440+1440)%1440;
+    date.setHours(Math.floor(minutes/60),minutes%60,0,0);return date.getTime();
+  };
+  return <div className="minimal-clock-gesture" role={confirmation === 'button' ? 'slider' : 'button'} tabIndex={busy ? -1 : 0} aria-disabled={busy}
+    aria-valuemin={confirmation === 'button' ? 0 : undefined} aria-valuemax={confirmation === 'button' ? clockOnly ? 1439 : 288 : undefined}
+    aria-valuenow={confirmation === 'button' ? clockOnly ? (selected?.getHours()??0)*60+(selected?.getMinutes()??0) : Math.max(0, Math.min(288, Math.round(((selection ?? Date.now()) - Date.now()) / 300_000))) : undefined}
+    aria-valuetext={confirmation === 'button' ? selected ? `${day} ${text}` : '未选择结束时间' : undefined}
+    aria-label={ariaLabel ?? (confirmation === 'button' ? '结束时间，上下滑动或按方向键调整' : selected ? `专注到${day} ${text}，双击或按 Enter 开始专注` : `当前时间 ${text}，上下滑动或按方向键选择结束时间`)}
     onBlur={event => { delete event.currentTarget.dataset.pointerFocus; }}
     onPointerDown={event => {
       event.stopPropagation();
@@ -60,8 +81,8 @@ export function MinimalClockGesture({ clockText, busy, focusMinutes = 25, breakM
         delta = start.y - event.clientY;
       }
       start.direction = direction;
-      let next = shiftClockSelection(start.base, Math.round((delta - direction * start.detentPx) / 12), nowMs);
-      const crossed = minimalRoundThresholdCrossings(start.lastSelection ?? nowMs, next ?? nowMs, nowMs, focusMinutes, breakMinutes);
+      let next = shift(start.base, clockDragSteps(delta, start.detentPx), nowMs);
+      const crossed = clockOnly ? [] : minimalRoundThresholdCrossings(start.lastSelection ?? nowMs, next ?? nowMs, nowMs, focusMinutes, breakMinutes);
       let shouldVibrate = false;
       for (const round of crossed) {
         start.detentRounds.add(round);
@@ -75,7 +96,7 @@ export function MinimalClockGesture({ clockText, busy, focusMinutes = 25, breakM
           ? Math.min(1, start.detentRounds.size) : start.detentRounds.size);
         // Re-evaluate after adding resistance: the selection pauses for a
         // short bounded pointer distance instead of jumping through a boundary.
-        next = shiftClockSelection(start.base, Math.round((delta - direction * start.detentPx) / 12), nowMs);
+        next = shift(start.base, clockDragSteps(delta, start.detentPx), nowMs);
       }
       if (shouldVibrate) lightRoundFeedback();
       start.lastSelection = next;
@@ -86,11 +107,12 @@ export function MinimalClockGesture({ clockText, busy, focusMinutes = 25, breakM
       event.stopPropagation();
       const start = drag.current; drag.current = null;
       if (!start || start.id !== event.pointerId || start.moved || busy) return;
+      if (confirmation === 'button') return;
       const now = performance.now(); const previous = tap.current;
       tap.current = { at:now, x:event.clientX, y:event.clientY };
       if (previous && now - previous.at < 450 && Math.hypot(event.clientX - previous.x, event.clientY - previous.y) < 48) {
         tap.current = null;
-        if (selection !== null) onConfirm(selection);
+        if (selection !== null) onConfirm?.(selection);
       }
     }}
     onKeyDown={event => {
@@ -99,20 +121,21 @@ export function MinimalClockGesture({ clockText, busy, focusMinutes = 25, breakM
       if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
         event.preventDefault(); setSelection(value => {
           const nowMs = Date.now();
-          const next = shiftClockSelection(value, event.key === 'ArrowUp' ? 1 : -1, nowMs);
-          if (minimalRoundThresholdCrossings(value ?? nowMs, next ?? nowMs, nowMs, focusMinutes, breakMinutes).length > 0) lightRoundFeedback();
+          const next = shift(value, event.key === 'ArrowUp' ? 1 : -1, nowMs);
+          if (!clockOnly && minimalRoundThresholdCrossings(value ?? nowMs, next ?? nowMs, nowMs, focusMinutes, breakMinutes).length > 0) lightRoundFeedback();
           return next;
         });
       } else if (event.key === 'Escape') { event.preventDefault(); setSelection(null); tap.current = null; }
-      else if ((event.key === 'Enter' || event.key === ' ') && selection !== null) { event.preventDefault(); if (!event.repeat) onConfirm(selection); }
+      else if (confirmation === 'double-tap' && (event.key === 'Enter' || event.key === ' ') && selection !== null) { event.preventDefault(); if (!event.repeat) onConfirm?.(selection); }
     }}>
-    <FocusTimer mode="clock" clockText={text} fallbackMs={0} onElapsed={() => {}}/>
-    {selected && <span className="minimal-clock-selection" aria-hidden="true">{day}结束 · 双击确认</span>}
+    {confirmation === 'button' ? <strong className="timer-value" aria-hidden="true">{text}</strong>
+      : <FocusTimer mode="clock" clockText={text} fallbackMs={0} onElapsed={() => {}}/>}
+    {(selected || confirmation === 'button') && <span className="minimal-clock-selection" aria-hidden="true">{clockOnly ? '上下滑动调整' : confirmation === 'button' ? `${selected ? `${day}结束 · ` : ''}上下滑动调整` : `${day}结束 · 双击确认`}</span>}
   </div>;
 }
 
 function lightRoundFeedback(): void {
   if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
-    try { navigator.vibrate(8); } catch { /* The drag detent remains even when WebView haptics are denied. */ }
+    try { navigator.vibrate(16); } catch { /* Drag resistance remains when WebView haptics are denied. */ }
   }
 }

@@ -216,7 +216,7 @@ test('settings page keeps grouped rows, quiet secondary actions, and 44px target
   });
   expect(cardMaterial.background, JSON.stringify(cardMaterial)).not.toBe('rgba(0, 0, 0, 0)');
   expect(cardMaterial.blur).toContain('blur');
-  expect(Number.parseFloat(cardMaterial.radius)).toBeGreaterThan(8);
+  expect(Number.parseFloat(cardMaterial.radius)).toBe(0);
   const row = page.locator('.settings-group .setting-row').first();
   await expect(row).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
   const separator = page.locator('.settings-group .setting-row + .setting-row').first();

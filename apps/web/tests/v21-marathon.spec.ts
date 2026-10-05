@@ -2,6 +2,8 @@ import { expect, test } from "@playwright/test";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { executeAndReloadPersistedCommand, readPersistedDomainState } from "./persisted-domain-state";
+import { choosePlanEndTime, startNextRound, waitForMarathonReport, revealFocusControls } from './focus-plan-controls';
+import { fixBusinessDate } from './fixed-business-date';
 
 async function expectWorldCanvasDoesNotCover(button: import('@playwright/test').Locator) {
   const hitTest = await button.evaluate((element) => {
@@ -27,18 +29,6 @@ async function createDefaultProject(page: import("@playwright/test").Page) {
   await expect(create).toBeEnabled({ timeout: 60_000 });
   await create.click();
   await expect(page.locator(".world-screen")).toBeVisible();
-}
-
-async function revealFocusControls(page: import("@playwright/test").Page) {
-  const endButton = page.getByRole("button", { name: "结束本次专注" });
-  if (await endButton.isVisible().catch(() => false)) return;
-  for (let attempt = 0; attempt < 5; attempt += 1) {
-    await page.dispatchEvent(".focus-panel", "pointerup", { pointerId: 7, clientX: 20, clientY: 20, pointerType: "touch", isPrimary: true });
-    await page.dispatchEvent(".focus-panel", "pointerup", { pointerId: 7, clientX: 20, clientY: 20, pointerType: "touch", isPrimary: true });
-    await page.waitForTimeout(300);
-    if (await endButton.isVisible().catch(() => false)) return;
-  }
-  throw new Error("Focus controls did not reveal after repeated double-taps");
 }
 
 test("opening and closing the plan sheet never moves the panel below the adjust row", async ({ page }) => {
@@ -83,11 +73,8 @@ test("marathon mode schedules from an end time and reports once after every roun
   await page.getByRole("button", { name: "调整本次计划" }).click();
   const sheet = page.getByRole("dialog", { name: "安排下一轮" });
   await sheet.getByRole("button", { name: "按结束时间" }).click();
-  // Installed at 16:00 Shanghai. The custom stepper starts at 18:00; move it to
-  // 16:05 (two hours back, five minutes forward) for a 4-5 round schedule.
-  await page.getByLabel("减少结束小时").click();
-  await page.getByLabel("减少结束小时").click();
-  await page.getByLabel("增加结束分钟").click();
+  // Installed at 16:00 Shanghai; choose a five-minute window.
+  await choosePlanEndTime(sheet, '16:05');
   await expect(sheet).toContainText(/轮专注/);
   await sheet.getByRole("button", { name: "确认计划" }).click();
 
@@ -104,11 +91,12 @@ test("marathon mode schedules from an end time and reports once after every roun
   for (let round = 1; round < total; round += 1) {
     await page.clock.fastForward(61_000);
     await expect(page.getByRole("button", { name: "开始下一轮" })).toBeVisible();
-    await page.getByRole("button", { name: "开始下一轮" }).click();
+    await startNextRound(page);
     await expect(page.locator(".focus-task-context strong")).toContainText(`专注中 第${round + 1}/${total}轮`);
   }
   await page.clock.fastForward(61_000);
-  await expect(page.getByRole("heading", { name: "把这次推进汇报给哪些任务？" })).toBeVisible();
+  const report = await waitForMarathonReport(page);
+  await expect(report.locator('.eyebrow')).toHaveText(`${total} 轮专注已结束`);
   await page.screenshot({ path: testInfo.outputPath("v21-marathon-report.png"), fullPage: true });
 
   // V22: project cards sit side by side; expand the (only) project and pick one
@@ -118,7 +106,7 @@ test("marathon mode schedules from an end time and reports once after every roun
   await firstRow.getByRole("button", { name: /推进至 25%/ }).click();
   await firstRow.getByRole("button", { name: /增加 .*计入轮数/ }).click();
   await page.getByRole("button", { name: "提交本次推进" }).click();
-  await expect(page.getByRole("heading", { name: "把这次推进汇报给哪些任务？" })).toBeHidden();
+  await expect(report).toHaveCount(0);
   // Back to the workbench: the combined report advanced the first subtask.
   await expect(page.locator(".workbench-context")).toContainText("确定目标");
   await expect(page.locator(".workbench-context")).toContainText("25%");
@@ -151,19 +139,17 @@ test("habit plans support an isolated end-time schedule without the finite-task 
   await expect(sheet.getByRole("button", { name: "固定轮次" })).toBeVisible();
   await sheet.getByRole("button", { name: "按结束时间" }).click();
   await expect(sheet.locator(".choice-menu")).toHaveCount(0);
-  await page.getByLabel("减少结束小时").click();
-  await page.getByLabel("减少结束小时").click();
-  await page.getByLabel("增加结束分钟").click();
-  await expect(sheet).toContainText("安排 2 轮习惯专注");
-  await expect(sheet).toContainText("结束后不进入普通任务的统一汇报");
+  await choosePlanEndTime(sheet, '16:05');
+  await expect(sheet).toContainText("2 轮习惯专注");
+  await expect(sheet).toContainText("完成即推进建筑");
   await sheet.getByRole("button", { name: "确认计划" }).click();
 
   const readyRound = page.locator(".focus-task-context strong");
-  await expect(page.locator(".world-screen")).toHaveClass(/is-focusing/);
-  await expect(page.getByRole("navigation", { name: "主导航" })).toBeHidden();
-  await expect(page.getByRole("heading", { name: "按结束时间排程" })).toHaveCount(0);
+  await expect(page.locator(".world-screen")).not.toHaveClass(/is-focusing/);
+  await expect(page.getByRole("navigation", { name: "主导航" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "按结束时间排程" })).toBeVisible();
   await expect(readyRound).toHaveText("准备第 1 / 2 轮");
-  await expect(page.locator(".workbench-context")).toHaveCount(0);
+  await expect(page.locator(".workbench-context")).toHaveCount(1);
   const readyPlan = await page.evaluate(() => JSON.parse(localStorage.getItem("blockcolc-round-plan-v1") ?? "null") as { projectId?: string; subtaskId?: string | null; mode?: string; totalRounds?: number; status?: string } | null);
   expect(readyPlan).toMatchObject({ subtaskId: null, mode: "marathon", totalRounds: 2, status: "ready" });
   const readyState = await readPersistedDomainState(page);
@@ -183,9 +169,9 @@ test("habit plans support an isolated end-time schedule without the finite-task 
   await expect(readyRound).toHaveText("准备第 2 / 2 轮");
   const afterEarlyCompletion = await page.evaluate(() => JSON.parse(localStorage.getItem("blockcolc-round-plan-v1") ?? "null") as { completedRounds?: number; totalRounds?: number; status?: string } | null);
   expect(afterEarlyCompletion).toMatchObject({ completedRounds: 1, totalRounds: 2, status: "ready" });
-  await page.getByRole("button", { name: "开始下一轮" }).click();
+  await startNextRound(page);
   await page.clock.fastForward(121_000);
-  await expect(page.getByRole("heading", { name: "把这次推进汇报给哪些任务？" })).toHaveCount(0);
+  await expect(page.locator('.marathon-progress-report')).toHaveCount(0);
   await expect(page.locator(".workbench-context")).toContainText("本周期 2 / 10 轮");
 
   const adjustPlan = page.getByRole("button", { name: "调整本次计划" });
@@ -196,7 +182,9 @@ test("habit plans support an isolated end-time schedule without the finite-task 
 });
 
 test("a locked habit end-time lane keeps its host after another project becomes current", async ({ page }) => {
-  await page.clock.install({ time: new Date("2026-08-03T08:00:00Z") });
+  // This case does not fast-forward a timer. Keep business time fixed while
+  // real rAF and presentation timers finish their visible control animations.
+  await fixBusinessDate(page, new Date("2026-08-03T08:00:00Z"));
   await createDefaultProject(page);
   await page.getByRole("button", { name: "设置" }).click();
   await page.getByLabel("普通任务专注分钟").fill("1");
@@ -211,17 +199,14 @@ test("a locked habit end-time lane keeps its host after another project becomes 
   await page.getByLabel("习惯名称").fill("宿主习惯");
   await page.getByRole("button", { name: "开始建造" }).click();
 
-  // Lock the habit lane first. It intentionally owns the immersive surface
-  // and hides the global tabs, so the host-switch contract must be exercised
-  // through a legitimate persisted-domain update rather than a hidden tab.
+  // Confirming keeps the ordinary workbench until start. Apply a legitimate
+  // persisted external switch to verify that the plan's host survives recovery.
   const adjustPlan = page.getByRole("button", { name: "调整本次计划" });
   await expectWorldCanvasDoesNotCover(adjustPlan);
   await adjustPlan.click();
   const habitSheet = page.getByRole("dialog", { name: "安排习惯专注" });
   await habitSheet.getByRole("button", { name: "按结束时间" }).click();
-  await page.getByLabel("减少结束小时").click();
-  await page.getByLabel("减少结束小时").click();
-  await page.getByLabel("增加结束分钟").click();
+  await choosePlanEndTime(habitSheet, '16:05');
   await habitSheet.getByRole("button", { name: "确认计划" }).click();
 
   const lockedPlan = await page.evaluate(() => JSON.parse(localStorage.getItem("blockcolc-round-plan-v1") ?? "null") as { projectId?: string; totalRounds?: number } | null);
@@ -234,16 +219,16 @@ test("a locked habit end-time lane keeps its host after another project becomes 
     page,
     beforeExternalSwitch.state,
     { type: "SwitchActiveProject", projectId: finiteHost.id },
-    Date.now(),
+    await page.evaluate(() => Date.now()),
   );
 
   expect(switched.revision).toBe(beforeExternalSwitch.revision + 1);
   expect(switched.state.activeProjectId).toBe(finiteHost.id);
-  await expect(page.locator(".world-screen")).toHaveClass(/is-focusing/);
-  await expect(page.getByRole("navigation", { name: "主导航" })).toBeHidden();
-  await expect(page.getByRole("heading", { name: "按结束时间排程" })).toHaveCount(0);
+  await expect(page.locator(".world-screen")).not.toHaveClass(/is-focusing/);
+  await expect(page.getByRole("navigation", { name: "主导航" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "按结束时间排程" })).toBeVisible();
   await expect(page.locator(".focus-task-context strong")).toHaveText(`准备第 1 / ${lockedPlan!.totalRounds} 轮`);
-  await expect(page.locator(".workbench-context")).toHaveCount(0);
+  await expect(page.locator(".workbench-context")).toHaveCount(1);
   await expect(page.locator(".focus-workbench-panel").getByText("我的第一座工坊", { exact: true })).toHaveCount(0);
 
   // The plan remains owned by the habit project even though the current
@@ -283,7 +268,7 @@ test("the native live-update action skips an active habit break", async ({ page 
   await sheet.getByRole("button", { name: "确认计划" }).click();
   await page.getByRole("button", { name: "开始 2 轮" }).click();
   await page.clock.fastForward(61_000);
-  await expect(page.getByRole("button", { name: "跳过休息" })).toBeVisible();
+  await expect(page.locator('.timer-break')).toContainText('休息中');
 
   await page.evaluate(() => {
     localStorage.setItem("blockcolc-skip-break-request-v1", "1");
@@ -293,7 +278,7 @@ test("the native live-update action skips an active habit break", async ({ page 
   await expect.poll(() => page.evaluate(() => localStorage.getItem("blockcolc-skip-break-request-v1"))).toBeNull();
 });
 
-test("marathon rounds preserve the wider round count on the immersive ready face", async ({ page }) => {
+test("marathon rounds preserve the wider round count on the confirmed workbench", async ({ page }) => {
   await page.clock.install({ time: new Date("2026-08-03T08:00:00Z") });
   await createDefaultProject(page);
   await page.getByRole("button", { name: "设置" }).click();
@@ -305,8 +290,7 @@ test("marathon rounds preserve the wider round count on the immersive ready face
   const sheet = page.getByRole("dialog", { name: "安排下一轮" });
   await sheet.getByRole("button", { name: "按结束时间" }).click();
   // Four hours out (default 5-minute breaks) is far beyond the old 4-round cap.
-  await page.getByLabel("增加结束小时").click();
-  await page.getByLabel("增加结束小时").click();
+  await choosePlanEndTime(sheet, '20:00');
   await expect(sheet).toContainText("24 轮");
   await sheet.getByRole("button", { name: "确认计划" }).click();
   const lockedPlan = await page.evaluate(() => JSON.parse(localStorage.getItem("blockcolc-round-plan-v1") ?? "null") as { mode?: string; totalRounds?: number; status?: string; endAt?: string } | null);
@@ -314,7 +298,7 @@ test("marathon rounds preserve the wider round count on the immersive ready face
   expect(Date.parse(lockedPlan?.endAt ?? "")).toBe(Date.parse("2026-08-03T12:00:00Z"));
   await expect(page.locator(".focus-task-context strong")).toHaveText("准备第 1 / 24 轮");
   await expect(page.locator(".timer-label")).toHaveText("剩余总时长");
-  await expect(page.locator(".workbench-context")).toHaveCount(0);
+  await expect(page.locator(".workbench-context")).toHaveCount(1);
 });
 
 // Known local flake, same class as the documented v11 drag case: the synthetic

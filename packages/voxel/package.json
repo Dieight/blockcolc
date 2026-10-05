@@ -10,7 +10,9 @@
     "./local-blueprint-sources": "./src/local-blueprint-sources.ts",
     "./environment": "./src/environment.ts",
     "./astronomy": "./src/astronomy.ts",
-    "./glass-material": "./src/glass-material.ts"
+    "./glass-material": "./src/glass-material.ts",
+    "./world-color-adjustment": "./src/world-color-adjustment.ts",
+    "./holiday-buildings": "./src/holiday-buildings.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

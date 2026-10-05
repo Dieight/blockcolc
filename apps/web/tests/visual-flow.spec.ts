@@ -3,13 +3,26 @@ import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { showWorldOverview } from './world-overview';
 import { selectValleyFixture } from './valley-fixture';
+import { waitForPreparedWorld } from './world-ready';
+
+test.beforeEach(async ({ page }) => {
+  // Keep navigation and persistence checks independent of today's random
+  // weather. The clock still advances; individual time-travel cases replace
+  // this baseline with their own date before opening the app.
+  await page.clock.install({ time: new Date('2026-07-26T12:00:00+08:00') });
+});
 
 // Local assets are optional on clean checkouts; identify packaged choices by
 // their stable IDs rather than a list of author names.
 
 async function createDefaultProject(page: import('@playwright/test').Page) {
   await page.goto('/');
+  await submitProject(page);
+}
+
+async function submitProject(page: import('@playwright/test').Page) {
   await page.getByRole('button', { name: '开始建造' }).click();
+  await waitForPreparedWorld(page);
 }
 
 async function openTasks(page: import('@playwright/test').Page) {
@@ -118,11 +131,10 @@ test('@smoke creates a project, renders the world and persists focus state', asy
   test.setTimeout(45_000);
   await page.goto('/');
   await expect(page.getByRole('heading', { name: '建立你的第一项任务' })).toBeVisible();
-  await page.getByRole('button', { name: '开始建造' }).click();
+  await submitProject(page);
   await expect(page.getByRole('heading', { name: '我的第一座工坊' })).toBeVisible();
   const canvas = page.getByLabel('项目建筑世界');
   await expect(canvas).toBeVisible();
-  await page.waitForTimeout(300);
   const canvasPng = await canvas.screenshot();
   expect(canvasPng.byteLength).toBeGreaterThan(2_000);
   await startFocus(page);
@@ -137,6 +149,7 @@ test('@smoke creates a project, renders the world and persists focus state', asy
   await page.waitForTimeout(5_500);
   await expect(page.getByRole('button', { name: '结束本次专注' })).toBeHidden();
   await page.reload();
+  await waitForPreparedWorld(page);
   await revealFocusControls(page);
   await interruptFocus(page);
   await expect(page.getByRole('button', { name: '开始 1 轮' })).toBeVisible();
@@ -185,11 +198,12 @@ test('previews three blueprints and persists the selected building', async ({ pa
   await page.screenshot({ path: testInfo.outputPath('blueprint-selection.png'), fullPage: true });
 
   await page.getByLabel('大型任务').fill('完成视觉发布');
-  await page.getByRole('button', { name: '开始建造' }).click();
+  await submitProject(page);
   const summary = page.locator('#world-summary');
   await expect(summary).toContainText('完成视觉发布');
   await expect(summary).toContainText('村庄礼拜堂');
   await page.reload();
+  await waitForPreparedWorld(page);
   await expect(page.locator('#world-summary')).toContainText('村庄礼拜堂');
   await page.screenshot({ path: testInfo.outputPath('selected-chapel-world.png'), fullPage: true });
 });
@@ -216,11 +230,11 @@ test('imports a local litematic, previews it and persists its normalized bluepri
   expect(previewPng.byteLength).toBeGreaterThan(2_000);
 
   await page.getByLabel('大型任务').fill('导入样例建筑');
-  await page.getByRole('button', { name: '开始建造' }).click();
+  await submitProject(page);
   await expect(page.locator('#world-summary')).toContainText('导入样例建筑');
   await page.reload();
+  await waitForPreparedWorld(page);
   await expect(page.locator('#world-summary')).toContainText('导入样例建筑');
-  await page.waitForTimeout(300);
   const worldPng = await page.getByLabel('项目建筑世界').screenshot({ path: testInfo.outputPath('litematic-world.png') });
   expect(worldPng.byteLength).toBeGreaterThan(2_000);
 });
@@ -235,7 +249,7 @@ test('renders a monument with the active building and restores both after deleti
   await page.goto('/');
   await page.getByLabel('大型任务').fill('完成第一栋建筑');
   await replaceSubtasks(page, ['完成全部工作']);
-  await page.getByRole('button', { name: '开始建造' }).click();
+  await submitProject(page);
   await page.getByRole('button', { name: '设置' }).click();
   await page.getByLabel('普通任务专注分钟').fill('1');
   await page.getByRole('button', { name: '计时' }).click();
@@ -244,11 +258,13 @@ test('renders a monument with the active building and restores both after deleti
   await page.getByRole('button', { name: '完成小任务' }).click();
   await page.getByRole('button', { name: '回到聚落' }).click();
 
-  await expect(page.getByRole('heading', { name: '建立新任务' })).toBeVisible();
+  await expect(page.locator('.setup')).toHaveCount(0);
+  await page.getByRole('button', { name: '新建任务', exact: true }).click();
+  await expect(page.getByRole('heading', { name: '新增任务' })).toBeVisible();
   await page.getByLabel('大型任务').fill('开始第二栋建筑');
   await replaceSubtasks(page, ['完成第二项工作']);
   await page.getByRole('radio', { name: /河岸木屋/ }).check();
-  await page.getByRole('button', { name: '开始建造' }).click();
+  await submitProject(page);
 
   let summary = page.locator('#world-summary');
   await expect(summary).toContainText('完成第一栋建筑，林边工坊，纪念建筑');
@@ -262,7 +278,7 @@ test('renders a monument with the active building and restores both after deleti
   await page.getByRole('alertdialog', { name: '删除这项任务？' }).getByRole('button', { name: '删除任务' }).click();
   await page.getByRole('button', { name: '设置' }).click();
   await expect(page.getByText('删除任务前备份')).toBeVisible();
-  await page.getByRole('button', { name: '恢复' }).first().click();
+  await page.locator('.rollback-list').getByRole('button', { name: '恢复', exact: true }).first().click();
   await page.getByRole('alertdialog', { name: '恢复这份备份？' }).getByRole('button', { name: '恢复备份' }).click();
   await page.getByRole('button', { name: '计时' }).click();
   summary = page.locator('#world-summary');
@@ -283,7 +299,7 @@ test('adds and switches unfinished large projects without moving their buildings
   await page.getByLabel('大型任务').fill('第二项长期工作');
   await replaceSubtasks(page, ['第二项的第一步', '第二项的第二步']);
   await page.getByRole('radio', { name: /河岸木屋/ }).check();
-  await page.getByRole('button', { name: '开始建造' }).click();
+  await submitProject(page);
 
   let summary = page.locator('#world-summary');
   await expect(summary).toContainText('我的第一座工坊，林边工坊，暂停建造');
@@ -359,7 +375,7 @@ test('preserves mobile Chinese composition while selecting a project blueprint',
   await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
   if ((await page.viewportSize())!.width < 700) expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
   await row.dispatchEvent('input');
-  await page.getByRole('button', { name: '开始建造' }).click();
+  await submitProject(page);
   await expect(page.locator('#world-summary')).toContainText('中文长期任务');
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
   await expect(page.locator('.topbar')).toBeVisible();
@@ -386,13 +402,13 @@ test('creates a project when Android IME has not emitted a React change before b
   await expect(page.getByLabel('小任务 1')).toHaveValue('调研需求');
   await expect(page.getByLabel('小任务 2')).toHaveValue('完成实现');
   await page.getByLabel('小任务 1').dispatchEvent('input');
-  await page.getByRole('button', { name: '开始建造' }).click();
+  await submitProject(page);
   await expect(page.locator('#world-summary')).toContainText('中文长期任务');
 });
 
 test('@smoke navigation remains usable without overlap', async ({ page }) => {
   await page.goto('/');
-  await page.getByRole('button', { name: '开始建造' }).click();
+  await submitProject(page);
   await page.getByRole('button', { name: '任务', exact: true }).click();
   await expect(page.getByRole('heading', { name: '我的第一座工坊' })).toBeVisible();
   await page.getByRole('button', { name: '统计' }).click();
@@ -407,7 +423,7 @@ test('@smoke navigation remains usable without overlap', async ({ page }) => {
 test('keeps the world renderer resident across tab switches', async ({ page }) => {
   test.setTimeout(150_000); // Drag + tab round trip through the resident renderer exceeds the default budget on loaded shared GPUs; the V23 refined far-fine terrain rebuilds heavier.
   await page.goto('/');
-  await page.getByRole('button', { name: '开始建造' }).click();
+  await submitProject(page);
   const canvas = page.getByLabel('项目建筑世界');
   await selectValleyFixture(page);
   await expect(canvas).toHaveAttribute('data-environment-style', 'natural-valley');
@@ -445,7 +461,7 @@ test('keeps the world renderer resident across tab switches', async ({ page }) =
 test('@smoke expired focus resumes into progress reporting and grows the building', async ({ page }, testInfo) => {
   await page.clock.install({ time: new Date('2026-07-23T08:00:00Z') });
   await page.goto('/');
-  await page.getByRole('button', { name: '开始建造' }).click();
+  await submitProject(page);
   await startFocus(page);
   await page.clock.fastForward(45 * 60 * 1000 + 1_000);
   await expect(page.getByRole('heading', { name: '这次工作推进到哪里？' })).toBeVisible();
@@ -457,7 +473,7 @@ test('@smoke expired focus resumes into progress reporting and grows the buildin
 
 test('persists focus and break preferences and exposes period statistics', async ({ page }, testInfo) => {
   await page.goto('/');
-  await page.getByRole('button', { name: '开始建造' }).click();
+  await submitProject(page);
   await page.getByRole('button', { name: '设置' }).click();
   await expect(page.getByLabel('普通任务专注分钟')).toHaveValue('45');
   await expect(page.getByLabel('开启专注完整性')).not.toBeChecked();
@@ -505,7 +521,7 @@ test('persists focus and break preferences and exposes period statistics', async
 test('runs a configured multi-round focus and break plan', async ({ page }) => {
   await page.clock.install({ time: new Date('2026-07-23T08:00:00Z') });
   await page.goto('/');
-  await page.getByRole('button', { name: '开始建造' }).click();
+  await submitProject(page);
   await page.getByRole('button', { name: '设置' }).click();
   await page.getByLabel('普通任务专注分钟').fill('1');
   await page.getByLabel('每轮休息分钟').fill('1');
@@ -771,7 +787,7 @@ test('renames an imported building blueprint without changing its stored snapsho
   await page.getByRole('button', { name: '新增任务' }).click();
   await page.getByRole('radio', { name: /V13 阅读大厅/ }).check();
   await page.getByLabel('大型任务').fill('标签世界');
-  await page.getByRole('button', { name: '开始建造' }).click();
+  await submitProject(page);
   await page.getByRole('button', { name: '任务', exact: true }).click();
   await page.getByRole('button', { name: '查看建筑' }).first().click();
   await expect(page.locator('.building-memory-panel')).toContainText('V13 阅读大厅');
@@ -796,7 +812,7 @@ test('exports, previews, imports, and restores a local backup', async ({ page },
   await expect(page.getByText('导入完成，已创建回滚备份。')).toBeVisible();
   await expect(page.getByText('导入前备份')).toBeVisible();
 
-  await page.getByRole('button', { name: '恢复' }).first().click();
+  await page.locator('.rollback-list').getByRole('button', { name: '恢复', exact: true }).first().click();
   const dialog = page.getByRole('alertdialog', { name: '恢复这份备份？' });
   await expect(dialog).toBeVisible();
   await dialog.getByRole('button', { name: '恢复备份' }).click();
@@ -851,12 +867,14 @@ test('deletes a completed-idle project with rollback and restores it from settin
   const dialog = page.getByRole('alertdialog', { name: '删除这项任务？' });
   await expect(dialog).toBeVisible();
   await dialog.getByRole('button', { name: '删除任务' }).click();
-  await expect(page.getByRole('heading', { name: '建立新任务' })).toBeVisible();
+  await expect(page.locator('.setup')).toHaveCount(0);
+  await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible();
 
   await page.getByRole('button', { name: '设置' }).click();
   await expect(page.getByRole('heading', { name: '设置' })).toBeVisible();
   await expect(page.getByText('删除任务前备份')).toBeVisible();
-  await page.getByRole('button', { name: '恢复' }).first().click();
+  await page.locator('.rollback-list li').filter({ hasText: '删除任务前备份' })
+    .getByRole('button', { name: '恢复', exact: true }).click();
   await page.getByRole('alertdialog', { name: '恢复这份备份？' }).getByRole('button', { name: '恢复备份' }).click();
   await page.getByRole('button', { name: '任务', exact: true }).click();
   await expect(page.getByRole('heading', { name: '我的第一座工坊' })).toBeVisible();

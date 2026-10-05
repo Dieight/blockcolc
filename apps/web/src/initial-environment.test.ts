@@ -1,8 +1,23 @@
 import { describe, expect, it } from 'vitest';
-import { initialEnvironmentPending, waitForInitialEnvironment } from './initial-environment';
+import { initialEnvironmentPending, waitForInitialEnvironment, prepareInitialEnvironmentAndModule } from './initial-environment';
+import { vi } from 'vitest';
 import type { WorldWeatherView } from './use-world-weather';
 
 describe('initial world environment preparation', () => {
+  it('loads the module during the same provider wait, not after it', async () => {
+    vi.useFakeTimers();
+    try {
+      let now=0,loaded=false;
+      const ports={pending:()=>now<600,current:()=>true,visible:()=>true,now:()=>now,
+        wait:(ms:number)=>new Promise<void>(resolve=>setTimeout(()=>{now+=ms;resolve();},ms))};
+      const preparing=prepareInitialEnvironmentAndModule(ports,async()=>{loaded=true;await new Promise(resolve=>setTimeout(resolve,400));return 'world-module';});
+      expect(loaded).toBe(true);
+      await vi.advanceTimersByTimeAsync(600);
+      const result=await preparing;
+      expect(result).toMatchObject({module:'world-module',result:'ready',totalMs:600,environmentMs:600});
+      expect(result.moduleMs).toBeLessThan(result.totalMs);
+    } finally {vi.useRealTimers();}
+  });
   it('waits for weather and astronomy independently, except when sync is disabled', () => {
     for (const syncState of ['not_synced', 'syncing', 'available', 'fallback'] as const) {
       for (const astronomySyncState of ['not_synced', 'syncing', 'calendar', 'ephemeris_only', 'unavailable'] as const) {

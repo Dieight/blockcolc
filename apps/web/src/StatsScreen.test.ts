@@ -67,7 +67,10 @@ describe('monument statistics disclosure', () => {
     expect(html).toContain('data-pixel-icon="cube"');
     expect(html).toContain('<span>纪念建筑</span><small>1 座已完成</small>');
     expect(html).toContain('展示可追溯投入；旧记录单列，不估算分配');
-    expect(html).toContain('另有 2 个完成轮次、1 条中断记录未分配或无法追溯（共 45 分钟），未计入宿主任务或小任务占比。');
+    expect(html).toContain('class="achievement monument-unallocated" role="note"');
+    expect(html).toContain('未分配的投入');
+    expect(html).toContain('2 个完成轮次、1 条中断记录 · 无法追溯，不估算分配');
+    expect(html).toContain('45 分钟');
     expect(html).toContain('<details>');
     expect(html).not.toContain(' open=');
   });

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useState } from 'react';
 import type { FocusPreferences } from './app-types';
 import { focusGlassMaterialFor } from './focus-glass';
 import { defaultFocusPreferences, loadFocusPreferences, saveFocusPreferences } from './focus-preferences';
@@ -14,6 +14,9 @@ export function useFocusPreferences() {
     saveFocusPreferences(window.localStorage, value);
     setPreferences(value);
   }, []);
+  useLayoutEffect(() => {
+    document.documentElement.dataset.font = preferences.fontStyle ?? 'pixel';
+  }, [preferences.fontStyle]);
 
   useEffect(() => {
     const media = window.matchMedia('(prefers-color-scheme: dark)');

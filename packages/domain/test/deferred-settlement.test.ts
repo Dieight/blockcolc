@@ -55,7 +55,8 @@ describe('minimal marathon deferred settlement', () => {
   });
   it.each([true, false])('migrates schema 10 with saved integrity=%s without inventing deferred semantics and rejects malformed flags', (enabled) => {
     const f=fixture(); f.run({type:'ConfigureFocusIntegrity',enabled,maxEffectiveExcursions:3});
-    const legacy={...structuredClone(f.state()),schemaVersion:10,
+    const {holidayRewards:_holidayRewards,...oldState}=structuredClone(f.state());
+    const legacy={...oldState,schemaVersion:10,
       focusIntegrityPolicy: { enabled, maxEffectiveExcursions: 3 }};
     expect(parseDomainState(legacy)).toEqual(f.state());
     f.start();

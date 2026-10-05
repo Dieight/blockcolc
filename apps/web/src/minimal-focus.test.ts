@@ -17,6 +17,10 @@ function fixture(kind: 'finite' | 'habit' = 'finite') {
 }
 
 describe('minimal focus preparation', () => {
+  it('does not add a grace round at an exact one-minute, zero-break boundary', () => {
+    expect(roundsForMinimalEndTime(now + 5 * 60_000, now, 1, 0)).toEqual({ rounds: 5, endsAtMs: now + 5 * 60_000 });
+    expect(roundsForMinimalEndTime(now + 5 * 60_000 + 1, now, 1, 0)).toEqual({ rounds: 6, endsAtMs: now + 6 * 60_000 });
+  });
   it('fills only a shortfall of at most 60 seconds to the next actual round end', () => {
     const base = Date.parse('2026-09-27T10:00:00.000Z');
     expect(roundsForMinimalEndTime(base + 9 * 60_000, base, 10, 5)).toEqual({ rounds: 1, endsAtMs: base + 10 * 60_000 });

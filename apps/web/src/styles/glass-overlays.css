@@ -2,8 +2,7 @@
    The immersive focus board keeps its own user-adjustable material tokens. */
 .world-hud span,
 .world-hud button,
-.toast,
-.construction-feedback {
+.toast {
   border-color: var(--world-glass-border);
   background: var(--world-glass-background);
   box-shadow: var(--world-glass-shadow);
@@ -13,8 +12,7 @@
 
 .world-hud span,
 .world-hud button,
-.toast,
-.construction-feedback {
+.toast {
   border-style: solid;
   border-width: 1px;
 }
@@ -23,7 +21,6 @@
   .world-hud span,
   .world-hud button,
   .toast,
-  .construction-feedback,
   .world-pick-chip,
   .immersive-reset-view,
   .focus-integrity-warning.flash,

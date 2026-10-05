@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { addLocalDays } from '@blockcolc/domain';
 import { allocationPercentageUnits, allocationWeight } from '../focus-allocation-field';
 import { focusHeatmapLevel, type FocusDateRange } from '../focus-stats';
@@ -38,13 +38,15 @@ function useChartReveal() {
 }
 
 /** F10 calendar layout; user-approved pixel-soft demo supplies fixed squares/bands. */
-export function FocusCalendarChart({ days, today, selection, onSelectionChange }: {
-  days:CalendarDay[]; today:string; selection:FocusDateRange; onSelectionChange:(range:FocusDateRange) => void;
+export function FocusCalendarChart({ days, today, selection, onSelectionChange, decoration }: {
+  days:CalendarDay[]; today:string; selection:FocusDateRange; onSelectionChange:(range:FocusDateRange) => void; decoration?:ReactNode;
 }) {
   const reveal = useChartReveal();
   const id = useId();
   const drag = useRef<{pointerId:number; anchor:string; before:FocusDateRange}|null>(null);
   const keyboardAnchor = useRef<string|null>(null);
+  const [highlight,setHighlight]=useState<number|null>(null);
+  const longest=days.filter(day=>!day.future&&day.minutes>0).reduce<CalendarDay|null>((best,day)=>!best||day.minutes>best.minutes?day:best,null);
   const first = days[0]?.date ?? today;
   const months = days.flatMap((day,index) => day.date.endsWith('-01') || index === 0 ? [{column:Math.floor(index / 7), label:`${Number(day.date.slice(5,7))}月`}] : [])
     .filter((month,index,list) => (list[index + 1]?.column ?? 26) - month.column >= 3);
@@ -67,6 +69,7 @@ export function FocusCalendarChart({ days, today, selection, onSelectionChange }
   const dateLabel = (value:string) => `${Number(value.slice(0,4))}年${Number(value.slice(5,7))}月${Number(value.slice(8,10))}日`;
   return <section className="focus-chart focus-heatmap-card" ref={reveal.ref} data-chart-template="F10" aria-labelledby="focus-heatmap-title">
     <h2 id="focus-heatmap-title" className="sr-only">过去 26 周的投入</h2>
+    {decoration}
     <svg className={`focus-calendar-chart${reveal.revision ? ' is-revealed' : ''}`} viewBox="0 0 350 145" role="grid"
       tabIndex={0} aria-label="专注日历：点击一天，按住拖动选择多天。方向键切换，Shift 加方向键扩选，Escape 回到今天。"
       aria-multiselectable="true" aria-activedescendant={`${id}-${selection.end}`}
@@ -74,6 +77,7 @@ export function FocusCalendarChart({ days, today, selection, onSelectionChange }
       onBlur={event => { delete event.currentTarget.dataset.selectionInput; }}
       onPointerDown={event => {
         if (event.button !== 0 || drag.current) return;
+        event.currentTarget.dataset.selectionInput='pointer';
         const date = hitDate(event.currentTarget,event.clientX,event.clientY);
         if (!date) return;
         event.preventDefault(); event.currentTarget.dataset.selectionInput='pointer'; event.currentTarget.focus({preventScroll:true});
@@ -117,16 +121,20 @@ export function FocusCalendarChart({ days, today, selection, onSelectionChange }
       {['一','二','三','四','五','六','日'].map((day,index) => <text key={day} x={18} y={33 + index * 15} textAnchor="end" className="chart-axis">{day}</text>)}
       {days.map((day,index) => {
         const selected = !day.future && day.date >= selection.start && day.date <= selection.end;
+        const level=day.future?0:focusHeatmapLevel(day.minutes);
         return <g key={day.date} id={`${id}-${day.date}`} role="gridcell" aria-selected={selected} aria-disabled={day.future}
           data-date={day.date} data-minutes={day.future ? undefined : day.minutes} data-future={day.future || undefined} data-level={day.future ? 0 : focusHeatmapLevel(day.minutes)}
+          data-highlight={highlight===null?undefined:level===highlight?'match':'dim'} data-longest={highlight===4&&day===longest||undefined}
           className="calendar-day">
           <title>{day.future ? `${dateLabel(day.date)} · 尚未到来` : `${dateLabel(day.date)} · ${formatFocusMinutes(Math.round(day.minutes))} · ${day.sessions} 次`}</title>
           <rect className="calendar-day-hit" x={x(index)-6} y={y(index)-7.5} width={12} height={15} fill="transparent"/>
           <rect className="calendar-pixel" x={x(index)-4} y={y(index)-4} width={8} height={8}/>
+          {highlight===4&&day===longest&&<path className="calendar-longest-mark" d={`M${x(index)-3} ${y(index)-8}h6l-3 -4z`} aria-hidden="true"/>}
         </g>;
       })}
     </svg>
-    <div className="calendar-legend" aria-label="热力图时长档位">{['0–3H','3–6H','6–9H','9–12H'].map((label,index) => <span key={label}><i data-level={index+1}/>{label}</span>)}</div>
+    <div className="calendar-legend" aria-label="热力图时长档位">{['0–3H','3–6H','6–9H','9–12H'].map((label,index) => <button type="button" key={label} aria-label={`高亮 ${label}`} aria-pressed={highlight===index+1} onClick={()=>setHighlight(previous=>previous===index+1?null:index+1)}><i data-level={index+1}/>{label}</button>)}</div>
+    {highlight===4&&longest&&<p className="calendar-longest-label" role="status">最长一天 · {dateLabel(longest.date)} · {formatFocusMinutes(Math.round(longest.minutes))}</p>}
     <p className="calendar-gesture-hint">按住拖动，可选多天</p>
   </section>;
 }

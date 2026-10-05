@@ -61,6 +61,31 @@ export interface BackupRepository {
   restoreRollback(backupId: string, expectedRevision: number): Promise<{ rollbackBackupId: string; revision: number }>;
 }
 
+export interface DailyBackupSummary {
+  id: string;
+  date: string;
+  createdAt: ISOInstant;
+  timeZone: string;
+  sourceRevision: number;
+  snapshotBytes: number;
+  summary: BackupImportPreview['summary'];
+}
+
+export interface DailyBackupCollection {
+  backups: DailyBackupSummary[];
+  storedBytes: number;
+  retentionDays: number;
+  maximumBytes: number;
+}
+
+/** Daily history is independent of the two atomic operation rollback points. */
+export interface DailyBackupRepository {
+  createDailyBackup(date: string): Promise<DailyBackupSummary | null>;
+  listDailyBackups(): Promise<DailyBackupCollection>;
+  exportDailyBackup(backupId: string): Promise<string>;
+  restoreDailyBackup(backupId: string, expectedRevision: number): Promise<{ rollbackBackupId: string; revision: number }>;
+}
+
 export type NotificationPermission = "granted" | "denied" | "prompt" | "unavailable";
 export type NotificationPrecision = "exact" | "inexact" | "unavailable";
 

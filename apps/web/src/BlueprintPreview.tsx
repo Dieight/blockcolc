@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef } from 'react';
 import type { BlueprintV1, VoxelRenderer, WorldSnapshot } from '@blockcolc/voxel';
 import type { ResourcePackRepository } from '@blockcolc/resource-pack-indexeddb';
-import { RotateCcw } from 'lucide-react';
+import { PixelReset as RotateCcw } from './ui/PixelIcon';
 import { loadVoxelModule, resourcePackAtlasMaximumSizeForTest } from './voxel-runtime';
 import { resolveSelectedResourcePack } from './resource-pack-selection';
 

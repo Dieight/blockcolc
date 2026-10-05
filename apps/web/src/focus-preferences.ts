@@ -1,4 +1,5 @@
 import type { FocusPreferences } from './app-types';
+import { normalizeWorldColor } from '@blockcolc/voxel/world-color-adjustment';
 
 export const FOCUS_PREFERENCES_KEY = 'blockcolc-focus-preferences-v1';
 
@@ -6,7 +7,8 @@ export function defaultFocusPreferences(): FocusPreferences {
   return {
     focusMinutes: 45, habitFocusMinutes: 45, habitTargetRounds: 10, breakMinutes: 5,
     lightingQuality: 'cinematic', constructionOutlineVisibility: 'current',
-    showWorldCoordinates: false, focusGlassTransparency: 100, themeMode: 'system',
+    worldColorAdjustment: normalizeWorldColor(null),
+    showWorldCoordinates: false, focusGlassTransparency: 100, themeMode: 'system', fontStyle: 'pixel',
     returnToFocusReminders: true,
     autoContinueFocus: false,
     realWeatherEnabled: false,
@@ -30,6 +32,7 @@ export function parseFocusPreferences(input: unknown): FocusPreferences {
   const focusMinutes = integer(value.focusMinutes, defaults.focusMinutes, 1, 180);
   return {
     focusMinutes,
+    worldColorAdjustment: normalizeWorldColor(value.worldColorAdjustment),
     habitFocusMinutes: integer(value.habitFocusMinutes, focusMinutes, 1, 180),
     habitTargetRounds: integer(value.habitTargetRounds, defaults.habitTargetRounds, 10, 30),
     breakMinutes: integer(value.breakMinutes, defaults.breakMinutes, 0, 60),
@@ -42,6 +45,7 @@ export function parseFocusPreferences(input: unknown): FocusPreferences {
     showWorldCoordinates: typeof value.showWorldCoordinates === 'boolean' ? value.showWorldCoordinates : true,
     focusGlassTransparency: integer(value.focusGlassTransparency, defaults.focusGlassTransparency, 0, 100),
     themeMode: value.themeMode === 'light' || value.themeMode === 'dark' ? value.themeMode : 'system',
+    fontStyle: value.fontStyle === 'system' ? 'system' : 'pixel',
     returnToFocusReminders: typeof value.returnToFocusReminders === 'boolean' ? value.returnToFocusReminders : defaults.returnToFocusReminders,
     autoContinueFocus: value.autoContinueFocus === true,
     realWeatherEnabled: value.realWeatherEnabled === true,

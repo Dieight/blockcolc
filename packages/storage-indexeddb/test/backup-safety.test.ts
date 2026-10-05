@@ -6,7 +6,7 @@ import {
   type DomainCommand,
   type DomainState,
 } from "@blockcolc/domain";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   BackupValidationError,
   IndexedDbStateRepository,
@@ -31,6 +31,61 @@ beforeEach(() => {
 });
 
 describe("backup safety", () => {
+  it('lists a lightweight rollback index and backfills a legacy index only once, without weakening restore validation',async()=>{
+    const label='summary-index',repository=createRepository(label);
+    await repository.save(projectState('Before'),0);
+    const source=createRepository('summary-source');await source.save(projectState('After'),0);
+    const saved=await repository.replaceFromImport(await source.exportBackup(),1);
+    const open=indexedDB.open(databaseName(label));
+    const db=await new Promise<IDBDatabase>((resolve,reject)=>{open.onsuccess=()=>resolve(open.result);open.onerror=()=>reject(open.error);});
+    const write=(stores:string[],operation:(tx:IDBTransaction)=>void)=>new Promise<void>((resolve,reject)=>{
+      const tx=db.transaction(stores,'readwrite');tx.oncomplete=()=>resolve();tx.onabort=()=>reject(tx.error);operation(tx);
+    });
+    const originalGet=IDBObjectStore.prototype.get,originalGetAll=IDBObjectStore.prototype.getAll;
+    const payloadReads:string[]=[];
+    const get=vi.spyOn(IDBObjectStore.prototype,'get').mockImplementation(function(this:IDBObjectStore,...args){
+      if(this.name==='rollbackBackups')payloadReads.push('get');return originalGet.apply(this,args);
+    });
+    const getAll=vi.spyOn(IDBObjectStore.prototype,'getAll').mockImplementation(function(this:IDBObjectStore,...args){
+      if(this.name==='rollbackBackups')payloadReads.push('getAll');return originalGetAll.apply(this,args);
+    });
+    try {
+      const indexed=await repository.listRollbackBackups();expect(indexed).toHaveLength(1);expect(payloadReads).toEqual([]);
+      await write(['metadata'],tx=>tx.objectStore('metadata').delete(`rollback-summary:${saved.rollbackBackupId}`));
+      expect(await repository.listRollbackBackups()).toEqual(indexed);expect(payloadReads).toEqual(['get']);
+      payloadReads.length=0;expect(await repository.listRollbackBackups()).toEqual(indexed);expect(payloadReads).toEqual([]);
+      await write(['rollbackBackups'],tx=>{
+        const store=tx.objectStore('rollbackBackups'),read=store.get(saved.rollbackBackupId);
+        read.onsuccess=()=>store.put({...read.result,state:{invalid:true}});
+      });
+      expect(await repository.listRollbackBackups()).toEqual(indexed);
+      await expect(repository.restoreRollback(saved.rollbackBackupId,saved.revision)).rejects.toThrow();
+      expect((await repository.load()).state?.projects[0]?.title).toBe('After');
+    } finally {get.mockRestore();getAll.mockRestore();db.close();}
+  });
+  it("exports, imports and rolls back a full 36-entry blueprint library", async () => {
+    let state = projectState("Library source");
+    for (let index = 0; index < 36; index++) {
+      const result = execute(state, { type: "ImportBuildingBlueprint", blueprint: {
+        schemaVersion: 1, id: `library-${index}`, title: `Building ${index}`,
+        bounds: { minX: 0, maxX: 0, minY: 0, maxY: 0, minZ: 0, maxZ: 0 },
+        voxels: [{ x: 0, y: 0, z: 0, materialId: "stone", stage: "foundation", buildOrder: 0 }],
+      } }, new TestClock());
+      if (!result.ok) throw new Error(result.message);
+      state = result.state;
+    }
+    const source = createRepository("library-source");
+    await source.save(state, 0);
+    const backup = await source.exportBackup();
+    const destination = createRepository("library-destination");
+    await destination.save(projectState("Before library import"), 0);
+    const before = await destination.load();
+    await destination.previewImport(backup);
+    const imported = await destination.replaceFromImport(backup, before.revision);
+    expect((await destination.load()).state).toEqual(state);
+    await destination.restoreRollback(imported.rollbackBackupId, imported.revision);
+    expect((await destination.load()).state).toEqual(before.state);
+  });
   it("rejects a backup beyond 100 MiB before replacement without altering data or rollbacks", async () => {
     const repository = createRepository("oversized");
     await repository.save(projectState("Keep existing data"), 0);
@@ -73,6 +128,7 @@ describe("backup safety", () => {
     await source.save(initial, 0);
     const old = JSON.parse(await source.exportBackup());
     old.payload.schemaVersion = 11;
+    delete old.payload.holidayRewards;
     delete old.payload.focusIntegrityPolicy.excursionThresholdSeconds;
     const { checksum: _checksum, ...unsigned } = old;
     old.checksum = await sha256(unsigned);
@@ -96,7 +152,7 @@ describe("backup safety", () => {
     const destination = createRepository("minimal-destination");
     await destination.replaceFromImport(await source.exportBackup(), 0);
     const restored = await destination.load();
-    expect(restored.state?.schemaVersion).toBe(12);
+    expect(restored.state?.schemaVersion).toBe(13);
     expect(restored.state?.activeFocusSession).toEqual(started.state.activeFocusSession);
     clock.advance(60_000);
     const completed = execute(restored.state!, {type:"CompleteFocus"}, clock);
@@ -153,6 +209,7 @@ describe("backup safety", () => {
     await source.save(state, 0);
     const legacyEnvelope = JSON.parse(await source.exportBackup()) as any;
     legacyEnvelope.payload.schemaVersion = 10;
+    delete legacyEnvelope.payload.holidayRewards;
     delete legacyEnvelope.payload.focusIntegrityPolicy.excursionThresholdSeconds;
     legacyEnvelope.payload.todayNextSteps = {
       date: "2026-07-23",
@@ -207,6 +264,7 @@ describe("backup safety", () => {
     await source.save(projectState("Old v1"), 0);
     const oldEnvelope = JSON.parse(await source.exportBackup()) as any;
     oldEnvelope.payload.schemaVersion = 1;
+    delete oldEnvelope.payload.holidayRewards;
     delete oldEnvelope.payload.focusIntegrityPolicy;
     delete oldEnvelope.payload.decorationBlueprintResources;
     delete oldEnvelope.payload.decorationRewards;
@@ -223,12 +281,12 @@ describe("backup safety", () => {
     const destination = createRepository("old-v1-destination");
     await expect(destination.previewImport(JSON.stringify(oldEnvelope))).resolves.toMatchObject({ schemaVersion: 1 });
     await destination.replaceFromImport(JSON.stringify(oldEnvelope), 0);
-    expect((await destination.load()).state?.schemaVersion).toBe(12);
+    expect((await destination.load()).state?.schemaVersion).toBe(13);
     expect((await destination.load()).state?.focusIntegrityPolicy).toEqual({ enabled: true, maxEffectiveExcursions: 3, excursionThresholdSeconds: 3 });
     expect((await destination.load()).state?.projects[0]!.importedBlueprint).toBeNull();
     const normalized = JSON.parse(await destination.exportBackup()) as any;
     expect(normalized.schemaVersion).toBe(1);
-    expect(normalized.payload.schemaVersion).toBe(12);
+    expect(normalized.payload.schemaVersion).toBe(13);
     expect(normalized.payload.worldSettings).toEqual({ worldSeed: "legacy-project-1", terrainGenerationVersion: 4, environmentStyle: "natural-valley" });
     expect(normalized.payload.projects[0]).toHaveProperty("importedBlueprint", null);
   });

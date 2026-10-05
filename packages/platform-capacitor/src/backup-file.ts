@@ -15,7 +15,7 @@ export async function saveNativeBackupFile(fileName: string, contents: string): 
   const available = await Share.canShare();
   if (!available.value) throw new Error('This device cannot share a local backup file');
   await Share.share({
-    title: '导出番茄钟存档',
+    title: '导出方块钟备份',
     files: [written.uri],
   });
   return true;

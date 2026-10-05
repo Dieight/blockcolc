@@ -69,7 +69,7 @@
 .glass-transparency-setting[open] .glass-transparency-value svg{transform:rotate(180deg)}
 @media(prefers-reduced-motion:reduce){.glass-transparency-value svg{transition:none}}
 .glass-transparency-expanded{padding:0 16px 10px}
-.glass-transparency-control{min-height:44px;display:grid;grid-template-columns:minmax(0,1fr) 42px;align-items:center;gap:10px;color:var(--ink);font-size:0.8125rem;font-weight:600;font-variant-numeric:tabular-nums}
+.glass-transparency-control{min-height:44px;display:grid;grid-template-columns:minmax(0,1fr);align-items:center;color:var(--ink);font-size:0.8125rem;font-weight:600;font-variant-numeric:tabular-nums}
 .glass-transparency-control input[type="range"]{--range-track:#cbd5cd;--range-progress:50%;width:100%;height:44px;margin:0;padding:0;border:0;border-radius:0;background:transparent;color:var(--focus);cursor:pointer;-webkit-appearance:none;appearance:none;outline:none;box-shadow:none;-webkit-tap-highlight-color:transparent;-webkit-user-select:none;user-select:none;touch-action:pan-y}
 .glass-transparency-control input[type="range"]::-webkit-slider-runnable-track{height:4px;border:0;border-radius:999px;background:linear-gradient(to right,var(--focus) 0 var(--range-progress),var(--range-track) var(--range-progress) 100%);box-shadow:none}
 .glass-transparency-control input[type="range"]::-webkit-slider-thumb{width:20px;height:20px;margin-top:-8px;border:2px solid #fff;border-radius:50%;background:var(--focus);box-shadow:0 1px 4px rgba(23,33,28,.28);-webkit-appearance:none;appearance:none}
@@ -80,15 +80,18 @@
 .glass-transparency-control input[type="range"]:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 3px rgba(194,88,68,.36),0 1px 4px rgba(23,33,28,.28)}
 .glass-transparency-control input[type="range"]:focus-visible::-moz-range-thumb{box-shadow:0 0 0 3px rgba(194,88,68,.36),0 1px 4px rgba(23,33,28,.28)}
 .glass-transparency-control span{text-align:right}
-/* DF-UI-01: seven equal rounded-rectangle cells on one row; cells keep a real
- * 44px hit area. The row spans the card content width in full: on 360px the
- * card padding is compensated by a small negative inline margin so all seven
- * 44px cells fit on one visible line — no horizontal scrolling in the
- * acceptance viewports. */
-.planned-days{flex:1 1 auto;display:flex;gap:0;min-width:0}
-.planned-days button{flex:1 1 0;min-width:44px;min-height:44px;padding:0;border:0;border-radius:10px;background:transparent;color:#58635d;font-weight:600;white-space:nowrap}
-.planned-days button[aria-pressed="true"]{background:#e2efe5;color:#276749;font-weight:800}
-.planned-days button:disabled{color:#bcc5bf}
+/* Marks stay small; the seven non-overlapping touch areas remain 44px wide. */
+.planned-days-setting{flex-wrap:wrap;gap:8px}
+.planned-days-setting>.setting-name{width:100%}
+.planned-days{flex:1 1 100%;display:flex;gap:0;min-width:0}
+.planned-days button{flex:1 1 0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px;min-width:44px;min-height:50px;padding:5px 0;border:0;border-radius:3px;background:transparent;color:var(--muted);font-weight:500;white-space:nowrap}
+.planned-days button i{width:5px;height:5px;background:var(--line)}
+.planned-days button[aria-pressed="true"]{color:var(--focus);font-weight:750}
+.planned-days button[aria-pressed="true"] i{background:currentColor;box-shadow:-4px 0 0 currentColor,4px 0 0 currentColor}
+.planned-days button:disabled{opacity:1;cursor:default}
+.planned-days-setting[aria-busy="true"] .planned-days button{opacity:.55}
+.planned-days button:focus-visible{outline:2px solid var(--focus);outline-offset:-2px}
+.planned-days-error{width:100%;color:var(--danger)}
 @media(max-width:420px){
   .planned-days{margin-inline:-14px}
 }
@@ -134,3 +137,39 @@
 @media(prefers-reduced-transparency:reduce){
   .settings-list,.building-blueprint-panel,.resource-pack-panel,.backup-panel{background:var(--surface);backdrop-filter:none;-webkit-backdrop-filter:none;box-shadow:none}
 }
+.world-color-controls{padding:0 16px 14px;display:grid;grid-template-columns:minmax(0,1fr);gap:12px;container-type:inline-size;container-name:world-color}
+.world-color-setting>summary{cursor:pointer;list-style:none}
+.world-color-setting>summary::-webkit-details-marker{display:none}
+.world-color-setting[open]>summary>svg{transform:rotate(180deg)}
+.world-color-controls .world-color-control{display:grid;grid-template-columns:minmax(0,1fr) 6em;gap:0 8px;align-items:center;font-size:.9rem;min-width:0}
+.world-color-control>span{grid-column:1;grid-row:1}
+.world-color-control>output{grid-column:2;grid-row:1}
+.world-color-control>.physical-slider{grid-column:1/-1;grid-row:2}
+/* Large text and narrow rows keep the label/value above a full-width rail.
+ * em tracks the text size; a fixed viewport breakpoint cannot do that. */
+@container world-color (min-width:17em){
+  .world-color-controls .world-color-control{grid-template-columns:4.5em minmax(0,1fr) 6em;gap:8px}
+  .world-color-control>.physical-slider{grid-column:2;grid-row:1}
+  .world-color-control>output{grid-column:3;grid-row:1}
+}
+.settings-list>.world-color-setting{border-top:1px solid var(--settings-separator)}
+.settings-list>.world-color-setting>summary{padding:8px 16px}
+.settings-list>.world-color-setting+.setting-row{border-top:1px solid var(--settings-separator)}
+.glass-transparency-control>.physical-slider{flex:1;min-width:0}
+.world-color-controls,.glass-transparency-expanded,.world-color-setting[open]{overflow:visible}
+.world-color-controls output{text-align:right;color:#111;background:transparent;border:0;padding:0;box-shadow:none;font-variant-numeric:tabular-nums;white-space:nowrap}
+:root[data-theme="dark"] .world-color-controls output{color:#fff}
+.world-color-controls input{padding:0;border:0;accent-color:var(--focus);min-height:44px;cursor:ew-resize}
+.world-color-controls button{justify-self:end;display:flex;align-items:center;gap:6px;min-height:44px}
+.background-health details summary{font-size:.8rem;cursor:pointer;min-height:44px;display:flex;align-items:center}
+.background-health details p{font-size:.8rem;line-height:1.5;max-width:30em;margin:0}
+.daily-backup-history{border-top:1px solid var(--line);margin-top:16px;padding-top:8px}
+.daily-backup-history summary{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:8px;min-height:44px;cursor:pointer}
+.daily-backup-history summary span,.daily-backup-history p,.daily-backup-history li span{font-size:.8rem;color:var(--muted)}
+.daily-backup-history ul{padding:0;margin:8px 0;list-style:none}
+.daily-backup-history li{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 0;border-top:1px solid var(--line)}
+.daily-backup-history li>div:first-child{display:grid;gap:4px;min-width:0}
+.daily-backup-actions{display:flex;flex-shrink:0;gap:4px}
+.daily-backup-actions button{min-height:44px;padding-inline:6px}
+@media(max-width:420px){.daily-backup-history li{flex-wrap:wrap}.daily-backup-actions{margin-left:auto}}
+.daily-backup-actions button{min-height:44px;display:inline-flex;align-items:center;justify-content:center;padding:0 13px;border:1px solid var(--control-border);background:var(--surface-subtle);color:var(--focus);font-weight:700;box-shadow:none}

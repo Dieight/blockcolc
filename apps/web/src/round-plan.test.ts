@@ -91,7 +91,7 @@ describe('round-plan recovery', () => {
     expect(parseRoundPlan({ ...basePlan, cancellationReason: null }, projectId)?.cancellationReason).toBeNull();
     expect(parseRoundPlan({ ...basePlan, cancellationReason: 'invented' }, projectId)).toBeNull();
     expect(parseRoundPlan({ ...basePlan, cancellationRequested: true, cancellationReason: 'other', cancellationNote: '结束安排' }, projectId)).toMatchObject({ cancellationRequested: true, cancellationNote: '结束安排' });
-    expect(parseRoundPlan({ ...basePlan, cancellationRequested: true, cancellationReason: 'other' }, projectId)).toBeNull();
+    expect(parseRoundPlan({ ...basePlan, cancellationRequested: true, cancellationReason: 'other' }, projectId)).toMatchObject({cancellationRequested:true,cancellationReason:'other'});
     expect(parseRoundPlan({ ...basePlan, cancellationNote: ' '.repeat(3) }, projectId)).toBeNull();
   });
   it('accepts legacy persisted plans and initializes their recovery evidence', () => {
@@ -140,7 +140,9 @@ describe('round-plan recovery', () => {
       plannedDurationMs: 2_700_000, timeZoneAtStart: 'Asia/Shanghai',
       interruptedAt: '2026-08-05T08:20:00.000Z', interruptionReason: 'user-cancelled', interruptionCategory: null, actualDurationMs: 1_200_000,
     }] as DomainState['focusHistory'];
-    expect(reconcileRoundPlan(basePlan, state({ focusHistory }), projectId)).toBeNull();
+    const paused=reconcileRoundPlan(basePlan, state({ focusHistory }), projectId);
+    expect(paused).toMatchObject({status:'ready',completedRounds:0,currentSessionId:undefined});
+    expect(paused?.automaticContinuation).toBeUndefined();
     const breakPlan = { ...basePlan, status: 'break' as const, completedRounds: 1, breakEndsAt: '2026-08-05T08:50:00.000Z' };
     expect(reconcileRoundPlan(breakPlan, state({}), projectId, Date.parse('2026-08-05T08:51:00.000Z'))).toMatchObject({ status: 'ready', completedRounds: 1 });
   });

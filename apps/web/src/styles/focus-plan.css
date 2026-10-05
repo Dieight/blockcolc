@@ -17,15 +17,11 @@
 .focus-plan-sheet .round-picker button[aria-pressed="true"] strong{color:var(--focus)}
 .plan-round-pixels{display:flex;justify-content:center;gap:3px;min-height:5px}
 .plan-round-pixels i{width:5px;height:5px;background:currentColor}
-.focus-plan-sheet .marathon-end-picker{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:center;gap:8px;padding:8px 0}
-.focus-plan-sheet .time-stepper{min-width:0;display:grid;grid-template-columns:44px minmax(28px,1fr) 44px;align-items:center;gap:5px}
-.focus-plan-sheet .time-stepper>span{grid-column:1/-1;color:var(--muted);font-size:12px;line-height:1.5}
-.focus-plan-sheet .time-stepper strong{min-width:0;width:100%;padding:6px 0;border:0;border-radius:0;background:transparent;color:var(--ink);font-size:30px;line-height:1.4;font-weight:650}
-.focus-plan-sheet .time-stepper button{width:44px;min-height:44px;display:grid;place-items:center;border:0;border-radius:4px;background:var(--surface-active);color:var(--focus)}
-.focus-plan-sheet .time-stepper button .pixel-icon{width:18px;height:18px}
-.focus-plan-sheet .time-colon{align-self:start;margin:32px 0 0;color:var(--muted);font-size:24px;line-height:1.5}
+.focus-plan-sheet .plan-end-time{padding:12px 0 4px;color:var(--ink)}
+.focus-plan-sheet .plan-end-time .minimal-clock-gesture{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:112px;padding:12px 8px;touch-action:none;color:var(--ink);text-align:center}
+.focus-plan-sheet .plan-end-time .timer-value{font-size:52px;font-variant-numeric:tabular-nums;letter-spacing:-.04em;line-height:1.25}
+.focus-plan-sheet .plan-end-time .minimal-clock-selection{position:static;left:auto;transform:none;display:block;margin-top:8px;color:var(--muted);font-size:12px}
 .focus-plan-sheet .plan-sheet-note{margin:16px 0;font-size:12px;line-height:1.6;color:var(--muted)}
 .focus-plan-sheet .plan-sheet-error{color:var(--danger)}
 .focus-plan-sheet .plan-confirm{display:flex;align-items:center;justify-content:center;gap:8px;border-radius:5px;font-size:15px}
 .focus-plan-sheet .plan-confirm .pixel-icon{width:18px;height:18px}
-@media(max-width:380px){.focus-plan-sheet .time-stepper{grid-template-columns:1fr 1fr}.focus-plan-sheet .time-stepper strong{grid-column:1/-1;grid-row:2}.focus-plan-sheet .time-stepper button{grid-row:3;width:100%}}

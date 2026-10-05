@@ -3,10 +3,17 @@ import type { DomainState, FocusInterruptionCategory } from '@blockcolc/domain';
 import type { FocusPreferences } from './app-types';
 import { marathonEndInstant } from './marathon-end-time';
 import { unsettledMarathonSessions } from './marathon-settlement';
-import { createAutomaticContinuationSchedule, newAutomaticContinuationAuthorizationId, planRoundsForDuration, reconcileRoundPlan, type RoundPlan } from './round-plan';
+import { createAutomaticContinuationSchedule, newAutomaticContinuationAuthorizationId, planRoundsForDuration, reconcileRoundPlan, isUnstartedMarathonPlan, type RoundPlan } from './round-plan';
 import { markFocusPerformance } from './focus-performance';
 
 interface FocusDispatchOptions { deferRefresh?: boolean }
+
+export interface FocusPlanDraft {
+  rounds: number;
+  mode: 'rounds' | 'marathon';
+  endAt: string;
+  selectedId: string | null;
+}
 
 export interface FocusFlowPorts {
   snapshot: () => DomainState;
@@ -16,7 +23,11 @@ export interface FocusFlowPorts {
   readPlan: () => RoundPlan | null;
   writePlan: (plan: RoundPlan | null) => void;
   preferences: () => FocusPreferences;
-  draft: () => { rounds: number; mode: 'rounds' | 'marathon'; endAt: string; selectedId: string | null };
+  /** Last confirmed choices, also used when starting without a persisted plan. */
+  draft: () => FocusPlanDraft;
+  /** Editing never changes the choices used by the timer or start action. */
+  planDraft?: () => FocusPlanDraft;
+  commitDraft?: (draft: FocusPlanDraft) => void;
   nowMs: () => number;
   closeEnding: () => void;
   closePlan: () => void;
@@ -72,19 +83,25 @@ export function createFocusFlow(ports: FocusFlowPorts) {
       ports.closeEnding();
       return true;
     }
+    if(isUnstartedMarathonPlan(plan,Boolean(ports.snapshot().activeFocusSession))
+      &&unsettledMarathonSessions(ports.snapshot(),plan.projectId).length===0){
+      ports.writePlan(null);ports.resetDraftMode();ports.closePlan();ports.closeEnding();return true;
+    }
     const cancellationReason = plan.cancellationRequested && reason === null ? plan.cancellationReason ?? null : reason;
     const cancellationNote = plan.cancellationRequested && !note.trim() ? plan.cancellationNote : note.trim();
-    if (!cancellationNote || cancellationNote.length > 200) return false;
+    if ((cancellationNote?.length ?? 0) > 200) return false;
     if (!plan.cancellationRequested) {
       const { automaticContinuation: _automaticContinuation, ...withoutAuthorization } = plan;
-      plan = { ...withoutAuthorization, cancellationRequested: true, cancellationReason, cancellationNote };
+      plan = { ...withoutAuthorization, cancellationRequested: true, cancellationReason,
+        ...(cancellationNote ? { cancellationNote } : {}) };
       ports.writePlan(plan);
     }
     const current = ports.snapshot().activeFocusSession;
     if (current) {
       if (Date.parse(current.endsAt) <= ports.nowMs()) await ports.resume();
       else {
-        const interrupted = await ports.dispatch({ type: 'CancelFocus', interruptionCategory: cancellationReason, interruptionNote: cancellationNote });
+        const interrupted = await ports.dispatch({ type: 'CancelFocus', interruptionCategory: cancellationReason,
+          ...(cancellationNote ? { interruptionNote: cancellationNote } : {}) });
         if (!interrupted.ok) return false;
       }
     }
@@ -134,9 +151,16 @@ export function createFocusFlow(ports: FocusFlowPorts) {
       try { return await cancelPlan(reason, note); } finally { busy = false; }
     },
     confirmPlan: () => submit(async () => {
-      const { active, plan, draft, preferences, nowMs } = context();
+      const { active, plan, draft: confirmedDraft, preferences, nowMs } = context();
       if (plan) { await cancelPlan(); return; }
       if (!active) return;
+      const draft = { ...(ports.planDraft?.() ?? confirmedDraft) };
+      if (active.kind !== 'habit') {
+        const selected = active.subtasks.find(item => item.id === draft.selectedId && item.progressBasisPoints < 10000)
+          ?? active.subtasks.find(item => item.progressBasisPoints < 10000);
+        if (!selected) return;
+        draft.selectedId = selected.id;
+      }
       if (draft.mode === 'marathon') {
         const endMs = marathonEndInstant(draft.endAt, nowMs);
         const schedule = endMs === null ? null : planRoundsForDuration(endMs - nowMs, preferences.focusMinutes, preferences.breakMinutes);
@@ -145,6 +169,7 @@ export function createFocusFlow(ports: FocusFlowPorts) {
         if (active.kind !== 'habit' && subtaskId === null) return;
         ports.writePlan({ projectId: active.id, subtaskId, totalRounds: schedule.rounds, completedRounds: 0, status: 'ready', reportedSessionIds: [], mode: 'marathon', endAt: new Date(endMs!).toISOString() });
       }
+      ports.commitDraft?.(draft);
       ports.closePlan();
     }),
     startFocus: (total?: number) => submit(async () => {
@@ -191,57 +216,59 @@ export function createFocusFlow(ports: FocusFlowPorts) {
       }
       const automaticPlanChanged = JSON.stringify(previousPlan?.automaticContinuation ?? null)
         !== JSON.stringify(next.automaticContinuation ?? null);
-      if (automaticPlanChanged) {
+      if (automaticPlanChanged || !plan) {
         // The plan context is not atomic with domain focus. Persist a ready
         // write-ahead copy when this call is creating the first plan; if the
         // process dies after StartFocus, authoritative active focus reconciles it.
-        const writeAhead = plan ? next : { ...next, status: 'ready' as const, currentSessionId: undefined };
+        const writeAhead = { ...next, status: 'ready' as const, currentSessionId: undefined };
         ports.writePlan(writeAhead);
       }
       markFocusPerformance('command-queued');
       const result = await ports.dispatch({ type: 'StartFocus', subtaskId: next.subtaskId, plannedDurationMs: focusDurationMs,
         ...(deferred ? { deferredSettlement: true } : {}), ...(marathonRound ? { projectId: host.id, marathon: true } : {}) }, { deferRefresh: true });
       if (!result.ok) {
-        if (automaticPlanChanged && !ports.snapshot().activeFocusSession) ports.writePlan(previousPlan);
+        if ((automaticPlanChanged || !plan) && !ports.snapshot().activeFocusSession) ports.writePlan(previousPlan);
         return;
       }
       markFocusPerformance('command-committed');
       const { breakStartedAt: _breakStartedAt, breakEndsAt: _breakEndsAt, ...withoutBreak } = next;
       const started = result.events.find(event => event.type === 'FocusStarted');
-      ports.writePlan({ ...withoutBreak, status: 'focus', currentSessionId: started?.sessionId });
+      ports.writePlan({ ...withoutBreak, status: 'focus', hasStarted: true, currentSessionId: started?.sessionId });
       ports.refresh?.();
     }),
     interruptFocus: (interruptionCategory: FocusInterruptionCategory | null) => submit(async () => {
       const { plan } = context();
       const current = ports.snapshot().activeFocusSession;
       if (current && Date.parse(current.endsAt) <= ports.nowMs()) { ports.closeEnding(); await ports.resume(); return; }
-      const result = await ports.dispatch({ type: 'CancelFocus', interruptionCategory });
-      if (!result.ok) return;
-      if (plan?.mode === 'marathon') {
+      // Remove authorization BEFORE the domain commit notifies the coordinator.
+      // Otherwise a zero-break early end can launch another round in that gap.
+      const paused = plan ? { ...plan, automaticContinuation: undefined } : null;
+      if (paused) ports.writePlan(paused);
+      const result = await ports.dispatch({ type: 'CancelFocus', interruptionCategory }, { deferRefresh: true });
+      if (!result.ok) { if (paused) ports.writePlan(plan); return; }
+      if (plan && (plan.totalRounds > 1 || plan.mode === 'marathon')) {
         const { breakStartedAt: _breakStartedAt, breakEndsAt: _breakEndsAt, endAfterBreak: _endAfterBreak,
           automaticContinuation: _automaticContinuation, ...withoutAuthorization } = plan;
-        ports.writePlan({ ...withoutAuthorization, status: 'ready', currentSessionId: undefined });
+        ports.writePlan({ ...withoutAuthorization, status: 'ready', hasStarted: true, currentSessionId: undefined });
       } else ports.writePlan(null);
+      ports.refresh?.();
       ports.closeEnding();
     }),
     completeEarly: () => submit(async () => {
       const { plan, active } = context();
       const current = ports.snapshot().activeFocusSession;
       if (current && Date.parse(current.endsAt) <= ports.nowMs()) { ports.closeEnding(); await ports.resume(); return; }
-      const result = await ports.dispatch({ type: 'CompleteFocusEarly' });
-      if (!result.ok) return;
+      const paused = plan ? { ...plan, automaticContinuation: undefined } : null;
+      if (paused) ports.writePlan(paused);
+      const result = await ports.dispatch({ type: 'CompleteFocusEarly' }, { deferRefresh: true });
+      if (!result.ok) { if (paused) ports.writePlan(plan); return; }
       ports.closeEnding();
       const sealed = result.events.some(event => event.type === 'ProjectSealedAsMonument' || event.type === 'HabitBuildingCompleted');
       const isHabit = plan?.mode === 'marathon'
         ? plan.deferredSettlement !== true && result.state.projects.find(project => project.id === plan.projectId)?.kind === 'habit'
         : active?.kind === 'habit';
       const sessionId = result.events.find(event => event.type === 'FocusCompletedEarly')?.sessionId;
-      const breakMinutes = ports.preferences().breakMinutes;
       const reportedSessionIds = plan && sessionId && !plan.reportedSessionIds.includes(sessionId) ? [...plan.reportedSessionIds, sessionId] : plan?.reportedSessionIds ?? [];
-      const completedSession = sessionId ? result.state.focusHistory.find(session => session.id === sessionId) : undefined;
-      const completedAt = completedSession?.status === 'completed-early' ? completedSession.completedAt
-        : completedSession?.status === 'completed' ? completedSession.endsAt : undefined;
-      const breakStartMs = completedAt ? Date.parse(completedAt) : ports.nowMs();
       if (plan?.mode === 'marathon') {
         const completedRounds = plan.completedRounds + 1;
         const next = { ...plan, completedRounds, currentSessionId: undefined, reportedSessionIds };
@@ -251,19 +278,15 @@ export function createFocusFlow(ports: FocusFlowPorts) {
           ports.writePlan({ ...withoutAuthorization, status: 'report' });
         }
         else {
-          const interval = breakIntervalFrom(breakStartMs, plan, breakMinutes);
-          const durationMs = Date.parse(interval.breakEndsAt) - breakStartMs;
-          if (durationMs === 0) ports.writePlan({ ...next, status: 'ready',
-            automaticContinuation: undefined });
-          else ports.writePlan({ ...next, status: 'break', ...interval,
-            automaticContinuation: undefined });
+          ports.writePlan({ ...next, status: 'ready', breakStartedAt: undefined,
+            breakEndsAt: undefined, automaticContinuation: undefined });
         }
-        return;
+        ports.refresh?.(); return;
       }
-      if (sealed || !plan || plan.totalRounds === 1 || breakMinutes === 0) { ports.writePlan(null); return; }
-      const interval = breakIntervalFrom(breakStartMs, plan, breakMinutes);
-      const { automaticContinuation: _automaticContinuation, ...withoutAuthorization } = plan;
-      ports.writePlan({ ...withoutAuthorization, completedRounds: plan.completedRounds + 1, status: 'break', endAfterBreak: true, ...interval, currentSessionId: undefined, reportedSessionIds });
+      if (!isHabit || sealed || !plan || plan.completedRounds + 1 >= plan.totalRounds) ports.writePlan(null);
+      else ports.writePlan({ ...paused!, completedRounds: plan.completedRounds + 1, status: 'ready',
+        breakStartedAt: undefined, breakEndsAt: undefined, currentSessionId: undefined, reportedSessionIds });
+      ports.refresh?.();
     }),
     /** The report UI supplies its pre-submit plan, preventing a recovered round from being counted twice. */
     afterReport: (plan: RoundPlan | null, sessionId: string) => {

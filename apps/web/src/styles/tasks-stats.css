@@ -281,3 +281,16 @@
   .monument-metrics>div:last-child{grid-column:1/-1}
   .monument-list details>summary{align-items:flex-start}
 }
+.calendar-legend button{display:inline-flex;align-items:center;gap:4px;min-height:44px;border:0;padding:0 4px;background:transparent;color:var(--chart-muted);font-size:11px;-webkit-tap-highlight-color:transparent}
+.calendar-legend button[aria-pressed='true']{color:var(--focus);font-weight:700}
+.calendar-legend button i{width:8px;height:8px;display:block}
+.calendar-day[data-highlight='dim'] .calendar-pixel{opacity:.16}
+.calendar-day[data-highlight='match'] .calendar-pixel{opacity:1;filter:brightness(1.13)}
+.calendar-longest-mark{fill:var(--focus);pointer-events:none}
+.calendar-longest-label{font-size:11px;color:var(--chart-muted);margin:0 0 4px}
+.focus-calendar-chart:focus:not([data-selection-input='keyboard']),.focus-heatmap-card:focus-within:not(:has(:focus-visible)){outline:none;box-shadow:none}
+.monument-list{gap:0}
+.monument-list details,.monument-unknown,.monument-unallocated{border:0;border-top:1px solid var(--line);background:transparent;box-shadow:none;padding:0;border-radius:0}
+.monument-list details>summary{min-height:64px;padding:12px 0;display:grid;grid-template-columns:24px minmax(0,1fr) auto;gap:10px}
+.monument-list details>summary>svg{color:var(--focus)}
+.monument-unknown,.monument-unallocated{padding:12px 0}

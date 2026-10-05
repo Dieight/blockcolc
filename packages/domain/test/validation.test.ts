@@ -54,7 +54,7 @@ describe("parseDomainState", () => {
     const second = execute(first.state, { type: "CreateProject", projectId: "p2", title: "Second", blueprintId: "tower", subtasks: [{ id: "b", title: "B" }] }, clock);
     if (!second.ok) throw new Error(second.message);
 
-    expect(second.state.schemaVersion).toBe(12);
+    expect(second.state.schemaVersion).toBe(13);
     expect(second.state.projects.map((project) => project.status)).toEqual(["paused", "active"]);
     expect(parseDomainState(second.state)).toEqual(second.state);
   });
@@ -63,7 +63,7 @@ describe("parseDomainState", () => {
     const raw = asLegacyV1(validState());
     delete raw.projects[0].importedBlueprint;
     const parsed = parseDomainState(raw);
-    expect(parsed.schemaVersion).toBe(12);
+    expect(parsed.schemaVersion).toBe(13);
     expect(parsed.worldSettings).toEqual({ worldSeed: "legacy-p1", terrainGenerationVersion: 4, environmentStyle: "natural-valley" });
     expect(parsed.projects[0]).toMatchObject({ kind: "finite", habit: null });
     expect(parsed.habitBuildings).toEqual([]);
@@ -90,10 +90,11 @@ describe("parseDomainState", () => {
   it("migrates a v5 backup without changing project facts", () => {
     const raw: any = structuredClone(validState());
     raw.schemaVersion = 5;
+    delete raw.holidayRewards;
     delete raw.focusIntegrityPolicy.excursionThresholdSeconds;
     delete raw.worldSettings;
     const parsed = parseDomainState(raw);
-    expect(parsed.schemaVersion).toBe(12);
+    expect(parsed.schemaVersion).toBe(13);
     expect(parsed.projects).toEqual(raw.projects);
     expect(parsed.worldSettings).toEqual({ worldSeed: "legacy-p1", terrainGenerationVersion: 4, environmentStyle: "natural-valley" });
   });
@@ -101,6 +102,7 @@ describe("parseDomainState", () => {
   it("migrates v6 terrain and building resource names to schema v12", () => {
     const raw: any = structuredClone(validState());
     raw.schemaVersion = 6;
+    delete raw.holidayRewards;
     delete raw.focusIntegrityPolicy.excursionThresholdSeconds;
     raw.worldSettings.terrainGenerationVersion = 2;
     raw.buildingBlueprintResources = [{
@@ -113,7 +115,7 @@ describe("parseDomainState", () => {
       importedAt: "2026-07-20T09:00:00.000Z",
     }];
     const parsed = parseDomainState(raw);
-    expect(parsed.schemaVersion).toBe(12);
+    expect(parsed.schemaVersion).toBe(13);
     expect(parsed.worldSettings.terrainGenerationVersion).toBe(4);
     expect(parsed.buildingBlueprintResources[0]).toMatchObject({ displayName: "Legacy library house" });
   });
@@ -121,15 +123,17 @@ describe("parseDomainState", () => {
   it("migrates schema v9 without inventing withdrawn feature state", () => {
     const raw: any = structuredClone(validState());
     raw.schemaVersion = 9;
+    delete raw.holidayRewards;
     delete raw.focusIntegrityPolicy.excursionThresholdSeconds;
     const parsed = parseDomainState(raw);
-    expect(parsed.schemaVersion).toBe(12);
+    expect(parsed.schemaVersion).toBe(13);
     expect(parsed).not.toHaveProperty("todayNextSteps");
   });
 
   it("drops the withdrawn schema-v10 today-next-steps field without weakening unknown-field validation", () => {
     const raw: any = structuredClone(validState());
     raw.schemaVersion = 10;
+    delete raw.holidayRewards;
     delete raw.focusIntegrityPolicy.excursionThresholdSeconds;
     raw.todayNextSteps = {
       date: "2026-07-20",
@@ -145,6 +149,7 @@ describe("parseDomainState", () => {
   it("migrates a schema-v7 terrain-v3 world to v4 without changing user facts", () => {
     const raw: any = structuredClone(validState());
     raw.schemaVersion = 7;
+    delete raw.holidayRewards;
     delete raw.focusIntegrityPolicy.excursionThresholdSeconds;
     raw.worldSettings.terrainGenerationVersion = 3;
     const parsed = parseDomainState(raw);
@@ -169,6 +174,7 @@ describe("parseDomainState", () => {
     run({ type: "CompleteFocusEarly", reportId: "early-report" });
     const raw: any = structuredClone(state);
     raw.schemaVersion = 6;
+    delete raw.holidayRewards;
     delete raw.focusIntegrityPolicy.excursionThresholdSeconds;
     raw.worldSettings.terrainGenerationVersion = 2;
     raw.dailyGoals[0].reachedAt = null;
@@ -321,12 +327,12 @@ describe("parseDomainState", () => {
     delete legacy.projects[0].importedBlueprint.voxels[0].sign;
     delete legacy.projects[0].importedBlueprint.voxels[1].campfire;
     const legacyParsed = parseDomainState(legacy);
-    expect(legacyParsed.schemaVersion).toBe(12);
+    expect(legacyParsed.schemaVersion).toBe(13);
     expect(legacyParsed.projects[0]!.importedBlueprint!.voxels[0]).not.toHaveProperty("sign");
     expect(legacyParsed.projects[0]!.importedBlueprint!.voxels[1]).not.toHaveProperty("campfire");
 
     const parsed = parseDomainState(raw);
-    expect(parsed.schemaVersion).toBe(12);
+    expect(parsed.schemaVersion).toBe(13);
     expect(parsed.projects[0]!.importedBlueprint!.voxels[0]!.sign).toEqual({
       front: { lines: ["Front line"], dyeColor: "red", glowing: true },
       back: { lines: ["Back line", "Second"], dyeColor: "light_blue", glowing: false },
@@ -485,6 +491,7 @@ describe("parseDomainState", () => {
 function asLegacyV1(state: DomainState): any {
   const raw: any = structuredClone(state);
   raw.schemaVersion = 1;
+  delete raw.holidayRewards;
   delete raw.focusIntegrityPolicy;
   delete raw.decorationBlueprintResources;
   delete raw.decorationRewards;

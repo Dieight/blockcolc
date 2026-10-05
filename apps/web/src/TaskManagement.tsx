@@ -7,6 +7,7 @@ import { PixelProgress } from './ui/PixelProgress';
 import { ChoiceMenu } from './ChoiceMenu';
 import { NativeImeTextEntry, isImeCommitKey } from './NativeImeTextEntry';
 import { useBackLayer } from './back-layer';
+import { HolidayEmblem } from './ui/HolidayEmblem';
 
 type ActiveProject = NonNullable<ReturnType<ApplicationService['activeProjectProjection']>>;
 type AppState = ReturnType<ApplicationService['snapshot']>;
@@ -15,6 +16,7 @@ type DropTarget = { id: string; position: 'before' | 'after' };
 
 export function TasksScreen({ active, state, run, onCreateProject, onViewProject }: { active: ActiveProject; state: AppState; run: RunCommand; onCreateProject: () => void; onViewProject: (projectId: string) => void }) {
   const [pending, setPending] = useState(false);
+  const commandInFlight = useRef(false);
   const [projectTitle, setProjectTitle] = useState(active.project.title);
   const projectTitleRef = useRef<HTMLInputElement>(null);
   const [editingProject, setEditingProject] = useState(false);
@@ -47,7 +49,8 @@ export function TasksScreen({ active, state, run, onCreateProject, onViewProject
   }, [active.project.id, active.project.title]);
 
   const perform = async (command: ApplicationCommand) => {
-    if (pending) return false;
+    if (commandInFlight.current) return false;
+    commandInFlight.current = true;
     setPending(true);
     try {
       const result = await run(command);
@@ -55,6 +58,7 @@ export function TasksScreen({ active, state, run, onCreateProject, onViewProject
     } catch {
       return false;
     } finally {
+      commandInFlight.current = false;
       setPending(false);
     }
   };
@@ -537,7 +541,7 @@ function DailyGoalControl({ state, run, onViewReward }: { state: AppState; run: 
     <section className="daily-goal daily-goal-workbench task-surface" aria-labelledby="daily-goal-title">
       <div className="daily-goal-summary"><div><h2 id="daily-goal-title">今日目标</h2><p>所有任务合计</p></div><button ref={openerRef} type="button" className="daily-goal-adjust" aria-label="调整今日目标" onClick={() => { resetTargetDraft(); setTargetError(''); setSheetError(''); setOpen(true); }}><Pencil/><span>调整</span></button></div>
       <div className="daily-goal-tally"><strong>{completed}{enabled && <span> / {goal.targetPomodoros}</span>}</strong><span>{enabled ? '轮已完成' : '轮 · 目标未开启'}</span></div>
-      {enabled && <PixelProgress rounds className="daily-goal-progress" label={`今日 ${completed} / ${goal.targetPomodoros} 轮`} max={goal.targetPomodoros} value={completed}/>}
+      <div className="daily-goal-festival-line">{enabled && <PixelProgress rounds className="daily-goal-progress" label={`今日 ${completed} / ${goal.targetPomodoros} 轮`} max={goal.targetPomodoros} value={completed}/>}<HolidayEmblem date={date} slot={1}/></div>
       {enabled && completed < goal.targetPomodoros && <p className="daily-goal-hint"><PixelSprout/>再完成 {goal.targetPomodoros - completed} 轮，达成今日目标</p>}
       {rewardName && <span className="daily-goal-reward"><Check/>今日装饰已入库 · {rewardName}</span>}
       {goal.reachedAt && <span className="goal-reached"><Check/>今日已达成</span>}
@@ -564,9 +568,9 @@ function ConfirmDialog({ title, confirmLabel, pending, onCancel, onConfirm, chil
     return () => window.removeEventListener('keydown', keyboard);
   }, [onCancel, pending]);
   return <div className="dialog-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget && !pending) onCancel(); }}>
-    <div ref={dialogRef} className="confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title">
+    <div ref={dialogRef} className="confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" aria-busy={pending}>
       <h2 id="confirm-title">{title}</h2>{children}
-      <div className="dialog-actions"><button ref={cancelRef} disabled={pending} onClick={onCancel}>取消</button><button className="danger-action" disabled={pending} onClick={onConfirm}><Trash2/>{confirmLabel}</button></div>
+      <div className="dialog-actions"><button ref={cancelRef} disabled={pending} onClick={onCancel}>取消</button><button className="danger-action" disabled={pending} aria-busy={pending} onClick={onConfirm}><Trash2/>{pending?'处理中…':confirmLabel}</button></div>
     </div>
   </div>;
 }

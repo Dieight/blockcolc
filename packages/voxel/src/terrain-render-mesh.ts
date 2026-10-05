@@ -29,7 +29,7 @@ export function compactTerrainRenderMesh(data: RenderMesh): RenderMesh {
     }
     for (const rect of merged) emit(verticesFor(rect));
   };
-  for (const material of ['grass', 'dirt', 'stone', 'water'] as const) compact(data.indicesByMaterial[material], material, false);
+  for (const material of Object.keys(data.indicesByMaterial) as TerrainMaterial[]) compact(data.indicesByMaterial[material], material, false);
   for (const material of ['dirt', 'stone'] as const) compact(data.sideIndices[material], material, true);
   return { positions: out.positions, indicesByMaterial: out.indicesByMaterial, sideIndices: out.sideIndices,
     triangleCount: (Object.values(out.indicesByMaterial).reduce((sum, indices) => sum + indices.length, 0)

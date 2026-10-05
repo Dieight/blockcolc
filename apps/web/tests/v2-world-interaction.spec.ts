@@ -1,9 +1,15 @@
 import { expect, test, type CDPSession } from "@playwright/test";
 import { selectValleyFixture } from './valley-fixture';
+import { observeShadowRequests, readShadowRequests } from './world-shadow-observer';
 
 test("renders the current compact world and supports bounded rotate and pinch gestures", async ({ page }, testInfo) => {
+  // Two prepared worlds, real gestures and four software-WebGL captures.
+  // The 30 s trace reached the last capture with strict shadow/orbit checks
+  // passing; retain those checks and the geometry/draw budgets unchanged.
+  test.setTimeout(60_000);
   await page.clock.install({ time: new Date("2026-07-26T12:00:00+08:00") });
   await page.goto("/");
+  if (process.env.BLOCKCOLC_SHADOW_TRACE === '1') await observeShadowRequests(page);
   await page.getByRole("button", { name: "开始建造" }).click();
   const canvas = page.getByLabel("项目建筑世界");
   await expect(canvas).toHaveAttribute("data-quality-tier", /^(low|balanced|high)$/);
@@ -49,6 +55,9 @@ test("renders the current compact world and supports bounded rotate and pinch ge
   await expect.poll(async () => Number(await canvas.getAttribute("data-camera-azimuth"))).not.toBe(initialCameraAzimuth);
   await expect(canvas).toHaveAttribute("data-world-rotation", "0.0000");
   expect(Number(await canvas.getAttribute("data-cached-shadow-transform-syncs"))).toBe(0);
+  if (process.env.BLOCKCOLC_SHADOW_TRACE === '1') await testInfo.attach('shadow-requests', {
+    body: JSON.stringify(await readShadowRequests(page)), contentType: 'application/json',
+  });
   expect(Number(await canvas.getAttribute("data-shadow-refresh-count"))).toBe(initialShadowRefreshes);
   const rotated = await canvas.screenshot({ path: testInfo.outputPath("v2-world-rotated.png") });
   expect(Buffer.compare(initial, rotated)).not.toBe(0);

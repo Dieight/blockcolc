@@ -23,6 +23,7 @@ export function sceneryPlanningFixture(style: TerrainEnvironmentStyle, count: nu
     environmentStyle: style, worldSeed: 'world-default', terrainGenerationVersion: version, refinedFar: false,
   });
   return { environmentStyle: style, worldSeed: 'world-default', surfaces: terrainSurfaceRectangles(terrain),
+    ...(style==='mosaic-coast'?{mosaicCoreRadius:Math.abs(terrain.framingBounds.maxX)}:{}),
     trees: terrain.naturalTrees, roads, protectedRects: worlds.map(world => ({ x: world.worldPosition.x,
       z: world.worldPosition.z, width: world.footprint.width + 5, depth: world.footprint.depth + 5 })) };
 }

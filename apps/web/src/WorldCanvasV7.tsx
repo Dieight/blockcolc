@@ -1,11 +1,12 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ApplicationService } from '@blockcolc/application';
 import type { WorldEnvironmentStyle } from '@blockcolc/domain';
-import type { AstronomyContext, BlueprintV1, ConstructionOutlineVisibility, ExternalWeatherVisualOverride, VoxelLightingQuality, VoxelRenderer } from '@blockcolc/voxel';
+import type { AstronomyContext, BlueprintV1, ConstructionOutlineVisibility, ExternalWeatherVisualOverride, VoxelLightingQuality, VoxelRenderer, WorldColorAdjustment } from '@blockcolc/voxel';
 import type { ResourcePackRepository, ResourcePackSelectionMetadata } from '@blockcolc/resource-pack-indexeddb';
-import { PixelMap as MapIcon, PixelReset as RotateCcw, PixelHammer as Hammer } from './ui/PixelIcon';
+import { PixelMap as MapIcon, PixelReset as RotateCcw } from './ui/PixelIcon';
 import { LoadingPage, type LoadingStage } from './LoadingPage';
-import { waitForInitialEnvironment } from './initial-environment';
+import { advanceStartupPresentation, completeStartupPresentation } from './startup-presentation';
+import { prepareInitialEnvironmentAndModule } from './initial-environment';
 import { useWorldGlass } from './use-world-glass';
 import { conditionLabel } from './BuildingMemoryPanel';
 import { loadVoxelModule, useBlueprintCatalog, blueprintName, resourcePackAtlasMaximumSizeForTest } from './voxel-runtime';
@@ -25,6 +26,7 @@ interface WorldCanvasProps {
   stateRevision: number;
   resourcePacks: ResourcePackRepository;
   lightingQuality: VoxelLightingQuality;
+  worldColorAdjustment?: WorldColorAdjustment;
   constructionOutlineVisibility: ConstructionOutlineVisibility;
   showWorldCoordinates: boolean;
   environmentStyle: WorldEnvironmentStyle;
@@ -43,13 +45,27 @@ interface WorldCanvasProps {
   focusedProjectId: string | null;
   onSelectProject: (projectId: string) => void;
   onInitialProjectFocus?: (projectId: string) => void;
+  onReadyChange?: (ready: boolean) => void;
+  onScenePrepared?: (environment:WorldEnvironmentStyle) => void;
+  onScenePreparationFailed?: (environment:WorldEnvironmentStyle) => void;
   onClearWorldFocus: () => void;
   visible: boolean;
   onPickTerrain: (position: { x: number; y: number; z: number }) => void;
   pickedCell: { x: number; y: number; z: number } | null;
 }
 
-export const WorldCanvasV7 = memo(function WorldCanvasV7({service,resourcePacks,lightingQuality,constructionOutlineVisibility,showWorldCoordinates,environmentStyle,worldSeed,terrainGenerationVersion,constructionFeedback=0,sessionActive=false,immersivePresentation=sessionActive,immersiveBand={bottom:0,right:0},glassClarity=50,externalWeatherOverride=null,astronomyContext=null,worldDebug=null,initialEnvironmentPending=false,openingProjectId=null,focusedProjectId,onSelectProject,onInitialProjectFocus,onClearWorldFocus,visible,onPickTerrain,pickedCell}:WorldCanvasProps) {
+export const WorldCanvasV7 = memo(function WorldCanvasV7({service,resourcePacks,lightingQuality,worldColorAdjustment,constructionOutlineVisibility,showWorldCoordinates,environmentStyle,worldSeed,terrainGenerationVersion,constructionFeedback=0,sessionActive=false,immersivePresentation=sessionActive,immersiveBand={bottom:0,right:0},glassClarity=50,externalWeatherOverride=null,astronomyContext=null,worldDebug=null,initialEnvironmentPending=false,openingProjectId=null,focusedProjectId,onSelectProject,onInitialProjectFocus,onReadyChange,onScenePrepared,onScenePreparationFailed,onClearWorldFocus,visible,onPickTerrain,pickedCell}:WorldCanvasProps) {
+  const [, updateCommittedWorld] = useState(0);
+  useEffect(() => {
+    let frame = 0;
+    const unsubscribe = service.subscribeCommitted(() => {
+      // The UI may hold a success receipt. Let the resident world update during
+      // it, coalescing multiple adoptions without tearing the report's props.
+      if (frame) return;
+      frame = requestAnimationFrame(() => { frame = 0; updateCommittedWorld(value => value + 1); });
+    });
+    return () => { unsubscribe(); cancelAnimationFrame(frame); };
+  }, [service]);
   const projectionToken=peekFocusSubmissionProjection();
   const projectionStartedAt=projectionToken===null?0:performance.now();
   const world=service.worldProjection();
@@ -61,12 +77,16 @@ export const WorldCanvasV7 = memo(function WorldCanvasV7({service,resourcePacks,
   const forceFullPackValidationRef=useRef(true);
   const lastHandledPackRetryRef=useRef(0);
   const latestQualityRef=useRef(lightingQuality); latestQualityRef.current=lightingQuality;
+  const colorPreferenceRef=useRef(worldColorAdjustment); colorPreferenceRef.current=worldColorAdjustment;
   const immersiveBandRef=useRef(immersiveBand); immersiveBandRef.current=immersiveBand;
   const glassPreference=useWorldGlass(immersivePresentation,glassClarity);
   const glassPreferenceRef=useRef(glassPreference); glassPreferenceRef.current=glassPreference;
   const externalWeatherRef=useRef(externalWeatherOverride); externalWeatherRef.current=externalWeatherOverride;
   const initialEnvironmentPendingRef=useRef(initialEnvironmentPending); initialEnvironmentPendingRef.current=initialEnvironmentPending;
   const [bootStage,setBootStage]=useState<LoadingStage>('resources');
+  const sceneCallbacks=useRef({onScenePrepared,onScenePreparationFailed});
+  sceneCallbacks.current={onScenePrepared,onScenePreparationFailed};
+  useLayoutEffect(() => { onReadyChange?.(ready); }, [ready, onReadyChange]);
   const astronomyRef=useRef(astronomyContext); astronomyRef.current=astronomyContext;
   const debugRef=useRef(worldDebug); debugRef.current=worldDebug;
   const openingProjectRef=useRef(openingProjectId); openingProjectRef.current=openingProjectId;
@@ -170,7 +190,8 @@ export const WorldCanvasV7 = memo(function WorldCanvasV7({service,resourcePacks,
   importedRef.current=new Map(world.projects.flatMap(project=>project.building.importedBlueprint?[[project.building.blueprintId,project.building.importedBlueprint as BlueprintV1]]:[])); focusRef.current=focusedProjectId; selectRef.current=onSelectProject; visibleRef.current=visible && documentVisible;
   const blueprintLabel=(blueprintId:string,importedTitle?:string)=>state.buildingBlueprintResources.find(resource=>resource.id===blueprintId)?.displayName??importedTitle??blueprintName(catalog,blueprintId);
   const decorationDates=decorationDatesByProject(state); const snapshotKey=world.projects.map(project=>`${project.project.id}:${project.building.blueprintId}:${project.building.completionBasisPoints}:${project.building.conditionBasisPoints}:${project.isActive}:${project.settlementIndex}:${(decorationDates.get(project.project.id)??[]).join(',')}:${project.importedDecorations.map(reward=>`${reward.rewardId}@${reward.localPosition.x},${reward.localPosition.z},${reward.rotationQuarterTurns}`).join(';')}`).join('|');
-  const snapshots=useMemo(()=>toVoxelWorlds(world.projects,state),[snapshotKey]); const latestSnapshotsRef=useRef({key:snapshotKey,worlds:snapshots}); latestSnapshotsRef.current={key:snapshotKey,worlds:snapshots}; const summary=world.projects.map(project=>`${project.project.title}，${blueprintLabel(project.building.blueprintId,project.building.importedBlueprint?.title)}，${project.isActive?'正在建造':project.project.status==='paused'?'暂停建造':'纪念建筑'}，建造进度 ${Math.round(project.building.completionBasisPoints/100)}%，保存状况 ${conditionLabel(project.building.conditionBasisPoints)}`).join('；'); const focusedTitle=world.projects.find(project=>project.project.id===focusedProjectId)?.project.title;
+  const snapshots=useMemo(()=>toVoxelWorlds(world.projects,state),[snapshotKey]); const latestSnapshotsRef=useRef({key:snapshotKey,worlds:snapshots}); latestSnapshotsRef.current={key:snapshotKey,worlds:snapshots}; const summary=world.projects.map(project=>`${project.project.title}，${blueprintLabel(project.building.blueprintId,project.building.importedBlueprint?.title)}，${project.isActive?'正在建造':project.project.status==='paused'?'暂停建造':'纪念建筑'}，建造进度 ${Math.round(project.building.completionBasisPoints/100)}%，保存状况 ${conditionLabel(project.building.conditionBasisPoints)}`).join('；'); const focusedTitle=world.projects.find(project=>project.project.id===focusedProjectId)?.project.title
+    ??world.projects.flatMap(project=>project.importedDecorations).find(reward=>`reward:${reward.rewardId}`===focusedProjectId)?.blueprint.title;
   useLayoutEffect(()=>{
     if(!isFocusSubmissionDiagnosticsEnabled())return;
     const previousCommittedKey=committedSnapshotKeyRef.current;
@@ -192,16 +213,21 @@ export const WorldCanvasV7 = memo(function WorldCanvasV7({service,resourcePacks,
       schedule: scheduleAfterPaint,
       load: async () => {
         if (initialEnvironmentPendingRef.current) setBootStage('environment');
-        const result = await waitForInitialEnvironment({
+        const prepared = await prepareInitialEnvironmentAndModule({
           pending: () => initialEnvironmentPendingRef.current,
           current: () => generationActive,
           visible: () => visibleRef.current && !document.hidden,
           now: () => performance.now(), wait: ms => new Promise(resolve => setTimeout(resolve, ms)),
-        });
+        },loadVoxelModule);
         if (!generationActive) throw new Error('Superseded world generation');
-        if (ref.current) ref.current.dataset.initialEnvironmentPreparation = result;
+        if (ref.current) {
+          ref.current.dataset.initialEnvironmentPreparation = prepared.result;
+          ref.current.dataset.initialModuleLoadMs = prepared.moduleMs.toFixed(2);
+          ref.current.dataset.initialEnvironmentWaitMs = prepared.environmentMs.toFixed(2);
+          ref.current.dataset.initialModuleAndEnvironmentMs = prepared.totalMs.toFixed(2);
+        }
         setBootStage('resources');
-        return loadVoxelModule();
+        return prepared.module;
       },
       create: ({ createVoxelRenderer, resolveBuiltinBlueprint }) => {
         if (!ref.current) return null;
@@ -230,6 +256,7 @@ export const WorldCanvasV7 = memo(function WorldCanvasV7({service,resourcePacks,
         current.setVisible(false);
         current.setImmersiveBandFraction(immersiveBandRef.current.bottom ?? 0, immersiveBandRef.current.right ?? 0);
         current.setGlassSurface(glassPreferenceRef.current);
+        current.setWorldColorAdjustment(colorPreferenceRef.current ?? null);
         current.focusProject(focusRef.current);
         let adoptedSelectionMetadata: ResourcePackSelectionMetadata | null = null;
         await initializeRendererWorlds({
@@ -268,11 +295,11 @@ export const WorldCanvasV7 = memo(function WorldCanvasV7({service,resourcePacks,
         appliedDebugRef.current = debugRef.current;
         setBootStage('environment');
         current.setVisible(visibleRef.current);
-        await current.prepareInitialPresentation();
+        await current.prepareInitialPresentation(openingProjectRef.current);
       },
-      ready: () => setReady(true),
+      ready: () => {setReady(true);completeStartupPresentation();sceneCallbacks.current.onScenePrepared?.(environmentStyle);},
       readyOnError: false,
-      error: error => { setResourcePackError(true); console.error('Voxel world initialization failed', error); },
+      error: error => { setResourcePackError(true);sceneCallbacks.current.onScenePreparationFailed?.(environmentStyle); console.error('Voxel world initialization failed', error); },
       release: current => {
         if (renderer.current !== current) return;
         recordQualityLifecyclePhase('renderer-released');
@@ -358,14 +385,13 @@ export const WorldCanvasV7 = memo(function WorldCanvasV7({service,resourcePacks,
       });
     });
   },[ready,visible,documentVisible,resourcePackLoading,environmentUpdating]);
-  // IF-01: bounded construction pulses — round completed (stronger) and focus started (gentle).
+  // Construction feedback belongs to a delivered result, not starting the clock.
   useEffect(()=>{if(constructionFeedback>0)renderer.current?.playConstructionPulse(1);},[constructionFeedback]);
   useEffect(()=>{
     const previous=sessionActiveRef.current;
     sessionActiveRef.current=sessionActive;
     if(!sessionActive||previous)return;
     markFocusPerformance('renderer-requested');
-    renderer.current?.playConstructionPulse(0.6);
     // This is a browser diagnostic boundary: it records the first committed
     // frame after the focus state reached the resident renderer. It is not a
     // device FPS or end-to-end latency claim.
@@ -376,6 +402,7 @@ export const WorldCanvasV7 = memo(function WorldCanvasV7({service,resourcePacks,
   },[sessionActive]);
   useEffect(()=>{renderer.current?.setImmersiveBandFraction(immersiveBandRef.current.bottom??0,immersiveBandRef.current.right??0);},[immersiveBand?.bottom,immersiveBand?.right]);
   useEffect(()=>{renderer.current?.setGlassSurface(glassPreference);},[glassPreference]);
+  useEffect(()=>{if(ready)renderer.current?.setWorldColorAdjustment(worldColorAdjustment ?? null);},[worldColorAdjustment,ready]);
   // MT-02: with the renderer resident, the pack switched in settings must apply when the pane returns; re-apply only when the active pack actually changed.
   useEffect(() => {
     const refreshOwner = ++packRefreshOwnerRef.current;
@@ -435,6 +462,7 @@ export const WorldCanvasV7 = memo(function WorldCanvasV7({service,resourcePacks,
     }
   },[openingProjectId]);
   const loadingStatus=!ready?(resourcePackError?'世界初始化失败，请重新打开此页面或刷新后重试。':bootStage==='environment'?'正在校准光照与天气…':bootStage==='scene'?'正在准备地形与建筑…':'正在读取世界资源…'):resourcePackLoading?'正在更新世界材质…':environmentUpdating?'正在更新世界画面…':null;
+  useEffect(()=>{if(!ready&&loadingStatus)advanceStartupPresentation(resourcePackError?'error':bootStage,loadingStatus);},[ready,bootStage,loadingStatus,resourcePackError]);
   return <>
     <figure className={focusedProjectId?'world is-project-focused':'world'}>
       <canvas ref={ref} role="img" aria-label="项目建筑世界" aria-describedby="world-summary" data-coordinate-picking={pickEnabled?'true':'false'}/>
@@ -445,7 +473,7 @@ export const WorldCanvasV7 = memo(function WorldCanvasV7({service,resourcePacks,
       </div>}
       {visible&&<figcaption id="world-summary" className="sr-only">林边聚落，共 {world.projects.length} 栋建筑。{summary}</figcaption>}
       {visible&&ready&&resourcePackError&&<div className="world-pack-error" role="status">材质包暂不可用，当前使用默认材质。 <button type="button" onClick={()=>setPackRetryRevision(value=>value+1)}>重试</button></div>}
-      {visible&&!immersivePresentation&&<nav className="world-building-index" aria-label="聚落建筑">{world.projects.map(project=><button key={project.project.id} type="button" onClick={()=>onSelectProject(project.project.id)}>查看建筑记忆：{project.project.title}</button>)}</nav>}
+      {visible&&!immersivePresentation&&<nav className="world-building-index" aria-label="聚落建筑">{world.projects.map(project=><button key={project.project.id} type="button" onClick={()=>onSelectProject(project.project.id)}>查看建筑记忆：{project.project.title}</button>)}{world.projects.flatMap(project=>project.importedDecorations).map(reward=><button key={reward.rewardId} type="button" onClick={()=>onSelectProject(`reward:${reward.rewardId}`)}>查看奖励记忆：{reward.blueprint.title}</button>)}</nav>}
       {visible&&pickEnabled&&pickedCell&&<div className="world-pick-chip" role="status" data-testid="world-pick">x {pickedCell.x} · z {pickedCell.z} · 高 {pickedCell.y}</div>}
       {visible&&!immersivePresentation&&(viewControlsVisible||viewControlsLeaving)&&<div className={`world-hud${viewControlsLeaving?' is-leaving':''}`}>
         <span>{focusedTitle?`正在查看 · ${focusedTitle}`:`林边聚落 · ${world.projects.length} 栋`}</span>
@@ -454,7 +482,6 @@ export const WorldCanvasV7 = memo(function WorldCanvasV7({service,resourcePacks,
           <button title="重置视角" aria-label="重置视角" onClick={()=>runViewAction(()=>renderer.current?.resetCamera())}><RotateCcw/></button>
         </div>
       </div>}
-      {visible&&constructionFeedback>0&&<div key={constructionFeedback} className="construction-feedback" role="status"><Hammer/><span>材料已送达，继续建造</span><i/><i/><i/></div>}
     </figure>
     {loadingStatus&&<LoadingPage stage={resourcePackError?'error':!ready?bootStage:resourcePackLoading?'resources':'environment'} status={loadingStatus}/>}
   </>;

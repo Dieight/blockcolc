@@ -1,5 +1,6 @@
 import { assertISODate, assertValidTimeZone, localDateOf } from "./calendar.js";
-import { SIGN_DYE_COLORS } from "./model.js";
+import { MAX_BUILDING_BLUEPRINTS, SIGN_DYE_COLORS } from "./model.js";
+import { HOLIDAY_IDS, holidaysOnDate } from './holidays.js';
 import type {
   ActiveFocusSession,
   DailyGoal,
@@ -16,6 +17,7 @@ import type {
   DecorationBlueprintResource,
   DecorationReward,
   HabitBuildingMonument,
+  HolidayReward,
   Subtask,
 } from "./model.js";
 
@@ -29,14 +31,14 @@ export class DomainStateValidationError extends Error {
 
 export function parseDomainState(raw: unknown): DomainState {
   const migrated = withoutWithdrawnTodayNextSteps(migrateV9State(migrateV8State(migrateV7State(migrateTerrainV4State(migrateV6State(migrateV5State(migrateV4State(withBuildingBlueprintDefaults(migrateV2State(withDecorationDefaults(migrateV1State(raw))))))))))));
-  const root = object(migrateV11State(migrateV10State(migrated)), "$", [
+  const root = object(migrateV12State(migrateV11State(migrateV10State(migrated))), "$", [
     "schemaVersion", "projects", "habitBuildings", "activeProjectId", "retiredSubtaskIds", "activeFocusSession",
     "focusHistory", "progressReports", "dailyGoals", "calendar", "decayPolicy", "projectConditions", "focusIntegrityPolicy",
-    "decorationBlueprintResources", "decorationRewards", "buildingBlueprintResources", "worldSettings",
+    "decorationBlueprintResources", "decorationRewards", "holidayRewards", "buildingBlueprintResources", "worldSettings",
   ]);
-  if (root.schemaVersion !== 12) invalid("$.schemaVersion", "must equal 12");
+  if (root.schemaVersion !== 13) invalid("$.schemaVersion", "must equal 13");
   const state: DomainState = {
-    schemaVersion: 12,
+    schemaVersion: 13,
     projects: array(root.projects, "$.projects", parseProject),
     habitBuildings: array(root.habitBuildings, "$.habitBuildings", parseHabitBuilding),
     activeProjectId: nullableString(root.activeProjectId, "$.activeProjectId"),
@@ -51,6 +53,7 @@ export function parseDomainState(raw: unknown): DomainState {
     focusIntegrityPolicy: parseFocusIntegrityPolicy(root.focusIntegrityPolicy, "$.focusIntegrityPolicy"),
     decorationBlueprintResources: array(root.decorationBlueprintResources, "$.decorationBlueprintResources", parseDecorationResource),
     decorationRewards: array(root.decorationRewards, "$.decorationRewards", parseDecorationReward),
+    holidayRewards: array(root.holidayRewards, '$.holidayRewards', parseHolidayReward),
     buildingBlueprintResources: array(root.buildingBlueprintResources, "$.buildingBlueprintResources", parseBuildingResource),
     worldSettings: parseWorldSettings(root.worldSettings, "$.worldSettings"),
   };
@@ -545,13 +548,22 @@ function parseFocusIntegrityPolicy(raw: unknown, path: string): DomainState["foc
   };
 }
 
+function parseHolidayReward(raw:unknown,path:string):HolidayReward {
+  const x=object(raw,path,['holidayId','year','date','projectId','settlementIndex','sourceSessionId','awardedAt','position','rotationQuarterTurns']);
+  const position=object(x.position,path+'.position',['x','z']);
+  return{holidayId:enumeration(x.holidayId,path+'.holidayId',HOLIDAY_IDS),year:integer(x.year,path+'.year',100,9999),date:isoDate(x.date,path+'.date'),
+    projectId:nonBlankString(x.projectId,path+'.projectId'),settlementIndex:integer(x.settlementIndex,path+'.settlementIndex',0),
+    sourceSessionId:nonBlankString(x.sourceSessionId,path+'.sourceSessionId'),awardedAt:instant(x.awardedAt,path+'.awardedAt'),
+    position:{x:safeInteger(position.x,path+'.position.x'),z:safeInteger(position.z,path+'.position.z')},rotationQuarterTurns:integer(x.rotationQuarterTurns,path+'.rotationQuarterTurns',0,3) as 0|1|2|3};
+}
+
 function parseWorldSettings(raw: unknown, path: string): DomainState["worldSettings"] {
   const x = object(raw, path, ["worldSeed", "terrainGenerationVersion", "environmentStyle"]);
   integer(x.terrainGenerationVersion, path + ".terrainGenerationVersion", 4, 4);
   return {
     worldSeed: nonBlankString(x.worldSeed, path + ".worldSeed"),
     terrainGenerationVersion: 4,
-    environmentStyle: enumeration(x.environmentStyle, path + ".environmentStyle", ["natural-valley", "classic-island", "ocean-island"] as const),
+    environmentStyle: enumeration(x.environmentStyle, path + ".environmentStyle", ["natural-valley", "classic-island", "ocean-island", 'mosaic-coast'] as const),
   };
 }
 
@@ -707,7 +719,7 @@ function validateReferences(state: DomainState): void {
     }
   }
   unique(state.decorationBlueprintResources.map((item) => item.id), "$.decorationBlueprintResources[].id");
-  if (state.buildingBlueprintResources.length > 12) invalid("$.buildingBlueprintResources", "must contain at most 12 entries");
+  if (state.buildingBlueprintResources.length > MAX_BUILDING_BLUEPRINTS) invalid("$.buildingBlueprintResources", `must contain at most ${MAX_BUILDING_BLUEPRINTS} entries`);
   unique(state.buildingBlueprintResources.map((item) => item.id), "$.buildingBlueprintResources[].id");
   const decorationResources = new Set(state.decorationBlueprintResources.map((item) => item.id));
   unique(state.decorationRewards.map((item) => item.date), "$.decorationRewards[].date");
@@ -718,6 +730,16 @@ function validateReferences(state: DomainState): void {
     const goal = state.dailyGoals.find((item) => item.date === reward.date);
     if (!goal?.reachedAt) invalid(path + ".date", "must reference a reached daily goal");
     if (reward.awardedAt < goal.reachedAt) invalid(path + ".awardedAt", "precedes daily goal completion");
+  }
+  unique(state.holidayRewards.map(r=>`${r.holidayId}:${r.year}`),'$.holidayRewards');
+  for (const [index,reward] of state.holidayRewards.entries()) {
+    const path=`$.holidayRewards[${index}]`;
+    const session=state.focusHistory.find(s=>s.id===reward.sourceSessionId);
+    if(!session || session.status==='interrupted' || session.projectId!==reward.projectId || session.completedLocalDate!==reward.date || session.completedAt!==reward.awardedAt)invalid(path,'must reference its saved effective focus completion');
+    if(!holidaysOnDate(reward.date).some(h=>h.id===reward.holidayId&&h.year===reward.year))invalid(path+'.date','outside holiday window');
+    const owner=state.projects.find(p=>p.id===reward.projectId&&p.settlementIndex===reward.settlementIndex)
+      ??state.habitBuildings.find(b=>b.habitProjectId===reward.projectId&&b.settlementIndex===reward.settlementIndex);
+    if(!owner)invalid(path+'.settlementIndex','unknown owning construction plot');
   }
 }
 
@@ -981,6 +1003,12 @@ function migrateV11State(raw: unknown): unknown {
     ...candidate, schemaVersion: 12,
     focusIntegrityPolicy: { ...policy, excursionThresholdSeconds: 3 },
   };
+}
+
+function migrateV12State(raw:unknown):unknown {
+  const candidate=record(raw,'$');if(candidate.schemaVersion!==12)return raw;
+  if(Object.hasOwn(candidate,'holidayRewards'))invalid('$.holidayRewards','requires schema 13');
+  return{...candidate,schemaVersion:13,holidayRewards:[]};
 }
 
 function migrateV1ActiveSession(raw: unknown, path: string): Record<string, unknown> {

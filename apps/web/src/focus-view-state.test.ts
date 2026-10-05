@@ -46,6 +46,11 @@ describe('focus view ownership', () => {
     expect(deriveFocusViewState({ ...input, minimalWanted: false, plan: marathon })).toMatchObject({ phase: 'ready', minimal: false, isImmersiveLayout: true });
     expect(deriveFocusViewState({ ...input, minimalWanted: false, plan: marathonRest })).toMatchObject({ phase: 'break', minimal: false, isImmersiveLayout: true });
   });
+  it('keeps a newly confirmed marathon ordinary but a manually paused first round immersive',()=>{
+    const confirmed:RoundPlan={...plan,deferredSettlement:undefined,subtaskId:'s'};
+    expect(deriveFocusViewState({...input,minimalWanted:false,plan:confirmed})).toMatchObject({phase:'ready',isImmersiveLayout:false});
+    expect(deriveFocusViewState({...input,minimalWanted:false,plan:{...confirmed,hasStarted:true}})).toMatchObject({phase:'ready',isImmersiveLayout:true});
+  });
   it('keeps ordinary pending reporting ahead of minimal idle', () => {
     expect(deriveFocusViewState({ ...input, hasPendingReport: true })).toMatchObject({ phase: 'report', minimal: false, isImmersiveLayout: true, activePendingBlocksWorkbench: true });
   });
