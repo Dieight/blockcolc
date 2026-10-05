@@ -1,11 +1,11 @@
 # blockcolc 当前任务
 
-正式版本：[v2.4.0 / 50](releases/v2.4.0.md)，已发布。
+正式版本：[v2.5.6 / 55](releases/v2.5.6.md)，已发布。
 
 ## 当前
 
 - 规则整理已按批准的第二稿应用；旧文件快照和专属 skill 归档保留。
-- v2.5.6：完整门禁及 [55 号同源成对构建](versions/V55.md)已通过，用户以“发吧”接受本轮私人包，正在发布原标准候选。应用输入不变，不重建或重跑全量；私人包留本地，不另做安装或服务器部署。发布说明见 [v2.5.6](releases/v2.5.6.md)，完成后核对 CI、资产摘要及 Latest。设备专项问题见[后台恢复排查](research/2.5.6-background-recovery.md)。
+- v2.5.6 已发布：[交付与验证](versions/V55.md)、[发布说明](releases/v2.5.6.md)。标准 APK 的 CI、下载摘要与 Latest 均已核对；私人包留本地。设备专项问题见[后台恢复排查](research/2.5.6-background-recovery.md)。
 
 新版本按 [模板](templates/README.md) 建开发记录，把当前链接放在这里。此处只留当前事项，不复制开发日志或测试计数。
 
