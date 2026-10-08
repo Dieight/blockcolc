@@ -2,6 +2,7 @@ import { expect, test, type Page } from '@playwright/test';
 import { createInitialState, execute, type DomainCommand, type DomainState } from '@blockcolc/domain';
 import { readPersistedDomainState } from './persisted-domain-state';
 import { fixBusinessDate } from './fixed-business-date';
+import { waitForPreparedWorld } from './world-ready';
 
 const startedAt = Date.parse('2026-09-27T12:00:00+08:00');
 const completedAt = startedAt + 130_000;
@@ -81,13 +82,15 @@ async function seed(page: Page, marathon = false, minimal = false) {
   }, { state: reportFixture(marathon), marathon, minimal });
   await page.reload();
   expect(await page.evaluate(() => /\[native code\]/.test(performance.now.toString()))).toBe(true);
-  if (minimal && marathon) {
+  await waitForPreparedWorld(page);
+  // Marathon reports now share the immersive report surface in both modes.
+  if (marathon) {
     const report = page.locator('.focus-report-surface--minimal');
     await expect(report).toBeVisible();
     await expect(report.getByRole('heading', { name: '1 分钟', exact: true })).toBeVisible();
     await expect(report).toContainText('1 轮专注已结束');
   } else {
-    await expect(page.getByRole('heading', { name: marathon ? '把这次推进汇报给哪些任务？' : '这次工作推进到哪里？' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: '这次工作推进到哪里？' })).toBeVisible();
   }
   const canvas = page.getByLabel('项目建筑世界');
   await expect(canvas).toHaveAttribute('data-first-nonempty-frame-ms', /\d/, { timeout: 20_000 });
@@ -226,7 +229,7 @@ for (const viewport of [
     await row.getByRole('button', { name: '推进至 75%', exact: true }).click();
     await row.getByRole('button', { name: /增加 .*计入轮数/ }).click();
     await report.getByRole('button', { name: '一次提交本次推进', exact: true }).click();
-    const feedback = report.getByRole('button', { name: '材料已送达', exact: true });
+    const feedback = report.getByRole('button', { name: '材料已送达！', exact: true });
     await expect(feedback).toBeVisible();
     const geometry = await page.evaluate(() => {
       const toast = document.querySelector('.marathon-report-submit')?.getBoundingClientRect();

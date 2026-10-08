@@ -2,8 +2,8 @@ import { expect, test } from '@playwright/test';
 import type { VoxelRenderer } from '@blockcolc/voxel';
 import type * as THREE from 'three';
 
-type Probe = { upper:number; lower:number; count:number; capacity:number; area:number; spanY:number; cameraY:number; maxY:number; groundRelative:boolean };
-type Scope = typeof window & { __blockcolcVoxelTest:typeof import('@blockcolc/voxel'); densityRenderer:VoxelRenderer; densityProbe?:Probe };
+type Probe = { upper:number; lower:number; count:number; capacity:number; area:number; spanY:number; cameraY:number; maxY:number; groundRelative:boolean; sampleId:number };
+type Scope = typeof window & { __blockcolcVoxelTest:typeof import('@blockcolc/voxel'); densityRenderer:VoxelRenderer; densitySampleId:number; densityProbe?:Probe };
 
 // This standalone shader-uniform probe measures the CSS camera volume, not
 // high-DPI raster performance. Keep its software WebGL surface at CSS resolution;
@@ -25,16 +25,16 @@ test('ordinary and immersive precipitation cover every cardinal view and keep ph
     const proto = Object.getPrototypeOf(Object.getPrototypeOf(scene)) as THREE.Object3D;
     const before = proto.onBeforeRender;
     temporary.dispose();
-    let sampleKey = '';
+    scope.densitySampleId=0;
     proto.onBeforeRender = function(renderer,scene,camera,geometry,material,group) {
       if ((this.name==='world-rain' || this.name==='world-snow') && renderer.domElement.getAttribute('aria-label')==='降水密度验证') {
         const mesh = this as THREE.InstancedMesh;
         const phase = geometry.getAttribute('weatherPhase'), offset = geometry.getAttribute('weatherOffset');
         const uniforms = (renderer.properties.get(material) as {uniforms?:Record<string,{value:unknown}>}).uniforms;
         if (uniforms?.weatherField) {
-          const key=[this.name,...camera.matrixWorld.elements,...camera.projectionMatrix.elements,mesh.count,...uniforms.weatherField.value as number[],...uniforms.weatherCenter!.value as number[]].join(',');
-          if(key===sampleKey){before.call(this,renderer,scene,camera,geometry,material,group);return;}
-          sampleKey=key;
+          // Project particles only for a requested observation, not every easing
+          // frame. The probe must not add work to the gesture it is waiting for.
+          if(scope.densitySampleId===0 || scope.densityProbe?.sampleId===scope.densitySampleId){before.call(this,renderer,scene,camera,geometry,material,group);return;}
           const field = uniforms.weatherField.value as [number,number], center = uniforms.weatherCenter!.value as [number,number];
           const spanY = Number(uniforms.weatherSpan!.value), base = Number(uniforms.weatherBase!.value);
           const elapsed = Number(uniforms.weatherElapsed!.value), speed = Number(uniforms.weatherSpeed!.value);
@@ -58,7 +58,7 @@ test('ordinary and immersive precipitation cover every cardinal view and keep ph
               .applyMatrix4(mesh.matrixWorld).project(camera);
             if (Math.abs(point.x)<=1 && Math.abs(point.y)<=1 && point.z>=-1 && point.z<=1) { if(point.y>=0)upper++;else lower++; }
           }
-          scope.densityProbe={upper,lower,count:mesh.count,capacity:phase.count,area:field[0]*field[1],spanY,cameraY:camera.position.y,maxY:base+spanY,groundRelative:!!groundTexture};
+          scope.densityProbe={upper,lower,count:mesh.count,capacity:phase.count,area:field[0]*field[1],spanY,cameraY:camera.position.y,maxY:base+spanY,groundRelative:!!groundTexture,sampleId:scope.densitySampleId};
         }
       }
       before.call(this,renderer,scene,camera,geometry,material,group);
@@ -105,14 +105,35 @@ test('ordinary and immersive precipitation cover every cardinal view and keep ph
           node.dispatchEvent(new PointerEvent('pointerup',{pointerId:5,clientX:80+dx,clientY:100,bubbles:true}));
           return from+dx*.011;
         },{from:commandedAzimuth,target:angle});
-        await expect.poll(async()=>{
-          const delta=Number(await canvas.getAttribute('data-camera-azimuth'))-angle;
-          return Math.abs(Math.atan2(Math.sin(delta),Math.cos(delta)));
-        }).toBeLessThan(.01);
+        // Observe readiness inside the page rather than repeatedly injecting DOM
+        // getters between costly software-GPU frames. Use the same bounded
+        // readiness window as the weather draw; this is not a latency benchmark.
+        await page.waitForFunction(target=>{
+          const node=document.querySelector<HTMLCanvasElement>('[aria-label="降水密度验证"]')!;
+          const delta=Number(node.dataset.cameraAzimuth)-target;
+          return Math.abs(Math.atan2(Math.sin(delta),Math.cos(delta)))<.01;
+        },angle,{timeout:15_000});
         for(const zoom of ['far','near']) {
-          await canvas.dispatchEvent('wheel',{deltaY:zoom==='far'?100_000:-100_000});
-          await page.waitForTimeout(350);
-          const probe=await page.evaluate(()=>(window as Scope).densityProbe!);
+          const request=await canvas.evaluate((node,value)=>{
+            const scope=window as Scope,sampleId=++scope.densitySampleId;
+            const renderedBefore=Number(node.dataset.renderFrameCount);
+            node.dispatchEvent(new WheelEvent('wheel',{deltaY:value==='far'?100_000:-100_000,bubbles:true,cancelable:true}));
+            return {sampleId,renderedBefore};
+          },zoom);
+          // Read shader uniforms from this requested, submitted frame, not the
+          // previous pose after a fixed sleep. A GPU fence per observation adds
+          // raster latency to a numerical frustum probe without adding coverage.
+          const sampleHandle=await page.waitForFunction(({sampleId,renderedBefore})=>{
+            const scope=window as Scope,node=document.querySelector<HTMLCanvasElement>('[aria-label="降水密度验证"]')!;
+            if(scope.densityProbe?.sampleId!==sampleId || Number(node.dataset.renderFrameCount)<=renderedBefore)return false;
+            return {probe:scope.densityProbe,azimuth:Number(node.dataset.cameraAzimuth)};
+          },request,{timeout:15_000});
+          const sample=await sampleHandle.jsonValue();await sampleHandle.dispose();
+          if(!sample)throw new Error('The requested precipitation draw did not produce a sample.');
+          expect(sample.probe.sampleId).toBe(request.sampleId);
+          const delta=sample.azimuth-angle;
+          expect(Math.abs(Math.atan2(Math.sin(delta),Math.cos(delta)))).toBeLessThan(.01);
+          const probe=sample.probe;
           observations.push({mode,kind,angle,zoom,probe});
           await info.attach(`${mode}-${kind}-${angle.toFixed(2)}-${zoom}`,{body:JSON.stringify(probe),contentType:'application/json'});
           if(mode==='ordinary'&&angle===0&&zoom==='far')await canvas.screenshot({path:info.outputPath(`${kind}-${mode}-far.png`)});

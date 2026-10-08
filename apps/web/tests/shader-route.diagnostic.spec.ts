@@ -219,7 +219,7 @@ test('captures WebGL link, error, and context state at natural flower routing st
   await mark('world-start');
   await page.getByRole('button', { name: '开始建造', exact: true }).click();
   await page.getByRole('button', { name: '设置', exact: true }).click();
-  await page.getByRole('group', { name: '聚落环境', exact: true }).getByRole('button', { name: '自然山谷', exact: true }).click();
+  await page.getByRole('group', { name: '聚落环境', exact: true }).getByRole('button', { name: '山谷', exact: true }).click();
   await page.getByLabel('临时调试世界', { exact: true }).check();
   await page.getByLabel('指定时间', { exact: true }).check();
   await page.getByLabel('世界调试时间', { exact: true }).fill('12:00');

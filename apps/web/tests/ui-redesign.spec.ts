@@ -48,9 +48,15 @@ test('glass adjustment affects only immersive clocks, not reading surfaces',asyn
   await page.getByRole('button',{name:'计时',exact:true}).click();
   if(await page.getByRole('button',{name:'进入极简模式'}).isVisible())await page.getByRole('button',{name:'进入极简模式'}).click();
   await expect(page.locator('.minimal-clock-gesture')).toBeVisible();
+  // The incoming face can already be mounted underneath the inert portal.
+  // Keyboard input belongs to the finished, interactive page, not that frame.
+  await expect(page.locator('.app-shell')).not.toHaveAttribute('data-mode-portal-active','true',{timeout:20_000});
   const immersive=await material(page.locator('.focus-panel'));
   await page.locator('.minimal-exit').focus();
+  await expect(page.locator('.minimal-exit')).toBeFocused();
   await page.keyboard.press('Enter');
+  await expect(page.locator('.app-shell')).toHaveAttribute('data-mode-portal-active','false',{timeout:20_000});
+  await expect(page.locator('.world-screen')).toHaveAttribute('data-minimal-mode','false');
   await page.getByRole('button',{name:'调整本次计划'}).click();
   const plan=await material(page.locator('.focus-plan-sheet'));
   await page.getByRole('button',{name:'关闭本次计划'}).click();
@@ -79,6 +85,7 @@ test('fixed calendar shares the summary card and task cards share hierarchy',asy
  await selectLastCalendarDays(page,7);
  expect(await calendar.locator('[data-date]').evaluateAll(elements=>elements.map(element=>element.getAttribute('data-date')))).toEqual(dates);
  await page.getByRole('button',{name:'任务',exact:true}).click();
+ await expect(page.locator('.tasks-page .task-surface')).toHaveCount(4);
  const surfaces=await page.locator('.tasks-page .task-surface').evaluateAll(elements=>elements.map(element=>{const css=getComputedStyle(element);return {background:css.backgroundColor,radius:css.borderRadius};}));
  expect(surfaces.length).toBeGreaterThanOrEqual(4);
  expect(surfaces.every(surface=>surface.background===surfaces[0]!.background&&surface.radius===surfaces[0]!.radius)).toBe(true);
@@ -170,10 +177,15 @@ for(const viewport of viewports)for(const theme of ['浅色','深色']){
   await page.screenshot({path:info.outputPath('minimal-idle.png'),fullPage:true,animations:'disabled'});
   await page.locator('.minimal-exit').focus();
   await page.keyboard.press('Enter');
+  // Layout coverage waits for the same actual world-ready portal boundary as
+  // the transition spec; desktop-sized software WebGL is not a latency gate.
+  await expect(page.locator('.app-shell')).not.toHaveAttribute('data-mode-portal-active','true',{timeout:20_000});
   const group=page.locator('.workbench-heading-actions');
   const entry=(await group.locator('.minimal-entry').boundingBox())!;
-  const tasks=(await group.getByRole('button',{name:'切换当前工作'}).boundingBox())!;
-  expect(tasks.x-entry.x-entry.width).toBeLessThanOrEqual(12);
+  await expect(group.locator('button')).toHaveCount(1);
+  await expect(group.getByRole('button',{name:'切换当前工作'})).toHaveCount(0);
+  const actions=(await group.boundingBox())!;
+  expect(Math.abs(entry.x+entry.width-actions.x-actions.width)).toBeLessThanOrEqual(1);
   expect(entry.width).toBeGreaterThanOrEqual(44);
   await page.getByRole('button',{name:'统计',exact:true}).click();
   await expect(page.getByRole('heading',{name:'专注轨迹'})).toBeVisible();

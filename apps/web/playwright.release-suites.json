@@ -25,6 +25,7 @@
     "v24-voidscan.spec.ts",
     "v256-world.diagnostic.spec.ts",
     "v256-sky-seam.diagnostic.spec.ts",
+    "v260-review.diagnostic.spec.ts",
     "void-probe.spec.ts",
     "world-visual-audit.diagnostic.spec.ts"
   ],
@@ -68,6 +69,8 @@
         "ui-redesign.spec.ts",
         "settings-layout.spec.ts",
         "v256-ui.spec.ts",
+        "v260-ui.spec.ts",
+        "v260-followup.spec.ts",
         "daily-goal-sheet.spec.ts",
         "focus-allocation.spec.ts",
         "minimal-report.spec.ts",

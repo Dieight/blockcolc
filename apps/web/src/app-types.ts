@@ -17,6 +17,8 @@ export interface FocusPreferences {
   focusGlassTransparency: number;
   themeMode: ThemeMode;
   fontStyle?: 'pixel' | 'system';
+  /** Check the public release on launch; never downloads or installs it. */
+  autoCheckUpdates?: boolean;
   /** Local reminder for returning to the next round after a marathon/minimal break. */
   returnToFocusReminders: boolean;
   /** Explicitly authorize the next planned round to start at the break deadline. */

@@ -154,7 +154,7 @@ test('opens the active task in a restrained world focus until the map is reset',
   await page.getByRole('button', { name: '关闭建筑记忆' }).click();
   await expect(page.locator('figure.world')).toHaveClass(/is-project-focused/);
   await page.getByRole('button', { name: '重置地图' }).click();
-  await expect(page.getByText('林边聚落 · 1 栋')).toBeVisible();
+  await expect(page.getByText('海岛聚落 · 1 栋')).toBeVisible();
   await expect(page.locator('figure.world')).not.toHaveClass(/is-project-focused/);
   await expect(world).toHaveAttribute('data-sky-camera-world-offset', '0.0000');
 });

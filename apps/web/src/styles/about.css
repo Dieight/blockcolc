@@ -17,3 +17,8 @@
 .about-dialog .check-update .pixel-icon{width:18px;height:18px}
 .about-dialog .update-result{margin:12px 0 0;font-size:12px;line-height:1.5}
 .about-dialog .update-result{min-height:3em;margin-block:6px 0}
+.update-transfer{display:grid;gap:6px;font-size:12px;font-variant-numeric:tabular-nums}
+.update-transfer progress{width:100%;height:8px;accent-color:var(--focus)}
+.update-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+.update-actions>button,.update-actions>a{min-height:44px;display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:8px 12px;color:var(--ink);background:var(--surface-subtle);border:1px solid var(--line);text-decoration:none;font-size:13px}
+.update-actions>button{flex:1}

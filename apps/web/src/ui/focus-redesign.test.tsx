@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { shiftClockSelection, minimalRoundDetentOffsetPx, clockDragSteps, MinimalClockGesture } from './MinimalClockGesture';
+import { shiftClockSelection, clockDragSteps, MinimalClockGesture } from './MinimalClockGesture';
 import { FocusFace } from './FocusFace';
 import { FocusAllocationChart, FocusCalendarChart, MonumentFocusChart } from './FocusStatsCharts';
 import { AchievementsSection } from './AchievementsPanel';
@@ -30,25 +30,23 @@ describe('shared focus face and clock gesture', () => {
     expect(shiftClockSelection(null,0,now)).toBeNull();
     expect(shiftClockSelection(null,10000,now)).toBe(Date.parse('2026-09-10T08:00:00Z'));
   });
-  it('adds a short bounded drag resistance per crossed round and cannot accumulate into a lock', () => {
-    expect(minimalRoundDetentOffsetPx(0)).toBe(0);
-    expect(minimalRoundDetentOffsetPx(1)).toBe(18);
-    expect(minimalRoundDetentOffsetPx(3)).toBe(54);
-    expect(minimalRoundDetentOffsetPx(24)).toBe(216);
-  });
-  it('cannot turn a short reversed drag into a forward time step at a round detent', () => {
-    for (const resistance of [0, 18, 54, 216]) {
-      for (let delta = -240; delta <= 240; delta++) {
-        expect(clockDragSteps(delta, resistance) * delta).toBeGreaterThanOrEqual(0);
-      }
+  it('keeps reversed drags monotonic without accumulated distance resistance', () => {
+    for (let delta = -240; delta <= 240; delta++) {
+      expect(clockDragSteps(delta) * delta).toBeGreaterThanOrEqual(0);
     }
-    expect(Math.abs(clockDragSteps(-6, 18))).toBe(0);
-    expect(clockDragSteps(-36, 18)).toBe(-2);
-    expect(clockDragSteps(36, 18)).toBe(2);
+    expect(Math.abs(clockDragSteps(-5))).toBe(0);
+    expect(clockDragSteps(-36)).toBe(-3);
+    expect(clockDragSteps(36)).toBe(3);
   });
 });
 
 describe('statistics template contracts', () => {
+  it('sweeps calendar columns left to right without a separate animation for every row',()=>{
+    const days=Array.from({length:14},(_,index)=>({date:`2026-09-${String(index+1).padStart(2,'0')}`,minutes:index*60,sessions:1,future:false}));
+    const html=renderToStaticMarkup(<FocusCalendarChart days={days} today="2026-09-14" selection={{start:'2026-09-14',end:'2026-09-14'}} onSelectionChange={()=>{}}/>);
+    const delays=[...html.matchAll(/--calendar-delay:([\d.]+)s/g)].map(match=>Number(match[1]));
+    expect(delays).toEqual([...Array(7).fill(0),...Array(7).fill(.9)]);
+  });
   it('uses fixed pixel bands, keeps zero days distinct, and disables future dates', () => {
     const days = [{date:'2026-09-07',minutes:25,sessions:1,future:false}, {date:'2026-09-08',minutes:100,sessions:2,future:false}, {date:'2026-09-09',minutes:0,sessions:0,future:false}, {date:'2026-09-10',minutes:500,sessions:4,future:true}];
     const html = renderToStaticMarkup(<FocusCalendarChart days={days} today="2026-09-09" selection={{start:'2026-09-07',end:'2026-09-09'}} onSelectionChange={() => {}}/>);

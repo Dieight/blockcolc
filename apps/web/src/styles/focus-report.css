@@ -1,11 +1,13 @@
 /* The minimal report is part of the existing edge-attached glass band, not a sheet on a sheet. */
 .report.focus-report-surface--immersive{width:min(100%,680px);max-height:calc(100dvh - 40px);margin-inline:auto;overflow-y:auto;overscroll-behavior:contain;background:transparent;border:0;box-shadow:none}
 .focus-immersive .is-focusing .focus-panel:has(.focus-report-surface--minimal){padding-top:24px;justify-content:start;max-height:76dvh}
-/* Dense reading needs a contrast floor on the existing band, not another sheet.
- * Idle/focus still use the user's full clarity range. */
-.focus-immersive .world-screen.is-focusing .focus-panel:has(.focus-report-surface--minimal){background:linear-gradient(145deg,rgb(255 255 255 / var(--focus-glass-highlight-alpha)),transparent 42%,rgb(39 103 73 / var(--focus-glass-accent-alpha))),rgb(243 245 242 / max(.74,var(--focus-glass-light-alpha)))}
-[data-theme='dark'] .focus-immersive .world-screen.is-focusing .focus-panel:has(.focus-report-surface--minimal){background:linear-gradient(145deg,rgb(255 255 255 / var(--focus-glass-highlight-alpha)),transparent 42%,rgb(111 206 150 / var(--focus-glass-accent-alpha))),rgb(20 29 25 / max(.7,var(--focus-glass-dark-alpha)))}
+/* Settlement uses the same user-selected material as focus and rest. */
 .report.focus-report-surface--minimal{position:relative;padding:0;border:0;border-radius:0;background:transparent;box-shadow:none;text-align:left;max-height:calc(76dvh - 48px - var(--safe-bottom));scrollbar-width:thin;color:var(--ink);--focus:var(--ink);touch-action:pan-y}
+/* A clear night scene remains dark even in the light theme. Change the ink,
+ * not the selected glass material; frosted/reduced-transparency stays themed. */
+@media(prefers-reduced-transparency:no-preference){
+  [data-theme='light'] .world-screen[data-clear-glass='true']:has(canvas[data-day-phase='night']) .focus-report-surface--minimal{--ink:#e6efe9;--muted:var(--ink)}
+}
 .focus-report-surface--minimal .eyebrow{margin:0;font-size:12px;color:var(--muted);letter-spacing:.06em}
 .focus-report-surface--minimal h2{margin:4px 0;font-size:32px;font-weight:650;letter-spacing:-.04em;font-variant-numeric:tabular-nums}
 .focus-report-surface--minimal .minimal-report-caption{color:var(--ink);font-size:14px;margin:0 0 8px}

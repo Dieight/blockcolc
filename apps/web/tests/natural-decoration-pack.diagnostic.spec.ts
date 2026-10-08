@@ -50,8 +50,8 @@ async function expectProjectedLods(canvas: Locator) {
 }
 
 for (const environment of [
-  { value: 'natural-valley', label: '自然山谷' },
-  { value: 'ocean-island', label: '海洋小岛' },
+  { value: 'natural-valley', label: '山谷' },
+  { value: 'ocean-island', label: '海岛' },
 ]) {
   test(`natural flowers in ${environment.value} adopt a pack, fall back atomically, and retain identity through real LOD gestures`, async ({ page }, testInfo) => {
     test.setTimeout(180_000);

@@ -12,15 +12,12 @@ async function switchAndPaint(page: Page, label: string): Promise<number> {
   }, label);
 }
 
-test('main pages load together during cold start and remain mounted across warm navigation', async ({ page }) => {
+test('main pages mount on first visit and remain resident across warm navigation', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: '开始建造' }).click();
-  await expect(page.locator('html')).toHaveAttribute('data-route-modules', 'ready');
-  await expect(page.locator('html')).toHaveAttribute('data-route-modules-ready-ms', /^\d+(?:\.\d+)?$/);
-
-  // Every primary page is already resident before its first visit. Cold start
-  // pays this cost once instead of exposing three later loading phases.
-  await expect(page.locator('[data-route-mounted="true"]')).toHaveCount(3);
+  // Only the world is needed during startup. Hidden history/backup screens
+  // must not mount or compute their projections before the first navigation.
+  await expect(page.locator('[data-route-mounted="true"]')).toHaveCount(0);
 
   const canvas = page.getByLabel('项目建筑世界');
   await expect(canvas).toHaveAttribute('data-first-nonempty-frame-ms', /\d/);
@@ -33,10 +30,12 @@ test('main pages load together during cold start and remain mounted across warm 
   await page.getByRole('button', { name: '任务', exact: true }).click();
   const tasks = page.locator('[data-route="tasks"]');
   await expect(tasks).toBeVisible();
+  await expect(page.locator('[data-route-mounted="true"]')).toHaveCount(1);
   await tasks.evaluate((element) => { element.setAttribute('data-residency-probe', 'preserved'); });
 
   await page.getByRole('button', { name: '统计', exact: true }).click();
   await expect(page.locator('[data-route="stats"]')).toBeVisible();
+  await expect(page.locator('[data-route-mounted="true"]')).toHaveCount(2);
   await page.getByRole('button', { name: '设置', exact: true }).click();
   await expect(page.locator('[data-route="settings"]')).toBeVisible();
   await page.getByRole('button', { name: '计时', exact: true }).click();

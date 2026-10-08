@@ -116,6 +116,17 @@ function Get-ApkBuildChannel {
     return 'standard' # Older standard APKs predate the marker.
 }
 
+function Get-ApkPerformanceDiagnostics {
+    param([Parameter(Mandatory)][string]$ManifestTree)
+    foreach ($element in ($ManifestTree -split '(?m)^\s*E: ')) {
+        if ($element -notmatch '^meta-data\b' -or $element -notmatch '"com\.blockcolc\.PERFORMANCE_DIAGNOSTICS"') { continue }
+        if ($element -match 'android:value[^\r\n]*\(type 0x12\)0x0\b') { return $false }
+        if ($element -match 'android:value[^\r\n]*\(type 0x12\)0xffffffff\b') { return $true }
+        throw 'Unrecognized performance diagnostic build marker.'
+    }
+    return $false
+}
+
 function Get-ApkMetadata {
     param([Parameter(Mandatory)][string]$Path)
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { throw "APK not found: $Path" }
@@ -140,6 +151,7 @@ function Get-ApkMetadata {
         Sha256 = Get-Sha256 -Path $Path
         SizeBytes = (Get-Item -LiteralPath $Path).Length
         BuildChannel = $buildChannel
+        PerformanceDiagnostics = Get-ApkPerformanceDiagnostics -ManifestTree $manifestTree
     }
 }
 
@@ -147,9 +159,11 @@ function Assert-ApkMetadata {
     param(
         [Parameter(Mandatory)][string]$Path,
         [Parameter(Mandatory)]$Context,
-        [switch]$AllowPrivateRelay
+        [switch]$AllowPrivateRelay,
+        [switch]$AllowPerformanceDiagnostics
     )
     $metadata = Get-ApkMetadata -Path $Path
+    if ($metadata.PerformanceDiagnostics -and -not $AllowPerformanceDiagnostics) { throw 'Performance diagnostic APK is not a final verification/publication candidate.' }
     if ($metadata.BuildChannel -eq 'private-relay' -and -not $AllowPrivateRelay) {
         throw 'Private relay APK cannot enter the standard verification or publication workflow.'
     }

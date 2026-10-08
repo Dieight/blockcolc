@@ -39,7 +39,7 @@ export function EndFocusDialog({taskTitle,habit=false,marathon=false,isLastMarat
   // End-time rounds can finish early without claiming that a finite subtask is
   // complete. The domain records the round; only the final settlement changes
   // finite-task progress.
-  return <div className="dialog-backdrop" role="presentation">
+  return <div className="dialog-backdrop focus-end-backdrop" role="presentation">
     <div className="confirm-dialog end-focus-dialog" role="dialog" aria-modal="true" aria-labelledby="end-focus-title">
       <button ref={closeRef} className="dialog-close" aria-label="关闭结束专注窗口" disabled={busy} onClick={onClose}><X/></button>
       <h2 id="end-focus-title">{mode === 'choose' ? '如何结束这次专注？' : mode === 'interrupt' ? '这次为什么中断？' : '取消整个多轮计划？'}</h2>

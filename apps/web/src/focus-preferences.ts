@@ -11,6 +11,7 @@ export function defaultFocusPreferences(): FocusPreferences {
     showWorldCoordinates: false, focusGlassTransparency: 100, themeMode: 'system', fontStyle: 'pixel',
     returnToFocusReminders: true,
     autoContinueFocus: false,
+    autoCheckUpdates: false,
     realWeatherEnabled: false,
     minimalMode: false,
   };
@@ -48,6 +49,7 @@ export function parseFocusPreferences(input: unknown): FocusPreferences {
     fontStyle: value.fontStyle === 'system' ? 'system' : 'pixel',
     returnToFocusReminders: typeof value.returnToFocusReminders === 'boolean' ? value.returnToFocusReminders : defaults.returnToFocusReminders,
     autoContinueFocus: value.autoContinueFocus === true,
+    autoCheckUpdates: value.autoCheckUpdates === true,
     realWeatherEnabled: value.realWeatherEnabled === true,
     minimalMode: value.minimalMode === true,
   };

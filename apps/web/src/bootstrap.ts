@@ -9,25 +9,29 @@ import { APPLICATION_STATE_CHANGED_EVENT, shouldPublishLifecycleRefresh, type Ap
 import { registerBuiltinDailyRewardBlueprints } from './builtin-daily-rewards';
 import { installResourcePackColdStartProbe } from './resource-pack-cold-start-performance';
 import { holidayBuildingBlueprint } from '@blockcolc/voxel/holiday-buildings';
+import { bindPerformanceApplication, measurePerformanceStage } from './performance-probe';
 export { APPLICATION_STATE_CHANGED_EVENT, type ApplicationStateChangedDetail } from './application-lifecycle';
 
 export async function bootstrap() {
-  await configureNativeSystemBars();
+  await measurePerformanceStage('native-bars', configureNativeSystemBars);
   const repository = new IndexedDbStateRepository({ databaseName: 'blockcolc-v1' });
-  const service = await ApplicationService.initialize({ repository, backupRepository: repository, dailyBackupRepository: repository, holidayBlueprint:holidayBuildingBlueprint, notifications: isCapacitorNative() ? new CapacitorNotificationPort() : new BrowserNotificationPort(), clock: new DateClock(), ids: new CryptoIdGenerator(), initialTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone, initialRestWeekdays: [0, 6] });
-  await service.resume();
+  const service = await measurePerformanceStage('storage-load', () => ApplicationService.initialize({ repository, backupRepository: repository, dailyBackupRepository: repository, holidayBlueprint:holidayBuildingBlueprint, notifications: isCapacitorNative() ? new CapacitorNotificationPort() : new BrowserNotificationPort(), clock: new DateClock(), ids: new CryptoIdGenerator(), initialTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone, initialRestWeekdays: [0, 6] }));
+  bindPerformanceApplication(service);
+  await measurePerformanceStage('resume', () => service.resume());
   // The supplemental bundle is optional in clean/public builds. A failed
   // bundle load or invalid optional asset must not prevent the local clock from
   // opening; the domain command remains the persistence/validation boundary.
   try {
-    const { BUILTIN_DAILY_REWARD_BLUEPRINTS } = await import('@blockcolc/voxel/blueprint');
-    await registerBuiltinDailyRewardBlueprints(service, BUILTIN_DAILY_REWARD_BLUEPRINTS);
+    await measurePerformanceStage('builtin-rewards', async () => {
+      const { BUILTIN_DAILY_REWARD_BLUEPRINTS } = await import('@blockcolc/voxel/blueprint');
+      await registerBuiltinDailyRewardBlueprints(service, BUILTIN_DAILY_REWARD_BLUEPRINTS);
+    });
   } catch {
     // Optional packaged decorations are an enhancement, never a bootstrap gate.
   }
   if (isCapacitorNative()) attachFocusExport(service);
   const lifecycle = isCapacitorNative() ? new CapacitorFocusLifecyclePort() : new BrowserFocusLifecyclePort();
-  await lifecycle.subscribe(async event => {
+  await measurePerformanceStage('lifecycle', () => lifecycle.subscribe(async event => {
     const beforeRevision = service.stateRevision();
     const before = service.snapshot().activeFocusSession;
     const result = await service.handleLifecycleEvent(event);
@@ -55,7 +59,7 @@ export async function bootstrap() {
       maxEffectiveExcursions: result.state.focusIntegrityPolicy.maxEffectiveExcursions,
     };
     window.dispatchEvent(new CustomEvent<ApplicationStateChangedDetail>(APPLICATION_STATE_CHANGED_EVENT, { detail }));
-  });
+  }));
   const resourcePacks = installResourcePackColdStartProbe(
     new IndexedDbResourcePackRepository({ databaseName: 'blockcolc-resource-packs-v1' }),
   );

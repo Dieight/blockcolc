@@ -155,7 +155,10 @@ export function fallbackVisualStyleForVoxel(
     color = 0xe5ece8;
   }
 
-  if (/(?:^|_)glass(?:_|$)|(?:^|_)ice(?:_|$)/.test(path)) {
+  if (namespace==='minecraft' && (path==='packed_ice' || path==='blue_ice')) {
+    // Solid ice spires were accidentally rendered like pale transparent firs.
+    color=path==='blue_ice'?0x82aeca:0xb6cee1;transparent=false;opacity=1;
+  } else if (/(?:^|_)glass(?:_|$)|(?:^|_)ice(?:_|$)/.test(path)) {
     transparent = true;
     opacity = 0.44;
     response = "glass";

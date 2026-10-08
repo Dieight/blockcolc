@@ -827,6 +827,7 @@ float blockcolcUvFluidWater = blockcolcUvFluidActive > 0.5 ? mod(floor(blockcolc
 float blockcolcUvFluidFlowing = blockcolcUvFluidActive > 0.5 ? mod(floor(blockcolcUvFluidMeta / 32768.0), 2.0) : 0.0;
 float blockcolcUvFluidAngle = blockcolcUvFluidActive > 0.5 ? mod(blockcolcUvFluidMeta, 32768.0) * 6.283185307179586 / 4096.0 : 0.0;`;
   const flowUv = `
+#ifdef USE_MAP
 if (blockcolcUvFluidActive > 0.5 && blockcolcUvFluidFlowing > 0.5 && normal.y > 0.5) {
   float blockcolcFlowS = 0.25 * sin(blockcolcUvFluidAngle);
   float blockcolcFlowC = 0.25 * cos(blockcolcUvFluidAngle);
@@ -838,7 +839,8 @@ if (blockcolcUvFluidActive > 0.5 && blockcolcUvFluidFlowing > 0.5 && normal.y > 
       ? vec2(0.5 - blockcolcFlowC + blockcolcFlowS, 0.5 + blockcolcFlowC + blockcolcFlowS)
       : vec2(0.5 + blockcolcFlowC + blockcolcFlowS, 0.5 + blockcolcFlowC - blockcolcFlowS));
   vMapUv = blockcolcFlowUv;
-}`;
+}
+#endif`;
   const atlasFlowUv = `
 ${fluidMetadata}
 vBlockcolcFluid = blockcolcUvFluidActive;

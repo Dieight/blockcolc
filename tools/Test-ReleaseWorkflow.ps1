@@ -35,6 +35,11 @@ $privateManifest = "E: application`n  E: meta-data`n    A: android:name(0x010100
 Assert-True -Condition ((Get-ApkBuildChannel -ManifestTree $privateManifest) -eq 'private-relay') -Message 'Private relay marker'
 Assert-True -Condition ((Get-ApkBuildChannel -ManifestTree ($privateManifest.Replace('0xffffffff', '0x0'))) -eq 'standard') -Message 'Explicit standard marker'
 Assert-Throws -MessagePattern 'Unrecognized' -Action { Get-ApkBuildChannel -ManifestTree ($privateManifest.Replace('0xffffffff', '0x1')) }
+$probeManifest = $privateManifest.Replace('PRIVATE_RELAY', 'PERFORMANCE_DIAGNOSTICS')
+Assert-True -Condition (Get-ApkPerformanceDiagnostics -ManifestTree $probeManifest) -Message 'Explicit diagnostic marker'
+Assert-True -Condition (-not (Get-ApkPerformanceDiagnostics -ManifestTree ($probeManifest.Replace('0xffffffff', '0x0')))) -Message 'Explicit inactive diagnostic marker'
+Assert-True -Condition (-not (Get-ApkPerformanceDiagnostics -ManifestTree 'E: application')) -Message 'Legacy APK has no probes'
+Assert-Throws -MessagePattern 'Unrecognized' -Action { Get-ApkPerformanceDiagnostics -ManifestTree ($probeManifest.Replace('0xffffffff', '0x1')) }
 $hashB = ('b' * 64) -join ''
 $evidence = [pscustomobject]@{
     phase = 'accepted'

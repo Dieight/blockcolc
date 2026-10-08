@@ -8,6 +8,22 @@ describe('ballistic slider',()=>{
   expect(sliderFlight(150,-30,-35,300).landing).toBeLessThan(150);
   expect(sliderFlight(150,-60,65,300).landing).toBeGreaterThan(left.landing);
  });
+ it('mirrors the upper and lower trajectories, including duration and landing',()=>{
+  for(const y of [-15,-45,-110,15,45,110]){
+   const flight=sliderFlight(150,12,y,300);
+   const mirrored=sliderFlight(150,12,-y,300);
+   expect(flight.duration).toBeCloseTo(mirrored.duration);
+   expect(flight.vy).toBe(-mirrored.vy);expect(flight.gravity).toBe(-mirrored.gravity);
+   for(const fraction of [0,.1,.3,.5,.8,1]){
+    const a=sliderFlightPosition(flight,flight.duration*fraction),b=sliderFlightPosition(mirrored,mirrored.duration*fraction);
+    expect(a.y).toBeCloseTo(-b.y);expect(a.x+b.x).toBeCloseTo(2*flight.origin);
+   }
+   expect(Number.isFinite(flight.duration)).toBe(true);
+   const apex=-flight.vy/flight.gravity;
+   expect(apex).toBeGreaterThan(0);expect(flight.duration).toBeGreaterThan(apex);
+   expect(sliderFlightPosition(flight,flight.duration).y).toBeCloseTo(0);
+  }
+ });
  it('lands at the preview regardless of frame rate, rebounds then settles',()=>{
   for(const pull of [-200,-20,0,20,200]){
    const flight=sliderFlight(130,pull,70,300);expect(flight.landing).toBeGreaterThanOrEqual(0);expect(flight.landing).toBeLessThanOrEqual(300);

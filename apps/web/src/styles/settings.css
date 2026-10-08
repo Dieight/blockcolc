@@ -43,10 +43,13 @@
 .notification-actions>.settings-text-action{min-width:44px;height:44px;display:inline-flex;align-items:center;justify-content:center;padding:0 8px}
 
 /* iOS-style segmented control replaces the underlined text toggle. */
-.text-toggle{flex:0 0 auto;display:flex;gap:2px;padding:2px;border-radius:7px;background:var(--settings-field)}
-.text-toggle button{min-height:44px;padding:8px 14px;border:0;background:transparent;border-radius:5px;color:var(--muted);font-weight:500}
-.text-toggle button:hover{background:rgba(23,33,28,.05)}
-.text-toggle button[aria-pressed="true"]{background:var(--surface);color:#17211c;font-weight:750;box-shadow:0 1px 3px rgba(23,33,28,.18)}
+.text-toggle{position:relative;isolation:isolate;flex:0 0 auto;display:flex;gap:2px;padding:2px;border-radius:7px;background:var(--settings-field)}
+.text-toggle-selection{position:absolute;inset:2px auto 2px 0;z-index:-1;pointer-events:none;background:var(--surface);box-shadow:0 1px 3px rgb(23 33 28 / .15);transition:transform .26s cubic-bezier(.22,.8,.25,1),width .26s cubic-bezier(.22,.8,.25,1)}
+.text-toggle button{min-height:44px;padding:8px 14px;border:0;background:transparent;border-radius:5px;color:var(--muted);font-weight:500;white-space:nowrap}
+.text-toggle button:hover{background:transparent}
+.text-toggle button[aria-pressed="true"]{color:var(--ink);font-weight:750}
+.text-toggle:not([data-indicator-ready]) button[aria-pressed="true"]{background:var(--surface)}
+@media(prefers-reduced-motion:reduce){.text-toggle-selection{transition:none}}
 
 /* iOS-style pill switch. The label keeps the 44px touch target and never
  * compresses; the track clips its own knob so nothing crosses the pill edge. */
@@ -127,7 +130,7 @@
    * control that used to extend past the viewport while preserving each
    * button's 44px height. */
   .toggle-row .text-toggle{width:100%;flex:0 0 100%;max-width:100%;min-width:0;justify-content:flex-start}
-  .toggle-row .text-toggle button{min-width:0;padding-inline:10px;white-space:normal}
+  .toggle-row .text-toggle button{min-width:0;padding-inline:10px;white-space:nowrap}
   .toggle-row .planned-days{width:100%;flex:0 0 100%;max-width:100%;justify-content:flex-start}
 }
 

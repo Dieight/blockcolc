@@ -269,8 +269,8 @@ function originalMaterialTone(pattern: OriginalMaterialPattern, x: number, y: nu
     // Directionless ripple noise: a directional sine pattern moires into
     // straight dark/light stripes across large planar water surfaces.
     const ripple = noise(Math.floor(x / 2), Math.floor(y / 2), seed + 7);
-    const sparkle = hash(x, y, seed + 13) % 29 === 0 ? 9 : 0;
-    return clampByte(222 + ripple * 0.16 + sparkle);
+    const sparkle = hash(x, y, seed + 13) % 29 === 0 ? 4 : 0;
+    return clampByte(222 + ripple * 0.07 + sparkle);
   }
   if (pattern === "lava") {
     const vein = Math.abs(Math.sin((x * 0.65 + y * 0.9 + coarse * 0.018))) < 0.28;

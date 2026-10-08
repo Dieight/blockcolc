@@ -10,8 +10,8 @@ test("@smoke ocean island world renders main island, islets and open sea", async
   await page.goto("/");
   await page.getByRole("button", { name: "开始建造" }).click();
   await page.getByRole("button", { name: "设置", exact: true }).click();
-  await page.getByRole("group", { name: "聚落环境" }).getByRole("button", { name: "海洋小岛" }).click();
-  await expect(page.getByRole("group", { name: "聚落环境" }).getByRole("button", { name: "海洋小岛" })).toHaveAttribute("aria-pressed", "true");
+  await page.getByRole("group", { name: "聚落环境" }).getByRole("button", { name: "海岛" }).click();
+  await expect(page.getByRole("group", { name: "聚落环境" }).getByRole("button", { name: "海岛" })).toHaveAttribute("aria-pressed", "true");
   await page.getByRole("button", { name: "计时", exact: true }).click();
   const canvas = page.getByLabel("项目建筑世界");
   await expect(canvas).toHaveAttribute("data-environment-style", "ocean-island");
@@ -86,7 +86,7 @@ test("ocean island at night scatters the moon streak instead of a mirror band", 
   await page.goto("/");
   await page.getByRole("button", { name: "开始建造" }).click();
   await page.getByRole("button", { name: "设置", exact: true }).click();
-  await page.getByRole("group", { name: "聚落环境" }).getByRole("button", { name: "海洋小岛" }).click();
+  await page.getByRole("group", { name: "聚落环境" }).getByRole("button", { name: "海岛" }).click();
   await page.getByRole("button", { name: "计时", exact: true }).click();
   const canvas = page.getByLabel("项目建筑世界");
   await expect(canvas).toHaveAttribute("data-environment-style", "ocean-island");

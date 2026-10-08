@@ -16,14 +16,20 @@ function noise(seed:number,x:number,z:number) {
 /** A continuous, irregular reef bed with branching colonies and channels.
  * Coordinates, colour patches and heights belong to the bed, not a repeated
  * prefab. The caller clips it to actual warm water and protects other sites. */
-export function createReefField(seed:number,halfX:number,halfZ:number,allowed:(x:number,z:number)=>boolean=()=>true) {
+export function createReefField(seed:number,halfX:number,halfZ:number,allowed:(x:number,z:number)=>boolean=()=>true,
+  field?:{originX:number;originZ:number;baseY:(x:number,z:number)=>number}) {
   const cells=new Map<string,{voxel:BlueprintVoxel;solid:boolean}>();
+  const permitted=new Map<string,boolean>(),elevations=new Map<string,number>();
+  const accepts=(x:number,z:number)=>{const key=`${x}:${z}`;if(!permitted.has(key))permitted.set(key,allowed(x,z));return permitted.get(key)!;};
+  const elevation=(x:number,z:number)=>{const key=`${x}:${z}`;if(!elevations.has(key))elevations.set(key,field?.baseY(x,z)??0);return elevations.get(key)!;};
   const put=(x:number,y:number,z:number,block:string,solid=true,state?:Record<string,string>)=>{
-    if(!allowed(x,z))return;
-    cells.set(`${x}:${y}:${z}`,{voxel:{x,y,z,materialId:block==='sand'?'stone':'accent',buildOrder:0,
+    if(!accepts(x,z))return;
+    const actualY=y+elevation(x,z);
+    cells.set(`${x}:${actualY}:${z}`,{voxel:{x,y:actualY,z,materialId:block==='sand'?'stone':'accent',buildOrder:0,
       sourceBlockId:`minecraft:${block}`,...(state?{sourceBlockState:state}:{})},solid});
   };
   const inside=(x:number,z:number)=>{
+    if(field)return true; // Connected tiles are clipped by actual warm-water bounds.
     const warpedX=x+(noise(seed+31,x/9,z/9)-.5)*7;
     const warpedZ=z+(noise(seed+77,x/11,z/11)-.5)*6;
     const edge=1-(warpedX/halfX)**2-(warpedZ/halfZ)**2;
@@ -32,17 +38,21 @@ export function createReefField(seed:number,halfX:number,halfZ:number,allowed:(x
     return edge+(noise(seed,x/7,z/7)-.5)*.7>.05 && !(channel<1.3&&Math.abs(x)>halfX*.28);
   };
   for(let x=-halfX;x<=halfX;x++)for(let z=-halfZ;z<=halfZ;z++) {
-    if(!inside(x,z)||!allowed(x,z))continue;
+    if(!inside(x,z)||!accepts(x,z))continue;
     put(x,0,z,'sand');
-    const family=KINDS[Math.min(4,Math.floor(noise(seed+90,x/15,z/15)*5))]!;
-    if(noise(seed+4,x/5,z/5)>.28)put(x,1,z,`${family}_coral_block`);
-    if(random(seed+17,x,z)>.975)put(x,2,z,`${family}_coral_fan`,false,{waterlogged:'true'});
+    const wx=x+(field?.originX??0),wz=z+(field?.originZ??0);
+    const family=KINDS[Math.min(4,Math.floor(noise(seed+90,wx/15,wz/15)*5))]!;
+    // Broad colonies stay connected, cut only by winding sandy passages.
+    const channel=field&&Math.abs(wz-18*Math.sin(wx/31+seed%13))<1.2;
+    if(!channel&&noise(seed+4,wx/8,wz/8)>.17)put(x,1,z,`${family}_coral_block`);
+    if(random(seed+17,wx,wz)>.975)put(x,2,z,`${family}_coral_fan`,false,{waterlogged:'true'});
   }
   for(let x=-halfX+3;x<halfX;x+=5)for(let z=-halfZ+3;z<halfZ;z+=5) {
-    const cx=x+Math.floor(random(seed+5,x,z)*3)-1,cz=z+Math.floor(random(seed+6,x,z)*3)-1;
-    if(!inside(cx,cz)||!allowed(cx,cz)||random(seed+8,x,z)<.12)continue;
-    const family=KINDS[Math.min(4,Math.floor(noise(seed+90,cx/15,cz/15)*5))]!;
-    const form=Math.floor(random(seed+12,x,z)*3),height=1+Math.floor(random(seed+9,x,z)*2);
+    const wx=x+(field?.originX??0),wz=z+(field?.originZ??0);
+    const cx=x+Math.floor(random(seed+5,wx,wz)*3)-1,cz=z+Math.floor(random(seed+6,wx,wz)*3)-1;
+    if(!inside(cx,cz)||!accepts(cx,cz)||random(seed+8,wx,wz)<.12)continue;
+    const family=KINDS[Math.min(4,Math.floor(noise(seed+90,(cx+(field?.originX??0))/15,(cz+(field?.originZ??0))/15)*5))]!;
+    const form=Math.floor(random(seed+12,wx,wz)*3),height=1+Math.floor(random(seed+9,wx,wz)*2);
     for(let y=1;y<=height;y++)put(cx,y,cz,`${family}_coral_block`);
     for(let dx=-2;dx<=2;dx++)for(let dz=-2;dz<=2;dz++) {
       if(form===0?Math.abs(dx)+Math.abs(dz)>2:form===1?Math.abs(dx)>1||Math.abs(dz)>1:dz!==0&&Math.abs(dx)!==2)continue;

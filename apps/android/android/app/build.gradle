@@ -8,6 +8,7 @@ import java.util.Properties
 import java.util.TimeZone
 
 def releaseVersion = new JsonSlurper().parse(file("${rootProject.projectDir}/../../../version.json"))
+def performanceDiagnosticsEnabled = project.findProperty('blockcolcPerformanceDiagnostics')?.toString() == 'true'
 
 def releaseStoreFile = System.getenv('BLOCKCOLC_STORE_FILE')
 def releaseStorePassword = System.getenv('BLOCKCOLC_STORE_PASSWORD')
@@ -136,8 +137,9 @@ android {
         versionCode releaseVersion.versionCode as int
         versionName releaseVersion.versionName as String
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
-        manifestPlaceholders = [blockcolcPrivateRelayEnabled: privateRelayEnabled.toString()]
+        manifestPlaceholders = [blockcolcPrivateRelayEnabled: privateRelayEnabled.toString(), blockcolcPerformanceDiagnostics: performanceDiagnosticsEnabled.toString()]
         buildConfigField 'boolean', 'BLOCKCOLC_QWEATHER_CONFIGURED', qWeatherConfigured.toString()
+        buildConfigField 'boolean', 'BLOCKCOLC_PERFORMANCE_DIAGNOSTICS', performanceDiagnosticsEnabled.toString()
         buildConfigField 'String', 'BLOCKCOLC_QWEATHER_HOST', groovy.json.JsonOutput.toJson(qWeatherHost)
         buildConfigField 'String', 'BLOCKCOLC_QWEATHER_API_KEY', groovy.json.JsonOutput.toJson(qWeatherApiKey)
         if (privateRelayEnabled) {
@@ -155,6 +157,7 @@ android {
     buildFeatures { buildConfig true }
     sourceSets {
         main {
+            java.srcDir performanceDiagnosticsEnabled ? 'src/performance/java' : 'src/performance-disabled/java'
             // These names belong only to the optional private overlay. Keep
             // inert historical placeholders out of the standard APK too;
             // the common app has no manifest reference to either component.
@@ -168,6 +171,7 @@ android {
             }
         }
         test {
+            if (performanceDiagnosticsEnabled) java.srcDir 'src/performanceTest/java'
             if (privateRelayEnabled) {
                 java.srcDir privateRelayTestJavaDir
             }

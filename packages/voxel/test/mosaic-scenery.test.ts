@@ -1,8 +1,8 @@
 import { describe,expect,it } from 'vitest';
-import { sampleMosaicTerrain, mosaicRegionAt, mosaicGridPosition } from '../src/mosaic-terrain';
+import { sampleMosaicTerrain, mosaicRegionAt, mosaicGridPosition, mosaicSeed } from '../src/mosaic-terrain';
 import { createSteppedTerrainData } from '../src/terrain';
 import { terrainSurfaceRectangles } from '../src/renderer';
-import { planWorldScenery, scenerySurfaceAt, sceneryGeometryLayers } from '../src/scenery';
+import { planWorldScenery, scenerySurfaceAt, sceneryGeometryLayers, surfaceSampler } from '../src/scenery';
 import { sceneryPlanningFixture } from './scenery-planning-fixture';
 
 describe('continuous composite environment',()=>{
@@ -35,9 +35,49 @@ describe('continuous composite environment',()=>{
    expect(input.protectedRects).toHaveLength(7);expect(terrain.positions.every(Number.isFinite)).toBe(true);
    expect(terrain.lodCellCounts.far).toBeGreaterThan(0);
  },30_000);
+ it('forms a low sand shelf at sea edges rather than clipping the old relief into a beach wall',()=>{
+   for(const seed of [1234,45211,89412]){
+     let shores=0;
+     for(let x=-340;x<=340;x+=4)for(let z=-340;z<=340;z+=4){
+       const sample=sampleMosaicTerrain(x,z,seed,26);
+       if(sample.material!=='sand')continue;
+       expect(sample.height).toBeGreaterThanOrEqual(1);expect(sample.height).toBeLessThanOrEqual(3);
+       if([[4,0],[-4,0],[0,4],[0,-4]].some(([dx,dz])=>sampleMosaicTerrain(x+dx!,z+dz!,seed,26).biome==='ocean'))shores++;
+     }
+     expect(shores).toBeGreaterThan(80);
+   }
+ });
+ it.each([26,66])('joins warm and open sea without a dry diagonal seam at core radius %s',core=>{
+   const spacing=mosaicGridPosition(0,0,core).spacing;
+   for(const seed of [1234,45211,89412,mosaicSeed('world-default')])for(let u=.32;u<=1.4;u+=.025){
+     const v=-1.1,s=sampleMosaicTerrain((u+v)*spacing/Math.SQRT2,(v-u)*spacing/Math.SQRT2,seed,core);
+     expect(s.material,`dry seam at ${u.toFixed(3)} for ${seed}`).toBe('water');
+   }
+ });
 });
 
 describe('supported distant scenery',()=>{
+ it.each([1,14,24])('does not mix legacy broadleaf trees into the snow/ice crown margin in a %s-building world',count=>{
+   const input=sceneryPlanningFixture('mosaic-coast',count,4),at=surfaceSampler(input.surfaces),plan=planWorldScenery(input);
+   const isolatedSand=input.surfaces.filter(s=>s.material==='sand'&&[[-12,0],[12,0],[0,-12],[0,12]].every(([dx,dz])=>at((s.minX+s.maxX)/2+dx!,(s.minZ+s.maxZ)/2+dz!)?.water));
+   expect(isolatedSand).toEqual([]);
+   const cold=plan.objects.filter(o=>o.role==='tree'&&[[0,0],[-8,0],[8,0],[0,-8],[0,8],[-6,-6],[-6,6],[6,-6],[6,6]].some(([dx,dz])=>['snow','ice'].includes(at(o.x+dx!,o.z+dz!)?.material??'')));
+   expect(cold.length).toBeGreaterThan(5);
+   for(const tree of cold){
+     expect(tree.voxels.some(v=>v.sourceBlockId==='minecraft:spruce_log')).toBe(true);
+     expect(tree.voxels.some(v=>/minecraft:(oak|birch)_log/.test(v.sourceBlockId??''))).toBe(false);
+     expect(Math.max(...tree.voxels.map(v=>v.y))).toBeGreaterThanOrEqual(9);
+   }
+ },30_000);
+ it.each(['world-default','world-portal-0','cold-edge-regression'])('uses only tall block spruce on the actual snow top, including blended edges: %s',worldSeed=>{
+   const input=sceneryPlanningFixture('mosaic-coast',24,4,worldSeed),plan=planWorldScenery(input);
+   const snowy=plan.objects.filter(o=>o.role==='tree'&&input.surfaces.some(s=>['snow','ice'].includes(s.material??'')&&o.x>=s.minX&&o.x<s.maxX&&o.z>=s.minZ&&o.z<s.maxZ));
+   expect(snowy.length).toBeGreaterThan(5);
+   for(const tree of snowy){
+     expect(tree.voxels.some(v=>v.sourceBlockId==='minecraft:spruce_log')).toBe(true);
+     expect(Math.max(...tree.voxels.map(v=>v.y))).toBeGreaterThanOrEqual(9);
+   }
+ },30_000);
  it('does not inherit the old valley bowl around a twenty-four-building construction area',()=>{
    const input=sceneryPlanningFixture('mosaic-coast',24,4);
    const outerX=Math.max(...input.protectedRects.map(rect=>Math.abs(rect.x)+rect.width/2));
@@ -59,11 +99,32 @@ describe('supported distant scenery',()=>{
    const poplars=plan.objects.filter(object=>object.role==='tree'&&object.voxels.some(voxel=>voxel.sourceBlockId==='minecraft:poplar_log'));
    expect(poplars.length).toBeGreaterThanOrEqual(40);
    for(const color of ['red','orange','yellow'])expect(poplars.some(object=>object.voxels.some(voxel=>voxel.sourceBlockId===`minecraft:${color}_poplar_leaves`))).toBe(true);
-   for(const reef of plan.objects.filter(object=>object.id.includes(':reef:'))){
-     expect(reef.width).toBeGreaterThanOrEqual(51);expect(reef.depth).toBeGreaterThanOrEqual(39);
-     expect(reef.voxels.length).toBeGreaterThanOrEqual(800);
-     expect(reef.voxels.some(voxel=>voxel.sourceBlockId?.endsWith('_coral_fan'))).toBe(true);
-     expect(reef.voxels.some(voxel=>voxel.sourceBlockId==='minecraft:sea_pickle')).toBe(true);
+   const reefs=plan.objects.filter(object=>object.id.includes(':reef:'));
+   const coral=reefs.flatMap(o=>o.voxels.filter(v=>v.sourceBlockId?.endsWith('_coral_block')).map(v=>({x:v.x+o.x,z:v.z+o.z})));
+   expect(coral.length).toBeGreaterThan(4000);
+   expect(Math.max(...coral.map(v=>v.x))-Math.min(...coral.map(v=>v.x))).toBeGreaterThan(90);
+   expect(reefs.some(o=>o.voxels.some(v=>v.sourceBlockId?.endsWith('_coral_fan')))).toBe(true);
+   expect(reefs.some(o=>o.voxels.some(v=>v.sourceBlockId==='minecraft:sea_pickle'))).toBe(true);
+   // Adjacent culling tiles meet at real one-block columns, not prefab gaps.
+   const floor=new Set(reefs.flatMap(o=>o.voxels.filter(v=>v.sourceBlockId==='minecraft:sand').map(v=>`${v.x+o.x}:${v.z+o.z}`)));
+   const crossTile=coral.filter(v=>v.x%40===19&&floor.has(`${v.x+1}:${v.z}`));
+   expect(crossTile.length).toBeGreaterThan(30);
+   const spruces=plan.objects.filter(o=>o.role==='tree'&&o.voxels.some(v=>v.sourceBlockId==='minecraft:spruce_log'));
+   expect(spruces.length).toBeGreaterThan(5);
+   for(const tree of spruces)expect(tree.voxels.every(v=>Number.isInteger(v.x)&&Number.isInteger(v.y)&&Number.isInteger(v.z))).toBe(true);
+   const coldTrees=plan.objects.filter(o=>{
+     const material=input.surfaces.find(s=>o.x>=s.minX&&o.x<s.maxX&&o.z>=s.minZ&&o.z<s.maxZ)?.material;
+     return o.role==='tree'&&(material==='snow'||material==='ice'||mosaicRegionAt(o.x,o.z,input.mosaicCoreRadius!)==='21'||sampleMosaicTerrain(o.x,o.z,mosaicSeed(input.worldSeed),input.mosaicCoreRadius!).biome==='glacier');
+   });
+   expect(coldTrees.length).toBeGreaterThan(5);
+   for(const tree of coldTrees){
+     expect(tree.voxels.some(v=>v.sourceBlockId==='minecraft:spruce_log')).toBe(true);
+     expect(tree.voxels.some(v=>/minecraft:(oak|birch)_log/.test(v.sourceBlockId??''))).toBe(false);
+     expect(Math.max(...tree.voxels.map(v=>v.y))).toBeGreaterThanOrEqual(9);
+   }
+   for(const reef of reefs){
+     expect(reef.width).toBe(40);expect(reef.depth).toBe(40);
+     expect(reef.voxels.length).toBeGreaterThanOrEqual(12);
      expect(Math.max(...reef.voxels.map(voxel=>reef.y+voxel.y+.5))).toBeLessThanOrEqual(0);
      for(const voxel of reef.voxels.filter(voxel=>/_coral$|_coral_fan$|sea_pickle$/.test(voxel.sourceBlockId??'')))expect(voxel.sourceBlockState?.waterlogged).toBe('true');
    }

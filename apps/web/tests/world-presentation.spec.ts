@@ -171,8 +171,8 @@ test('opening camera movement never opens memory and is not replayed by route ch
 });
 
 for (const [environment, label, expectedMaximum] of [
-  ['ocean-island', '海洋小岛', 1.14],
-  ['natural-valley', '自然山谷', 0.9],
+  ['ocean-island', '海岛', 1.14],
+  ['natural-valley', '山谷', 0.9],
 ] as const) test(`minimal cold opening travels from the maximum to minimum settlement zoom (${environment})`, async ({ page }) => {
   test.setTimeout(90_000);
   await createProject(page);

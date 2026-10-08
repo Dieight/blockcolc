@@ -67,7 +67,8 @@ test("confirming locks the plan on the workbench; cancelling after start settles
   await expect(page.getByRole("heading", { name: "按结束时间排程" })).toBeVisible();
   await expect(page.locator(".focus-task-context strong")).toHaveText("准备第 1 / 4 轮");
   await expect(page.locator(".workbench-context")).toHaveCount(1);
-  await expect(page.getByRole("button", { name: "切换当前工作", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "切换当前工作", exact: true })).toHaveCount(0);
+  await expect(page.getByRole('navigation',{name:'主导航'}).getByRole('button',{name:'任务',exact:true})).toBeVisible();
   const lockedPlan = await page.evaluate(() => JSON.parse(localStorage.getItem("blockcolc-round-plan-v1") ?? "null") as { mode?: string; subtaskId?: string | null; totalRounds?: number; status?: string; endAt?: string } | null);
   expect(lockedPlan).toMatchObject({ mode: "marathon", totalRounds: 4, status: "ready" });
   const total = lockedPlan?.totalRounds ?? 0;

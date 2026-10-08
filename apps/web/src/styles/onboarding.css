@@ -1,0 +1,16 @@
+.tutorial-backdrop{z-index:1200}
+.tutorial-sheet{box-sizing:border-box;color:var(--ink);overflow:auto;overscroll-behavior:contain}
+.tutorial-sheet header{display:flex;align-items:center;justify-content:space-between;font-size:12px}
+.tutorial-sheet header button{display:grid;place-items:center;min-width:44px;min-height:44px;padding:0;border:0;background:none;color:inherit}
+.tutorial-heading{display:flex;align-items:center;gap:14px;margin:18px 0 24px}
+.tutorial-heading>.pixel-icon{flex-shrink:0;color:var(--focus)}
+.tutorial-heading h2{font-size:22px;margin:0;outline:0}
+.tutorial-features{margin:0}
+.tutorial-features>div{padding:16px 0}
+.tutorial-features>div:first-child{padding-top:0}
+.tutorial-features>div+div{border-top:1px solid var(--sheet-glass-border)}
+.tutorial-features dt{display:flex;align-items:baseline;gap:12px;font-size:16px;margin-bottom:8px;font-weight:700;line-height:1.4}
+.tutorial-feature-index{flex:0 0 22px;font-size:11px;font-weight:500;color:var(--focus);letter-spacing:.03em}
+.tutorial-features dd{margin:0 0 0 34px;font-size:14px;line-height:1.65;color:inherit}
+.tutorial-sheet footer{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:16px}
+.tutorial-sheet footer button{min-height:48px}

@@ -10,47 +10,79 @@ const FACE_TANGENTS = [
   [[1, 0, 0], [0, 1, 0]], [[1, 0, 0], [0, 1, 0]],
   [[0, 0, 1], [0, 1, 0]], [[0, 0, 1], [0, 1, 0]],
 ] as const;
+// These 48 neighbour offsets are identical for every block. Building vectors
+// and nested temporary arrays per face was a large part of forest preparation.
+const FACE_SAMPLES = FACE_OFFSETS.map((normal, face) => {
+  const [first, second] = FACE_TANGENTS[face]!;
+  return { normal, edges: [-1, 1].flatMap(sign => [add(normal, scale(first, sign)), add(normal, scale(second, sign))]),
+    corners: [-1, 1].flatMap(a => [-1, 1].map(b => add(normal, add(scale(first, a), scale(second, b))))) };
+});
 const TINT_WORD_RANGE = 4 ** 6;
 const MAX_VISUAL_WORD = 4 ** 12;
 
 export interface LocalOcclusionField {
   readonly minimumY: number;
   readonly occupied: ReadonlySet<string>;
+  /** Fast equivalent membership for renderer-created fields; hand-built fields remain supported. */
+  readonly has?: (x: number, y: number, z: number) => boolean;
 }
 
 export function createLocalOcclusionField(voxels: readonly BlueprintVoxel[]): LocalOcclusionField {
   let minimumY = 0;
-  const occupied = new Set<string>();
+  let minX = Infinity, minY = Infinity, minZ = Infinity, maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+  let integerCoordinates = true;
   for (const [index, voxel] of voxels.entries()) {
     if (index === 0 || voxel.y < minimumY) minimumY = voxel.y;
-    if (isFullOccluder(voxel)) occupied.add(voxelKey(voxel));
+    integerCoordinates &&= Number.isSafeInteger(voxel.x) && Number.isSafeInteger(voxel.y) && Number.isSafeInteger(voxel.z);
+    minX = Math.min(minX, voxel.x); minY = Math.min(minY, voxel.y); minZ = Math.min(minZ, voxel.z);
+    maxX = Math.max(maxX, voxel.x); maxY = Math.max(maxY, voxel.y); maxZ = Math.max(maxZ, voxel.z);
   }
-  return {
-    minimumY,
-    occupied,
+  const spanY = maxY - minY + 1, spanZ = maxZ - minZ + 1, strideX = spanY * spanZ;
+  const volume = (maxX - minX + 1) * strideX;
+  if (!integerCoordinates || !Number.isSafeInteger(volume) || volume <= 0) {
+    const occupied = new Set(voxels.filter(isFullOccluder).map(voxelKey));
+    return { minimumY, occupied };
+  }
+  const cells = new Set<number>();
+  for (const voxel of voxels) if (isFullOccluder(voxel)) cells.add((voxel.x - minX) * strideX + (voxel.y - minY) * spanZ + voxel.z - minZ);
+  let strings: Set<string> | null = null;
+  return { minimumY,
+    has(x, y, z) {
+      if (x < minX || x > maxX || y < minY || y > maxY || z < minZ || z > maxZ
+        || !Number.isInteger(x) || !Number.isInteger(y) || !Number.isInteger(z)) return false;
+      return cells.has((x - minX) * strideX + (y - minY) * spanZ + z - minZ);
+    },
+    get occupied() {
+      // Keep the public string-set contract without allocating all coordinate
+      // strings when only the renderer's numeric sampler uses this field.
+      if (!strings) strings = new Set([...cells].map(cell => {
+        const x = Math.floor(cell / strideX), remainder = cell - x * strideX;
+        const y = Math.floor(remainder / spanZ), z = remainder - y * spanZ;
+        return `${x + minX}:${y + minY}:${z + minZ}`;
+      }));
+      return strings;
+    },
   };
 }
 
+function occupiedAt(field: LocalOcclusionField, voxel: BlueprintVoxel, offset: readonly number[]): boolean {
+  return field.has ? field.has(voxel.x + offset[0]!, voxel.y + offset[1]!, voxel.z + offset[2]!) : field.occupied.has(offsetKey(voxel, offset));
+}
+
 export function faceOcclusionLevelsFor(voxel: BlueprintVoxel, field: LocalOcclusionField): FaceOcclusionLevels {
-  return FACE_OFFSETS.map((normal, face) => {
-    const direct = offsetKey(voxel, normal);
-    if (field.occupied.has(direct)) return 0;
-    const [first, second] = FACE_TANGENTS[face]!;
-    let score = 0;
-    for (const sign of [-1, 1] as const) {
-      if (field.occupied.has(offsetKey(voxel, add(normal, scale(first, sign))))) score += 1;
-      if (field.occupied.has(offsetKey(voxel, add(normal, scale(second, sign))))) score += 1;
-    }
-    for (const firstSign of [-1, 1] as const) {
-      for (const secondSign of [-1, 1] as const) {
-        if (field.occupied.has(offsetKey(voxel, add(normal, add(scale(first, firstSign), scale(second, secondSign)))))) score += 0.5;
-      }
-    }
-    let level = score === 0 ? 0 : score <= 1.5 ? 1 : score <= 3.5 ? 2 : 3;
-    if (voxel.y === field.minimumY && face >= 2) level = Math.max(level, 1);
-    if (voxel.y === field.minimumY && face === 0) level = Math.max(level, 2);
-    return level;
-  }) as unknown as FaceOcclusionLevels;
+  return FACE_SAMPLES.map(({ normal }, face) => occupiedAt(field, voxel, normal) ? 0
+    : exposedFaceLevel(voxel, field, face)) as unknown as FaceOcclusionLevels;
+}
+
+function exposedFaceLevel(voxel: BlueprintVoxel, field: LocalOcclusionField, face: number): number {
+  const { edges, corners } = FACE_SAMPLES[face]!;
+  let score = 0;
+  for (const offset of edges) if (occupiedAt(field, voxel, offset)) score += 1;
+  for (const offset of corners) if (occupiedAt(field, voxel, offset)) score += .5;
+  let level = score === 0 ? 0 : score <= 1.5 ? 1 : score <= 3.5 ? 2 : 3;
+  if (voxel.y === field.minimumY && face >= 2) level = Math.max(level, 1);
+  if (voxel.y === field.minimumY && face === 0) level = Math.max(level, 2);
+  return level;
 }
 
 export function packFaceOcclusionLevels(levels: FaceOcclusionLevels): number {
@@ -73,11 +105,17 @@ export function combineTintAndOcclusionWord(tintWord: number, levels: FaceOcclus
 }
 
 export function blockOcclusionFor(voxel: BlueprintVoxel, field: LocalOcclusionField): number {
-  const levels = faceOcclusionLevelsFor(voxel, field);
-  const visible = levels.filter((_, face) => !field.occupied.has(offsetKey(voxel, FACE_OFFSETS[face]!)));
-  if (visible.length === 0) return 0;
-  const average = visible.reduce((sum, level) => sum + level, 0) / visible.length / 3;
-  const maximum = Math.max(...visible) / 3;
+  // Keep the exposed-face sum and arithmetic order, without allocating face
+  // and filtered arrays or looking up each normal twice for every instance.
+  let count = 0, sum = 0, max = 0;
+  for (let face = 0; face < FACE_OFFSETS.length; face++) {
+    if (occupiedAt(field, voxel, FACE_OFFSETS[face]!)) continue;
+    const level = exposedFaceLevel(voxel, field, face);
+    sum += level; max = Math.max(max, level); count++;
+  }
+  if (count === 0) return 0;
+  const average = sum / count / 3;
+  const maximum = max / 3;
   return maximum * 0.65 + average * 0.35;
 }
 

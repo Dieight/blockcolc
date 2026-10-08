@@ -1,0 +1,35 @@
+.motion-phone{
+  --motion-ink:light-dark(#192c24,#eef4f0);--motion-glass:light-dark(rgb(245 250 246 / .59),rgb(16 32 25 / .62));
+  --motion-chrome:light-dark(#f5f8f3,#16271f);--motion-button:light-dark(rgb(18 46 31 / .10),rgb(236 250 241 / .13));
+  --motion-edge:light-dark(rgb(255 255 255 / .64),rgb(220 240 228 / .20));
+  --motion-depth:light-dark(rgb(8 27 19 / .15),rgb(0 10 5 / .34));
+  width:min(100%,390px);height:736px;position:relative;margin:auto;overflow:hidden;isolation:isolate;
+  background:var(--motion-chrome);color:var(--motion-ink);font:400 14px/1.5 var(--motion-font,var(--ui-font,sans-serif));
+}
+.motion-phone *{box-sizing:border-box}
+.motion-world{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;touch-action:none;transform:none}
+.motion-topbar{position:absolute;z-index:8;top:0;left:0;right:0;height:56px;padding:0 17px;display:flex;align-items:center;gap:10px;background:var(--motion-chrome)}
+.motion-topbar b{font-weight:400}.motion-topbar>span{margin-left:auto;display:flex;gap:6px;align-items:center;font-size:12px}
+.motion-topbar svg{width:22px;height:22px}.motion-topbar>span svg{width:16px;height:16px}
+.motion-glass{position:absolute;z-index:2;left:0;right:0;bottom:64px;height:280px;background:var(--motion-glass);backdrop-filter:blur(18px) saturate(1.15);-webkit-backdrop-filter:blur(18px) saturate(1.15);transform-origin:center top;box-shadow:inset 0 1px var(--motion-edge)}
+.motion-clock{position:absolute;z-index:7;left:50%;bottom:150px;margin:0;transform:translateX(-50%);transform-origin:center center;white-space:nowrap;font-size:60px;font-weight:400;line-height:1.15;font-variant-numeric:tabular-nums;letter-spacing:-2px}
+.motion-workline,.motion-title,.motion-progress,.motion-minimal-kicker,.motion-minimal-meta{position:absolute;z-index:6;left:0;right:0;text-align:center;margin:0;padding:0 16px}
+.motion-workline{bottom:298px;font-size:12px}.motion-title{bottom:263px;font-size:17px;font-weight:400}
+.motion-progress{bottom:235px;display:flex;justify-content:center;gap:5px}
+.motion-progress i{width:16px;height:5px;background:var(--motion-ink);opacity:.18}.motion-progress i:nth-child(-n+5){opacity:.8}
+.motion-minimal-kicker{bottom:214px;font-size:13px}.motion-minimal-meta{bottom:76px;font-size:12px}
+.motion-toggle{position:absolute;z-index:9;left:50%;bottom:91px;transform:translate(-50%,0);border:0;background:var(--motion-button);color:var(--motion-ink);padding:10px 16px;min-height:44px;min-width:168px;font:inherit;font-size:13px;display:grid;place-items:center;-webkit-tap-highlight-color:transparent}
+.motion-toggle>span{grid-area:1/1;white-space:nowrap}
+.motion-phone[data-motion-phase='reshape'] .motion-toggle{pointer-events:none}
+.motion-nav{position:absolute;z-index:5;bottom:0;left:0;right:0;height:64px;background:var(--motion-chrome);display:flex;justify-content:space-around;align-items:center}
+.motion-nav-item{display:flex;flex-direction:column;align-items:center;gap:5px;min-width:44px}.motion-nav-item svg{width:21px;height:21px}.motion-nav-item small{font-size:12px}
+.motion-phone[data-mode='normal'] .motion-minimal-part,.motion-phone[data-mode='normal'] .motion-minimal-label{opacity:0;pointer-events:none}
+.motion-phone[data-mode='minimal'] .motion-normal-part,.motion-phone[data-mode='minimal'] .motion-normal-label,.motion-phone[data-mode='minimal'] .motion-topbar,.motion-phone[data-mode='minimal'] .motion-nav{opacity:0;pointer-events:none}
+.motion-phone[data-mode='minimal'] .motion-glass{bottom:0;height:266px}
+.motion-phone[data-mode='minimal'] .motion-clock{bottom:103px;font-size:86px}
+.motion-phone[data-mode='minimal'] .motion-toggle{bottom:22px}
+.motion-sheet{position:absolute;z-index:3;pointer-events:none;background:var(--motion-glass);backdrop-filter:blur(18px) saturate(1.15);-webkit-backdrop-filter:blur(18px) saturate(1.15);box-shadow:inset 0 1px var(--motion-edge),0 8px 20px var(--motion-depth);backface-visibility:hidden}
+.motion-hinge-0{transform-origin:center bottom}.motion-hinge-1{transform-origin:center top}
+.motion-glint{z-index:4;background:linear-gradient(0deg,transparent,var(--motion-edge),transparent);box-shadow:none;backdrop-filter:none;-webkit-backdrop-filter:none}
+@media(max-width:420px){.motion-phone{height:680px}}
+@media(prefers-reduced-motion:reduce){.motion-phone *{animation:none!important;transition:none!important}}

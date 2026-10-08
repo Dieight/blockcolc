@@ -39,7 +39,7 @@ test('void-scans classic island at noon', async ({ page }, testInfo) => {
   await page.goto('/?voidscan');
   await page.getByRole('button', { name: '开始建造' }).click();
   await page.getByRole('button', { name: '设置', exact: true }).click();
-  await page.getByRole('group', { name: '聚落环境' }).getByRole('button', { name: '经典空岛' }).click();
+  await page.getByRole('group', { name: '聚落环境' }).getByRole('button', { name: '空岛' }).click();
   await page.getByRole('button', { name: '计时', exact: true }).click();
   await expect(page.getByLabel('项目建筑世界')).toHaveAttribute('data-environment-style', 'classic-island');
   await captureRotations(page, testInfo, 'void-classic-noon');

@@ -1,0 +1,32 @@
+/* Focus actions share the band's adjustable material, including every reason/field. */
+.focus-end-backdrop{background:rgb(10 18 14 / .16)}
+.end-focus-dialog{position:relative;padding-top:24px}
+.end-focus-choices{display:grid;gap:10px;margin-top:18px}
+.end-focus-choices>button{min-height:72px;padding:12px;border:1px solid var(--reading-glass-border);border-radius:0;display:grid;grid-template-columns:30px minmax(0,1fr);align-items:center;gap:10px;text-align:left}
+.end-focus-choices svg{width:23px}
+.end-focus-choices strong,.end-focus-choices small{display:block}
+.end-focus-choices small{margin-top:4px;font-size:12px;line-height:1.4}
+.interruption-options{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:18px}
+.interruption-options button,.dialog-back{min-height:44px;padding:8px 10px;border:1px solid var(--reading-glass-border);border-radius:0}
+.interruption-options button:last-child{grid-column:1/-1}
+.dialog-back{width:100%;margin-top:12px}
+.focus-end-backdrop .end-focus-dialog{background:var(--focus-glass-background);border-color:var(--reading-glass-border);box-shadow:0 16px 48px rgb(10 20 15 / var(--focus-glass-shadow-alpha));backdrop-filter:var(--focus-glass-filter);-webkit-backdrop-filter:var(--focus-glass-filter);color:var(--ink);--muted:var(--ink)}
+.end-focus-dialog h2{padding-right:32px}
+.end-focus-dialog :is(.end-focus-choices>button,.interruption-options button,.dialog-back,textarea){background:transparent;color:var(--ink);border-color:var(--reading-glass-border);box-shadow:none}
+.end-focus-dialog :is(.end-focus-choices strong,.end-focus-choices small,.end-focus-choices svg,.interruption-options button:last-child,.dialog-close,.cancel-plan-count){color:var(--ink)}
+.end-focus-dialog .interruption-options button[aria-pressed='true']{background:transparent;border-color:var(--ink);text-decoration:underline;text-underline-offset:5px}
+.end-focus-dialog .primary.destructive,.focus-immersive .immersive-controls .primary.destructive{background:var(--focus-glass-background);backdrop-filter:var(--focus-glass-filter);-webkit-backdrop-filter:var(--focus-glass-filter);color:var(--ink);border:1px solid var(--reading-glass-border);box-shadow:inset 3px 0 0 var(--danger)}
+.end-focus-dialog button:is(:active,:hover){background-color:transparent;filter:none}
+.end-focus-dialog .end-focus-choices>button[aria-busy='true']::after{grid-column:1;grid-row:1}
+.end-focus-dialog .end-focus-choices>button[aria-busy='true']>svg{visibility:hidden;grid-column:1;grid-row:1}
+.end-focus-dialog .end-focus-choices>button>span{grid-column:2;grid-row:1}
+@media(max-width:480px){.interruption-options{grid-template-columns:1fr}.interruption-options button:last-child{grid-column:auto}.focus-end-backdrop{align-items:end;padding:12px 12px max(12px,var(--safe-bottom))}.end-focus-dialog{width:100%;max-height:min(88dvh,720px);overflow:auto}}
+
+/* Functional sheets have fixed clarity, independent of the focus setting. */
+.edge-sheet-backdrop :is(.about-dialog,.focus-plan-sheet,.daily-goal-sheet,.tutorial-sheet){background:var(--sheet-glass-background);backdrop-filter:var(--sheet-glass-filter);-webkit-backdrop-filter:var(--sheet-glass-filter);border-color:var(--sheet-glass-border);box-shadow:var(--sheet-glass-shadow);border-radius:0}
+.about-dialog .update-download{display:inline-flex;align-items:center;gap:7px;min-height:44px;color:var(--ink)}
+@media(max-width:699px){
+  .dialog-backdrop.edge-sheet-backdrop{padding:0;align-items:end;justify-items:stretch}
+  .edge-sheet-backdrop :is(.about-dialog,.focus-plan-sheet,.daily-goal-sheet,.tutorial-sheet){width:100%;max-height:calc(100dvh - max(24px,var(--safe-top)));border-width:1px 0 0;padding:22px max(20px,var(--safe-right)) max(20px,var(--safe-bottom)) max(20px,var(--safe-left));overflow:auto;overscroll-behavior:contain}
+}
+@media(prefers-reduced-transparency:reduce){.focus-end-backdrop .end-focus-dialog,.edge-sheet-backdrop :is(.about-dialog,.focus-plan-sheet,.daily-goal-sheet,.tutorial-sheet){background:var(--surface);backdrop-filter:none;-webkit-backdrop-filter:none}.end-focus-dialog .primary.destructive,.focus-immersive .immersive-controls .primary.destructive{background:var(--surface);backdrop-filter:none;-webkit-backdrop-filter:none}}

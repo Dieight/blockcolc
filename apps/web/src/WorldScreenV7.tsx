@@ -4,7 +4,7 @@ import { completedPomodorosOn, dailyGoalForDate, localDateOf, type FocusInterrup
 import type { ResourcePackRepository } from '@blockcolc/resource-pack-indexeddb';
 import { localDateForDate, weatherForLocalDate, type WeatherState } from '@blockcolc/voxel/environment';
 import { AlertTriangle } from 'lucide-react';
-import { PixelTasks as ListTodo, PixelClock as Clock3, PixelStop as Square, PixelPlay, PixelMinimize as Minimize2, PixelChest, PixelClose } from './ui/PixelIcon';
+import { PixelTasks as ListTodo, PixelClock as Clock3, PixelStop as Square, PixelPlay, PixelPortal as Minimize2, PixelChest, PixelClose } from './ui/PixelIcon';
 import { BuildingMemoryPanel, createBuildingMemory } from './BuildingMemoryPanel';
 import type { FocusPreferences } from './app-types';
 import type { RecordedIntegrityNotice } from './application-lifecycle';
@@ -45,7 +45,7 @@ function breakPlanIdentity(plan: RoundPlan | null): string | null {
 }
 function immersiveBandTestOverride():{bottom:number;right:number}|undefined{if(!testBuildEnabled())return undefined;const read=(key:string)=>{const raw=new URLSearchParams(location.search).get(key);if(raw===null)return undefined;const value=Number(raw);return Number.isFinite(value)&&value>=0&&value<=0.75?value:undefined;};const bottom=read('__immersiveBand');const right=read('__immersiveRightBand');if(bottom===undefined&&right===undefined)return undefined;return{bottom:bottom??0,right:right??0};}
 
-export function WorldScreenV7({ service, active: committedActive, state: committedState, stateRevision, hasActiveProject: committedHasActiveProject, onCreateProject, resourcePacks, run, refresh, onReconcileFocus, preferences, worldWeather, worldDebug = null, minimalWanted, fullDeferredPresentation, onMinimalPresentationChange, onImmersiveLayoutChange, onExitMinimal, onEnterMinimal, recordedIntegrityNotice, focusedProjectId, memoryProjectId, onFocusWorldProject, onInitialProjectFocus, onClearWorldFocus, onCloseWorldMemory, onOpenTasks, visible, onScenePrepared, onScenePreparationFailed }: {
+export function WorldScreenV7({ service, active: committedActive, state: committedState, stateRevision, hasActiveProject: committedHasActiveProject, onCreateProject, resourcePacks, run, refresh, onReconcileFocus, preferences, worldWeather, worldDebug = null, minimalWanted, fullDeferredPresentation, onMinimalPresentationChange, onImmersiveLayoutChange, onExitMinimal, onEnterMinimal, recordedIntegrityNotice, focusedProjectId, memoryProjectId, onFocusWorldProject, onInitialProjectFocus, onClearWorldFocus, onCloseWorldMemory, visible, onScenePrepared, onScenePreparationFailed }: {
   service: ApplicationService;
   /** Display facts from one parent commit; event handlers may read the live service. */
   active: ActiveProjectProjection;
@@ -74,7 +74,6 @@ export function WorldScreenV7({ service, active: committedActive, state: committ
   onInitialProjectFocus: (projectId: string) => void;
   onClearWorldFocus: () => void;
   onCloseWorldMemory: () => void;
-  onOpenTasks: () => void;
   visible: boolean;
   onScenePrepared?: (environment:ReturnType<ApplicationService['snapshot']>['worldSettings']['environmentStyle'])=>void;
   onScenePreparationFailed?: (environment:ReturnType<ApplicationService['snapshot']>['worldSettings']['environmentStyle'])=>void;
@@ -530,7 +529,7 @@ export function WorldScreenV7({ service, active: committedActive, state: committ
   const reenterMinimalButton = canReenterMinimal
     ? <button type="button" className="task-switch-action minimal-entry" aria-label="进入极简模式" onClick={onEnterMinimal}><Minimize2/><span>极简</span></button>
     : null;
-  const adjustPlanButton = !minimal && reconciledPlan !== null && !(marathonPlan && showIdleWorkbench)
+  const adjustPlanButton = !minimal && marathonPlan && reconciledPlan !== null && !showIdleWorkbench
     ? <button type="button" className="task-switch-action immersive-plan-action" aria-label="调整本次计划" aria-expanded={planOpen} onClick={openPlan}><ListTodo/><span>调整</span></button>
     : null;
   // A locked end-time plan is its own lane. Facts from whichever project is
@@ -564,7 +563,7 @@ export function WorldScreenV7({ service, active: committedActive, state: committ
   const sheetLocked=Boolean(sheetPlan),sheetMode=sheetPlan?.mode??planDraft.mode;
   const sheetUnstarted=isUnstartedMarathonPlan(sheetPlan,Boolean(session));
 
-  return <div data-world-ready={worldReady} data-minimal-mode={minimal ? 'true' : 'false'} className={isImmersiveLayout ? 'world-screen is-focusing' : marathonReportPhase ? 'world-screen has-report' : activePendingBlocksWorkbench ? 'world-screen has-report' : activeHabitAwaitingBlocksWorkbench ? 'world-screen is-choosing-habit-building' : 'world-screen'}>
+  return <div data-world-ready={worldReady} data-minimal-mode={minimal ? 'true' : 'false'} data-clear-glass={preferences.focusGlassTransparency >= 75 ? 'true' : 'false'} className={isImmersiveLayout ? 'world-screen is-focusing' : marathonReportPhase ? 'world-screen has-report' : activePendingBlocksWorkbench ? 'world-screen has-report' : activeHabitAwaitingBlocksWorkbench ? 'world-screen is-choosing-habit-building' : 'world-screen'}>
     <div className="world-stage">
       <WorldCanvasV7 service={service} stateRevision={stateRevision} resourcePacks={resourcePacks} lightingQuality={preferences.lightingQuality}
         worldColorAdjustment={preferences.worldColorAdjustment}
@@ -599,7 +598,6 @@ export function WorldScreenV7({ service, active: committedActive, state: committ
         <h1>{marathonPlan ? '按结束时间排程' : active.project.title}</h1>
         <div className="workbench-heading-actions">
           {preferences.minimalMode === true && !minimalWanted && (!marathonPlan || reconciledPlan?.deferredSettlement === true) && <button className="task-switch-action minimal-entry" type="button" aria-label="进入极简模式" onClick={onEnterMinimal}><Minimize2/><span>极简</span></button>}
-          <button className="task-switch-action" type="button" aria-label="切换当前工作" onClick={onOpenTasks}><ListTodo/><span>切换任务</span></button>
         </div>
       </div>}
        {showIdleWorkbench && !isBreak && !activePendingBlocksWorkbench && !activeHabitAwaitingBlocksWorkbench && !marathonReportPhase && <>

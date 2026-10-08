@@ -3,11 +3,10 @@
 .workbench-heading>div:first-child{min-width:0}
 .workbench-heading h1{margin:0;font-size:22px;font-weight:700;line-height:1.25;overflow-wrap:anywhere}
 .workbench-heading h1{min-width:0;flex:1}
-.workbench-heading-actions{display:flex;align-items:center;gap:0;flex:0 0 auto}
+.workbench-heading-actions{display:flex;align-items:center;gap:0;flex:0 0 44px;justify-content:flex-end}
 .workbench-heading-actions .task-switch-action{width:44px;min-width:44px;height:44px;padding:0;gap:0;justify-content:center}
 .workbench-heading-actions .task-switch-action span{display:none}
-.workbench-heading-actions .task-switch-action .pixel-icon{width:22px;height:22px;transform:translateX(-3px)}
-.workbench-heading-actions .minimal-entry .pixel-icon{transform:translateX(3px)}
+.workbench-heading-actions .task-switch-action .pixel-icon{width:22px;height:22px}
 .task-switch-action{min-height:44px;flex:0 0 auto;display:inline-flex;align-items:center;gap:6px;padding:0 4px;border:0;background:none;color:#276749;font-weight:700}
 .task-switch-action svg{width:18px}
 .workbench-context{position:relative;border:0;border-radius:0;background:transparent;padding:2px 0 2px 16px;display:grid;gap:5px;grid-template-columns:minmax(0,1fr)}

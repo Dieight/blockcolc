@@ -3,7 +3,9 @@ import { GlassWorldCompositor, type GlassSurfacePreference } from "./glass-surfa
 import { releaseOwnedMaterials } from './owned-mesh-materials';
 import { WorldColorCompositor } from './world-color-compositor';
 import { SkySpectacle, twilightPalette } from './sky-spectacle';
-import { mosaicColdDirection } from './mosaic-terrain';
+import { mosaicColdDirection, mosaicSeed } from './mosaic-terrain';
+import { createMosaicSeabed } from './mosaic-seabed';
+import { detachTerrainWaterSurface } from './terrain-water-surface';
 import { terrainGeometryBytes, TERRAIN_CACHE_BYTES } from './terrain-cache';
 import type { WorldColorAdjustment } from './world-color-adjustment';
 import { cloudDisplacement, patchCloudMotion } from './cloud-motion';
@@ -157,6 +159,7 @@ import {
 import { initializeWorldConfiguration } from "./initial-world-configuration";
 import { ambientEnvironmentDecorations, naturalDecorationParts, naturalTreeMushroomCandidates, NATURAL_SHELF_MUSHROOM_RENDER_SCALE, visibleNaturalTreeCount, type NaturalDecorationKind, type NaturalDecorationLod, type NaturalDecorationPart } from "./natural-decorations";
 import { planWorldScenery, sceneryLod, sceneryTreeBlocks, sceneryGeometryLayers, surfaceSampler, type SceneryObject } from './scenery';
+import { waitForGpuCompletion } from './gpu-ready';
 import { precipitationFieldForView, precipitationFieldLimits, rainCrossSectionScaleForView, stepPrecipitationClock, type PrecipitationField } from "./precipitation-field";
 import { patchPrecipitationMaterial, precipitationFrameIntervalMs, precipitationMotion, type PrecipitationUniforms } from './precipitation-motion';
 import { precipitationCountForVolume } from './precipitation-density';
@@ -431,6 +434,10 @@ export interface VoxelRenderer {
   initializeWorlds(worlds: readonly WorldSnapshot[], pack: VoxelResourcePack | null): Promise<void>;
   /** Warm shaders and commit an initial environment frame behind the loading surface. */
   prepareInitialPresentation(openingProjectId?: string | null): Promise<boolean>;
+  preparePresentationFrame(): Promise<boolean>;
+  setConstructionOutlineVisibility(visibility: ConstructionOutlineVisibility): void;
+  /** Copy one freshly drawn frame before WebGL clears its non-preserved buffer. */
+  capturePresentation(target: HTMLCanvasElement): boolean;
   setWorld(world: WorldSnapshot | null): void;
   setWorlds(worlds: readonly WorldSnapshot[]): void;
   /** Updates sky, clouds, precipitation, and ambient light without rebuilding the world. */
@@ -683,6 +690,8 @@ export function createVoxelRenderer(
     worldSeed?: string;
     terrainGenerationVersion?: TerrainGenerationVersion;
     onSelectProject?: (projectId: string) => void;
+    /** Explicit diagnostic builds only; includes CPU submission, not GPU elapsed time. */
+    onPerformanceFrame?: (cpuMs: number) => void;
     /** Diagnostic: a light tap reports the terrain cell under the pointer. */
     onPickTerrain?: (position: { x: number; y: number; z: number }) => void;
     /** Previews keep the camera fitted to the building while terrain extends past the viewport. */
@@ -940,11 +949,11 @@ export function createVoxelRenderer(
   let lightingUpdateCount = 0;
   let lightingSampledAtMs = Date.now();
   let requestedLightingQuality = options.lightingQuality ?? "auto";
-  const constructionOutlineVisibility = options.constructionOutlineVisibility ?? "current";
+  let constructionOutlineVisibility = options.constructionOutlineVisibility ?? "current";
   let qualityTier = selectQualityTierForLighting(deviceSignals(renderer, 0), requestedLightingQuality);
   let qualityProfile = QUALITY_PROFILES[qualityTier];
   let adaptiveQualityCap: QualityTier = "high";
-  const fallbackOcclusionMeshes = new Map<THREE.InstancedMesh, { voxels: BlueprintV1["voxels"]; field: LocalOcclusionField }>();
+  const fallbackOcclusionMeshes = new Map<THREE.InstancedMesh, { voxels: BlueprintV1["voxels"]; field: LocalOcclusionField; occlusions: Float64Array }>();
   const sceneryInstanceCulling = new SceneryInstanceCulling();
   let interactionFrameDurations: number[] = [];
   let interactionTotalDurations: number[] = [];
@@ -1161,6 +1170,7 @@ export function createVoxelRenderer(
 
   let sceneVoxelCount = 0;
   let plannedOutlineVoxelCount = 0;
+  const constructionOutlines: {root:THREE.Group;blueprint:BlueprintV1;completion:number;active:boolean;built:boolean}[]=[];
   let fittedDistance = 24;
   let cameraDistance = 24;
   let minimumCameraDistance = fittedDistance * 0.65;
@@ -1312,9 +1322,11 @@ export function createVoxelRenderer(
       const warmSea=terrainWater&&options.environmentStyle==='mosaic-coast';
       const transparent = fallbackVisual?.transparent === true || id === "glass" || warmSea;
       const pattern = fallbackVisual?.pattern ?? originalPatternForMaterialId(id);
+      const texture = originalMaterialTexture(pattern);
+      if (terrainWater) { texture.magFilter=THREE.LinearFilter; texture.anisotropy=Math.min(4,renderer.capabilities.getMaxAnisotropy()); }
       found = new THREE.MeshStandardMaterial({
         color: fallbackVisual?.color ?? colors[id] ?? 0xffffff,
-        map: originalMaterialTexture(pattern),
+        map: texture,
         roughness: id === "glass" ? 0.1 : terrainWater ? 0.34 : response.roughness,
         metalness: id === "glass" ? 0.08 : terrainWater ? 0.05 : response.metalness,
         transparent,
@@ -1323,7 +1335,7 @@ export function createVoxelRenderer(
         emissive: terrainLava ? 0x8f1f08 : id === "glass" ? 0x315c72 : 0x000000,
         emissiveIntensity: terrainLava ? 0.68 : id === "glass" ? 0.13 : 0,
       });
-      const voxelEdgeStrength = transparent ? 0.22 : fallbackVisual ? 0.12 : ["stone", "wood", "plank", "roof", "accent"].includes(id) ? 0.12 : 0;
+      const voxelEdgeStrength = terrainWater ? 0 : transparent ? 0.22 : fallbackVisual ? 0.12 : ["stone", "wood", "plank", "roof", "accent"].includes(id) ? 0.12 : 0;
       if (terrainWater) skySpectacle.patchReflection(found, 2.2);
       trackMaterialEffects(found, voxelEdgeStrength);
       materials.set(id, found);
@@ -1406,6 +1418,7 @@ export function createVoxelRenderer(
 
   let totalRenderedFrames = 0;
   function renderFrame(frameStarted: number): boolean {
+    const probeFrameStarted = options.onPerformanceFrame ? performance.now() : 0;
     if(initialPresentationPreparing)canvas.dataset.initialPreparationRenderCount=String(++initialPreparationRenderCount);
     lastWeatherFrameStartedMs = frameStarted;
     if (rainAnimation !== null || snowAnimation !== null) lastAmbientFrameStartedMs = frameStarted;
@@ -1559,6 +1572,7 @@ export function createVoxelRenderer(
       constructionPulseUntilMs = 0;
       updateLighting(new Date());
     }
+    if (options.onPerformanceFrame) options.onPerformanceFrame(performance.now() - probeFrameStarted);
     return cameraStillMoving;
   }
 
@@ -1656,6 +1670,7 @@ export function createVoxelRenderer(
     };
     const preserveCameraView = positionedWorlds.length > 0 && sameSpatialWorldLayout(previousWorlds, worlds);
     sceneRevision += 1;
+    constructionOutlines.length=0;
     clearGroup(buildingGroup);
     sceneryInstanceCulling.clear();
     fallbackOcclusionMeshes.clear();
@@ -2004,9 +2019,13 @@ export function createVoxelRenderer(
     terrainGroup.add(mesh);
     terrainMeshForPicking = mesh;
     if(options.environmentStyle==='mosaic-coast'&&!options.debugFlatColors){
-      const bedMaterial=new THREE.MeshStandardMaterial({color:0xdad2ad,map:originalMaterialTexture('sand'),roughness:1});
-      const bed=new THREE.Mesh(new THREE.PlaneGeometry(data.bounds.maxX-data.bounds.minX,data.bounds.maxZ-data.bounds.minZ),bedMaterial);
-      bed.rotation.x=-Math.PI/2;bed.position.set((data.bounds.minX+data.bounds.maxX)/2,-6,(data.bounds.minZ+data.bounds.maxZ)/2);
+      const waterSurface = detachTerrainWaterSurface(geometry, materialIds.indexOf('water'), material('terrainWater'));
+      if (waterSurface) terrainGroup.add(waterSurface);
+      const field=createMosaicSeabed(terrainSurfaceRectangles(data),mosaicSeed(options.worldSeed??'world-default'),Math.abs(data.framingBounds.maxX));
+      const bedTexture=originalMaterialTexture('sand').clone();bedTexture.magFilter=THREE.LinearFilter;bedTexture.anisotropy=Math.min(4,renderer.capabilities.getMaxAnisotropy());terrainPackTextures.push(bedTexture);
+      const bedMaterial=new THREE.MeshStandardMaterial({color:0xdad2ad,map:bedTexture,roughness:1});
+      const bedGeometry=new THREE.BufferGeometry();bedGeometry.setAttribute('position',new THREE.Float32BufferAttribute(field.positions,3));bedGeometry.setAttribute('normal',new THREE.Float32BufferAttribute(field.normals,3));bedGeometry.setAttribute('uv',new THREE.Float32BufferAttribute(field.uvs,2));bedGeometry.setIndex(field.indices);
+      const bed=new THREE.Mesh(bedGeometry,bedMaterial);bed.receiveShadow=true;
       bed.userData.ownedMaterials=[bedMaterial];bed.name='warm-sea-bed';terrainGroup.add(bed);
     }
     addNaturalBackdrop(data);
@@ -2258,7 +2277,10 @@ export function createVoxelRenderer(
     addVines(structure, conditionVisual.vines);
     const showOutline = constructionOutlineVisibility === "all"
       || (constructionOutlineVisibility === "current" && world.isActive === true);
-    addPlannedOutline(structure, world.blueprint, completion, showOutline);
+    const outlineRoot=new THREE.Group();outlineRoot.name='construction-outline';structure.add(outlineRoot);
+    constructionOutlines.push({root:outlineRoot,blueprint:world.blueprint,completion,active:world.isActive===true,built:showOutline});
+    outlineRoot.visible=showOutline;
+    addPlannedOutline(outlineRoot, world.blueprint, completion, showOutline);
     addDecorations(structure, world, emissivePoints);
   }
 
@@ -2410,11 +2432,14 @@ export function createVoxelRenderer(
     field: LocalOcclusionField,
     tier: QualityTier = qualityTier,
   ): void {
-    fallbackOcclusionMeshes.set(mesh, { voxels, field });
+    const previous = fallbackOcclusionMeshes.get(mesh);
+    const occlusions = previous?.voxels === voxels && previous.field === field ? previous.occlusions
+      : Float64Array.from(voxels, voxel => blockOcclusionFor(voxel, field));
+    fallbackOcclusionMeshes.set(mesh, { voxels, field, occlusions });
     const strength = LIGHTWEIGHT_SHADING_PROFILES[tier].ambientOcclusionStrength * 0.7;
     const color = new THREE.Color();
     voxels.forEach((voxel, index) => {
-      const brightness = 1 - blockOcclusionFor(voxel, field) * strength;
+      const brightness = 1 - occlusions[index]! * strength;
       color.setRGB(brightness, brightness, brightness);
       mesh.setColorAt(index, color);
     });
@@ -2505,8 +2530,17 @@ export function createVoxelRenderer(
 
   function groupFallbackVoxels(voxels: readonly BlueprintV1["voxels"][number][]): Map<string, BlueprintV1["voxels"]> {
     const groups = new Map<string, BlueprintV1["voxels"]>();
+    // Appearance depends on source ID and semantic material, not coordinates
+    // or source state. A coral bed/forest repeats these identities thousands
+    // of times; scope the cache to this batch so imported IDs aren't retained.
+    const visualKeys = new Map<string, string>();
     for (const voxel of voxels) {
-      const materialKey = voxel.sourceBlockId ? fallbackVisualStyleForVoxel(voxel).key : voxel.materialId;
+      const identity = `${voxel.sourceBlockId ?? ''}|${voxel.materialId}`;
+      let materialKey = visualKeys.get(identity);
+      if (materialKey === undefined) {
+        materialKey = voxel.sourceBlockId ? fallbackVisualStyleForVoxel(voxel).key : voxel.materialId;
+        visualKeys.set(identity, materialKey);
+      }
       const emission = effectiveEmissionIdentity(voxel);
       const key = `${materialKey}|${emission.kind}|${emission.level}`;
       const list = groups.get(key) ?? [];
@@ -2704,7 +2738,7 @@ export function createVoxelRenderer(
   }
 
   function addPlannedOutline(root: THREE.Group, blueprint: BlueprintV1, completion: number, showOutline: boolean): void {
-    if (!showOutline) return;
+    if (!showOutline || completion>=10000) return;
     const occupied = new Set(blueprint.voxels.map((voxel) => `${voxel.x}:${voxel.y}:${voxel.z}`));
     const planned = blueprint.voxels.filter((voxel) => voxel.buildOrder > completion && isExposedVoxel(voxel, occupied));
     if (planned.length === 0) return;
@@ -2741,7 +2775,8 @@ export function createVoxelRenderer(
     importedDecorations: readonly ImportedDecorationPlacement[], environmentStyle: TerrainEnvironmentStyle,
     terrain: MergedGeometryData, terrainKey: string,
   ): void {
-    const planningStartedMs = lifecycleProbeEnabled ? performance.now() : 0;
+    const measureScenery = lifecycleProbeEnabled || options.onPerformanceFrame !== undefined;
+    const planningStartedMs = measureScenery ? performance.now() : 0;
     const sceneryKey=`${terrainKey}|${importedDecorations.map(d=>`${d.rewardId}:${d.worldPosition.x}:${d.worldPosition.z}`).join(',')}`;
     const planCacheHit=sceneryPlanCache?.key===sceneryKey;
     const plan = planCacheHit ? sceneryPlanCache!.plan : planWorldScenery({ environmentStyle, worldSeed: options.worldSeed ?? 'world-default',
@@ -2752,7 +2787,7 @@ export function createVoxelRenderer(
     // Do not retain oversized terrain through an unrelated scenery reference.
     sceneryPlanCache={key:sceneryKey,plan};
     canvas.dataset.sceneryPlanCacheHit=String(planCacheHit);
-    const planningCompletedMs = lifecycleProbeEnabled ? performance.now() : 0;
+    const planningCompletedMs = measureScenery ? performance.now() : 0;
     const root = new THREE.Group(); root.name = 'world-scenery';
     root.userData.sceneryVillage = plan.village;
     buildingGroup.add(root);
@@ -2836,7 +2871,7 @@ export function createVoxelRenderer(
       if (o.castShadow) ambientDecorationShadowCasters++;
     } });
     canvas.dataset.naturalDecorationCount = String(plan.objects.length);
-    if (lifecycleProbeEnabled) canvas.dataset.sceneryBuildStagesMs = JSON.stringify({
+    if (measureScenery) canvas.dataset.sceneryBuildStagesMs = JSON.stringify({
       planning: Number((planningCompletedMs - planningStartedMs).toFixed(2)),
       geometry: Number((performance.now() - planningCompletedMs).toFixed(2)),
     });
@@ -5242,6 +5277,15 @@ export function createVoxelRenderer(
   resize();
 
   return {
+    capturePresentation(target) {
+      if (disposed || !paneVisible || document.hidden || rendererContextIsLost()) return false;
+      const context = target.getContext('2d');
+      if (!context) return false;
+      renderFrame(performance.now());
+      // Synchronous copy in this task; preserveDrawingBuffer stays disabled.
+      context.drawImage(canvas, 0, 0, target.width, target.height);
+      return true;
+    },
     async initializeWorlds(worlds, pack) {
       const generation = ++resourcePackGeneration;
       await initializeWorldConfiguration(worlds, pack, {
@@ -5306,7 +5350,7 @@ export function createVoxelRenderer(
       updateLighting(new Date(), true);
       // Prime actual distant/focused draw routes, including shadows and the
       // glass/post-process target, while the single cold loader still covers us.
-      const priorFocus=focusedProjectId,priorTarget=cameraTarget.clone(),priorDistance=cameraDistance;
+      const priorFocus=focusedProjectId,priorTarget=cameraTarget.clone(),priorDistance=cameraDistance,priorAzimuth=cameraAzimuth;
       const warmFrame=()=>new Promise<boolean>(resolve=>{preparedFrameWaiters.add(resolve);requestRender();});
       try {
         await renderer.compileAsync(scene, camera);
@@ -5317,13 +5361,45 @@ export function createVoxelRenderer(
         if(openingProjectId){focusedProjectId=openingProjectId;frameScene(true);}
         else {cameraDistance=minimumCameraDistance;updateCamera();}
         if(!await warmFrame()||disposed)return false;
-        canvas.dataset.openingPreparedFrames='2';
+        // First orbit routes and the restored opening view also draw under the
+        // loader, instead of deferring their first upload until a user's drag.
+        for(const offset of [-Math.PI/4,Math.PI/4]){
+          cameraAzimuth=priorAzimuth+offset;targetCameraAzimuth=cameraAzimuth;updateCamera();
+          if(!await warmFrame()||disposed)return false;
+        }
+        focusedProjectId=priorFocus;cameraAzimuth=priorAzimuth;targetCameraAzimuth=priorAzimuth;
+        frameScene(true);cameraTarget.copy(priorTarget);cameraDistance=priorDistance;updateCamera();
+        if(!await warmFrame()||disposed)return false;
+        const gpuStarted=performance.now();
+        canvas.dataset.initialGpuPreparation=await waitForGpuCompletion(renderer.getContext(),()=>!disposed&&paneVisible&&!document.hidden);
+        canvas.dataset.initialGpuPreparationMs=(performance.now()-gpuStarted).toFixed(2);
+        canvas.dataset.openingPreparedFrames=String(initialPreparationRenderCount);
         return true;
       } finally {
         initialPresentationPreparing=false;
         canvas.dataset.initialPresentationPreparationMs=(performance.now()-preparationStarted).toFixed(2);
-        if(!disposed){focusedProjectId=priorFocus;frameScene(true);cameraTarget.copy(priorTarget);cameraDistance=priorDistance;updateCamera();}
+        if(!disposed){focusedProjectId=priorFocus;cameraAzimuth=priorAzimuth;targetCameraAzimuth=priorAzimuth;frameScene(true);cameraTarget.copy(priorTarget);cameraDistance=priorDistance;updateCamera();}
       }
+    },
+    async preparePresentationFrame(){
+      if(disposed||!paneVisible||document.hidden)return false;
+      await renderer.compileAsync(scene,camera);
+      if(disposed||!paneVisible||document.hidden)return false;
+      const drawn=await new Promise<boolean>(resolve=>{preparedFrameWaiters.add(resolve);requestRender();});
+      if(!drawn||disposed)return false;
+      const completion=await waitForGpuCompletion(renderer.getContext(),()=>!disposed&&paneVisible&&!document.hidden);
+      return completion!=='cancelled'&&completion!=='failed';
+    },
+    setConstructionOutlineVisibility(visibility){
+      if(disposed||constructionOutlineVisibility===visibility)return;
+      constructionOutlineVisibility=visibility;plannedOutlineVoxelCount=0;
+      for(const entry of constructionOutlines){
+        const show=visibility==='all'||visibility==='current'&&entry.active;
+        if(show&&!entry.built){addPlannedOutline(entry.root,entry.blueprint,entry.completion,true);entry.built=true;cacheStaticTransformTree(entry.root);}
+        entry.root.visible=show;
+      }
+      plannedOutlineVoxelCount=constructionOutlines.filter(entry=>entry.root.visible).reduce((sum,entry)=>sum+entry.root.children.reduce((total,mesh)=>total+(mesh instanceof THREE.InstancedMesh?mesh.count:0),0),0);
+      updateDiagnosticsDataset();requestRender();
     },
     setWorld(world) {
       const previous = lastWorlds;
@@ -5481,6 +5557,7 @@ export function createVoxelRenderer(
       canvas.dataset.reducedMotion = String(value);
     },
     setVisible(value) {
+      if (paneVisible === value || disposed) return;
       paneVisible = value;
       if (!value) precipitationViewCache = invalidatePrecipitationViewCache(precipitationViewCache);
       syncPrecipitationMotionGate(performance.now());

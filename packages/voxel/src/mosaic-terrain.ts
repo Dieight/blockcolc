@@ -18,6 +18,14 @@ export function mosaicRegionAt(x:number,z:number,coreRadius:number):string {
   const {u,v}=mosaicGridPosition(x,z,coreRadius);
   const col=Math.max(1,Math.min(3,Math.round(u)+2)),row=Math.max(1,Math.min(3,Math.round(v)+2));return`${row}${col}`;
 }
+/** Smooth shallow shelves and deeper gullies; the water/support surface stays at zero. */
+export function mosaicSeabedHeight(x:number,z:number,seed:number,coreRadius:number):number {
+  const {u,v}=mosaicGridPosition(x,z,coreRadius);
+  const offshore=smooth(.32,1.25,u)*smooth(-.15,.8,-v);
+  const broad=noise(seed^0x62b9,x,z,70),detail=noise(seed^0x19b7,x,z,24);
+  const gully=Math.pow(1-Math.abs(noise(seed^0x29ac,x,z,42)*2-1),3);
+  return -5.4-offshore*5-broad*1.6+detail*.7-gully*1.4;
+}
 /** Fixed nine-region composition; ridged relief and erosion are continuous
  * fields underneath climate surfaces, not nine coloured flat rectangles. */
 export function sampleMosaicTerrain(x:number,z:number,seed:number,coreRadius:number):MosaicSample {
@@ -33,7 +41,9 @@ export function sampleMosaicTerrain(x:number,z:number,seed:number,coreRadius:num
   const ocean=smooth(.18,.7,a)*smooth(.16,.72,-b);
   const inlet=smooth(-.08,.2,a)*smooth(.28,.75,-b)*(1-smooth(.35,.7,Math.abs(a)));
   const rightSea=smooth(.38,.82,a)*(1-smooth(-.15,.18,b));
-  const coast=Math.max(ocean,inlet,rightSea);
+  // The inlet and warm/open sea are overlapping water, not competing climate
+  // labels. max() left a low-weight seam between two wet masks: a long sandbar.
+  const coast=1-(1-ocean)*(1-inlet)*(1-rightSea);
   // Lower 23 splits between construction transition and dappled woodland, with
   // the upper half opening to warm sea. 33 remains a continuous forest.
   const forest=smooth(.65,1.02,a)*smooth(.04,.36,b);
@@ -41,15 +51,23 @@ export function sampleMosaicTerrain(x:number,z:number,seed:number,coreRadius:num
   // Jagged crests: multiple ridged octaves, exposed stone below the snowline.
   const peak=25+ridge*25+Math.pow(1-Math.abs(noise(seed^0x741,x,z,30)*2-1),3)*20;
   const mesa=Math.floor((6+broad*25+detail*9)/4)*4;
-  let height=rolling+mountain*peak+ice*(5+detail*6)+Math.min(1,bad)*mesa+forest*(3+ridge*9);
+  const landHeight=rolling+mountain*peak+ice*(5+detail*6)+Math.min(1,bad)*mesa+forest*(3+ridge*9);
+  let height=landHeight;
   height=height*(1-coast)+(-4+detail*2)*coast;
-  if(coast>.66||height<.4)return{biome:'ocean',height:0,material:'water'};
-  if(coast>.44)return{biome:'beach',height:Math.max(1,Math.round(height)),material:'sand'};
+  const submerged=height<.4;
+  // A continuous littoral shelf, not the residual height of a mountain
+  // abruptly cut off at the water mask. Sand stays one to three blocks high.
+  const shelf=1+2*(1-smooth(.40,.66,coast)),shelfBlend=smooth(.28,.40,coast);
+  height=height*(1-shelfBlend)+shelf*shelfBlend;
+  // The shelf flattens real dry coasts; it must not lift already submerged
+  // lowland into a second isolated strip in the water.
+  if(coast>.66||submerged)return{biome:'ocean',height:0,material:'water'};
+  if(coast>.40)return{biome:'beach',height:Math.max(1,Math.round(height)),material:'sand'};
   if(mountain>.2)return{biome:'snow-mountain',height:Math.round(height),material:height>20?'snow':'stone'};
   if(ice>.34)return{biome:'glacier',height:Math.round(height),material:detail>.64?'ice':'snow'};
   if(bad>.32)return{biome:'badlands',height:Math.round(height),material:'terracotta'};
   if(forest>.25)return{biome:'forest',height:Math.round(height),material:'grass'};
   // Coastal transition forests occupy 23 without displacing the central bench.
-  if(b>.6&&a>.35&&coast<.44&&bad<.15)return{biome:'forest',height:Math.round(height),material:'grass'};
+  if(b>.6&&a>.35&&coast<.40&&bad<.15)return{biome:'forest',height:Math.round(height),material:'grass'};
   return{biome:Math.hypot(a,b)>.5?'valley':'plains',height:Math.max(2,Math.round(height)),material:'grass'};
 }

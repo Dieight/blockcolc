@@ -11,14 +11,17 @@ export function sliderLandingValueAt(x:number,width:number,min:number,max:number
   const index=direction>0?Math.ceil(steps-1e-8):direction<0?Math.floor(steps+1e-8):Math.round(steps);
   return clamp(min+index*step,min,max);
 }
-/** Below the rail is a pulled sling; above it is a thrown ball with reversed velocity. */
+/** Mirror the sling's complete arc across the rail for an upward pull.
+ * The rebound uses normal gravity again once the ball reaches the rail. */
 export function sliderFlight(origin:number,pullX:number,pullY:number,width:number):SliderFlight {
   const polarity=pullY<0?1:-1;
-  const vy = polarity*clamp(Math.sqrt(2*SLIDER_GRAVITY*Math.abs(pullY))+Math.abs(pullY)*4.8,110,1000);
-  const duration = (-vy+Math.sqrt(vy*vy-2*SLIDER_GRAVITY*pullY))/SLIDER_GRAVITY;
+  const side=pullY<0?-1:1;
+  const speed=clamp(Math.sqrt(2*SLIDER_GRAVITY*Math.abs(pullY))+Math.abs(pullY)*4.8,110,1000);
+  const vy=-side*speed, gravity=side*SLIDER_GRAVITY;
+  const duration=(speed+Math.sqrt(speed*speed-2*SLIDER_GRAVITY*Math.abs(pullY)))/SLIDER_GRAVITY;
   const startX=clamp(origin+pullX,0,width);
   const landing = clamp(startX+polarity*clamp(pullX*6,-1200,1200)*duration,0,width);
-  return {origin:startX,startY:pullY,vx:(landing-startX)/duration,vy,gravity:SLIDER_GRAVITY,duration,landing};
+  return {origin:startX,startY:pullY,vx:(landing-startX)/duration,vy,gravity,duration,landing};
 }
 /** Analytical path: independent of display refresh rate or a long frame. */
 export function sliderFlightPosition(flight:SliderFlight,seconds:number) {

@@ -3,8 +3,8 @@ import type { FormEvent, ReactNode } from 'react';
 import type { ApplicationCommand, ApplicationResult, ApplicationService } from '@blockcolc/application';
 import type { LitematicImportResult } from '@blockcolc/litematic';
 import { localDateOf, projectProgressBasisPoints } from '@blockcolc/domain';
-import { ExternalLink, FileUp } from 'lucide-react';
-import { PixelChart as BarChart3, PixelClock as Clock3, PixelTasks as ListTodo, PixelPlus as Plus, PixelReset as RefreshCw, PixelSettings as Settings, PixelSprout as TreePine, PixelTrophy as Trophy, PixelClose as X, PixelCube, PixelBrand, PixelRepeat, PixelHammer } from './ui/PixelIcon';
+import { FileUp } from 'lucide-react';
+import { PixelChart as BarChart3, PixelClock as Clock3, PixelTasks as ListTodo, PixelPlus as Plus, PixelSettings as Settings, PixelCalendar, PixelTrophy as Trophy, PixelClose as X, PixelCube, PixelBrand, PixelRepeat, PixelHammer } from './ui/PixelIcon';
 import type { BlueprintCatalogEntry, BlueprintV1 } from '@blockcolc/voxel';
 import type { ResourcePackRepository } from '@blockcolc/resource-pack-indexeddb';
 import { LoadingPage } from './LoadingPage';
@@ -30,9 +30,17 @@ import { resolveSelectedResourcePack } from './resource-pack-selection';
 import { requiresFirstProjectSetup, workspacePresentation } from './workspace-presentation';
 import { WorkspaceRest } from './WorkspaceRest';
 import { usePresentationTransition } from './use-presentation-transition';
+import { useModePortal } from './use-mode-portal';
+import { installButtonIconMotion } from './ui/button-icon-motion';
 import { useDailyBackup } from './use-daily-backup';
-import { finishRefreshFeedback, paintPendingFeedback } from './refresh-feedback';
+import { paintPendingFeedback } from './refresh-feedback';
 import { createScenePreparation } from './scene-preparation';
+import type { AppRelease } from './app-update';
+import { useAutoUpdateCheck } from './use-auto-update-check';
+import { AboutDialog } from './AboutDialog';
+import { appUpdater } from './app-updater';
+import { OnboardingDialog } from './OnboardingDialog';
+import { shouldOfferTutorial, completeTutorial } from './onboarding';
 
 let tasksScreenModulePromise: Promise<{ default: (typeof import('./TaskManagement'))['TasksScreen'] }> | null = null;
 let statsScreenModulePromise: Promise<{ default: (typeof import('./StatsScreen'))['StatsScreen'] }> | null = null;
@@ -48,7 +56,6 @@ type Tab = 'world' | 'tasks' | 'stats' | 'settings';
 type ImportRole = 'building' | 'decoration';
 interface ProjectSetupDraft { kind: 'finite' | 'habit'; title: string; subtasksText: string; blueprintId: string; habitTargetRounds: number; imported: LitematicImportResult | null; packCompatibility: { name: string; textured: number; fallback: number; total: number } | null; importRole: ImportRole }
 const APP_VERSION = releaseVersion.versionName;
-const REPOSITORY_URL = 'https://github.com/Dieight/blockcolc';
 const INITIAL_PROJECT_SETUP_DRAFT: ProjectSetupDraft = { kind: 'finite', title: '我的第一座工坊', subtasksText: '确定目标\n完成核心工作\n检查并收尾', blueprintId: 'builtin-small-workshop', habitTargetRounds: 10, imported: null, packCompatibility: null, importRole: 'building' };
 const FIRST_PROJECT_SETUP_KEY = 'blockcolc-first-project-setup-v1';
 let litematicModulePromise:Promise<typeof import('@blockcolc/litematic')>|null=null;
@@ -59,7 +66,9 @@ function writeFirstProjectSetupMarker(): void { try { window.localStorage.setIte
 
 
 export function App({ service, resourcePacks }: { service: ApplicationService; resourcePacks: ResourcePackRepository }) {
+  useEffect(() => installButtonIconMotion(document), []);
   useDailyBackup(service);
+  useEffect(() => appUpdater.attach(), []);
   const [tab, setTab] = useState<Tab>('world'); const [version, setVersion] = useState(0);
   // Transient status toasts may carry one navigable action (e.g. open settings)
   // when the message needs a user decision, not just an acknowledgement. The
@@ -70,6 +79,7 @@ export function App({ service, resourcePacks }: { service: ApplicationService; r
   const [worldFocusProjectId,setWorldFocusProjectId]=useState<string|null>(null);
   const [worldMemoryProjectId,setWorldMemoryProjectId]=useState<string|null>(null);
   const [aboutOpen,setAboutOpen]=useState(false);
+  const [availableRelease,setAvailableRelease]=useState<AppRelease|null>(null);
   const [ceremony,setCeremony]=useState<{projectId:string;title:string}|null>(null);
   const { preferences, updatePreferences } = useFocusPreferences();
   const [minimalTemporarilyExited, setMinimalTemporarilyExited] = useState(false);
@@ -82,6 +92,9 @@ export function App({ service, resourcePacks }: { service: ApplicationService; r
   const [worldDebug, setWorldDebug] = useState<WorldDebugSettings>(NORMAL_WORLD_DEBUG);
   const worldDebugProjection = useMemo(() => projectWorldDebug(worldDebug, Date.now()), [worldDebug]);
   const [firstProjectSetupDone, setFirstProjectSetupDone] = useState(readFirstProjectSetupMarker);
+  const [tutorial,setTutorial]=useState<'first'|'replay'|null>(()=>shouldOfferTutorial(window.localStorage,requiresFirstProjectSetup(service.snapshot(),readFirstProjectSetupMarker(),unsettledMarathonSessions(service.snapshot()).some(session=>session.deferredSettlement===true)))?'first':null);
+  const closeTutorial=useCallback(()=>{completeTutorial(window.localStorage);setTutorial(null);},[]);
+  const replayTutorial=useCallback(()=>setTutorial('replay'),[]);
   const firstRunRequiredRef = useRef(false);
   const navigateTo = useCallback((next: Tab) => {
     if (firstRunRequiredRef.current && next !== 'world') { setTab('world'); return; }
@@ -105,8 +118,10 @@ export function App({ service, resourcePacks }: { service: ApplicationService; r
     try {
       updatePreferences(next);
       if (next.minimalMode !== preferences.minimalMode) setMinimalTemporarilyExited(false);
+      return true;
     } catch (error) {
       showMessage(error instanceof Error ? `设置未保存：${error.message}` : '设置未保存，请重试。');
+      return false;
     }
   }, [updatePreferences, preferences.minimalMode, showMessage]);
   const run = useMemo(() => createCommandRunner({
@@ -117,6 +132,14 @@ export function App({ service, resourcePacks }: { service: ApplicationService; r
       if (completed) setCeremony(completed);
     },
   }), [service, refresh, showMessage, clearMessage]);
+  const configureOutline=useCallback(async(value:FocusPreferences['constructionOutlineVisibility'])=>{
+    if(value===preferences.constructionOutlineVisibility)return;
+    if(!hasResidentWorld.current){changePreferences({...preferences,constructionOutlineVisibility:value});return;}
+    const environment=service.snapshot().worldSettings.environmentStyle;
+    const prepared=scenePreparation.begin(environment);
+    try{await paintPendingFeedback();if(!changePreferences({...preferences,constructionOutlineVisibility:value})){scenePreparation.cancel();return;}await prepared;}
+    catch{scenePreparation.failed(environment);showMessage('施工轮廓准备未完成，请重试。');}
+  },[preferences,changePreferences,service,scenePreparation,showMessage]);
   const configureEnvironment=useCallback(async(environmentStyle:NonNullable<typeof preparingEnvironment>)=>{
     if(environmentStyle===service.snapshot().worldSettings.environmentStyle)return;
     if(!hasResidentWorld.current)return run({type:'ConfigureWorldEnvironment',environmentStyle});
@@ -134,10 +157,16 @@ export function App({ service, resourcePacks }: { service: ApplicationService; r
   const state = useMemo(() => service.snapshot(), [service, version]); const active = useMemo(() => service.activeProjectProjection(), [service, version]);
   const stateRevision = useMemo(() => service.stateRevision(), [service, version]);
   const workspace = useMemo(() => workspacePresentation(state, active, service.worldProjection()), [state, active, service]);
-  const achievementEntries = useMemo(() => service.achievementsProjection(), [service, version]);
+  const achievementEntries = useMemo(() => tab === 'stats' ? service.achievementsProjection() : [], [service, version, tab]);
   const orphanedDeferredHostForGate = unsettledMarathonSessions(state).some(session => session.deferredSettlement === true);
   const firstRunRequired = requiresFirstProjectSetup(state, firstProjectSetupDone, orphanedDeferredHostForGate);
   firstRunRequiredRef.current = firstRunRequired;
+  const receiveUpdate = useCallback((release: AppRelease) => {
+    setAvailableRelease(release); setAboutOpen(true); void appUpdater.download(release, true);
+  }, []);
+  useAutoUpdateCheck(preferences.autoCheckUpdates === true,
+    !firstRunRequired && !creatingProject && !state.activeFocusSession && !orphanedDeferredHostForGate && preparingEnvironment === null,
+    APP_VERSION, receiveUpdate);
   useEffect(() => {
     // Persist the completed choice and migrate installations created before
     // this marker existed. A later empty workspace is still an existing user.
@@ -146,28 +175,6 @@ export function App({ service, resourcePacks }: { service: ApplicationService; r
       writeFirstProjectSetupMarker();
     }
   }, [firstProjectSetupDone, state.projects.length]);
-  useEffect(() => {
-    let cancelled = false;
-    document.documentElement.dataset.routeModules = 'loading';
-    // Load every primary route as one cold-start unit. The chunks stay split so
-    // the entry bundle remains bounded, but a first visit never becomes a
-    // second, user-visible loading phase.
-    void Promise.all([loadTasksScreen(), loadStatsScreen(), loadSettingsScreen()])
-      .then(() => {
-        if (cancelled) return;
-        const durationMs = performance.now();
-        document.documentElement.dataset.routeModules = 'ready';
-        document.documentElement.dataset.routeModulesReadyMs = durationMs.toFixed(2);
-        try {
-          const bridge = (window as typeof window & { BlockcolcNativeInput?: { logRenderDiagnostic?: (message: string) => void } }).BlockcolcNativeInput;
-          bridge?.logRenderDiagnostic?.(`[blockcolc-startup] ${JSON.stringify({ phase: 'all-routes-ready', durationMs: Number(durationMs.toFixed(2)) })}`);
-        } catch { /* Startup diagnostics are optional outside Android. */ }
-      })
-      .catch(() => {
-        if (!cancelled) document.documentElement.dataset.routeModules = 'failed';
-      });
-    return () => { cancelled = true; };
-  }, []);
   const setupDraft=projectDraft??{...INITIAL_PROJECT_SETUP_DRAFT,habitTargetRounds:preferences.habitTargetRounds};
   const updateSetupDraft=useCallback((patch:Partial<ProjectSetupDraft>)=>setProjectDraft(current=>({...current??INITIAL_PROJECT_SETUP_DRAFT,...patch})),[]);
   const beginProjectSetup=useCallback(()=>{setProjectDraft(current=>current??{...INITIAL_PROJECT_SETUP_DRAFT,habitTargetRounds:preferences.habitTargetRounds});setCreatingProject(true);},[preferences.habitTargetRounds]);
@@ -212,6 +219,7 @@ export function App({ service, resourcePacks }: { service: ApplicationService; r
   const immersiveFocus = !creatingProject && Boolean(orphanedDeferredHost && (tab === 'world' || tab === 'tasks')
     || tab === 'world' && active && (worldImmersive || minimalPresentation && minimalWanted || state.activeFocusSession && !fullDeferredPresentation));
   const shellRef = usePresentationTransition(immersiveFocus);
+  const travelMode = useModePortal(shellRef, minimal => setMinimalTemporarilyExited(!minimal), () => showMessage('转场未完成，已恢复操作。'));
   const [landscape,setLandscape]=useState(()=>matchMedia('(orientation: landscape)').matches);
   useEffect(()=>{const media=matchMedia('(orientation: landscape)');const change=()=>setLandscape(media.matches);media.addEventListener('change',change);return()=>media.removeEventListener('change',change);},[]);
   useEffect(() => {
@@ -246,10 +254,10 @@ export function App({ service, resourcePacks }: { service: ApplicationService; r
       worldDebug={worldDebugProjection}
       minimalWanted={minimalWanted} fullDeferredPresentation={fullDeferredPresentation}
       onMinimalPresentationChange={setMinimalPresentation} onImmersiveLayoutChange={setWorldImmersive}
-      onExitMinimal={()=>setMinimalTemporarilyExited(true)} onEnterMinimal={()=>setMinimalTemporarilyExited(false)}
+      onExitMinimal={()=>travelMode('leave')} onEnterMinimal={()=>travelMode('enter')}
       recordedIntegrityNotice={recordedIntegrityNotice} focusedProjectId={worldFocusProjectId} memoryProjectId={worldMemoryProjectId}
       onFocusWorldProject={selectWorldProject} onInitialProjectFocus={setWorldFocusProjectId} onClearWorldFocus={clearWorldFocus} onCloseWorldMemory={closeWorldMemory}
-      onOpenTasks={()=>navigateTo('tasks')} visible={preparingEnvironment!==null || worldVisible && tab === 'world'} onScenePrepared={scenePreparation.ready} onScenePreparationFailed={scenePreparation.failed}/>
+      visible={preparingEnvironment!==null || worldVisible && tab === 'world'} onScenePrepared={scenePreparation.ready} onScenePreparationFailed={scenePreparation.failed}/>
   </div> : null;
   const firstRunSetup = <ProjectSetup run={run} resourcePacks={resourcePacks} buildingBlueprints={state.buildingBlueprintResources} existingProjects={state.projects.filter(project=>project.status==='paused')} draft={setupDraft} firstRun={firstRunRequired} onDraftChange={updateSetupDraft} onCreated={()=>{setProjectDraft(null);writeFirstProjectSetupMarker();setFirstProjectSetupDone(true);navigateTo('world');}}/>;
   const creationSetup = <ProjectSetup run={run} resourcePacks={resourcePacks} buildingBlueprints={state.buildingBlueprintResources} existingProjects={[]} draft={setupDraft} onDraftChange={updateSetupDraft} onCancel={discardProjectSetup} onCreated={completeProjectSetup}/>;
@@ -269,23 +277,33 @@ export function App({ service, resourcePacks }: { service: ApplicationService; r
             visible={worldVisible} onPickTerrain={()=>{}} pickedCell={null}/></div>
           <section className="focus-panel"><MarathonProgressReport variant="minimal" key={orphanedDeferredHost} state={state} hostProjectId={orphanedDeferredHost} run={run} onSubmitted={() => { createRoundPlanStore(() => window.localStorage).write(null); refresh(); }}/></section>
         </div>
-        : firstRunRequired ? firstRunSetup : (tab === 'tasks' || !workspace) ? <WorkspaceRest state={state} run={run} onCreate={beginProjectSetup}/> : null)}
+        : firstRunRequired ? tutorial==='first'?null:firstRunSetup : (tab === 'tasks' || !workspace) ? <WorkspaceRest state={state} run={run} onCreate={beginProjectSetup}/> : null)}
       {active && <RoutePane active={tab === 'tasks'} route="tasks"><Suspense fallback={<LoadingPage status="正在打开任务…"/>}><TasksScreen active={active} state={state} run={run} onCreateProject={beginProjectSetup} onViewProject={viewProjectInWorld}/></Suspense></RoutePane>}
       <RoutePane active={tab === 'stats'} route="stats"><Suspense fallback={<LoadingPage status="正在打开统计…"/>}><StatsScreen state={state} active={tab === 'stats'} achievementEntries={achievementEntries}/></Suspense></RoutePane>
-      <RoutePane active={tab === 'settings'} route="settings"><Suspense fallback={<LoadingPage status="正在打开设置…"/>}><SettingsScreen active={tab === 'settings'} service={service} resourcePacks={resourcePacks} state={state} run={run} refresh={refreshAfterReplacement} preferences={preferences} onPreferencesChange={changePreferences} worldWeather={worldWeather} worldDebug={worldDebug} onWorldDebugChange={setWorldDebug} onConfigureEnvironment={configureEnvironment}/></Suspense></RoutePane>
+<RoutePane active={tab === 'settings'} route="settings"><Suspense fallback={<LoadingPage status="正在打开设置…"/>}><SettingsScreen active={tab === 'settings'} service={service} resourcePacks={resourcePacks} state={state} run={run} refresh={refreshAfterReplacement} preferences={preferences} onPreferencesChange={changePreferences} worldWeather={worldWeather} worldDebug={worldDebug} onWorldDebugChange={setWorldDebug} onConfigureEnvironment={configureEnvironment} onReplayTutorial={replayTutorial} onConfigureOutline={configureOutline}/></Suspense></RoutePane>
     </>}
   </>;
-  return <div ref={shellRef} data-world-preparing={preparingEnvironment!==null?'true':undefined} className={immersiveFocus?'app-shell focus-immersive':'app-shell'}>{!immersiveFocus&&<header className="topbar"><div className="app-brand"><PixelBrand/><div><span className="brand-mark">方块钟</span><span className="brand-en">Blockcolc</span></div></div><button className="today" type="button" aria-label="关于方块钟" onClick={()=>setAboutOpen(true)}><TreePine size={16}/>{new Intl.DateTimeFormat('zh-CN',{month:'short',day:'numeric'}).format(new Date())}</button></header>}
-    {preparingEnvironment!==null&&<LoadingPage stage="scene" status="正在准备新聚落…"/>}
+  return <div ref={shellRef} data-world-preparing={preparingEnvironment!==null?'true':undefined} className={immersiveFocus?'app-shell focus-immersive':'app-shell'}>{!immersiveFocus&&<header className="topbar"><div className="app-brand"><button type="button" className="brand-bounce" aria-label="跳一跳，方块钟"><PixelBrand/></button><div><span className="brand-mark">方块钟</span><span className="brand-en">Blockcolc</span></div></div><button className="today" type="button" aria-label="关于方块钟" onClick={()=>setAboutOpen(true)}><PixelCalendar size={18}/>{new Intl.DateTimeFormat('zh-CN',{month:'short',day:'numeric'}).format(new Date())}</button></header>}
+    {preparingEnvironment!==null&&<LoadingPage stage="scene" status="正在准备世界…"/>}
     <main data-active-route={tab}>{content}</main>
     {message && <div className={message.action?'toast has-action':'toast'} role="status">{message.text}{message.action&&<button type="button" className="toast-action" onClick={()=>{const target=message.action!.target;setMessage(null);navigateTo(target);}}>{message.action.label}</button>}</div>}
     {!immersiveFocus&&<nav className="bottom-nav" aria-label="主导航"><NavButton active={tab==='world'} icon={<Clock3/>} label="计时" onClick={()=>{if(creatingProject)setCreatingProject(false);navigateTo('world');}}/><NavButton active={tab==='tasks'} icon={<ListTodo/>} label="任务" onClick={()=>navigateTo('tasks')}/><NavButton active={tab==='stats'} icon={<BarChart3/>} label="统计" onClick={()=>navigateTo('stats')}/><NavButton active={tab==='settings'} icon={<Settings/>} label="设置" onClick={()=>navigateTo('settings')}/></nav>}
-    {aboutOpen&&<AboutDialog onClose={()=>setAboutOpen(false)}/>}
+    {aboutOpen&&<AboutDialog availableRelease={availableRelease} onClose={()=>setAboutOpen(false)}/>}
     {ceremony&&<CompletionCeremony title={ceremony.title} onClose={()=>setCeremony(null)}/>}
+    {tutorial&&<OnboardingDialog onClose={closeTutorial}/>}
   </div>;
 }
-function RoutePane({active,route,children}:{active:boolean;route:Exclude<Tab,'world'>;children:ReactNode}) { return <div className="route-pane" data-route={route} data-route-mounted="true" hidden={!active} aria-hidden={!active}>{children}</div>; }
-function NavButton({active,icon,label,onClick}:{active:boolean;icon:ReactNode;label:string;onClick:()=>void}) { return <button className={active?'nav-active':''} onClick={onClick}>{icon}<span>{label}</span></button>; }
+function RoutePane({active,route,children}:{active:boolean;route:Exclude<Tab,'world'>;children:ReactNode}) {
+  const visited = useRef(active);
+  if (active) visited.current = true;
+  // First paint does not mount three invisible screens. After a real visit,
+  // retain the screen so form drafts and scroll/UI state survive navigation.
+  return visited.current ? <div className="route-pane" data-route={route} data-route-mounted="true" hidden={!active} aria-hidden={!active}>{children}</div> : null;
+}
+function NavButton({active,icon,label,onClick}:{active:boolean;icon:ReactNode;label:string;onClick:()=>void}) {
+  const [motion, setMotion] = useState(0);
+  return <button type="button" className={active?'nav-active':''} aria-current={active?'page':undefined} onClick={()=>{setMotion(value=>value+1);onClick();}}><span className="nav-icon-motion" data-nav-motion={motion>0?'playing':undefined} key={motion}>{icon}</span><span>{label}</span></button>;
+}
 
 function ProjectSetup({run,resourcePacks,buildingBlueprints,existingProjects,draft,firstRun=false,onDraftChange,onCancel,onCreated}:{run:(c:ApplicationCommand)=>Promise<ApplicationResult>;resourcePacks:ResourcePackRepository;buildingBlueprints:ReturnType<ApplicationService['snapshot']>['buildingBlueprintResources'];existingProjects:ReturnType<ApplicationService['snapshot']>['projects'];draft:ProjectSetupDraft;firstRun?:boolean;onDraftChange:(patch:Partial<ProjectSetupDraft>)=>void;onCancel?:()=>void;onCreated?:()=>void}) {
   const catalog=useBlueprintCatalog(); const {kind,blueprintId,habitTargetRounds,imported,packCompatibility,importRole}=draft; const [importing,setImporting]=useState(false); const [submitting,setSubmitting]=useState(false); const submittingRef=useRef(false); const [submitError,setSubmitError]=useState(''); const [importError,setImportError]=useState(''); const [importNotice,setImportNotice]=useState(''); const [nativePicker,setNativePicker]=useState(false);
@@ -320,7 +338,7 @@ function ProjectSetup({run,resourcePacks,buildingBlueprints,existingProjects,dra
       </div>
       {selected ? <BlueprintPicker resourcePacks={resourcePacks} options={options} selected={selected} onSelect={id => onDraftChange({ blueprintId: id, ...(!imported || id !== imported.blueprint.id ? { importRole: 'building' } : {}) })} importControl={importControl}/> : <div className="blueprint-loading" role="status">正在准备建筑预览...</div>}
       {submitError&&<p className="setup-error" role="alert">{submitError}</p>}
-      <div className="setup-actions">{onCancel && <button type="button" className="setup-cancel" disabled={submitting} onClick={onCancel}>取消</button>}{importRole === 'decoration' && imported ? <button className="primary setup-submit" type="button" disabled={submitting||importing || Boolean(decorationLimitError)} onClick={() => void addDecoration()}><PixelCube size={18}/>加入装饰池</button> : <button className="primary setup-submit" type="submit" disabled={submitting||!selected || importing || !Number.isInteger(habitTargetRounds) || habitTargetRounds < 10 || habitTargetRounds > 30 || (kind === 'finite' && draft.subtasksText.split('\n').map(x => x.trim()).filter(Boolean).length === 0)}><PixelHammer size={18}/>{submitting?'正在创建…':'开始建造'}</button>}</div>
+      <div className="setup-actions">{onCancel && <button type="button" className="setup-cancel" disabled={submitting} onClick={onCancel}>取消</button>}{importRole === 'decoration' && imported ? <button className="primary setup-submit" type="button" aria-busy={importing} disabled={submitting||importing || Boolean(decorationLimitError)} onClick={() => void addDecoration()}><PixelCube size={18}/>加入装饰池</button> : <button className="primary setup-submit" type="submit" aria-busy={submitting} disabled={submitting||!selected || importing || !Number.isInteger(habitTargetRounds) || habitTargetRounds < 10 || habitTargetRounds > 30 || (kind === 'finite' && draft.subtasksText.split('\n').map(x => x.trim()).filter(Boolean).length === 0)}><PixelHammer size={18}/>{submitting?'正在创建…':'开始建造'}</button>}</div>
     </form>
   </section>;
 }
@@ -373,30 +391,4 @@ function litematicErrorMessage(error:unknown):string { const code=typeof error==
 
 
 
-function AboutDialog({onClose}:{onClose:()=>void}){
-  const [checking,setChecking]=useState(false);const [updateResult,setUpdateResult]=useState('');const closeRef=useRef<HTMLButtonElement>(null);
-  useEffect(()=>{closeRef.current?.focus();const onKey=(event:KeyboardEvent)=>{if(event.key==='Escape')onClose();};window.addEventListener('keydown',onKey);return()=>window.removeEventListener('keydown',onKey);},[onClose]);
-  const check=async()=>{if(checking)return;const started=performance.now();setChecking(true);try{const response=await fetch(`${REPOSITORY_URL.replace('github.com','api.github.com/repos')}/releases/latest`,{headers:{Accept:'application/vnd.github+json'}});if(!response.ok)throw new Error(String(response.status));const release=await response.json() as {tag_name?:string;html_url?:string};const latest=(release.tag_name??'').replace(/^v/,'');if(!/^\d+\.\d+\.\d+$/.test(latest))throw new Error('invalid release');await finishRefreshFeedback(started);setUpdateResult(compareVersions(latest,APP_VERSION)>0?`发现新版本 ${latest}，可前往 GitHub 下载。`:`当前已是最新版本 ${APP_VERSION}。`);}catch{await finishRefreshFeedback(started);setUpdateResult('暂时无法检查更新，请确认网络后重试。');}finally{setChecking(false);}};
-  return <div className="dialog-backdrop" role="presentation">
-    <section className="confirm-dialog about-dialog" role="dialog" aria-modal="true" aria-labelledby="about-title">
-      <button ref={closeRef} className="dialog-close" aria-label="关闭关于页面" onClick={onClose}><X/></button>
-      <header className="about-brand"><PixelBrand size={36}/><div><h2 id="about-title">方块钟 <span>blockcolc</span></h2><p className="about-version">版本 {APP_VERSION}</p></div></header>
-      <p className="about-description">把时间，慢慢建成一座聚落。任务、记录与蓝图默认保存在本机。</p>
-      <dl>
-        <div><dt>项目仓库</dt><dd><a href={REPOSITORY_URL} target="_blank" rel="noreferrer">GitHub <ExternalLink/></a></dd></div>
-        <div><dt>隐私</dt><dd>默认本地保存；外部服务按设置启用</dd></div>
-        <div><dt>项目许可</dt><dd><a href={`${REPOSITORY_URL}/blob/main/LICENSE`} target="_blank" rel="noreferrer">Apache-2.0 <ExternalLink/></a></dd></div>
-        <div><dt>天文计算</dt><dd><a href="licenses/suncalc.txt" target="_blank" rel="noreferrer">SunCalc · BSD-2-Clause <ExternalLink/></a></dd></div>
-        <div><dt>节日历法</dt><dd><a href="licenses/lunar-typescript/LICENSE.txt" target="_blank" rel="noreferrer">lunar-typescript · MIT <ExternalLink/></a></dd></div>
-        <div><dt>像素字体</dt><dd><a href="licenses/fusion-pixel/OFL.txt" target="_blank" rel="noreferrer">缝合像素 · OFL-1.1 <ExternalLink/></a></dd></div>
-      </dl>
-      <p className="legal-note">本应用不是 Minecraft 官方产品，未获 Mojang Studios 或 Microsoft 认可或关联。Minecraft 是其权利人的商标。</p>
-      <button className="check-update" type="button" disabled={checking} aria-busy={checking} onClick={()=>void check()}><RefreshCw className={checking?'is-spinning':''}/>手动检查更新</button>
-      <p className="update-result" role="status">{updateResult||'等待手动检查更新'}</p>
-    </section>
-  </div>;
-}
-
 function CompletionCeremony({title,onClose}:{title:string;onClose:()=>void}){const button=useRef<HTMLButtonElement>(null);useEffect(()=>{button.current?.focus();},[]);return <div className="ceremony-backdrop" role="presentation"><section className="completion-ceremony" role="dialog" aria-modal="true" aria-labelledby="ceremony-title"><div className="ceremony-rays"/><Trophy/><span>主体建筑完成</span><h2 id="ceremony-title">{title}</h2><p>这项长期工作已经在聚落中留下完整建筑。</p><button ref={button} onClick={onClose}>回到聚落</button></section></div>;}
-
-function compareVersions(left:string,right:string):number{const a=left.split('.').map(Number);const b=right.split('.').map(Number);for(let index=0;index<3;index+=1){if(a[index]!==b[index])return(a[index]??0)-(b[index]??0);}return 0;}

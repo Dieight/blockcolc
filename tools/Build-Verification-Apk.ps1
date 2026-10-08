@@ -3,7 +3,8 @@ param(
     [string[]]$Serial,
     [switch]$AllowBusyDevice,
     [switch]$ArtifactOnly,
-    [string]$DeliveryRoundId
+    [string]$DeliveryRoundId,
+    [switch]$PerformanceDiagnostics
 )
 
 $ErrorActionPreference = 'Stop'
@@ -57,14 +58,14 @@ try {
     Invoke-External -FilePath 'node' -Arguments @('tools/check-ui-assets.mjs', '--check')
     $sourceEvidence = Get-WorkingTreeEvidence -Root $context.Root
 
-    & (Join-Path $PSScriptRoot 'Build-AndroidRelease.ps1')
+    & (Join-Path $PSScriptRoot 'Build-AndroidRelease.ps1') -PerformanceDiagnostics:$PerformanceDiagnostics
 
-    $buildMetadata = Assert-ApkMetadata -Path $buildApk -Context $context
+    $buildMetadata = Assert-ApkMetadata -Path $buildApk -Context $context -AllowPerformanceDiagnostics:$PerformanceDiagnostics
     New-Item -ItemType Directory -Path $artifactDirectory -Force | Out-Null
     Copy-Item -LiteralPath $buildApk -Destination $verificationApk -Force
     $verificationHash = Get-Sha256 -Path $verificationApk
     Assert-Sha256Equal -Expected $buildMetadata.Sha256 -Actual $verificationHash -Boundary 'build output to verification copy'
-    $verificationMetadata = Assert-ApkMetadata -Path $verificationApk -Context $context
+    $verificationMetadata = Assert-ApkMetadata -Path $verificationApk -Context $context -AllowPerformanceDiagnostics:$PerformanceDiagnostics
 
     $devices = @()
     $targets = @()
@@ -107,6 +108,7 @@ try {
         schemaVersion = 2
         phase = if ($ArtifactOnly) { 'artifact-only-verification' } else { 'device-verification' }
         releasable = $false
+        performanceDiagnostics = [bool]$PerformanceDiagnostics
         deliveryStatus = if ($ArtifactOnly -or @($devices).Count -eq 0) { 'artifact-only-not-delivered' } else { 'delivered-to-device' }
         builtAt = (Get-Date).ToUniversalTime().ToString('o')
         versionName = $context.VersionName

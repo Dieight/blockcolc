@@ -1,0 +1,19 @@
+:root{--icon-motion-duration:.9s}
+.nav-icon-motion{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;flex:0 0 24px}
+.nav-icon-motion[data-nav-motion] [data-icon-part]{--part-delay:0s;transform-box:view-box;animation-duration:calc(var(--icon-motion-duration) - var(--part-delay));animation-delay:var(--part-delay);animation-fill-mode:both;animation-timing-function:cubic-bezier(.2,.7,.3,1)}
+.nav-icon-motion[data-nav-motion] [data-icon-part='hour']{transform-origin:5.5px 5.5px;animation-name:nav-hour}
+.nav-icon-motion[data-nav-motion] [data-icon-part='minute']{transform-origin:5.5px 5.5px;animation-name:nav-minute}
+.nav-icon-motion[data-nav-motion] [data-icon-part^='task-box']{animation-name:nav-box}
+.nav-icon-motion[data-nav-motion] [data-icon-part^='task-line']{transform-origin:5px 0;animation-name:nav-line}
+.nav-icon-motion[data-nav-motion] [data-icon-part$='-1']{--part-delay:.18s}
+.nav-icon-motion[data-nav-motion] [data-icon-part$='-2']{--part-delay:.36s}
+.nav-icon-motion[data-nav-motion] [data-icon-part^='bar-']{transform-origin:0 9px;animation-name:nav-bar}
+.nav-icon-motion[data-nav-motion] [data-icon-part='outer']{transform-origin:6px 6px;animation-name:nav-hour}
+@keyframes nav-hour{from{transform:rotate(0)}to{transform:rotate(360deg)}}
+@keyframes nav-minute{from{transform:rotate(0)}to{transform:rotate(4320deg)}}
+@keyframes nav-box{from{opacity:.15}to{opacity:1}}
+@keyframes nav-line{from{transform:scaleX(.05);opacity:.15}to{transform:scaleX(1);opacity:1}}
+@keyframes nav-bar{from{transform:scaleY(.06)}to{transform:scaleY(1)}}
+@media(prefers-reduced-motion:reduce){.nav-icon-motion[data-nav-motion] [data-icon-part]{animation:none}}
+/* Logo hit target stays separate from the title and does not shift the header. */
+.brand-bounce{display:grid;place-items:center;width:44px;height:44px;padding:0;margin:-8px;border:0;background:none;overflow:visible;touch-action:manipulation}

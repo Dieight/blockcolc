@@ -5,6 +5,7 @@ import { deflateSync } from 'node:zlib';
 import { basename, resolve } from 'node:path';
 import { readPersistedDomainState } from './persisted-domain-state';
 import { observeWorldDrawBudget, readWorldDrawBudget } from './world-draw-budget';
+import { showWorldOverview } from './world-overview';
 
 test('imports, persists, switches and safely deletes a local Java resource pack', async ({page}) => {
   const archive=Buffer.from(makePack());
@@ -135,7 +136,8 @@ test('applies an atlas to a real imported building and restores original renderi
   await observeWorldDrawBudget(page, '项目建筑世界');
   const canvas=page.getByLabel('项目建筑世界');
   await expect(canvas).toBeVisible();
-  await prepareMaterialComparison(page, canvas);
+  const originalView = await prepareMaterialComparison(page, canvas);
+  await testInfo.attach('original-view.json', { body: JSON.stringify(originalView), contentType: 'application/json' });
   const original=await canvas.screenshot({path:testInfo.outputPath('original-materials.png')});
   // Restore normal motion for the existing animated-atlas assertions. Only
   // the before/after material comparison is stationary.
@@ -178,7 +180,9 @@ test('applies an atlas to a real imported building and restores original renderi
   await page.locator('.resource-pack-original').getByRole('button',{name:'使用'}).click();
   await page.getByRole('button',{name:'计时'}).click();
   await expect(canvas).toHaveAttribute('data-active-resource-pack-id','');
-  await prepareMaterialComparison(page, canvas);
+  const restoredView = await prepareMaterialComparison(page, canvas);
+  await testInfo.attach('restored-view.json', { body: JSON.stringify(restoredView), contentType: 'application/json' });
+  expect(restoredView).toEqual(originalView);
   const restored=await canvas.screenshot({path:testInfo.outputPath('restored-original.png')});
   const restoration=await pixelDifference(page,original,restored);
   // V20 ambient cloud drift makes two screenshots taken at different instants
@@ -197,7 +201,8 @@ test('retextures built-in buildings through vanilla stand-in blocks', async ({ p
   await page.reload();
   const canvas = page.getByLabel('项目建筑世界');
   await expect(canvas).toBeVisible();
-  await prepareMaterialComparison(page, canvas);
+  const originalView = await prepareMaterialComparison(page, canvas);
+  await testInfo.attach('original-view.json', { body: JSON.stringify(originalView), contentType: 'application/json' });
   const original = await canvas.screenshot({ path: testInfo.outputPath('builtin-original.png') });
 
   await page.getByRole('button', { name: '设置' }).click();
@@ -232,7 +237,9 @@ test('retextures built-in buildings through vanilla stand-in blocks', async ({ p
   await page.getByRole('button', { name: '计时' }).click();
   await expect(canvas).toHaveAttribute('data-active-resource-pack-id', '');
   await expect.poll(async () => canvas.getAttribute('data-terrain-pack-textured'), { timeout: 20_000 }).toBe('false');
-  await prepareMaterialComparison(page, canvas);
+  const restoredView = await prepareMaterialComparison(page, canvas);
+  await testInfo.attach('restored-view.json', { body: JSON.stringify(restoredView), contentType: 'application/json' });
+  expect(restoredView).toEqual(originalView);
   await expect.poll(async () => {
     const shot = await canvas.screenshot({ path: testInfo.outputPath('builtin-restored.png') });
     return (await pixelDifference(page, original, shot)).changedPixelRatio;
@@ -414,13 +421,20 @@ test('cold bootstrap applies the selected pack with one world rebuild and preser
 });
 
 async function prepareMaterialComparison(page: import('@playwright/test').Page,
-  canvas: import('@playwright/test').Locator): Promise<void> {
-  await expect(canvas).toHaveAttribute('data-first-nonempty-frame-ms', /\d/, { timeout: 15_000 });
+  canvas: import('@playwright/test').Locator): Promise<Record<string, string | null>> {
+  // The cold opening ends in building focus; reset-view alone preserves that
+  // focus. Compare materials only after the real map control restores the
+  // same whole-settlement framing on both sides.
+  await showWorldOverview(page);
   // Expire the transient weather attribution with the installed clock on
   // both sides. Reduced motion keeps rain/clouds and the opening stationary.
   await page.clock.fastForward(10_000);
   await page.getByRole('button', { name: '重置视角', exact: true }).click();
   await expect(canvas).toHaveAttribute('data-camera-distance-ratio', '1.0000');
+  const attributes = ['data-camera-distance', 'data-camera-target-x', 'data-camera-target-y',
+    'data-camera-target-z', 'data-camera-azimuth', 'data-camera-pitch-degrees',
+    'data-camera-minimum-distance-ratio', 'data-camera-maximum-distance-ratio'];
+  return Object.fromEntries(await Promise.all(attributes.map(async name => [name, await canvas.getAttribute(name)])));
 }
 
 function makePack():Uint8Array{

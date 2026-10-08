@@ -50,14 +50,20 @@
 .boot-page-model{width:176px;height:158px;display:grid;place-items:center}
 .boot-site{width:160px;height:144px;overflow:visible}
 .boot-ground{fill:color-mix(in srgb,var(--focus) 18%,var(--app-bg))}.boot-shadow{fill:#17211c12}
-.boot-wall-left{fill:#bf5545}.boot-wall-right{fill:#934639}.boot-roof{fill:#7e9b77}.boot-dial{fill:#f5eddc}
-.boot-hand{fill:#304a3b}.boot-tree{fill:#729867}.boot-crate{fill:#bc975d}.boot-spark{fill:#edc45b}.boot-scan{display:none}
+.boot-wall-left{fill:#d3b58b}.boot-wall-right{fill:#b99c74}.boot-roof{fill:#7d4f40}.boot-roof-lit{fill:#a7664c}.boot-gable{fill:#654735}.boot-dial{fill:#f5eddc}
+.boot-hand,.boot-timber{fill:#304a3b}.boot-tree{fill:#729867}.boot-crate{fill:#bc975d}.boot-chimney,.boot-foundation{fill:#8f9987}.boot-door,.boot-tree-trunk{fill:#775740}.boot-window{fill:#b9dad1}.boot-path{fill:#c9b484}.boot-flower{fill:#d99a83}
+.boot-page-model[data-boot-house='1'] .boot-roof{fill:#607b60}.boot-page-model[data-boot-house='1'] .boot-roof-lit{fill:#8caa7e}.boot-page-model[data-boot-house='1'] .boot-gable{fill:#536850}
+.boot-page-model[data-boot-house='2'] .boot-roof{fill:#4c6870}.boot-page-model[data-boot-house='2'] .boot-roof-lit{fill:#72959c}.boot-page-model[data-boot-house='2'] .boot-gable{fill:#3d535a}
+.boot-page-model[data-boot-house='3'] .boot-roof{fill:#b45843}.boot-page-model[data-boot-house='3'] .boot-roof-lit{fill:#d6795c}.boot-page-model[data-boot-house='3'] .boot-gable{fill:#914635}
+.boot-roof-seam{fill:rgb(245 237 220 / .16)}
 /* The scene is rasterised once. Only this HTML layer rotates on the compositor;
    no animated SVG subtrees need to repaint while storage/terrain occupy JS. */
 .boot-page-model{position:relative;contain:layout paint}
-.boot-page-model::after{content:'';position:absolute;right:12px;top:8px;width:26px;height:26px;background:var(--focus);-webkit-mask:var(--pixel-orbit-mask) center/contain no-repeat;mask:var(--pixel-orbit-mask) center/contain no-repeat;animation:control-spin 1.2s linear infinite;will-change:transform}
-.boot-page[data-load-stage='storage'] .boot-roof,.boot-page[data-load-stage='resources'] .boot-dial{opacity:.45}
+.boot-windmill{position:absolute;left:86px;top:68px;width:32px;height:32px;transform:skewY(-26deg);color:#ecd3a7}
+.boot-windmill-rotor{width:100%;height:100%;animation:control-spin 2.6s linear infinite;will-change:transform}
+.boot-windmill svg{display:block;width:100%;height:100%;fill:currentColor;shape-rendering:crispEdges}
+.boot-windmill>i{position:absolute;left:13px;top:13px;width:6px;height:6px;background:#775740}
 [data-cold-startup='true'] .app-shell .boot-page{visibility:hidden}
-@media(prefers-reduced-motion:reduce){.boot-page-model::after,.boot-page-inner{animation:none;will-change:auto}.boot-spark,.boot-scan{opacity:0}}
+@media(prefers-reduced-motion:reduce){.boot-windmill-rotor,.boot-page-inner{animation:none;will-change:auto}}
 @keyframes world-boot-in{from{opacity:0}to{opacity:1}}
 .daily-goal-workbench{margin-bottom:26px}

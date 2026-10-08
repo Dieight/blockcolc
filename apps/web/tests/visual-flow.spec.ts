@@ -38,6 +38,7 @@ async function startFocus(page: import('@playwright/test').Page, rounds = 1) {
 }
 
 async function enableTaskEditing(page: import('@playwright/test').Page) {
+  await expect(page.getByRole('button', { name: /^(编辑施工清单|结束编辑施工清单)$/ })).toBeVisible();
   const enter = page.getByRole('button', { name: '编辑施工清单', exact: true });
   if (await enter.isVisible().catch(() => false)) await enter.click();
   await expect(page.getByRole('button', { name: '结束编辑施工清单', exact: true })).toBeVisible();
@@ -270,7 +271,7 @@ test('renders a monument with the active building and restores both after deleti
   await expect(summary).toContainText('完成第一栋建筑，林边工坊，纪念建筑');
   await expect(summary).toContainText('开始第二栋建筑，河岸木屋，正在建造');
   await showWorldOverview(page);
-  await expect(page.getByText('林边聚落 · 2 栋')).toBeVisible();
+  await expect(page.getByText('海岛聚落 · 2 栋')).toBeVisible();
 
   await openTasks(page);
   await page.locator('.project-portfolio-toggle').click();
@@ -304,7 +305,7 @@ test('adds and switches unfinished large projects without moving their buildings
   let summary = page.locator('#world-summary');
   await expect(summary).toContainText('我的第一座工坊，林边工坊，暂停建造');
   await expect(summary).toContainText('第二项长期工作，河岸木屋，正在建造');
-  await expect(page.getByText('林边聚落 · 2 栋')).toBeVisible();
+  await expect(page.getByText('海岛聚落 · 2 栋')).toBeVisible();
 
   await openTasks(page);
   const selector = page.locator('.choice-menu').filter({ has: page.getByText('当前任务', { exact: true }) });
@@ -431,6 +432,7 @@ test('keeps the world renderer resident across tab switches', async ({ page }) =
   const box = await canvas.boundingBox();
   if (!box) throw new Error('World canvas has no layout box');
   const y = box.y + box.height * 0.52;
+  const initialAzimuth = Number(await canvas.getAttribute('data-camera-azimuth'));
   // Keep this synthetic gesture inside one browser task. Separate Playwright
   // dispatches can be divided by a software-WebGL frame longer than the real
   // 2.5-second stale-pointer guard, correctly releasing the fake touch before
@@ -445,7 +447,16 @@ test('keeps the world renderer resident across tab switches', async ({ page }) =
     dispatch('pointerup', gesture.endX, 0);
   }, { startX: box.x + box.width * 0.3, endX: box.x + box.width * 0.7, y });
   await expect.poll(async () => Math.abs(Number(await canvas.getAttribute('data-camera-azimuth')))).toBeGreaterThan(2);
+  // A released pointer is not a settled camera. The renderer eases towards
+  // its input target; capture that target rather than an arbitrary in-flight
+  // frame which can legitimately continue moving after the tab round trip.
+  const settledAzimuth = initialAzimuth + box.width * .4 * .011;
+  await expect.poll(async () => Number(await canvas.getAttribute('data-camera-azimuth'))).toBeCloseTo(settledAzimuth, 4);
   const azimuth = await canvas.getAttribute('data-camera-azimuth');
+  const identity = await canvas.evaluate(node => {
+    node.dataset.residentRoundTrip = 'original';
+    return { generation: node.dataset.rendererGeneration, rebuilds: node.dataset.worldRebuildCount };
+  });
 
   await page.getByRole('button', { name: '任务', exact: true }).click();
   await expect(page.getByRole('heading', { name: '我的第一座工坊' })).toBeVisible();
@@ -455,6 +466,8 @@ test('keeps the world renderer resident across tab switches', async ({ page }) =
   await expect(page.locator('.boot-page')).toHaveCount(0);
   const restoredAzimuth = Number(await canvas.getAttribute('data-camera-azimuth'));
   expect(restoredAzimuth).toBeCloseTo(Number(azimuth), 2);
+  await expect(canvas).toHaveAttribute('data-resident-round-trip', 'original');
+  expect(await canvas.evaluate(node => ({ generation: node.dataset.rendererGeneration, rebuilds: node.dataset.worldRebuildCount }))).toEqual(identity);
   await expect(canvas).toHaveAttribute('data-environment-style', 'natural-valley');
 });
 
@@ -663,8 +676,7 @@ test('persists daily goal target changes and disabled state', async ({ page }, t
   await expect(goal.getByRole('switch')).toBeChecked();
   await expect(goal.getByRole('button', { name: '保存' })).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath('v13-daily-goal.png'), fullPage: true });
-  await goalTarget.fill('2');
-  await goalTarget.press('Enter');
+  for (let i = 0; i < 6; i++) { await goalTarget.press('ArrowLeft'); await expect(goalTarget).toBeEnabled(); }
   await expect(goal.getByLabel('今日目标次数')).toHaveValue('2');
   await goal.getByRole('button', { name: '关闭今日目标' }).click();
   const dailyGoalCard = page.getByRole('region', { name: '今日目标' });
@@ -677,8 +689,7 @@ test('persists daily goal target changes and disabled state', async ({ page }, t
   await expect(goal.getByLabel('今日目标次数')).toHaveValue('2');
   await expect(goal.locator('#daily-goal-sheet-summary')).toHaveText('今日已完成 0 / 2 轮');
 
-  await goal.getByLabel('今日目标次数').fill('4');
-  await goal.getByLabel('今日目标次数').press('Enter');
+  for (let i = 0; i < 2; i++) { await goal.getByLabel('今日目标次数').press('ArrowRight'); await expect(goal.getByLabel('今日目标次数')).toBeEnabled(); }
   await goal.getByRole('button', { name: '关闭今日目标' }).click();
   await expect(dailyGoalCard.getByRole('progressbar', { name: '今日 0 / 4 轮' })).toBeVisible();
   goal = await openDailyGoal(page);
@@ -689,7 +700,7 @@ test('persists daily goal target changes and disabled state', async ({ page }, t
   await openTasks(page);
   goal = await openDailyGoal(page);
   await expect(goal.getByRole('switch')).not.toBeChecked();
-  await expect(goal.getByLabel('今日目标次数')).toHaveValue('4');
+  await expect(goal.getByLabel('今日目标次数')).toHaveValue('0');
   await expect(goal.locator('#daily-goal-sheet-summary')).toHaveText('今日已完成 0 轮');
   await goal.getByRole('button', { name: '关闭今日目标' }).click();
   await expect(dailyGoalCard.locator('.daily-goal-tally')).toHaveText('0轮 · 目标未开启');

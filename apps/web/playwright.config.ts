@@ -4,7 +4,8 @@ import { crossViewportRendererSpecs, desktopOnlySpecs, diagnosticSpecs } from '.
 export default defineConfig({
   testDir: './tests', timeout: 30_000, fullyParallel: true,
   maxFailures: 1,
-  use: { baseURL: 'http://127.0.0.1:41988', trace: 'retain-on-failure' },
+  // Most cases start after learning the app; fresh-install tutorial cases clear this marker.
+  use: { baseURL: 'http://127.0.0.1:41988', trace: 'retain-on-failure', storageState: { cookies: [], origins: [{origin:'http://127.0.0.1:41988',localStorage:[{name:'blockcolc-onboarding-v1',value:'1'}]}] } },
   projects: [
     {
       name: 'mobile-chromium',

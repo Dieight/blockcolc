@@ -32,8 +32,9 @@ type ImportRole = 'building' | 'decoration';
 let litematicModulePromise: Promise<typeof import('@blockcolc/litematic')> | null = null;
 function loadLitematicModule() { litematicModulePromise ??= import('@blockcolc/litematic'); return litematicModulePromise; }
 
-export function SettingsScreen({active,service,resourcePacks,state,run,refresh,preferences,onPreferencesChange,worldWeather,worldDebug,onWorldDebugChange,onConfigureEnvironment}:{active:boolean;service:ApplicationService;resourcePacks:ResourcePackRepository;state:ReturnType<ApplicationService['snapshot']>;run:(c:ApplicationCommand)=>Promise<unknown>;refresh:()=>void;preferences:FocusPreferences;onPreferencesChange:(value:FocusPreferences)=>void;worldWeather:WorldWeatherView;worldDebug?:WorldDebugSettings;onWorldDebugChange?:(value:WorldDebugSettings)=>void;onConfigureEnvironment?:(environment:typeof state.worldSettings.environmentStyle)=>Promise<unknown>}) {
+export function SettingsScreen({active,service,resourcePacks,state,run,refresh,preferences,onPreferencesChange,worldWeather,worldDebug,onWorldDebugChange,onConfigureEnvironment,onConfigureOutline,onReplayTutorial}:{active:boolean;service:ApplicationService;resourcePacks:ResourcePackRepository;state:ReturnType<ApplicationService['snapshot']>;run:(c:ApplicationCommand)=>Promise<unknown>;refresh:()=>void;preferences:FocusPreferences;onPreferencesChange:(value:FocusPreferences)=>void;worldWeather:WorldWeatherView;worldDebug?:WorldDebugSettings;onWorldDebugChange?:(value:WorldDebugSettings)=>void;onReplayTutorial?:()=>void;onConfigureOutline?:(visibility:FocusPreferences["constructionOutlineVisibility"])=>Promise<void>;onConfigureEnvironment?:(environment:typeof state.worldSettings.environmentStyle)=>Promise<unknown>}) {
   const [glassPreview,setGlassPreview]=useState<number|null>(null);
+  const [outlinePending,setOutlinePending]=useState(false);
   const update=(key:'focusMinutes'|'habitFocusMinutes'|'habitTargetRounds'|'breakMinutes',value:number)=>onPreferencesChange({...preferences,[key]:value});
   return <section className="page settings-page">
     <header className="settings-head"><h1>设置</h1><p>专注节奏、聚落外观与本地数据。</p></header>
@@ -110,7 +111,7 @@ export function SettingsScreen({active,service,resourcePacks,state,run,refresh,p
       <div className="settings-list">
         <div className="setting-row toggle-row">
           <div className="setting-name"><span>聚落环境</span><small>只改变外围地形</small></div>
-          <TextToggle ariaLabel="聚落环境" value={state.worldSettings.environmentStyle} options={[{value:'natural-valley',label:'自然山谷'},{value:'classic-island',label:'经典空岛'},{value:'ocean-island',label:'海洋小岛'},{value:'mosaic-coast',label:'万象海岸'}]} onChange={value=>onConfigureEnvironment?onConfigureEnvironment(value):run({type:'ConfigureWorldEnvironment',environmentStyle:value})}/>
+          <TextToggle ariaLabel="聚落环境" value={state.worldSettings.environmentStyle} options={[{value:'classic-island',label:'空岛'},{value:'natural-valley',label:'山谷'},{value:'ocean-island',label:'海岛'},{value:'mosaic-coast',label:'海岸'}]} onChange={value=>onConfigureEnvironment?onConfigureEnvironment(value):run({type:'ConfigureWorldEnvironment',environmentStyle:value})}/>
         </div>
         <div className="setting-row">
           <div className="setting-name"><span>同步现实天气</span><small>位置仅存本机；定位暂失时使用缓存，关闭即清除</small><WorldWeatherSettingsStatus enabled={preferences.realWeatherEnabled} view={worldWeather}/></div>
@@ -123,7 +124,7 @@ export function SettingsScreen({active,service,resourcePacks,state,run,refresh,p
         <WorldColorSetting value={preferences.worldColorAdjustment} onChange={value=>onPreferencesChange({...preferences,worldColorAdjustment:value})}/>
         <div className="setting-row toggle-row">
           <div className="setting-name"><span>施工轮廓</span><small>未建部分的显示范围</small></div>
-          <TextToggle ariaLabel="施工轮廓" value={preferences.constructionOutlineVisibility} options={[{value:'off',label:'关闭'},{value:'current',label:'当前'},{value:'all',label:'全部'}]} onChange={value=>onPreferencesChange({...preferences,constructionOutlineVisibility:value})}/>
+          <TextToggle ariaLabel="施工轮廓" value={preferences.constructionOutlineVisibility} disabled={outlinePending} options={[{value:'off',label:'关闭'},{value:'current',label:'当前'},{value:'all',label:'全部'}]} onChange={value=>{if(!onConfigureOutline){onPreferencesChange({...preferences,constructionOutlineVisibility:value});return;}setOutlinePending(true);void onConfigureOutline(value).finally(()=>setOutlinePending(false));}}/>
         </div>
         <div className="setting-row">
           <div className="setting-name"><span>建筑腐败</span><small>错过的计划日会风化建筑，专注可修复</small></div>
@@ -136,6 +137,11 @@ export function SettingsScreen({active,service,resourcePacks,state,run,refresh,p
     <section className="settings-group" aria-labelledby="settings-group-advanced">
       <h2 id="settings-group-advanced">高级</h2>
       <div className="settings-list">
+        <div className="setting-row">
+          <div className="setting-name"><span>自动检查并下载</span><small>启动时检查新版</small></div>
+          <label className="switch-control ios-switch"><input aria-label="自动检查并下载" type="checkbox" checked={preferences.autoCheckUpdates === true} onChange={()=>onPreferencesChange({...preferences,autoCheckUpdates:!preferences.autoCheckUpdates})}/></label>
+        </div>
+        {onReplayTutorial&&<div className="setting-row"><div className="setting-name"><span>新手教程</span></div><button type="button" className="settings-text-action" onClick={onReplayTutorial}>重新查看</button></div>}
         <div className="setting-row">
           <div className="setting-name"><span>显示世界坐标</span><small>点按地形时显示 x、z 与高度，便于定位世界问题</small></div>
           <label className="switch-control ios-switch"><input aria-label="显示世界坐标" type="checkbox" checked={preferences.showWorldCoordinates} onChange={()=>onPreferencesChange({...preferences,showWorldCoordinates:!preferences.showWorldCoordinates})}/></label>

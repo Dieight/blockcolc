@@ -129,7 +129,7 @@ test("renders the current compact world and supports bounded rotate and pinch ge
 });
 
 test("lets the settlement inspect the same large blueprint closer than its preview", async ({ page }) => {
-  await page.addInitScript(() => localStorage.clear());
+  await page.addInitScript(() => {localStorage.clear();localStorage.setItem('blockcolc-onboarding-v1','1');});
   await page.goto("/");
   await page.locator("label.blueprint-option").filter({ hasText: "GYPpro的豪宅（一层）" }).click();
   const preview = page.locator('canvas[data-preview-blueprint-id="builtin-local-gyp-mansion-first-floor"]');

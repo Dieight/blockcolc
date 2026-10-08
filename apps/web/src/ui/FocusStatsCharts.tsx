@@ -48,6 +48,7 @@ export function FocusCalendarChart({ days, today, selection, onSelectionChange, 
   const [highlight,setHighlight]=useState<number|null>(null);
   const longest=days.filter(day=>!day.future&&day.minutes>0).reduce<CalendarDay|null>((best,day)=>!best||day.minutes>best.minutes?day:best,null);
   const first = days[0]?.date ?? today;
+  const revealSpan=Math.max(1,Math.ceil(days.filter(day=>!day.future).length/7)-1);
   const months = days.flatMap((day,index) => day.date.endsWith('-01') || index === 0 ? [{column:Math.floor(index / 7), label:`${Number(day.date.slice(5,7))}月`}] : [])
     .filter((month,index,list) => (list[index + 1]?.column ?? 26) - month.column >= 3);
   const x = (index:number) => 34 + Math.floor(index / 7) * 12;
@@ -125,7 +126,7 @@ export function FocusCalendarChart({ days, today, selection, onSelectionChange, 
         return <g key={day.date} id={`${id}-${day.date}`} role="gridcell" aria-selected={selected} aria-disabled={day.future}
           data-date={day.date} data-minutes={day.future ? undefined : day.minutes} data-future={day.future || undefined} data-level={day.future ? 0 : focusHeatmapLevel(day.minutes)}
           data-highlight={highlight===null?undefined:level===highlight?'match':'dim'} data-longest={highlight===4&&day===longest||undefined}
-          className="calendar-day">
+          className="calendar-day" style={{ '--calendar-delay': `${Math.floor(index/7) / revealSpan*.9}s` } as CSSProperties}>
           <title>{day.future ? `${dateLabel(day.date)} · 尚未到来` : `${dateLabel(day.date)} · ${formatFocusMinutes(Math.round(day.minutes))} · ${day.sessions} 次`}</title>
           <rect className="calendar-day-hit" x={x(index)-6} y={y(index)-7.5} width={12} height={15} fill="transparent"/>
           <rect className="calendar-pixel" x={x(index)-4} y={y(index)-4} width={8} height={8}/>

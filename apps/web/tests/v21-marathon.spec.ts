@@ -6,6 +6,7 @@ import { choosePlanEndTime, startNextRound, waitForMarathonReport, revealFocusCo
 import { fixBusinessDate } from './fixed-business-date';
 
 async function expectWorldCanvasDoesNotCover(button: import('@playwright/test').Locator) {
+  await button.click({ trial: true });
   const hitTest = await button.evaluate((element) => {
     const rect = element.getBoundingClientRect();
     const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);

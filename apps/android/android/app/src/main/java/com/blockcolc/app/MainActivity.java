@@ -24,6 +24,7 @@ public class MainActivity extends BridgeActivity {
     static final String ACTION_SKIP_BREAK = "com.blockcolc.app.action.SKIP_BREAK";
     private boolean pendingSkipBreak = false;
     private final long nativeCreatedAtMs = SystemClock.elapsedRealtime();
+    private PerformanceProbe performanceProbe;
     private Insets latestSafeInsets = Insets.NONE;
     private String lastSafeAreaScript = null;
     private final SafeAreaUpdateGate safeAreaUpdateGate = new SafeAreaUpdateGate();
@@ -56,6 +57,10 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+        if (BuildConfig.BLOCKCOLC_PERFORMANCE_DIAGNOSTICS) {
+            performanceProbe = new PerformanceProbe(this, nativeCreatedAtMs);
+            performanceProbe.receive(getIntent());
+        }
         captureBreakAction(getIntent());
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             WindowManager.LayoutParams attributes = getWindow().getAttributes();
@@ -70,6 +75,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(BreakLiveUpdatePlugin.class);
         registerPlugin(WeatherPlugin.class);
         registerPlugin(FocusExportPlugin.class);
+        registerPlugin(AppUpdatePlugin.class);
         bridgeBuilder.addWebViewListener(new WebViewListener() {
             @Override
             public boolean onRenderProcessGone(WebView webView, RenderProcessGoneDetail detail) {
@@ -86,8 +92,7 @@ public class MainActivity extends BridgeActivity {
 
             @Override
             public void onPageLoaded(WebView webView) {
-                Log.i("BlockcolcStartup", "page-loaded durationMs=" + (SystemClock.elapsedRealtime() - nativeCreatedAtMs));
-                captureWebDiagnostics(webView, 20);
+                if (performanceProbe != null) performanceProbe.pageLoaded();
                 publishSafeAreaInsets(latestSafeInsets, true);
                 dispatchPendingBreakAction();
             }
@@ -99,6 +104,7 @@ public class MainActivity extends BridgeActivity {
         WebView webView = getBridge().getWebView();
         webView.setBackgroundColor(0xFFF3F5F2);
         webView.addJavascriptInterface(new NativeInputBridge(), "BlockcolcNativeInput");
+        if (performanceProbe != null) performanceProbe.attach(webView);
         webView.setOnTouchListener((view, event) -> { NativeInputPlugin.record(event); return false; });
         ViewCompat.setOnApplyWindowInsetsListener(content, (view, windowInsets) -> {
             Insets bars = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars());
@@ -132,37 +138,11 @@ public class MainActivity extends BridgeActivity {
         mainHandler.postDelayed(miniWindowPoll, 500);
     }
 
-    private void captureWebDiagnostics(WebView webView, int attemptsRemaining) {
-        if (webView == null || isFinishing() || isDestroyed()) return;
-        webView.evaluateJavascript(
-            "(function(){" +
-                "var root=document.documentElement&&document.documentElement.dataset;" +
-                "var canvas=document.querySelector('canvas[aria-label=\"项目建筑世界\"]');" +
-                "if(!root||!root.bootstrapDurationMs||!root.appShellFrameMs||!canvas||" +
-                    "!canvas.dataset.firstNonemptyFrameMs)return null;" +
-                "return {" +
-                    "bootstrapDurationMs:Number(root.bootstrapDurationMs)," +
-                    "appShellFrameMs:Number(root.appShellFrameMs)," +
-                    "firstNonemptyFrameMs:Number(canvas.dataset.firstNonemptyFrameMs)," +
-                    "worldRebuildCount:Number(canvas.dataset.worldRebuildCount||0)," +
-                    "worldRebuildLastMs:Number(canvas.dataset.worldRebuildLastMs||0)," +
-                    "nativeBridgeReady:typeof window.BlockcolcNativeInput==='object'" +
-                "};" +
-            "})()",
-            value -> {
-                if (value != null && !"null".equals(value)) {
-                    Log.i("BlockcolcRender", "web-diagnostics=" + value);
-                } else if (attemptsRemaining > 0 && !isFinishing() && !isDestroyed()) {
-                    webView.postDelayed(() -> captureWebDiagnostics(webView, attemptsRemaining - 1), 500);
-                }
-            }
-        );
-    }
-
     @Override
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
+        if (performanceProbe != null) performanceProbe.receive(intent);
         captureBreakAction(intent);
         dispatchPendingBreakAction();
     }
@@ -308,6 +288,7 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     public void onPause() {
+        if (performanceProbe != null) performanceProbe.pause();
         super.onPause();
         // A floating window typically pauses the host without stopping it;
         // report the pause as a potential leave (the 3 s grace absorbs quick
@@ -319,6 +300,7 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onResume() {
         super.onResume();
+        if (performanceProbe != null) performanceProbe.resume();
         applyAttentionTransition(attentionState.onResume(), "resume");
     }
 
@@ -355,5 +337,11 @@ public class MainActivity extends BridgeActivity {
             // let the 3 s grace separate glances from actual slacking.
             applyAttentionTransition(attentionState.onWindowFocusChanged(false), "window-focus");
         }
+    }
+
+    @Override
+    public void onDestroy() {
+        if (performanceProbe != null) performanceProbe.destroy();
+        super.onDestroy();
     }
 }

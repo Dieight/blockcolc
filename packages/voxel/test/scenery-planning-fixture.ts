@@ -11,7 +11,7 @@ export const SCENERY_PLANNING_CASES = [
   { style: 'natural-valley', count: 1, version: 3 },
 ] as const;
 
-export function sceneryPlanningFixture(style: TerrainEnvironmentStyle, count: number, version: TerrainGenerationVersion) {
+export function sceneryPlanningFixture(style: TerrainEnvironmentStyle, count: number, version: TerrainGenerationVersion, worldSeed = 'world-default') {
   const worlds = alignWorldsToEnvironment(layoutWorlds(Array.from({ length: count }, (_, settlementIndex) => ({
     projectId: `scenery-snapshot-${settlementIndex}`, settlementIndex, blueprintId: 'builtin-small-workshop',
     buildingCompletionBasisPoints: 10_000, buildingConditionBasisPoints: 10_000, isMonument: false,
@@ -20,9 +20,9 @@ export function sceneryPlanningFixture(style: TerrainEnvironmentStyle, count: nu
   const pads = worlds.map(world => ({ x: world.worldPosition.x, z: world.worldPosition.z,
     width: world.footprint.width, depth: world.footprint.depth, groundLevel: world.worldPosition.y }));
   const terrain = createSteppedTerrainData(worlds, roads, pads, undefined, {
-    environmentStyle: style, worldSeed: 'world-default', terrainGenerationVersion: version, refinedFar: false,
+    environmentStyle: style, worldSeed, terrainGenerationVersion: version, refinedFar: false,
   });
-  return { environmentStyle: style, worldSeed: 'world-default', surfaces: terrainSurfaceRectangles(terrain),
+  return { environmentStyle: style, worldSeed, surfaces: terrainSurfaceRectangles(terrain),
     ...(style==='mosaic-coast'?{mosaicCoreRadius:Math.abs(terrain.framingBounds.maxX)}:{}),
     trees: terrain.naturalTrees, roads, protectedRects: worlds.map(world => ({ x: world.worldPosition.x,
       z: world.worldPosition.z, width: world.footprint.width + 5, depth: world.footprint.depth + 5 })) };

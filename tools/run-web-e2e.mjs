@@ -244,6 +244,10 @@ async function runReleaseSuites() {
     await fs.mkdir(path.dirname(suiteEvidencePath), { recursive: true });
     const originalReport = await fs.readFile(suiteReportPath);
     await fs.writeFile(suiteEvidencePath, originalReport);
+    // Playwright replaces test-results at the next batch. Preserve traces and
+    // screenshots before that happens, not just the JSON referencing them.
+    const suiteOutput = path.join(releaseSummaryArchiveDirectory, 'runs', summary.startedAt.replaceAll(':', '-').replaceAll('.', '-'), suite.name);
+    await fs.cp(path.join(webRoot, 'test-results'), suiteOutput, { recursive: true, force: false, errorOnExist: true });
     await fs.rm(suiteReportPath, { force: true });
     const suiteTests = collectReportEvidence(report, suite.name);
     summary.retryCount += reportSummary.retryCount;
@@ -266,6 +270,7 @@ async function runReleaseSuites() {
       skippedTestCount: reportSummary.skippedTestCount,
       playwrightReport: path.relative(repositoryRoot, suiteEvidencePath).split(path.sep).join('/'),
       playwrightReportSha256: sha256(originalReport),
+      outputDirectory: path.relative(repositoryRoot, suiteOutput).split(path.sep).join('/'),
       reportSummary: { stats: reportSummary.stats, testCount: reportSummary.testCount },
     });
     if (shouldStopFullRun(exitCode,collectAllFailures)) {

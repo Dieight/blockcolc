@@ -93,6 +93,7 @@ test('L14 allocation keeps duration shares and exact labels across light/dark re
       // first visit must exercise the modal.  Once dismissed, the persisted
       // receipt is the product contract: later viewport/theme passes must not
       // require the same historical batch to reappear.
+      if (!sawUnlockDialog) await expect(unlockDialog).toBeVisible();
       if (await unlockDialog.count()) {
         await expect(unlockDialog).toBeVisible();
         sawUnlockDialog = true;

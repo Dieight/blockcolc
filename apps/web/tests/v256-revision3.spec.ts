@@ -113,7 +113,7 @@ for (const minimal of [false, true]) test(`${minimal ? 'minimal' : 'ordinary'} c
   });
   await page.reload();
   const canvas = page.getByLabel('项目建筑世界');
-  await expect(canvas).toHaveAttribute('data-opening-prepared-frames', '2', { timeout: 35_000 });
+  await expect.poll(async()=>Number(await canvas.getAttribute('data-opening-prepared-frames')), { timeout: 35_000 }).toBeGreaterThanOrEqual(5);
   await expect(canvas).toHaveAttribute('data-initial-reveal-completed-count', '1', { timeout: 20_000 });
   await expect(page.locator('.boot-page')).toHaveCount(0);
   const samples = await page.evaluate(() => (window as typeof window & { __loaderSamples: { identity: number; stage: string; active: boolean; bandVisible: boolean }[] }).__loaderSamples);

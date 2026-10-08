@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import {sceneryIceSpireBlocks,sceneryTreeBlocks} from '../src/scenery';
 import {
   fallbackVisualStyleForOriginalComponent,
   fallbackVisualStyleForVoxel,
@@ -6,6 +7,14 @@ import {
   staticFluidHeight,
   staticFluidKind,
 } from "../src/fallback-visual";
+describe('ice-spike scenery identity',()=>{
+  it('renders packed and blue ice as solid ice, never translucent foliage',()=>{
+    for(const block of sceneryIceSpireBlocks(3).voxels){const visual=fallbackVisualStyleForVoxel(block);expect(visual.transparent).toBe(false);expect(visual.opacity).toBe(1);expect([0x82aeca,0xb6cee1]).toContain(visual.color);}
+    for(const block of sceneryTreeBlocks('spruce',2,true).voxels){expect(fallbackVisualStyleForVoxel(block).transparent).toBe(false);expect(block.sourceBlockId).toMatch(/^minecraft:spruce_(log|leaves)$/);}
+    expect(fallbackVisualStyleForVoxel({materialId:'glass',sourceBlockId:'minecraft:ice'}).transparent).toBe(true);
+    expect(fallbackVisualStyleForVoxel({materialId:'glass',sourceBlockId:'minecraft:glass'}).transparent).toBe(true);
+  });
+});
 
 describe("runtime fallback visuals", () => {
   it("keeps living reef colours distinct underwater without colouring dead or modded corals", () => {

@@ -5,7 +5,7 @@ import { fixBusinessDate } from './fixed-business-date';
 import { waitForPreparedWorld } from './world-ready';
 
 const at = Date.parse('2026-10-03T12:00:00+08:00');
-async function seed(page: Page, minimal: boolean, theme: 'light' | 'dark' = minimal ? 'light' : 'dark', displayTime = at + 70_000) {
+async function seed(page: Page, minimal: boolean, theme: 'light' | 'dark' = minimal ? 'light' : 'dark', displayTime = at + 70_000, clarity = 100) {
   let state = createInitialState('Asia/Shanghai');
   const run = (command: DomainCommand, time: number) => {
     const result = execute(state, command, { now: () => new Date(time) });
@@ -20,7 +20,7 @@ async function seed(page: Page, minimal: boolean, theme: 'light' | 'dark' = mini
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.goto('/');
   await expect(page.locator('html')).toHaveAttribute('data-bootstrap-state', 'ready');
-  await page.evaluate(async ({ state, minimal, theme }) => {
+  await page.evaluate(async ({ state, minimal, theme, clarity }) => {
     const db = await new Promise<IDBDatabase>((resolve, reject) => {
       const request = indexedDB.open('blockcolc-v1'); request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error);
     });
@@ -33,10 +33,10 @@ async function seed(page: Page, minimal: boolean, theme: 'light' | 'dark' = mini
       });
     } finally { db.close(); }
     localStorage.setItem('blockcolc-first-project-setup-v1', '1');
-    localStorage.setItem('blockcolc-focus-preferences-v1', JSON.stringify({ focusMinutes: 1, breakMinutes: 1, themeMode: theme, minimalMode: minimal, focusGlassTransparency: 100 }));
+    localStorage.setItem('blockcolc-focus-preferences-v1', JSON.stringify({ focusMinutes: 1, breakMinutes: 1, themeMode: theme, minimalMode: minimal, focusGlassTransparency: clarity }));
     if (minimal) localStorage.setItem('blockcolc-round-plan-v1', JSON.stringify({ projectId: 'p', subtaskId: null, mode: 'marathon', deferredSettlement: true,
       totalRounds: 1, completedRounds: 1, status: 'report', reportedSessionIds: [] }));
-  }, { state, minimal, theme });
+  }, { state, minimal, theme, clarity });
   await page.reload();
   await expect(page.locator('.focus-report-surface')).toBeVisible();
   const canvas = await waitForPreparedWorld(page);
@@ -44,9 +44,9 @@ async function seed(page: Page, minimal: boolean, theme: 'light' | 'dark' = mini
   return canvas;
 }
 
-for (const theme of ['light', 'dark'] as const) test(`v256 ${theme} report stays readable over a real night world without a second backdrop`, async ({ page }, info) => {
+for (const theme of ['light', 'dark'] as const) for (const clarity of [0, 100]) test(`night report ${theme}/${clarity} keeps its selected material and full-strength ink without a second backdrop`, async ({ page }, info) => {
   test.setTimeout(60_000);
-  const canvas = await seed(page, true, theme, Date.parse('2026-10-04T00:00:00+08:00'));
+  const canvas = await seed(page, true, theme, Date.parse('2026-10-04T00:00:00+08:00'), clarity);
   await expect(canvas).toHaveAttribute('data-day-phase', 'night');
   const report = page.locator('.focus-report-surface--minimal'), panel = page.locator('.focus-panel');
   await report.getByRole('button', { name: /设计一座钟/ }).click();
@@ -55,19 +55,71 @@ for (const theme of ['light', 'dark'] as const) test(`v256 ${theme} report stays
   const style = await panel.evaluate(element => ({ color: getComputedStyle(element).color, background: getComputedStyle(element).backgroundColor }));
   const rgba = (value: string) => value.match(/[\d.]+/g)!.map(Number);
   const [r, g, b, alpha] = rgba(style.background);
+  const materialAlpha = Number(await page.locator('html').evaluate((element, theme) => getComputedStyle(element).getPropertyValue(`--focus-glass-${theme}-alpha`), theme));
+  expect(alpha).toBeCloseTo(materialAlpha, 3);
   const worstWorld = theme === 'light' ? 0 : 255;
   const background = [r!, g!, b!].map(v => v * alpha! + worstWorld * (1 - alpha!));
   const luminance = (rgb: number[]) => rgb.map(v => v / 255).map(v => v <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4).reduce((sum, v, i) => sum + v * [ .2126, .7152, .0722 ][i]!, 0);
-  const expectedInk = theme === 'light' ? 'rgb(23, 33, 28)' : 'rgb(230, 239, 233)';
+  const expectedInk = theme === 'light' && clarity < 75 ? 'rgb(23, 33, 28)' : 'rgb(230, 239, 233)';
   for (const selector of ['.minimal-report-caption', '.minimal-report-help', '.marathon-settlement-copy strong', '.marathon-settlement-toggle', '.minimal-report-allocation']) {
     const text = report.locator(selector).first();
     await expect(text).toHaveCSS('color', expectedInk);
     await expect(text).toHaveCSS('text-shadow', 'none');
     const foregroundL = luminance(rgba(expectedInk)), backgroundL = luminance(background);
-    expect((Math.max(foregroundL, backgroundL) + .05) / (Math.min(foregroundL, backgroundL) + .05)).toBeGreaterThanOrEqual(4.5);
+    // v2.6 removed the report-only opacity floor at the user's request. The
+    // frosted endpoint still guarantees the original extreme-background
+    // contrast. Clear glass cannot guarantee that over arbitrary world pixels;
+    // its actual material/ink and real night frame are checked separately.
+    if (clarity === 0) expect((Math.max(foregroundL, backgroundL) + .05) / (Math.min(foregroundL, backgroundL) + .05)).toBeGreaterThanOrEqual(4.5);
+    await expect(text).toHaveCSS('opacity', '1');
   }
-  await info.attach('reading-contrast', {body: JSON.stringify({ theme, ...style, worstWorld, background }), contentType: 'application/json'});
-  await page.screenshot({path: info.outputPath(`night-report-${theme}.png`)});
+  await info.attach('reading-contrast', {body: JSON.stringify({ theme, clarity, ...style, worstWorld, background, guaranteedWorstCaseContrast: clarity === 0 }), contentType: 'application/json'});
+  await page.screenshot({path: info.outputPath(`night-report-${theme}-${clarity}.png`)});
+  if (clarity === 100) {
+    const labels = report.locator('.minimal-report-caption,.minimal-report-help summary,.marathon-settlement-copy strong,.marathon-settlement-toggle,.minimal-report-allocation');
+    const regions = await labels.evaluateAll(elements => elements.map(element => {
+      const { x, y, width, height } = element.getBoundingClientRect();
+      return { x, y, width, height, ink: getComputedStyle(element).color };
+    }));
+    const hiddenInk = await page.addStyleTag({ content: '.focus-report-surface--minimal,.focus-report-surface--minimal *{color:transparent!important;-webkit-text-fill-color:transparent!important}' });
+    let scene: Buffer;
+    try { scene = await page.screenshot({ scale: 'css' }); }
+    finally { await hiddenInk.evaluate(element => element.parentNode?.removeChild(element)); }
+    const contrasts = await page.evaluate(async ({ src, regions }) => {
+      const image = new Image(); image.src = src; await image.decode();
+      const surface = document.createElement('canvas'); surface.width = image.naturalWidth; surface.height = image.naturalHeight;
+      const context = surface.getContext('2d')!; context.drawImage(image, 0, 0);
+      const luminance = (rgb: number[]) => rgb.map(v => v / 255).map(v => v <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4).reduce((sum, v, i) => sum + v * [.2126, .7152, .0722][i]!, 0);
+      return regions.map(region => {
+        const foreground = luminance(region.ink.match(/[\d.]+/g)!.slice(0, 3).map(Number));
+        const data = context.getImageData(Math.ceil(region.x) + 2, Math.ceil(region.y) + 2, Math.max(1, Math.floor(region.width) - 4), Math.max(1, Math.floor(region.height) - 4)).data;
+        let minimum = Infinity;
+        for (let i = 0; i < data.length; i += 4) {
+          const background = luminance([data[i]!, data[i + 1]!, data[i + 2]!]);
+          minimum = Math.min(minimum, (Math.max(foreground, background) + .05) / (Math.min(foreground, background) + .05));
+        }
+        return minimum;
+      });
+    }, { src: `data:image/png;base64,${scene.toString('base64')}`, regions });
+    expect(contrasts).toHaveLength(5);
+    contrasts.forEach(contrast => expect(contrast).toBeGreaterThanOrEqual(4.5));
+    await info.attach('actual-night-contrast', { body: JSON.stringify({ theme, clarity, contrasts }), contentType: 'application/json' });
+  }
+  // The adaptive night ink must not leak into a bright daytime world or the
+  // opaque accessibility surface. Neither transition adds a report tint floor.
+  if (theme === 'light' && clarity === 100) {
+    const media = await page.context().newCDPSession(page);
+    await media.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-transparency', value: 'reduce' }, { name: 'prefers-reduced-motion', value: 'reduce' }] });
+    await expect(report.locator('.minimal-report-caption')).toHaveCSS('color', 'rgb(23, 33, 28)');
+    await media.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-transparency', value: 'no-preference' }, { name: 'prefers-reduced-motion', value: 'reduce' }] });
+    await expect(report.locator('.minimal-report-caption')).toHaveCSS('color', expectedInk);
+    await media.detach();
+    await fixBusinessDate(page, new Date(at + 70_000));
+    await page.reload();
+    await waitForPreparedWorld(page);
+    await expect(canvas).toHaveAttribute('data-day-phase', 'day');
+    await expect(report.locator('.minimal-report-caption')).toHaveCSS('color', 'rgb(23, 33, 28)');
+  }
 });
 
 for (const minimal of [false, true]) test(`v256 ${minimal ? 'minimal multi-round' : 'ordinary'} receipt follows persistence and lasts two seconds inside glass`, async ({ page }, testInfo) => {

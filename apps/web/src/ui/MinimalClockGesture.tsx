@@ -1,15 +1,10 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { FocusTimer } from '../FocusTimer';
 import { minimalRoundThresholdCrossings } from '../minimal-focus';
 
-/** A whole round adds a distinct, bounded drag detent, shared by all time pickers. */
-export function minimalRoundDetentOffsetPx(crossedThresholdCount: number): number {
-  return Math.min(12, Math.max(0, Math.floor(crossedThresholdCount))) * 18;
-}
-
-/** Resistance may stop a drag, but must never reverse its direction. */
-export function clockDragSteps(deltaPx: number, detentPx: number): number {
-  return Math.sign(deltaPx) * Math.round(Math.max(0, Math.abs(deltaPx) - detentPx) / 12);
+/** Timed round holds are separate from the five-minute drag grid. */
+export function clockDragSteps(deltaPx: number): number {
+  return Math.sign(deltaPx) * Math.round(Math.abs(deltaPx) / 12);
 }
 
 /** Five-minute steps, minute-aligned, bounded to the next 24 hours. No persistence. */
@@ -18,6 +13,20 @@ export function shiftClockSelection(current: number | null, steps: number, now: 
   const candidate = base + steps * 5 * 60_000;
   // Returning to now leaves the draft entirely; it is not a one-minute plan.
   return candidate <= now ? null : Math.min(Math.floor((now + 24 * 60 * 60_000) / 60_000) * 60_000, candidate);
+}
+
+export const CLOCK_ROUND_DWELL_MS = 500;
+/** Stop at the first whole-round boundary crossed, even by a fast move. */
+export function clockRoundDetent(fromMs: number, toMs: number, now: number, focusMinutes: number, breakMinutes: number) {
+  const rounds = toMs >= fromMs
+    ? minimalRoundThresholdCrossings(fromMs, toMs, now, focusMinutes, breakMinutes)
+    : minimalRoundThresholdCrossings(toMs - 1, fromMs - 1, now, focusMinutes, breakMinutes);
+  const round = toMs >= fromMs ? rounds[0] : rounds.at(-1);
+  if (round === undefined) return null;
+  const minutes = round * focusMinutes + (round - 1) * breakMinutes;
+  const endMs = Math.floor(now / 60_000) * 60_000 + Math.ceil(minutes / 5) * 300_000;
+  if (toMs < fromMs && endMs >= fromMs) return null;
+  return { round, endMs };
 }
 
 export function MinimalClockGesture({ clockText, busy, focusMinutes = 25, breakMinutes = 5, onConfirm, value, onChange, confirmation = 'double-tap', clockOnly = false, ariaLabel }: {
@@ -32,7 +41,16 @@ export function MinimalClockGesture({ clockText, busy, focusMinutes = 25, breakM
     if (value === undefined) setLocalSelection(resolved);
     onChange?.(resolved);
   };
-  const drag = useRef<{ id: number; x:number; y: number; lastY: number; base: number | null; lastSelection: number | null; feedbackRounds: Set<number>; detentRounds: Set<number>; detentPx: number; direction: -1 | 0 | 1; moved: boolean; axis: 'horizontal' | 'vertical' | null } | null>(null);
+  const drag = useRef<{ id: number; x:number; y: number; lastY: number; base: number | null; lastSelection: number | null; roundAnchor: number; holding: boolean; direction: -1 | 0 | 1; moved: boolean; axis: 'horizontal' | 'vertical' | null } | null>(null);
+  const timer = useRef(0), [heldRound, setHeldRound] = useState<number | null>(null);
+  const releaseDetent = () => { clearTimeout(timer.current); setHeldRound(null); if (drag.current) drag.current.holding = false; };
+  useEffect(() => () => clearTimeout(timer.current), []);
+  useEffect(() => { if (busy) { drag.current = null; releaseDetent(); } }, [busy]);
+  useEffect(() => {
+    const hidden = () => { if (document.hidden) { drag.current = null; releaseDetent(); } };
+    document.addEventListener('visibilitychange', hidden);
+    return () => document.removeEventListener('visibilitychange', hidden);
+  }, []);
   const tap = useRef<{ at: number; x: number; y: number } | null>(null);
   const selected = selection === null ? null : new Date(selection);
   const text = selected ? `${String(selected.getHours()).padStart(2, '0')}:${String(selected.getMinutes()).padStart(2, '0')}` : clockText;
@@ -42,7 +60,7 @@ export function MinimalClockGesture({ clockText, busy, focusMinutes = 25, breakM
     const date=new Date(base??now);const minutes=((date.getHours()*60+date.getMinutes()+steps*5)%1440+1440)%1440;
     date.setHours(Math.floor(minutes/60),minutes%60,0,0);return date.getTime();
   };
-  return <div className="minimal-clock-gesture" role={confirmation === 'button' ? 'slider' : 'button'} tabIndex={busy ? -1 : 0} aria-disabled={busy}
+  return <div className="minimal-clock-gesture" data-round-detent={heldRound === null ? undefined : 'holding'} data-detent-round={heldRound ?? undefined} role={confirmation === 'button' ? 'slider' : 'button'} tabIndex={busy ? -1 : 0} aria-disabled={busy}
     aria-valuemin={confirmation === 'button' ? 0 : undefined} aria-valuemax={confirmation === 'button' ? clockOnly ? 1439 : 288 : undefined}
     aria-valuenow={confirmation === 'button' ? clockOnly ? (selected?.getHours()??0)*60+(selected?.getMinutes()??0) : Math.max(0, Math.min(288, Math.round(((selection ?? Date.now()) - Date.now()) / 300_000))) : undefined}
     aria-valuetext={confirmation === 'button' ? selected ? `${day} ${text}` : '未选择结束时间' : undefined}
@@ -53,7 +71,8 @@ export function MinimalClockGesture({ clockText, busy, focusMinutes = 25, breakM
       if (busy || !event.isPrimary || event.button !== 0) return;
       event.currentTarget.dataset.pointerFocus = 'true';
       event.currentTarget.setPointerCapture(event.pointerId);
-      drag.current = { id:event.pointerId, x:event.clientX, y:event.clientY, lastY:event.clientY, base:selection, lastSelection:selection, feedbackRounds:new Set(), detentRounds:new Set(), detentPx:0, direction:0, moved:false, axis:null };
+      releaseDetent();
+      drag.current = { id:event.pointerId, x:event.clientX, y:event.clientY, lastY:event.clientY, base:selection, lastSelection:selection, roundAnchor:Math.floor(Date.now()/60_000)*60_000, holding:false, direction:0, moved:false, axis:null };
     }}
     onPointerMove={event => {
       const start = drag.current;
@@ -73,7 +92,7 @@ export function MinimalClockGesture({ clockText, busy, focusMinutes = 25, breakM
       if (start.direction !== 0 && direction !== start.direction) {
         // A direction change releases the old detent immediately; reversing
         // never leaves the selection trapped behind accumulated resistance.
-        start.detentRounds.clear(); start.detentPx = 0;
+        releaseDetent();
         // Rebase on the already displayed selection. Removing resistance must
         // not turn a reverse movement into a jump further forward in time.
         start.base = start.lastSelection;
@@ -81,31 +100,25 @@ export function MinimalClockGesture({ clockText, busy, focusMinutes = 25, breakM
         delta = start.y - event.clientY;
       }
       start.direction = direction;
-      let next = shift(start.base, clockDragSteps(delta, start.detentPx), nowMs);
-      const crossed = clockOnly ? [] : minimalRoundThresholdCrossings(start.lastSelection ?? nowMs, next ?? nowMs, nowMs, focusMinutes, breakMinutes);
-      let shouldVibrate = false;
-      for (const round of crossed) {
-        start.detentRounds.add(round);
-        if (!start.feedbackRounds.has(round)) { start.feedbackRounds.add(round); shouldVibrate = true; }
+      if (start.holding) { start.y = event.clientY; start.base = start.lastSelection; return; }
+      let next = shift(start.base, clockDragSteps(delta), nowMs);
+      const detent = clockOnly ? null : clockRoundDetent(start.lastSelection ?? start.roundAnchor, next ?? start.roundAnchor, start.roundAnchor, focusMinutes, breakMinutes);
+      if (detent) {
+        next = detent.endMs; start.holding = true; start.base = next; start.y = event.clientY;
+        setHeldRound(detent.round); lightRoundFeedback();
+        timer.current = window.setTimeout(() => {
+          if (drag.current !== start) return;
+          start.holding = false; start.base = start.lastSelection; start.y = start.lastY; setHeldRound(null);
+        }, CLOCK_ROUND_DWELL_MS);
       }
-      if (crossed.length > 0) {
-        // A five-minute clock tick can cross several sub-five-minute rounds
-        // at once. Let that tick feel like one detent, not a wall of stacked
-        // resistance that prevents short plans from being selected at all.
-        start.detentPx = minimalRoundDetentOffsetPx(focusMinutes < 5
-          ? Math.min(1, start.detentRounds.size) : start.detentRounds.size);
-        // Re-evaluate after adding resistance: the selection pauses for a
-        // short bounded pointer distance instead of jumping through a boundary.
-        next = shift(start.base, clockDragSteps(delta, start.detentPx), nowMs);
-      }
-      if (shouldVibrate) lightRoundFeedback();
       start.lastSelection = next;
       setSelection(next);
     }}
-    onPointerCancel={() => { drag.current = null; tap.current = null; }}
+    onPointerCancel={() => { drag.current = null; tap.current = null; releaseDetent(); }}
+    onLostPointerCapture={() => { if (drag.current) { drag.current = null; tap.current = null; releaseDetent(); } }}
     onPointerUp={event => {
       event.stopPropagation();
-      const start = drag.current; drag.current = null;
+      const start = drag.current; drag.current = null; releaseDetent();
       if (!start || start.id !== event.pointerId || start.moved || busy) return;
       if (confirmation === 'button') return;
       const now = performance.now(); const previous = tap.current;
@@ -125,7 +138,7 @@ export function MinimalClockGesture({ clockText, busy, focusMinutes = 25, breakM
           if (!clockOnly && minimalRoundThresholdCrossings(value ?? nowMs, next ?? nowMs, nowMs, focusMinutes, breakMinutes).length > 0) lightRoundFeedback();
           return next;
         });
-      } else if (event.key === 'Escape') { event.preventDefault(); setSelection(null); tap.current = null; }
+      } else if (event.key === 'Escape') { event.preventDefault(); releaseDetent(); setSelection(null); tap.current = null; }
       else if (confirmation === 'double-tap' && (event.key === 'Enter' || event.key === ' ') && selection !== null) { event.preventDefault(); if (!event.repeat) onConfirm?.(selection); }
     }}>
     {confirmation === 'button' ? <strong className="timer-value" aria-hidden="true">{text}</strong>
@@ -136,6 +149,6 @@ export function MinimalClockGesture({ clockText, busy, focusMinutes = 25, breakM
 
 function lightRoundFeedback(): void {
   if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
-    try { navigator.vibrate(16); } catch { /* Drag resistance remains when WebView haptics are denied. */ }
+    try { navigator.vibrate(16); } catch { /* The timed hold remains when WebView haptics are denied. */ }
   }
 }

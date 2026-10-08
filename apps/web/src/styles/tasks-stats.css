@@ -1,6 +1,8 @@
 /* Tasks: one surface, section-title and interaction vocabulary. */
 .tasks-page{--task-section-size:17px;--task-body-size:15px;--task-meta-size:13px}
-.tasks-page-heading h1{margin:0 0 20px;font-size:22px;font-weight:700}
+.tasks-page-heading{margin-bottom:20px}
+.tasks-page-heading h1{margin:0;font-size:22px;font-weight:700}
+.tasks-page-heading p{margin:7px 0 0;color:var(--muted);font-size:14px;line-height:1.5}
 .tasks-page .task-surface{margin:0 0 20px;padding:18px 16px;border:1px solid var(--line);border-radius:12px;background:var(--surface);color:var(--ink)}
 .tasks-page .task-queue-label{display:block;margin:0 0 14px;color:var(--ink);font-size:var(--task-section-size);font-weight:650;line-height:1.4}
 .task-planning-panel .project-switcher{margin:0;gap:12px;border:0;padding:0;grid-template-columns:minmax(0,1fr)}
@@ -44,6 +46,8 @@
 .tasks-page .project-portfolio{padding:0 16px;margin-bottom:0}
 .tasks-page .project-portfolio-toggle{display:grid;grid-template-columns:20px minmax(0,1fr) 18px;align-items:center;gap:10px;padding:10px 0;min-height:60px;color:var(--ink);text-align:left}
 .project-portfolio-toggle>.pixel-icon{color:var(--focus);width:20px;height:20px}
+.pixel-disclosure-stem{transform-box:view-box;transform-origin:50% 50%;transition:transform .24s ease}
+@media(prefers-reduced-motion:reduce){.pixel-disclosure-stem{transition:none}}
 .tasks-page .project-portfolio-toggle strong{font-size:var(--task-section-size);font-weight:650}
 .tasks-page .project-portfolio-toggle small{font-size:var(--task-meta-size);color:var(--muted)}
 .tasks-page .project-portfolio-groups{border-top:1px solid var(--line);padding:14px 0 16px}
@@ -87,12 +91,8 @@
 .daily-goal-switch input{flex:0 0 auto}
 .daily-goal-switch span{overflow-wrap:anywhere}
 .daily-goal-target-row{align-items:center}
-.daily-goal-stepper{display:grid;grid-template-columns:44px minmax(64px,1fr) 44px;align-items:center;gap:6px;flex:0 1 220px;min-width:164px}
-.daily-goal-stepper button{width:44px;min-width:44px;min-height:44px;padding:0;border:0;border-radius:4px;background:var(--surface-subtle);color:var(--focus)}
-.daily-goal-stepper button:disabled{opacity:.45}
-.daily-goal-stepper input[type=number]{width:100%;min-width:0;min-height:44px;padding:8px;border:0;border-bottom:2px solid var(--focus);border-radius:0;background:transparent;color:var(--ink);text-align:center;font-size:22px;font-weight:650;font-variant-numeric:tabular-nums;appearance:textfield;-moz-appearance:textfield}
-.daily-goal-stepper input[type=number]::-webkit-inner-spin-button,.daily-goal-stepper input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
-.daily-goal-stepper svg{width:17px;height:17px;margin:auto}
+.daily-goal-target-heading{display:flex;justify-content:space-between;align-items:baseline;gap:12px;font-weight:650;color:var(--ink)}
+.daily-goal-target-heading output{font-size:20px;font-variant-numeric:tabular-nums;white-space:nowrap}
 .daily-goal-error{margin:12px 0 0;padding:10px 12px;border:1px solid var(--danger);border-radius:10px;background:var(--surface-subtle);color:var(--danger);font-size:var(--task-meta-size);line-height:1.5;overflow-wrap:anywhere}
 .daily-goal-reward-panel{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:18px;padding-top:16px;border-top:1px solid var(--line)}
 .daily-goal-reward-panel>span{min-width:0;display:grid;grid-template-columns:18px minmax(0,1fr);column-gap:7px;align-items:center;color:var(--focus)}
@@ -102,7 +102,7 @@
 .daily-goal-reward-panel small{grid-column:2;color:var(--muted);font-size:var(--task-meta-size);line-height:1.45}
 .daily-goal-reward-panel button{min-width:44px;min-height:44px;flex:0 0 auto;padding:0 11px;border:1px solid var(--focus);border-radius:8px;background:var(--surface);color:var(--focus);font-size:var(--task-meta-size);font-weight:650;white-space:nowrap}
 @media(prefers-reduced-transparency:reduce){.daily-goal-sheet{background:var(--surface);backdrop-filter:none;-webkit-backdrop-filter:none;box-shadow:none}}
-@media(max-width:699px){.daily-goal-sheet{width:100%;max-height:min(88dvh,680px)}.daily-goal-target-row{display:grid;grid-template-columns:minmax(0,1fr);gap:10px}.daily-goal-stepper{width:100%;max-width:none;flex-basis:auto}.daily-goal-reward-panel{align-items:stretch;flex-direction:column}.daily-goal-reward-panel button{width:100%}}
+@media(max-width:699px){.daily-goal-reward-panel{align-items:stretch;flex-direction:column}.daily-goal-reward-panel button{width:100%}}
 @media(max-width:400px){.tasks-page .task-surface{padding:14px 12px}.tasks-page .task-management-disclosure,.tasks-page .project-portfolio{padding:0 12px}}
 /* F19-R06: ordinary and habit settlement use one compact, token-driven
  * allocator. The report keeps every control at the 44px touch contract while
@@ -175,11 +175,15 @@
 .focus-calendar-chart[data-selection-input="keyboard"]{box-shadow:0 2px 0 var(--focus)}
 .calendar-day{cursor:pointer}
 .calendar-pixel{pointer-events:none}
-.calendar-pixel{fill:var(--surface-subtle)}
-.calendar-day[data-level="1"] .calendar-pixel,.calendar-legend i[data-level="1"]{fill:color-mix(in srgb,var(--chart-data) 24%,var(--surface));background:color-mix(in srgb,var(--chart-data) 24%,var(--surface))}
-.calendar-day[data-level="2"] .calendar-pixel,.calendar-legend i[data-level="2"]{fill:color-mix(in srgb,var(--chart-data) 47%,var(--surface));background:color-mix(in srgb,var(--chart-data) 47%,var(--surface))}
-.calendar-day[data-level="3"] .calendar-pixel,.calendar-legend i[data-level="3"]{fill:color-mix(in srgb,var(--chart-data) 73%,var(--surface));background:color-mix(in srgb,var(--chart-data) 73%,var(--surface))}
-.calendar-day[data-level="4"] .calendar-pixel,.calendar-legend i[data-level="4"]{fill:var(--chart-data);background:var(--chart-data)}
+.calendar-pixel{fill:var(--calendar-fill,var(--surface-subtle))}
+.calendar-day[data-level="1"]{--calendar-fill:color-mix(in srgb,var(--chart-data) 24%,var(--surface))}
+.calendar-day[data-level="2"]{--calendar-fill:color-mix(in srgb,var(--chart-data) 47%,var(--surface))}
+.calendar-day[data-level="3"]{--calendar-fill:color-mix(in srgb,var(--chart-data) 73%,var(--surface))}
+.calendar-day[data-level="4"]{--calendar-fill:var(--chart-data)}
+.calendar-legend i[data-level="1"]{background:color-mix(in srgb,var(--chart-data) 24%,var(--surface))}
+.calendar-legend i[data-level="2"]{background:color-mix(in srgb,var(--chart-data) 47%,var(--surface))}
+.calendar-legend i[data-level="3"]{background:color-mix(in srgb,var(--chart-data) 73%,var(--surface))}
+.calendar-legend i[data-level="4"]{background:var(--chart-data)}
 .calendar-day[data-future="true"]{opacity:.25;cursor:default}
 .calendar-legend{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px 10px;margin-top:2px;color:var(--muted);font-size:10px;font-variant-numeric:tabular-nums}
 .calendar-legend>span{display:flex;align-items:center;gap:4px}
@@ -267,7 +271,10 @@
 @keyframes achievement-unlock-dialog-in{from{opacity:0;transform:translateY(8px) scale(.985)}to{opacity:1;transform:translateY(0) scale(1)}}
 @media(prefers-reduced-motion:no-preference){
   .is-revealed .chart-mark{animation:stats-chart-reveal .9s cubic-bezier(.25,1,.5,1) both}
+  .focus-calendar-chart:not(.is-revealed) .calendar-pixel{fill:var(--surface-subtle)}
+  .focus-calendar-chart.is-revealed .calendar-day:not([data-future]) .calendar-pixel{animation:calendar-light-up .05s steps(1,end) both;animation-delay:var(--calendar-delay)}
 }
+@keyframes calendar-light-up{from{fill:var(--surface-subtle)}to{fill:var(--calendar-fill,var(--surface-subtle))}}
 @keyframes stats-chart-reveal{from{opacity:0}to{opacity:1}}
 @media(max-width:400px){
   .focus-chart{padding:20px 14px 16px}

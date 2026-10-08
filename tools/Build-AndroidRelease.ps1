@@ -2,7 +2,8 @@
 param(
     [string]$SigningDirectory = (Join-Path $env:USERPROFILE '.blockcolc\signing'),
     [string]$PrivateRelayDirectory,
-    [switch]$QualityGateAlreadyPassed
+    [switch]$QualityGateAlreadyPassed,
+    [switch]$PerformanceDiagnostics
 )
 
 $ErrorActionPreference = 'Stop'
@@ -21,6 +22,7 @@ if (-not (Test-Path -LiteralPath $passwordPath -PathType Leaf)) {
 
 $securePassword = Import-Clixml -LiteralPath $passwordPath
 $passwordPointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($securePassword)
+$previousProbeEnvironment = $env:VITE_BLOCKCOLC_PERFORMANCE_DIAGNOSTICS
 
 try {
     $plainPassword = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($passwordPointer)
@@ -30,6 +32,7 @@ try {
     $env:BLOCKCOLC_KEY_PASSWORD = $plainPassword
     $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio\jbr'
     $env:Path = "$env:JAVA_HOME\bin;$env:Path"
+    $env:VITE_BLOCKCOLC_PERFORMANCE_DIAGNOSTICS = if ($PerformanceDiagnostics) { 'true' } else { 'false' }
 
     Push-Location $repositoryRoot
     try {
@@ -55,7 +58,8 @@ try {
                 $privatePath = (Resolve-Path -LiteralPath $PrivateRelayDirectory -ErrorAction Stop).Path
                 $relayArgument += $privatePath
             }
-            & .\gradlew.bat --no-daemon --console=plain $relayArgument testDebugUnitTest lintRelease assembleRelease
+            $probeArgument = '-PblockcolcPerformanceDiagnostics=' + $PerformanceDiagnostics.ToString().ToLowerInvariant()
+            & .\gradlew.bat --no-daemon --console=plain $relayArgument $probeArgument testDebugUnitTest lintRelease assembleRelease
             if ($LASTEXITCODE -ne 0) { throw 'Android release build failed.' }
         }
         finally {
@@ -76,4 +80,5 @@ finally {
     Remove-Item Env:BLOCKCOLC_KEY_ALIAS -ErrorAction SilentlyContinue
     Remove-Item Env:BLOCKCOLC_KEY_PASSWORD -ErrorAction SilentlyContinue
     $plainPassword = $null
+    $env:VITE_BLOCKCOLC_PERFORMANCE_DIAGNOSTICS = $previousProbeEnvironment
 }

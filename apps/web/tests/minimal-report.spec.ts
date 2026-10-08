@@ -4,9 +4,13 @@ import type { RoundPlan } from '../src/round-plan';
 import { readPersistedDomainState } from './persisted-domain-state';
 import { fixBusinessDate } from './fixed-business-date';
 import { defaultFocusPreferences } from '../src/focus-preferences';
+import { waitForPreparedWorld } from './world-ready';
 
 const now = Date.parse('2026-10-01T12:00:00+08:00');
 async function reportFixture(page: Page, theme: 'light' | 'dark') {
+  // Each theme restores at the mobile baseline; the assertions below then
+  // visit every viewport. Do not inherit the previous loop's desktop size.
+  await page.setViewportSize({ width: 412, height: 915 });
   let state = createInitialState('Asia/Shanghai');
   const run = (command: DomainCommand, at = now) => {
     const result = execute(state, command, { now: () => new Date(at) });
@@ -44,6 +48,9 @@ async function reportFixture(page: Page, theme: 'light' | 'dark') {
   }, { state, plan, preferences: { ...defaultFocusPreferences(), minimalMode: true, themeMode: theme, lightingQuality: 'performance' } });
   await page.reload();
   await expect(page.locator('html')).toHaveAttribute('data-bootstrap-state', 'ready');
+  // Storage readiness precedes real world/GPU preparation. The report must
+  // stay hidden during that preparation, just like the idle minimal panel.
+  await waitForPreparedWorld(page);
 }
 
 test('minimal glass reporting stays usable in both themes and five viewports, retaining a failed draft', async ({ page }, info) => {
@@ -98,6 +105,6 @@ test('minimal glass reporting stays usable in both themes and five viewports, re
     expect(after.progressReports).toHaveLength(before.state.progressReports.length + 1);
     expect(after.focusHistory.every(s => s.settledAt)).toBe(true);
     expect(after.projects.find(p => p.id === 'report-p')!.subtasks[0]!.progressBasisPoints).toBe(0);
-    await page.reload(); await expect(report).toBeHidden();
+    await page.reload(); await waitForPreparedWorld(page); await expect(report).toBeHidden();
   }
 });

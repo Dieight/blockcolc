@@ -1,0 +1,9 @@
+html,body,#review-root{min-height:100%;height:auto;overflow:auto!important}
+body{margin:0;background:var(--app-bg);color:var(--ink)}
+.review-layout{max-width:920px;margin:auto;padding:24px 16px 40px}
+.review-heading h1{font-size:22px;margin:0 0 8px}.review-heading p{font-size:13px;color:var(--muted);margin:0 0 22px}
+.review-options{display:flex;flex-wrap:wrap;gap:12px 20px;margin-bottom:22px}.review-options fieldset{min-width:0;margin:0;padding:0;border:0}.review-options legend{margin-bottom:6px;color:var(--muted);font-size:12px}.review-options button{border:0;color:var(--ink);background:var(--settings-field);padding:9px 12px;min-height:44px}.review-options button[aria-pressed='true']{background:var(--surface-active);color:var(--focus)}
+.review-loading{position:absolute;z-index:12;inset:0;background:var(--app-bg);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;color:var(--ink);font-size:13px}
+.review-error{position:absolute;z-index:12;inset:0;display:grid;place-items:center;background:var(--surface);color:var(--danger);padding:20px}
+.review-duration{font-size:13px;text-align:center;color:var(--ink);margin:16px 0 0}
+@media(max-width:420px){.review-layout{padding:16px 10px 32px}.review-options{gap:12px}}

@@ -1,0 +1,28 @@
+/* Static art; growth and fruit only animate their outer compositing layers. */
+.boot-tomato{--tomato-stem:#507446;--tomato-leaf:#618b50;--tomato-leaf-lit:#85ab62;--tomato-ripe:#d34835;--tomato-ripe-shade:#a93029;--tomato-green:#91a955;--tomato-soil:#957650;--tomato-soil-side:#796044;position:relative;overflow:hidden}
+[data-theme='dark'] .boot-tomato{--tomato-stem:#63874e;--tomato-leaf:#769f5d;--tomato-leaf-lit:#a4c776;--tomato-ripe:#ec6049;--tomato-ripe-shade:#b83d33;--tomato-green:#acc474;--tomato-soil:#8b6e48;--tomato-soil-side:#675039}
+.tomato-art{position:absolute;inset:0;width:100%;height:100%;display:block}
+.tomato-earth{z-index:0}
+.boot-tomato :is(.tomato-sprout,.tomato-canopy,.tomato-green-layer,.tomato-ripe-layer,.tomato-fall){position:absolute;inset:0;z-index:1;contain:layout paint}
+.tomato-sprout{animation:tomato-sprout 1.1s steps(1,end) forwards}
+.tomato-canopy{opacity:0;animation:tomato-canopy 1.1s steps(1,end) forwards}
+.tomato-green-layer{opacity:0;animation:tomato-green 6s steps(1,end) 2.2s infinite}
+.tomato-ripe-layer{opacity:0;animation:tomato-ripe 6s steps(1,end) 2.2s infinite}
+.tomato-fall{opacity:0;animation:tomato-fall 6s linear 2.2s infinite}
+.tomato-stem{fill:var(--tomato-stem)}.tomato-leaf,.tomato-grass{fill:var(--tomato-leaf)}.tomato-leaf-lit{fill:var(--tomato-leaf-lit)}
+.tomato-fruit-green{fill:var(--tomato-green)}.tomato-fruit-red{fill:var(--tomato-ripe)}.tomato-fruit-shade{fill:var(--tomato-ripe-shade)}.tomato-fruit-green .tomato-fruit-shade{fill:var(--tomato-leaf)}.tomato-fruit-glint{fill:#f7be8e}.tomato-fruit-green .tomato-fruit-glint{fill:#c2d68e}
+.tomato-soil{fill:var(--tomato-soil)}.tomato-soil-side{fill:var(--tomato-soil-side)}.tomato-earth-grain{fill:var(--tomato-soil)}
+.boot-scene[data-paused='true'] :is(.tomato-sprout,.tomato-canopy,.tomato-green-layer,.tomato-ripe-layer,.tomato-fall,.boot-windmill-rotor){animation-play-state:paused}
+@keyframes tomato-sprout{0%{opacity:1}100%{opacity:0}}
+@keyframes tomato-canopy{0%{opacity:0}100%{opacity:1}}
+@keyframes tomato-green{0%{opacity:1}30%,100%{opacity:0}}
+@keyframes tomato-ripe{0%{opacity:0}30%{opacity:1}55%,100%{opacity:0}}
+@keyframes tomato-fall{
+  0%,54.999%{opacity:0;transform:translate(0,0)}
+  55%{opacity:1;transform:translate(0,0);animation-timing-function:cubic-bezier(.42,0,1,1)}
+  77%{opacity:1;transform:translate(-5px,26px);animation-timing-function:cubic-bezier(0,.65,.35,1)}
+  82.5%{opacity:1;transform:translate(-6px,19px);animation-timing-function:cubic-bezier(.45,0,1,1)}
+  88%,92%{opacity:1;transform:translate(-7px,26px)}
+  97%,100%{opacity:0;transform:translate(-7px,26px)}
+}
+@media(prefers-reduced-motion:reduce){.boot-tomato :is(.tomato-sprout,.tomato-canopy,.tomato-green-layer,.tomato-ripe-layer,.tomato-fall){animation:none}.tomato-sprout,.tomato-green-layer,.tomato-fall{opacity:0}.tomato-canopy,.tomato-ripe-layer{opacity:1}}

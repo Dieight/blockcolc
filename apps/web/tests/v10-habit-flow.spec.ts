@@ -2,6 +2,10 @@ import { expect, test } from '@playwright/test';
 import { showWorldOverview } from './world-overview';
 
 async function expectWorldCanvasDoesNotCover(button: import('@playwright/test').Locator) {
+  // Settlement exposes the next button before its layout has finished moving.
+  // Use the same stability, viewport and hit checks as a real pointer click,
+  // without starting the next round, before inspecting the final hit target.
+  await button.click({ trial: true });
   const hitTest = await button.evaluate((element) => {
     const rect = element.getBoundingClientRect();
     const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
@@ -70,12 +74,12 @@ test('runs a repeatable habit building cycle with frozen targets and stable comp
   await page.screenshot({ path: testInfo.outputPath('habit-next-building-mobile.png'), fullPage: true });
   await page.getByRole('button', { name: '开始建造这座建筑' }).click();
 
-  await expect(page.getByRole('figure', { name: /^林边聚落，共 2 栋建筑。/ })).toBeVisible();
+  await expect(page.getByRole('figure', { name: /^海岛聚落，共 2 栋建筑。/ })).toBeVisible();
   await expect(page.getByRole('button', { name: '查看建筑记忆：阅读英语 · 第 1 座', exact: true })).toBeAttached();
   // Opening now commits a real building focus. The settlement label is only
   // shown in overview, so enter overview through the real map control first.
   await showWorldOverview(page);
-  await expect(page.getByText('林边聚落 · 2 栋')).toBeVisible();
+  await expect(page.getByText('海岛聚落 · 2 栋')).toBeVisible();
   await expect(page.locator('.workbench-context')).toContainText('第 2 座');
   await expect(page.locator('.workbench-context')).toContainText('本周期 0 / 12 轮');
   await page.getByRole('button', { name: '任务', exact: true }).click();

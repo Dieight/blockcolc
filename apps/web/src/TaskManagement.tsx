@@ -1,13 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { ApplicationCommand, ApplicationResult, ApplicationService } from '@blockcolc/application';
-import { completedPomodorosOn, dailyGoalForDate, localDateOf, projectProgressBasisPoints } from '@blockcolc/domain';
+import { projectProgressBasisPoints } from '@blockcolc/domain';
 import { GripVertical, LockKeyhole, Trash2 } from 'lucide-react';
-import { PixelCheck as Check, PixelChevron as ChevronDown, PixelCube as MapPinned, PixelMinus as Minus, PixelEdit as Pencil, PixelPlus as Plus, PixelRepeat as Repeat2, PixelClose as X, PixelIcon, PixelSprout } from './ui/PixelIcon';
+import { PixelCheck as Check, PixelChevron as ChevronDown, PixelCube as MapPinned, PixelEdit as Pencil, PixelPlus as Plus, PixelRepeat as Repeat2, PixelClose as X, PixelIcon, PixelDisclosure } from './ui/PixelIcon';
+import { DailyGoalControl } from './DailyGoalControl';
 import { PixelProgress } from './ui/PixelProgress';
 import { ChoiceMenu } from './ChoiceMenu';
 import { NativeImeTextEntry, isImeCommitKey } from './NativeImeTextEntry';
 import { useBackLayer } from './back-layer';
-import { HolidayEmblem } from './ui/HolidayEmblem';
 
 type ActiveProject = NonNullable<ReturnType<ApplicationService['activeProjectProjection']>>;
 type AppState = ReturnType<ApplicationService['snapshot']>;
@@ -205,7 +205,7 @@ export function TasksScreen({ active, state, run, onCreateProject, onViewProject
   };
 
   return <section className="page tasks-page">
-    <header className="tasks-page-heading"><h1>任务</h1></header>
+    <header className="tasks-page-heading"><h1>任务</h1><p>把要做的事，排成下一步建造</p></header>
     <DailyGoalControl state={state} run={perform} onViewReward={onViewProject}/>
 
     <section className="task-planning-panel task-surface" aria-label="任务选择与创建">
@@ -296,7 +296,7 @@ function ProjectPortfolio({state,activeProjectId,expanded,switchBlocked,pending,
   ].filter(group=>group.projects.length>0);
   return <section className={`project-portfolio task-surface${expanded?' is-expanded':''}`} aria-label="任务总览与管理">
     <button type="button" className="project-portfolio-toggle" aria-expanded={expanded} onClick={onToggle}>
-      <PixelIcon name="tasks"/><span><strong>任务总览与管理</strong><small>{groups.map(group=>`${group.label} ${group.projects.length}`).join(' · ')}</small></span><PixelIcon name={expanded?'minus':'plus'}/>
+      <PixelIcon name="tasks"/><span><strong>任务总览与管理</strong><small>{groups.map(group=>`${group.label} ${group.projects.length}`).join(' · ')}</small></span><PixelDisclosure expanded={expanded}/>
     </button>
     {expanded && <div className="project-portfolio-body">
       <div className="project-portfolio-groups">{groups.map(group=><section key={group.id}>
@@ -377,178 +377,6 @@ function SubtaskGroup({ label, count, expanded, onToggle, children }: { label: s
   return <section className={`subtask-group${expanded ? ' is-expanded' : ''}`}><button type="button" className="subtask-group-toggle" aria-label={`${label} ${count} 项`} aria-expanded={expanded} onClick={onToggle}><span>{label}<small>{count} 项</small></span><ChevronDown/></button>{expanded && <div className="subtask-group-rows">{children}</div>}</section>;
 }
 
-function DailyGoalControl({ state, run, onViewReward }: { state: AppState; run: (command: ApplicationCommand) => Promise<boolean>; onViewReward: (projectId: string) => void }) {
-  const date = localDateOf(new Date(), state.calendar.timeZone);
-  const goal = dailyGoalForDate(state, date);
-  const completed = useMemo(() => completedPomodorosOn(state, date), [date, state]);
-  const reward = state.decorationRewards.find(candidate => candidate.date === date);
-  const rewardName = reward ? state.decorationBlueprintResources.find(resource => resource.id === reward.resourceId)?.blueprint.title ?? '今日装饰' : null;
-  const [target, setTarget] = useState(String(goal.targetPomodoros));
-  const targetRef = useRef(target);
-  const targetInputRef = useRef<HTMLInputElement>(null);
-  const [targetError, setTargetError] = useState('');
-  useEffect(() => {
-    const value = String(goal.targetPomodoros);
-    targetRef.current = value;
-    setTarget(value);
-    setTargetError('');
-  }, [date, goal.targetPomodoros]);
-  const parsedTarget = Number(target);
-  const validTarget = Number.isInteger(parsedTarget) && parsedTarget > 0;
-  const enabled = goal.enabled;
-  const [requestedEnabled, setRequestedEnabled] = useState<boolean | null>(null);
-  useEffect(() => { setRequestedEnabled(null); }, [date, enabled]);
-  const [pending, setPending] = useState(false);
-  const [open, setOpen] = useState(false);
-  const [sheetError, setSheetError] = useState('');
-  const pendingRef = useRef(false);
-  const skipTargetBlurRef = useRef(false);
-  const openerRef = useRef<HTMLButtonElement>(null);
-  const sheetRef = useRef<HTMLElement>(null);
-  const closeRef = useRef<HTMLButtonElement>(null);
-  pendingRef.current = pending;
-
-  const resetTargetDraft = () => {
-    const value = String(goal.targetPomodoros);
-    targetRef.current = value;
-    setTarget(value);
-  };
-
-  const closeSheet = (restoreFocus = true) => {
-    if (pendingRef.current) return;
-    setOpen(false);
-    if (restoreFocus) window.requestAnimationFrame(() => openerRef.current?.focus());
-  };
-
-  useBackLayer(open, () => {
-    if (pendingRef.current) return true;
-    closeSheet();
-    return true;
-  });
-
-  useEffect(() => {
-    if (!open) return;
-    // A failed write may leave the in-memory draft ahead of persisted state.
-    // Re-open always starts from the saved goal, so a stale failure cannot be
-    // mistaken for a committed value.
-    resetTargetDraft();
-    setTargetError('');
-    setSheetError('');
-  }, [open, goal.targetPomodoros]);
-
-  useEffect(() => {
-    if (!open) return;
-    const sheet = sheetRef.current;
-    const focusable = () => [...(sheet?.querySelectorAll<HTMLElement>('button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),a[href],[tabindex]:not([tabindex="-1"])') ?? [])];
-    (closeRef.current ?? sheet)?.focus();
-    const keyboard = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        if (pendingRef.current) return;
-        event.preventDefault();
-        closeSheet();
-        return;
-      }
-      if (event.key !== 'Tab') return;
-      const items = focusable();
-      if (items.length === 0) {
-        event.preventDefault();
-        sheet?.focus();
-        return;
-      }
-      const first = items[0]!;
-      const last = items[items.length - 1]!;
-      if (!sheet?.contains(document.activeElement)) {
-        event.preventDefault();
-        (event.shiftKey ? last : first).focus();
-      } else if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    };
-    window.addEventListener('keydown', keyboard);
-    return () => window.removeEventListener('keydown', keyboard);
-  }, [open]);
-
-  const perform = async (command: ApplicationCommand) => {
-    if (pendingRef.current) return false;
-    pendingRef.current = true;
-    setPending(true);
-    setSheetError('');
-    try { return await run(command); } catch { return false; } finally {
-      pendingRef.current = false;
-      setPending(false);
-    }
-  };
-  const execute = async (command: ApplicationCommand) => {
-    const result = await perform(command);
-    if (!result) setSheetError('保存今日目标失败，请重试。');
-    return result;
-  };
-  const commitTarget = async (): Promise<boolean> => {
-    if (pendingRef.current) return false;
-    const rawTarget = targetRef.current.trim();
-    const requestedTarget = Number(rawTarget);
-    if (!rawTarget || !Number.isInteger(requestedTarget) || requestedTarget < 1) {
-      setTargetError('请输入至少 1 轮。');
-      return false;
-    }
-    setTargetError('');
-    if (requestedTarget !== goal.targetPomodoros || !enabled) return execute({ type: 'SetDailyGoal', date, targetPomodoros: requestedTarget });
-    return true;
-  };
-  const markTargetActionPointerDown = () => {
-    if (document.activeElement === targetInputRef.current) skipTargetBlurRef.current = true;
-  };
-  const commitTargetOnBlur = () => {
-    if (skipTargetBlurRef.current) {
-      skipTargetBlurRef.current = false;
-      return;
-    }
-    void commitTarget();
-  };
-  const stepTarget = (offset: -1 | 1) => {
-    if (pendingRef.current) return;
-    const draft = Number(targetRef.current);
-    const next = Math.max(1, (Number.isInteger(draft) && draft > 0 ? draft : goal.targetPomodoros) + offset);
-    targetRef.current = String(next);
-    setTarget(String(next));
-    setTargetError('');
-    void execute({ type: 'SetDailyGoal', date, targetPomodoros: next });
-  };
-  const changeEnabled = (checked: boolean) => {
-    const requestedTarget = Number(targetRef.current.trim());
-    if (checked && (!Number.isInteger(requestedTarget) || requestedTarget < 1)) {
-      setTargetError('请输入至少 1 轮后再开启目标。');
-      return;
-    }
-    setRequestedEnabled(checked);
-    void (async () => {
-      let targetSaved = true;
-      if (!checked && enabled && Number.isInteger(requestedTarget) && requestedTarget > 0 && requestedTarget !== goal.targetPomodoros) {
-        targetSaved = await execute({ type: 'SetDailyGoal', date, targetPomodoros: requestedTarget });
-      }
-      const result = await execute(checked ? { type: 'SetDailyGoal', date, targetPomodoros: requestedTarget } : { type: 'DisableDailyGoal', date });
-      if (!result) setRequestedEnabled(null);
-      if (!targetSaved) setSheetError('保存今日目标失败，请重试。');
-    })();
-  };
-  const requestedState = requestedEnabled ?? enabled;
-  const targetDescribedBy = `daily-goal-target-help${targetError || sheetError ? ' daily-goal-error' : ''}`;
-  return <>
-    <section className="daily-goal daily-goal-workbench task-surface" aria-labelledby="daily-goal-title">
-      <div className="daily-goal-summary"><div><h2 id="daily-goal-title">今日目标</h2><p>所有任务合计</p></div><button ref={openerRef} type="button" className="daily-goal-adjust" aria-label="调整今日目标" onClick={() => { resetTargetDraft(); setTargetError(''); setSheetError(''); setOpen(true); }}><Pencil/><span>调整</span></button></div>
-      <div className="daily-goal-tally"><strong>{completed}{enabled && <span> / {goal.targetPomodoros}</span>}</strong><span>{enabled ? '轮已完成' : '轮 · 目标未开启'}</span></div>
-      <div className="daily-goal-festival-line">{enabled && <PixelProgress rounds className="daily-goal-progress" label={`今日 ${completed} / ${goal.targetPomodoros} 轮`} max={goal.targetPomodoros} value={completed}/>}<HolidayEmblem date={date} slot={1}/></div>
-      {enabled && completed < goal.targetPomodoros && <p className="daily-goal-hint"><PixelSprout/>再完成 {goal.targetPomodoros - completed} 轮，达成今日目标</p>}
-      {rewardName && <span className="daily-goal-reward"><Check/>今日装饰已入库 · {rewardName}</span>}
-      {goal.reachedAt && <span className="goal-reached"><Check/>今日已达成</span>}
-    </section>
-    {open && <div className="dialog-backdrop daily-goal-sheet-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) closeSheet(); }}><section ref={sheetRef} className="daily-goal-sheet" role="dialog" aria-modal="true" aria-labelledby="daily-goal-sheet-title" aria-describedby="daily-goal-sheet-summary daily-goal-controls-note" aria-busy={pending} tabIndex={-1}><div className="sheet-heading daily-goal-sheet-heading"><div><span className="eyebrow"><PixelIcon name="flag"/>每日建造</span><h2 id="daily-goal-sheet-title">调整今日目标</h2></div><button ref={closeRef} type="button" className="dialog-close" aria-label="关闭今日目标" disabled={pending} onClick={() => closeSheet()}><X/></button></div><p id="daily-goal-sheet-summary" className="daily-goal-sheet-summary">{enabled ? `今日已完成 ${completed} / ${goal.targetPomodoros} 轮` : `今日已完成 ${completed} 轮`}</p><PixelProgress className="daily-goal-progress" value={completed} max={goal.targetPomodoros} rounds label="今日目标完成进度"/><p id="daily-goal-controls-note" className="daily-goal-sheet-note">目标按本地日期统计所有任务的完整或提前完成轮次。</p><div className="daily-goal-controls"><div className="daily-goal-setting-row"><div className="daily-goal-setting-copy"><span id="daily-goal-enabled-label">开启今日目标</span><small>达成后会在建筑世界中放置一件今日装饰。</small></div><label className="switch-control ios-switch daily-goal-switch" onPointerDown={markTargetActionPointerDown}><input type="checkbox" role="switch" aria-labelledby="daily-goal-enabled-label" aria-checked={requestedState} checked={requestedState} disabled={pending} onChange={() => changeEnabled(!requestedState)}/><span aria-hidden="true">{requestedState ? '已开启' : '已关闭'}</span></label></div><div className="daily-goal-setting-row daily-goal-target-row"><div className="daily-goal-setting-copy"><label htmlFor="daily-goal-target">目标轮数</label><small id="daily-goal-target-help">输入正整数；步进会立即保存。</small></div><div className="daily-goal-stepper"><button type="button" aria-label="减少目标轮数" aria-controls="daily-goal-target" disabled={pending || (validTarget && parsedTarget <= 1)} onPointerDown={markTargetActionPointerDown} onClick={() => stepTarget(-1)}><Minus/></button><input ref={targetInputRef} id="daily-goal-target" aria-label="今日目标次数" aria-describedby={targetDescribedBy} aria-errormessage={targetError ? 'daily-goal-error' : undefined} aria-invalid={targetError ? 'true' : undefined} type="number" min="1" step="1" inputMode="numeric" autoComplete="off" value={target} disabled={pending} onChange={event => { targetRef.current = event.target.value; setTarget(event.target.value); setTargetError(''); setSheetError(''); }} onBlur={commitTargetOnBlur} onKeyDown={event => { if (isImeCommitKey(event.nativeEvent)) { event.preventDefault(); event.currentTarget.blur(); } }}/><button type="button" aria-label="增加目标轮数" aria-controls="daily-goal-target" disabled={pending} onPointerDown={markTargetActionPointerDown} onClick={() => stepTarget(1)}><Plus/></button></div></div></div>{(targetError || sheetError) && <p id="daily-goal-error" className="daily-goal-error" role="alert">{targetError || sheetError}</p>}{reward && <div className="daily-goal-reward-panel"><span><Check/><b>今日装饰已入库</b><small>{rewardName}</small></span><button type="button" disabled={pending} onClick={() => { closeSheet(false); onViewReward(reward.projectId); }}>查看所在建筑</button></div>}</section></div>}
-  </>;
-}
 
 function ConfirmDialog({ title, confirmLabel, pending, onCancel, onConfirm, children }: { title: string; confirmLabel: string; pending: boolean; onCancel: () => void; onConfirm: () => void; children: React.ReactNode }) {
   const cancelRef = useRef<HTMLButtonElement>(null);

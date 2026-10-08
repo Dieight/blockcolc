@@ -404,7 +404,20 @@ function createNaturalTerrainDataV2(
     const broad0 = mosaic ? sampleMosaic(x,z) : hydrologyV3
       ? sampleNaturalTerrainV3(x, z, seedHash, support, hydrologyV3, true, true)
       : sampleNaturalTerrainV2(x, z, seedHash, support, hydrologyV2!, true, true);
-    const broad = withDistantRelief(broad0, x, z);
+    let broad = withDistantRelief(broad0, x, z);
+    if (mosaic && broad.waterKind === 'none' && broad.supportInfluence < .18) {
+      // Area-sample the same relief field at far resolution. Adjacent rings
+      // converge to this datum in the existing boundary band.
+      let sum = broad.height * 4, weight = 4;
+      for (const dx of [-size*.3, 0, size*.3]) for (const dz of [-size*.3, 0, size*.3]) {
+        if (dx === 0 && dz === 0) continue;
+        const neighbour = sampleMosaic(x+dx,z+dz);
+        if (neighbour.waterKind !== 'none' || neighbour.supportInfluence >= .18) continue;
+        if (broad.material === 'sand' && neighbour.material !== 'sand') continue;
+        sum += neighbour.height; weight++;
+      }
+      broad = { ...broad, height: Math.round(sum / weight) };
+    }
     if (broad.waterKind === "none") {
       cellSampleCache.set(key, broad);
       return broad;
@@ -457,7 +470,8 @@ function createNaturalTerrainDataV2(
       const weight = target.weight === 1 && otherWeight === 1 ? 1 : target.weight * (1 - otherWeight);
       heightSum += target.height * weight; weights += weight; blend = Math.max(blend, target.weight);
     }
-    const result = weights === 0 ? sample : { ...sample, height: Math.round(sample.height * (1 - blend) + heightSum / weights * blend) };
+    const blendedHeight = weights === 0 ? sample.height : Math.round(sample.height * (1 - blend) + heightSum / weights * blend);
+    const result = weights === 0 ? sample : { ...sample, height: mosaic && sample.material === 'sand' ? Math.max(1, Math.min(3, blendedHeight)) : blendedHeight };
     cellSampleCache.set(key, result);
     return result;
   };
@@ -474,10 +488,10 @@ function createNaturalTerrainDataV2(
     // lattice centers: sampling a ring boundary neighbor at this cell's size or
     // at an off-lattice position hides real steps and leaves a sky-visible slit
     // along the whole boundary line between the two rings.
-    addV2CellSide(x, z, size, sample, -1, 0, sampleCellAt, nearExtent, middleExtent, farFineExtent, refinedFar, farCellSize, addSideQuad);
-    addV2CellSide(x, z, size, sample, 1, 0, sampleCellAt, nearExtent, middleExtent, farFineExtent, refinedFar, farCellSize, addSideQuad);
-    addV2CellSide(x, z, size, sample, 0, -1, sampleCellAt, nearExtent, middleExtent, farFineExtent, refinedFar, farCellSize, addSideQuad);
-    addV2CellSide(x, z, size, sample, 0, 1, sampleCellAt, nearExtent, middleExtent, farFineExtent, refinedFar, farCellSize, addSideQuad);
+    addV2CellSide(x, z, size, sample, -1, 0, sampleCellAt, nearExtent, middleExtent, farFineExtent, refinedFar, farCellSize, addSideQuad, mosaic);
+    addV2CellSide(x, z, size, sample, 1, 0, sampleCellAt, nearExtent, middleExtent, farFineExtent, refinedFar, farCellSize, addSideQuad, mosaic);
+    addV2CellSide(x, z, size, sample, 0, -1, sampleCellAt, nearExtent, middleExtent, farFineExtent, refinedFar, farCellSize, addSideQuad, mosaic);
+    addV2CellSide(x, z, size, sample, 0, 1, sampleCellAt, nearExtent, middleExtent, farFineExtent, refinedFar, farCellSize, addSideQuad, mosaic);
     lodCellCounts[lod] += 1;
     terrainSurfaceArea += size * size;
     minHeight = Math.min(minHeight, sample.height);
@@ -1131,6 +1145,7 @@ function addV2CellSide(
   refinedFar: boolean,
   farCellSize = 16,
   addQuad: (vertices: readonly number[], material: "dirt" | "stone") => void,
+  transparentSea = false,
 ): void {
   // Water surfaces sit 0.16 above land tops; side faces must start at the actual
   // surface height so the shoreline never leaves a sky-visible slit.
@@ -1169,7 +1184,10 @@ function addV2CellSide(
     const neighborX = dx !== 0 ? snappedAcrossX : center;
     const neighborZ = dz !== 0 ? snappedAcrossZ : center;
     const neighbor = sampleCellAt(neighborX, neighborZ, neighborSize);
-    const bottom = neighbor.height - 0.5;
+    // The raised water surface is also the neighbouring top. Using the dry
+    // offset for two water cells made 0.16-high dirt fences through clear sea.
+    // Legacy opaque environments retain their generated geometry identities.
+    const bottom = neighbor.height - (transparentSea && neighbor.material === 'water' ? 0.34 : 0.5);
     if (bottom >= top - 0.01) continue;
     if (dx < 0) addQuad([x - half, bottom, segEnd, x - half, top, segEnd, x - half, top, segStart, x - half, bottom, segStart], material);
     else if (dx > 0) addQuad([x + half, bottom, segStart, x + half, top, segStart, x + half, top, segEnd, x + half, bottom, segEnd], material);

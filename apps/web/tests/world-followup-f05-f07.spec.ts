@@ -6,7 +6,7 @@ import { expect, test } from "@playwright/test";
 
 test.describe("world follow-up renderer contract", () => {
   test("preview clouds scale with small and large blueprint content", async ({ page }, testInfo) => {
-    await page.addInitScript(() => localStorage.clear());
+    await page.addInitScript(() => {localStorage.clear();localStorage.setItem('blockcolc-onboarding-v1','1');});
     await page.goto("/");
     // The first-run setup owns the preview.  Clicking “开始建造” navigates to
     // the world and unmounts `.blueprint-preview`, so inspect both blueprints
@@ -40,7 +40,7 @@ test.describe("world follow-up renderer contract", () => {
 
   test("real local time updates sun, moon, and shadow vectors", async ({ page }) => {
     await page.clock.install({ time: new Date("2026-06-21T05:00:00+08:00") });
-    await page.addInitScript(() => localStorage.clear());
+    await page.addInitScript(() => {localStorage.clear();localStorage.setItem('blockcolc-onboarding-v1','1');});
     await page.goto("/");
     await page.getByRole("button", { name: "开始建造" }).click();
     const canvas = page.getByLabel("项目建筑世界");
@@ -60,9 +60,9 @@ test.describe("world follow-up renderer contract", () => {
     expect(Number(await canvas.getAttribute("data-lighting-update-count"))).toBeGreaterThan(1);
   });
 
-  for (const [label, expectedOcean] of [["自然山谷", false], ["经典空岛", false], ["海洋小岛", true]] as const) {
+  for (const [label, expectedOcean] of [["山谷", false], ["空岛", false], ["海岛", true]] as const) {
     test(`renders visible ambient decorations in ${label}`, async ({ page }, testInfo) => {
-      await page.addInitScript(() => localStorage.clear());
+      await page.addInitScript(() => {localStorage.clear();localStorage.setItem('blockcolc-onboarding-v1','1');});
       await page.goto("/");
       await page.getByRole("button", { name: "开始建造" }).click();
       await page.getByRole("button", { name: "设置", exact: true }).click();
@@ -75,7 +75,7 @@ test.describe("world follow-up renderer contract", () => {
     });
 
     test(`keeps building and road supports above terrain in ${label}`, async ({ page }) => {
-      await page.addInitScript(() => localStorage.clear());
+      await page.addInitScript(() => {localStorage.clear();localStorage.setItem('blockcolc-onboarding-v1','1');});
       await page.goto("/");
       await page.getByRole("button", { name: "开始建造" }).click();
       await page.getByRole("button", { name: "设置", exact: true }).click();
@@ -86,7 +86,7 @@ test.describe("world follow-up renderer contract", () => {
         natural: "natural-valley",
         classic: "classic-island",
         ocean: "ocean-island",
-      }[label === "自然山谷" ? "natural" : label === "经典空岛" ? "classic" : "ocean"]!);
+      }[label === "山谷" ? "natural" : label === "空岛" ? "classic" : "ocean"]!);
       await expect.poll(async () => Number(await canvas.getAttribute("data-road-cell-count"))).toBeGreaterThan(0);
       const buildingSupport = Number(await canvas.getAttribute("data-building-support-min-y"));
       const roadSupport = Number(await canvas.getAttribute("data-road-support-min-y"));

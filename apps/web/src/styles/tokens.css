@@ -20,6 +20,8 @@
   --focus-glass-highlight-alpha: 0.098;
   --focus-glass-accent-alpha: 0.024;
   --focus-glass-shadow-alpha: 0.15;
+  --focus-glass-background: linear-gradient(145deg,rgb(255 255 255 / var(--focus-glass-highlight-alpha)),transparent 42%,rgb(39 103 73 / var(--focus-glass-accent-alpha))),rgb(243 245 242 / var(--focus-glass-light-alpha));
+  --focus-glass-filter: blur(var(--focus-glass-blur)) saturate(var(--focus-glass-saturation)) brightness(var(--focus-glass-brightness)) contrast(1.04);
   /* Fixed functional glass. Never bind these tokens to the focus preference. */
   --world-glass-background: linear-gradient(145deg, rgba(255, 255, 255, 0.13), rgba(255, 255, 255, 0.025) 42%, rgba(111, 206, 150, 0.055)), rgba(20, 29, 25, 0.8);
   --world-glass-border: rgba(255, 255, 255, 0.22);
@@ -59,6 +61,7 @@
   --focus: #6fce96;
   --focus-strong: #7fd6a1;
   --danger: #ff8a8a;
+  --focus-glass-background: linear-gradient(145deg,rgb(255 255 255 / var(--focus-glass-highlight-alpha)),transparent 42%,rgb(111 206 150 / var(--focus-glass-accent-alpha))),rgb(20 29 25 / var(--focus-glass-dark-alpha));
   --world-overlay: rgba(11, 17, 14, 0.95);
   --world-overlay-muted: #aebcb4;
   --world-glass-background: linear-gradient(145deg, rgba(255, 255, 255, 0.11), rgba(255, 255, 255, 0.018) 42%, rgba(111, 206, 150, 0.05)), rgba(11, 17, 14, 0.84);

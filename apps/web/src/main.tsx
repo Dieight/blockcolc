@@ -6,6 +6,9 @@ import { LoadingPage } from './LoadingPage';
 import { AppErrorBoundary } from './AppErrorBoundary';
 import { completeStartupPresentation, startupPresentationSnapshot, subscribeStartupPresentation } from './startup-presentation';
 import './styles/index.css';
+import { installPerformanceProbe, markPerformancePhase } from './performance-probe';
+
+installPerformanceProbe();
 
 const root = createRoot(document.getElementById('root')!);
 document.documentElement.dataset.inputMode='pointer';
@@ -24,6 +27,7 @@ const loadingPagePainted = new Promise<void>((resolve) => {
 const boot=Promise.all([bootstrap(), loadingPagePainted]).then(([result]) => {
   document.documentElement.dataset.bootstrapDurationMs = (performance.now() - appStartedAtMs).toFixed(2);
   document.documentElement.dataset.bootstrapState = 'ready';
+  markPerformancePhase('bootstrap-ready');
   logNativeStartup('bootstrap-ready', performance.now() - appStartedAtMs);
   return result;
 });
@@ -38,6 +42,7 @@ function StartupShell(){
     if(result.service.worldProjection().projects.length===0)completeStartupPresentation();
   requestAnimationFrame(() => {
     document.documentElement.dataset.appShellFrameMs = (performance.now() - appStartedAtMs).toFixed(2);
+    markPerformancePhase('shell-frame');
     logNativeStartup('app-shell-frame', performance.now() - appStartedAtMs);
   });
   }).catch(error=>{

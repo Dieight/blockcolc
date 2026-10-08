@@ -5,10 +5,13 @@
 .focus-plan-sheet .sheet-heading h2 .pixel-icon{width:22px;height:22px;color:var(--focus)}
 .focus-plan-sheet .eyebrow{color:var(--muted);font-size:12px}
 .focus-plan-sheet .dialog-close{width:44px;min-height:44px;border:0;background:transparent;color:var(--muted)}
-.focus-plan-sheet .plan-mode{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:0 0 18px;border-bottom:1px solid var(--line)}
+.focus-plan-sheet .plan-mode{position:relative;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:0 0 18px;padding:0;border-bottom:1px solid var(--line);overflow:clip}
 .focus-plan-sheet .plan-mode button{display:flex;align-items:center;justify-content:center;gap:7px;min-height:48px;padding:8px 4px;border:0;border-radius:0;background:transparent;color:var(--muted);font-size:13px;text-decoration:none}
 .focus-plan-sheet .plan-mode .pixel-icon{width:16px;height:16px}
-.focus-plan-sheet .plan-mode button[aria-pressed="true"]{background:var(--surface-active);color:var(--focus);box-shadow:inset 0 -2px 0 var(--focus);font-weight:700}
+.focus-plan-sheet .plan-mode button[aria-pressed="true"]{background:transparent;color:var(--focus);box-shadow:none;font-weight:700}
+.focus-plan-sheet .plan-mode .text-toggle-selection{top:0;bottom:0;border-radius:0;background:var(--surface-active);box-shadow:none;pointer-events:none}
+.focus-plan-sheet .plan-mode .text-toggle-selection::after{content:'';position:absolute;left:0;right:0;bottom:0;height:2px;background:var(--focus)}
+.focus-plan-sheet .plan-mode button{position:relative;z-index:1}
 .focus-plan-sheet .round-picker{margin-top:18px;gap:8px}
 .focus-plan-sheet .round-picker>span{color:var(--muted);font-size:12px}
 .focus-plan-sheet .round-picker button{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:9px;min-height:68px;padding:9px 3px;border:1px solid var(--line);border-radius:4px;background:var(--surface);color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums}

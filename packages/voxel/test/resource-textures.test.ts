@@ -57,6 +57,7 @@ describe("resource-pack voxel texture planning", () => {
     expect(patched).toContain("blockcolcCornerSouthWest");
     expect(patched).toContain("blockcolcUvFluidAngle");
     expect(patched).toContain("vMapUv = blockcolcFlowUv");
+    expect(patched).toContain('#ifdef USE_MAP\nif (blockcolcUvFluidActive');
 
     const atlasPatched = patchFluidSurfaceVertexShader(patchAtlasUvVertexShader(source), true);
     expect(atlasPatched).not.toContain("blockcolcFaceUvWordA1");

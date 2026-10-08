@@ -23,6 +23,7 @@ async function setup(page:Page){
  await page.getByRole('spinbutton',{name:'每轮休息分钟'}).blur();
 }
 async function expectButtonReceivesPointer(button:Locator){
+ await button.click({trial:true});
  const hitTest=await button.evaluate(element=>{
   const rect=element.getBoundingClientRect();
   const hit=document.elementFromPoint(rect.left+rect.width/2,rect.top+rect.height/2);
@@ -110,7 +111,10 @@ test('clock drag and double tap stay isolated from the blank-panel exit gesture'
  const box=(await clock.boundingBox())!;
  await page.mouse.move(box.x+box.width/2,box.y+box.height/2);
  await page.mouse.down();
- await page.mouse.move(box.x+box.width/2,box.y+box.height/2-36,{steps:6});
+ await page.mouse.move(box.x+box.width/2,box.y+box.height/2-12,{steps:2});
+ await expect(clock).toHaveAttribute('data-round-detent','holding');
+ await page.clock.runFor(650);
+ await page.mouse.move(box.x+box.width/2,box.y+box.height/2-24,{steps:2});
  await page.mouse.up();
  await expect(clock).toHaveAccessibleName(/专注到今天 16:10/);
  expect((await snapshot(page)).activeFocusSession).toBeNull();
@@ -210,7 +214,10 @@ test('dragging back to now clears the end-time draft and restores the live clock
  const x=box.x+box.width/2,y=box.y+box.height/2;
  await page.mouse.move(x,y);
  await page.mouse.down();
- await page.mouse.move(x,y-36,{steps:6});
+ await page.mouse.move(x,y-12,{steps:2});
+ await expect(clock).toHaveAttribute('data-round-detent','holding');
+ await page.clock.runFor(650);
+ await page.mouse.move(x,y-24,{steps:2});
  await expect(clock).toHaveAccessibleName(/16:10/);
  await page.mouse.move(x,y,{steps:4});
  await page.mouse.up();
@@ -266,6 +273,7 @@ test('interrupting minimal focus preserves the plan and returns through the lega
   await expect(page.locator('.minimal-clock-gesture')).toBeVisible();
   await page.locator('.minimal-exit').focus();
   await page.keyboard.press('Enter');
+  await expect(page.locator('.app-shell')).toHaveAttribute('data-mode-portal-active','false');
   await expect(page.getByRole('button',{name:'进入极简模式'})).toBeVisible();
   const enterMinimal=page.getByRole('button',{name:'进入极简模式'});
   await expectButtonReceivesPointer(enterMinimal);

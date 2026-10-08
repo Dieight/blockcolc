@@ -32,6 +32,8 @@ button[data-action-state='success']:disabled{opacity:1;filter:none;cursor:defaul
 button[aria-label^='刷新']{position:relative}
 button[aria-label^='刷新']:disabled,.check-update:disabled{opacity:1;filter:none}
 button[aria-label^='刷新'][aria-busy='true']::after,.check-update[aria-busy='true']::after{display:none}
+/* A segmented option moves its selection surface; a transient spinner must not widen it. */
+.text-toggle button[aria-busy='true']::after{display:none}
 button[aria-label^='刷新'][aria-busy='true'] [data-pixel-icon='reset'],button[aria-label^='刷新'][aria-busy='true'] .refresh-motion{animation:control-spin .85s linear infinite;transform-origin:50% 50%;will-change:transform}
 button[aria-label^='刷新'][aria-busy='true'] .refresh-motion [data-pixel-icon='reset']{animation:none;will-change:auto}
 .refresh-motion{display:inline-flex;width:20px;height:20px;align-items:center;justify-content:center;flex:0 0 auto}
@@ -43,10 +45,10 @@ button[aria-label^='刷新'][aria-busy='true'] .refresh-motion [data-pixel-icon=
 [data-input-mode='pointer'] :is(.bottom-nav,.plan-mode,.text-toggle,.world-color-control) button:is(:active,:focus){box-shadow:none;filter:none}
 .bottom-nav button{-webkit-user-select:none;user-select:none}
 /* Glass hierarchy comes from size/weight, not grey text over a changing world. */
-:is(.focus-panel,.glass-overlay,.focus-plan-sheet,.focus-report-surface,.minimal-end-sheet,.choice-menu-options,.settings-list,.about-dialog,.reward-memory-plate,.world-hud,.immersive-view-controls,.building-memory-panel,.toast){--muted:var(--ink)}
+:is(.focus-panel,.glass-overlay,.focus-plan-sheet,.focus-report-surface,.minimal-end-sheet,.choice-menu-options,.settings-list,.about-dialog,.daily-goal-sheet,.reward-memory-plate,.world-hud,.immersive-view-controls,.building-memory-panel,.toast){--muted:var(--ink)}
 .focus-report-surface--minimal :is(small,.eyebrow,.minimal-report-help,.round-allocation-caption,.marathon-report-rounds,.plan-sheet-note){color:var(--ink);opacity:1}
 .report.focus-report-surface--minimal .minimal-report-allocation{color:var(--ink)}
-.focus-panel .focus-plan-sheet .plan-mode button[aria-pressed='true']{background:transparent;box-shadow:inset 0 -2px 0 var(--focus)}
+.focus-panel .focus-plan-sheet .plan-mode button[aria-pressed='true']{background:transparent;box-shadow:none}
 .world-screen[data-world-ready='false']>.focus-panel{visibility:hidden;pointer-events:none}
 .bottom-nav .pixel-icon{width:24px;height:24px}
 .pixel-brand image{image-rendering:pixelated}

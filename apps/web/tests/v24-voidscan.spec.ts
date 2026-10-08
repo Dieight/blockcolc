@@ -4,7 +4,7 @@ test("scan multiple views for void clusters", async ({ page }) => {
   await page.goto("/?debugVoidScan");
   await page.getByRole("button", { name: "开始建造" }).click();
   await page.getByRole("button", { name: "设置", exact: true }).click();
-  await page.getByRole("group", { name: "聚落环境" }).getByRole("button", { name: "海洋小岛" }).click();
+  await page.getByRole("group", { name: "聚落环境" }).getByRole("button", { name: "海岛" }).click();
   await page.getByRole("button", { name: "计时", exact: true }).click();
   const canvas = page.getByLabel("项目建筑世界");
   await expect(canvas).toHaveAttribute("data-environment-style", "ocean-island", { timeout: 30_000 });

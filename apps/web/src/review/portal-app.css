@@ -1,0 +1,4 @@
+/* Review renders the actual App; only unrelated actions and the idle exit veil differ. */
+button:not(.minimal-entry):not(.minimal-exit),input,select,textarea{pointer-events:none}
+.minimal-exit.is-veiled{opacity:1;pointer-events:auto}
+.portal-overlay~*{pointer-events:none}

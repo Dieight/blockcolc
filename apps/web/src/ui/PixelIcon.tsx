@@ -1,6 +1,6 @@
 import type { SVGProps } from 'react';
 
-// Shared 12 px glyphs: one filled path, no canvas redraw or icon font.
+// Shared 12 px glyphs. Navigation parts animate without repainting the page.
 const glyphs = {
   cube: ['000111100000','011000011000','100000000100','101000010100','100110100100','100001000100','100001000100','010001001000','001001010000','000111100000','000000000000','000000000000'],
   clock: ['000011110000','001100001100','010000000010','010001000010','100001000001','100001110001','100000000001','100000000001','010000000010','010000000010','001100001100','000011110000'],
@@ -24,26 +24,67 @@ const glyphs = {
   stop: ['000000000000','011111111100','011111111100','011111111100','011111111100','011111111100','011111111100','011111111100','011111111100','011111111100','000000000000','000000000000'],
   repeat: ['000000010000','001111111000','010000011100','100000010000','100000000000','000000000100','000010000100','000111001000','000011110000','000010000000','000000000000','000000000000'],
   minimize: ['000000000000','010010010010','001010010100','000110011000','011110011110','000000000000','000000000000','011110011110','000110011000','001010010100','010010010010','000000000000'],
+  calendar: ['001000001000','011111111110','010000000010','011111111110','010000000010','010110110010','010000000010','010110110010','010000000010','011111111110','000000000000','000000000000'],
 } as const;
 
 /** The product mark keeps the red rind / inset clock identity at small sizes. */
 export function PixelBrand({ size = 28, ...props }: SVGProps<SVGSVGElement> & { size?: number }) {
   return <svg width={size} height={size} viewBox="0 0 16 16" className="pixel-icon pixel-brand" data-pixel-icon="brand" aria-hidden="true" focusable="false" shapeRendering="crispEdges" {...props}>
-    <path fill="#5b8358" d="M7 0h3v1h3v2h-3v1H7V3H4V1h3z"/>
     <path fill="#d4523f" d="M4 3h7v1h2v2h1v7h-2v2H4v-1H2v-2H1V7h1V5h2z"/>
     <path fill="#a63e34" d="M2 6h2v1h2v8H4v-1H2v-2H1V7h1z"/>
     <path fill="#ed7660" d="M4 3h7v1h2v2H6V5H4z"/>
     <path fill="#8d3c33" d="M7 6h5v1h1v6h-1v1H7v-1H6V7h1z"/>
     <path fill="#f1e8d5" d="M8 7h4v5h-1v1H7V8h1z"/>
     <path fill="#344d3d" d="M9 8h1v2h2v1H9z"/>
+    <g data-icon-part="leaf">
+      <path fill="#35533c" d="M7 1h3v1h3v2h-3v1H7V4H4V2h3z"/>
+      <path fill="#64905b" d="M7 0h3v1h3v1h-3v1H7V2H4V1h3z"/>
+      <path fill="#91b377" d="M7 0h3v1H7zM4 1h3v1H4z"/>
+      <path fill="#486943" d="M8 2h2v2H8z"/>
+    </g>
   </svg>;
 }
 
 export type PixelIconName = keyof typeof glyphs;
 type IconProps = Omit<SVGProps<SVGSVGElement>, 'name' | 'children'> & { size?: number };
+export function PixelDisclosure({ expanded, ...props }: IconProps & { expanded: boolean }) {
+  return <svg width="20" height="20" viewBox="0 0 12 12" className="pixel-icon pixel-disclosure" aria-hidden="true" focusable="false" shapeRendering="crispEdges" {...props}>
+    <path fill="currentColor" d="M1 5h10v2H1z"/>
+    <path className="pixel-disclosure-stem" fill="currentColor" d="M5 1h2v10H5z" style={{ transform: expanded ? 'scaleY(0)' : 'scaleY(1)' }}/>
+  </svg>;
+}
+export function PixelPortal({ size = 24, className, ...props }: IconProps) {
+  return <svg width={size} height={size * 1.5} viewBox="0 0 12 18" className={`pixel-icon pixel-portal-icon${className ? ` ${className}` : ''}`} data-pixel-icon="portal" aria-hidden="true" focusable="false" shapeRendering="crispEdges" {...props}>
+    <path data-icon-part="frame" fill="var(--portal-icon-frame, #365a44)" fillRule="evenodd" d="M0 0h12v18H0zM2 2v14h8V2z"/>
+    <path data-icon-part="frame-lit" fill="var(--portal-icon-lit, #65926b)" d="M0 0h2v2H0zM4 0h2v2H4zM8 0h2v2H8zM0 4h2v2H0zM10 8h2v2h-2zM0 12h2v2H0zM4 16h2v2H4zM8 16h2v2H8z"/>
+    <path fill="var(--portal-icon-shadow, #244332)" d="M1 2h1v14H1zM2 16h8v1H2zM11 2h1v14h-1z"/>
+  </svg>;
+}
 const paths = Object.fromEntries(Object.entries(glyphs).map(([name, rows]) => [name,
   rows.flatMap((row, y) => [...row.matchAll(/1+/g)].map(match => `M${match.index} ${y}h${match[0].length}v1h-${match[0].length}z`)).join(''),
 ])) as Record<PixelIconName, string>;
+function partPath(name: PixelIconName, accepts: (x: number, y: number) => boolean): string {
+  return glyphs[name].flatMap((row, y) => [...row].flatMap((value, x) => value === '1' && accepts(x, y) ? [`M${x} ${y}h1v1h-1z`] : [])).join('');
+}
+const navParts = {
+  clock: [
+    ['face', partPath('clock', (x, y) => !(x >= 5 && x <= 7 && y >= 3 && y <= 5))],
+    ['hour', partPath('clock', (x, y) => x >= 6 && x <= 7 && y === 5)],
+    ['minute', partPath('clock', (x, y) => x === 5 && y >= 3 && y <= 5)],
+  ],
+  tasks: [0, 1, 2].flatMap(i => [
+    [`task-box-${i}`, partPath('tasks', (x, y) => x <= 3 && y >= i * 4 && y < i * 4 + 3)],
+    [`task-line-${i}`, partPath('tasks', (x, y) => x >= 5 && y === i * 4)],
+  ]),
+  chart: [
+    ['baseline', partPath('chart', (_x, y) => y === 10)],
+    ...[0, 1, 2].map(i => [`bar-${i}`, partPath('chart', (x, y) => y < 9 && x >= 1 + i * 3 && x <= 2 + i * 3)]),
+  ],
+  gear: [
+    ['outer', partPath('gear', (x, y) => !(x >= 4 && x <= 7 && y >= 4 && y <= 7))],
+    ['center', partPath('gear', (x, y) => x >= 4 && x <= 7 && y >= 4 && y <= 7)],
+  ],
+};
 const navViewBoxes=Object.fromEntries(['clock','tasks','chart','gear'].map(name=>{
   const cells=glyphs[name as PixelIconName].flatMap((row,y)=>[...row].flatMap((value,x)=>value==='1'?[{x,y}]:[]));
   const minX=Math.min(...cells.map(p=>p.x)),minY=Math.min(...cells.map(p=>p.y));
@@ -54,7 +95,7 @@ const navViewBoxes=Object.fromEntries(['clock','tasks','chart','gear'].map(name=
 export function PixelIcon({ name, size = 24, className, ...props }: IconProps & { name: PixelIconName }) {
   return <svg width={size} height={size} viewBox={navViewBoxes[name]??'0 0 12 12'} fill="currentColor" shapeRendering="crispEdges"
     className={`pixel-icon${className ? ` ${className}` : ''}`} data-pixel-icon={name} aria-hidden="true" focusable="false" {...props}>
-    <path d={paths[name]}/>
+    {name in navParts ? navParts[name as keyof typeof navParts].map(([part, d]) => <path key={part} data-icon-part={part} d={d}/>) : <path d={paths[name]}/>}
   </svg>;
 }
 
@@ -81,3 +122,4 @@ export const PixelFlag = glyph('flag');
 export const PixelStop = glyph('stop');
 export const PixelRepeat = glyph('repeat');
 export const PixelMinimize = glyph('minimize');
+export const PixelCalendar = glyph('calendar');

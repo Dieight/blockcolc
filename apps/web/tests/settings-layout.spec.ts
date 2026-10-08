@@ -222,14 +222,27 @@ test('settings page keeps grouped rows, quiet secondary actions, and 44px target
   const separator = page.locator('.settings-group .setting-row + .setting-row').first();
   await expect(separator).toHaveCSS('border-top-width', '1px');
 
-  // Text option groups are iOS-style segmented controls: the active option is a
-  // raised solid chip, inactive options stay on the track without underline.
+  // The raised selection surface travels behind the active option. Buttons
+  // themselves stay transparent, so a change never flashes two filled chips.
+  const toggleGroup = page.locator('.text-toggle').first();
+  const selection = toggleGroup.locator('.text-toggle-selection');
   const activeToggle = page.locator('.text-toggle button[aria-pressed="true"]').first();
   const inactiveToggle = page.locator('.text-toggle button[aria-pressed="false"]').first();
   await expect(activeToggle).toHaveCSS('text-decoration-line', 'none');
   await expect(inactiveToggle).toHaveCSS('text-decoration-line', 'none');
-  const activeBackground = await activeToggle.evaluate((element) => getComputedStyle(element).backgroundColor);
-  expect(activeBackground, 'active segmented option must be raised').not.toBe('rgba(0, 0, 0, 0)');
+  await expect(selection).toBeVisible();
+  const selectionMaterial = await selection.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return { background: style.backgroundColor, shadow: style.boxShadow };
+  });
+  expect(selectionMaterial.background, 'travelling selection must be filled').not.toBe('rgba(0, 0, 0, 0)');
+  expect(selectionMaterial.shadow, 'travelling selection must be raised').not.toBe('none');
+  await expect.poll(async () => toggleGroup.evaluate((element) => {
+    const selected = element.querySelector('button[aria-pressed="true"]')!.getBoundingClientRect();
+    const surface = element.querySelector('.text-toggle-selection')!.getBoundingClientRect();
+    return Math.max(Math.abs(surface.x - selected.x), Math.abs(surface.width - selected.width));
+  }), { message: 'selection surface must settle behind the active option' }).toBeLessThan(1);
+  await expect(activeToggle).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
   const inactiveBackground = await inactiveToggle.evaluate((element) => getComputedStyle(element).backgroundColor);
   expect(inactiveBackground).toBe('rgba(0, 0, 0, 0)');
 

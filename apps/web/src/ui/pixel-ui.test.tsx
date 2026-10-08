@@ -1,16 +1,32 @@
 import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { PixelIcon } from './PixelIcon';
+import { PixelIcon, PixelPortal } from './PixelIcon';
 import { PixelProgress, pixelProgressCells } from './PixelProgress';
 
 describe('pixel UI primitives', () => {
-  it('renders decorative glyphs as a single crisp SVG path', () => {
+  it('renders separately animatable navigation parts in one crisp SVG', () => {
     const html = renderToStaticMarkup(<PixelIcon name="tasks"/>);
     expect(html).toContain('viewBox="0 0 11 11"');
     expect(html).toContain('shape-rendering="crispEdges"');
     expect(html).toContain('aria-hidden="true"');
-    expect(html.match(/<path/g)).toHaveLength(1);
+    expect(html.match(/<path/g)).toHaveLength(6);
+    expect(html).toContain('data-icon-part="task-box-0"');
+    expect(html).toContain('data-icon-part="task-line-2"');
     expect(html).not.toContain('canvas');
+  });
+  it('keeps ordinary glyphs static and splits only the four navigation motifs',()=>{
+    expect(renderToStaticMarkup(<PixelIcon name="plus"/>).match(/<path/g)).toHaveLength(1);
+    for(const [name,part] of [['clock','minute'],['chart','bar-2'],['gear','outer']] as const)
+      expect(renderToStaticMarkup(<PixelIcon name={name}/>)).toContain(`data-icon-part="${part}"`);
+  });
+
+  it('keeps the minimal entry green-framed with an unpainted center', () => {
+    const html = renderToStaticMarkup(<PixelPortal/>);
+    expect(html).toContain('fill-rule="evenodd"');
+    expect(html).toContain('--portal-icon-frame');
+    expect(html).not.toContain('--portal-field');
+    expect(html).not.toContain('--portal-energy');
+    expect(html.match(/<path/g)).toHaveLength(3);
   });
 
   it('retains continuous values rather than rounding to complete cells', () => {

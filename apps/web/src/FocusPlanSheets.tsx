@@ -3,6 +3,7 @@ import type { FocusInterruptionCategory } from '@blockcolc/domain';
 import { PixelClose as X, PixelClock, PixelFlag, PixelPlay } from './ui/PixelIcon';
 import { MinimalClockGesture } from './ui/MinimalClockGesture';
 import { ChoiceMenu } from './ChoiceMenu';
+import { TextToggle } from './ui/TextToggle';
 import { marathonEndInstant } from './marathon-end-time';
 import { MAX_MARATHON_ROUNDS, planRoundsForDuration } from './round-plan';
 import { formatClockTime, formatDurationSummary } from './focus-format';
@@ -14,10 +15,8 @@ const CANCEL_REASONS: ReadonlyArray<{ value: FocusInterruptionCategory; label: s
 ];
 
 function PlanMode({mode,locked,onChange}: {mode:'rounds'|'marathon';locked:boolean;onChange:(mode:'rounds'|'marathon')=>void}) {
-  return <div className="plan-mode" role="group" aria-label="排程方式">
-    <button type="button" aria-pressed={mode==='rounds'} disabled={locked} onClick={()=>onChange('rounds')}><PixelFlag/>固定轮次</button>
-    <button type="button" aria-pressed={mode==='marathon'} disabled={locked} onClick={()=>onChange('marathon')}><PixelClock/>按结束时间</button>
-  </div>;
+  return <TextToggle className="plan-mode" ariaLabel="排程方式" value={mode} disabled={locked} onChange={onChange}
+    options={[{value:'rounds',label:<><PixelFlag/>固定轮次</>},{value:'marathon',label:<><PixelClock/>按结束时间</>}]}/>;
 }
 
 function RoundChoices({rounds,locked,habit=false,onChange}: {rounds:number;locked:boolean;habit?:boolean;onChange:(rounds:number)=>void}) {
@@ -96,7 +95,7 @@ export function FocusPlanSheet({ subtasks, selectedId, rounds, focusMinutes, bre
   const marathonValid = endMs !== null && schedule !== null;
   const note = locked ? ' 已锁定，可取消后重新安排。' : '';
   const available = subtasks.filter(subtask => subtask.progressBasisPoints < 10000);
-  return <div className="dialog-backdrop plan-sheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+  return <div className="dialog-backdrop plan-sheet-backdrop edge-sheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
     <section className="focus-plan-sheet" role="dialog" aria-modal="true" aria-labelledby="focus-plan-title">
       <div className="sheet-heading"><div><span className="eyebrow">本次计划</span><h2 id="focus-plan-title"><PixelClock/>安排下一轮</h2></div><button type="button" className="dialog-close" aria-label="关闭本次计划" onClick={onClose}><X/></button></div>
       <PlanMode mode={mode} locked={locked} onChange={onModeChange}/>
@@ -140,7 +139,7 @@ export function HabitFocusPlanSheet({ rounds, focusMinutes, breakMinutes, locked
   const capped = schedule !== null && rawSchedule !== null && rawSchedule.rounds > schedule.rounds;
   const marathonValid = endMs !== null && schedule !== null;
   const note = locked ? ' 已锁定，可取消后重新安排。' : '';
-  return <div className="dialog-backdrop plan-sheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+  return <div className="dialog-backdrop plan-sheet-backdrop edge-sheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
     <section className="focus-plan-sheet" role="dialog" aria-modal="true" aria-labelledby="habit-focus-plan-title">
       <div className="sheet-heading"><div><span className="eyebrow">本次计划</span><h2 id="habit-focus-plan-title"><PixelClock/>安排习惯专注</h2></div><button type="button" className="dialog-close" aria-label="关闭本次计划" onClick={onClose}><X/></button></div>
       <PlanMode mode={mode} locked={locked} onChange={onModeChange}/>

@@ -22,9 +22,9 @@ test('switches the derived world environment without moving project data', async
 
   await page.getByRole('button', { name: '设置', exact: true }).click();
   const environment = page.getByRole('group', { name: '聚落环境' });
-  await expect(environment.getByRole('button', { name: '自然山谷' })).toHaveAttribute('aria-pressed', 'true');
-  await environment.getByRole('button', { name: '经典空岛' }).click();
-  await expect(environment.getByRole('button', { name: '经典空岛' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(environment.getByRole('button', { name: '山谷' })).toHaveAttribute('aria-pressed', 'true');
+  await environment.getByRole('button', { name: '空岛' }).click();
+  await expect(environment.getByRole('button', { name: '空岛' })).toHaveAttribute('aria-pressed', 'true');
 
   await page.getByRole('button', { name: '计时', exact: true }).click();
   await expect(canvas).toHaveAttribute('data-environment-style', 'classic-island');
@@ -39,22 +39,29 @@ test('switches the derived world environment without moving project data', async
   // not keep the natural valley's wide envelope.
   await expect.poll(async () => Number(await canvas.getAttribute('data-cloud-span-x'))).toBeLessThan(naturalSpan / 2);
   await showWorldOverview(page);
-  await expect(page.getByText('林边聚落 · 1 栋')).toBeVisible();
+  await expect(page.getByText('空岛聚落 · 1 栋')).toBeVisible();
 });
 
 test('selects a building with a light tap', async ({ page }, testInfo) => {
   test.setTimeout(60_000);
+  // This case owns touch hit-testing, not the idle weather loop. Reduced
+  // motion leaves pointer selection intact on the software-WebGL desktop.
+  await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.goto('/');
   await page.getByRole('button', { name: '开始建造' }).click();
   const canvas = page.getByLabel('项目建筑世界');
   await selectValleyFixture(page);
   await expect(canvas).toHaveAttribute('data-environment-style', 'natural-valley');
 
+  // The opening now ends in building focus. Keep the physical tap separate
+  // from keyboard selection, and wait for the actual framed view to paint.
+  await showWorldOverview(page);
+  await page.screenshot({path:testInfo.outputPath('before-light-tap.png')});
   const box = await canvas.boundingBox();
   if (!box) throw new Error('World canvas has no layout box');
   let pointerId = 10;
-  for (const y of [0.36, 0.48, 0.6, 0.72]) {
-    for (const x of [0.25, 0.38, 0.5, 0.62, 0.75]) {
+  for (const y of [0.5, 0.52, 0.54, 0.48, 0.56, 0.36, 0.6, 0.72]) {
+    for (const x of [0.5, 0.48, 0.52, 0.38, 0.62, 0.25, 0.75]) {
       const clientX = box.x + box.width * x;
       const clientY = box.y + box.height * y;
       pointerId += 1;

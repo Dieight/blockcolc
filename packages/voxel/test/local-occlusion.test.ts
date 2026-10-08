@@ -11,6 +11,33 @@ import {
 } from "../src/local-occlusion";
 
 describe("local voxel occlusion", () => {
+  it("numeric membership matches string membership for sparse negative coordinates and all six faces", () => {
+    const blocks = Array.from({ length: 1200 }, (_, i) => voxel(i % 19 - 10, (i * 7) % 23 - 8, (i * 11) % 29 - 14,
+      i % 3 ? 'minecraft:stone' : 'minecraft:oak_leaves'));
+    const numeric = createLocalOcclusionField(blocks);
+    const reference = { minimumY: numeric.minimumY, occupied: numeric.occupied };
+    for (const block of blocks) {
+      expect(faceOcclusionLevelsFor(block, numeric)).toEqual(faceOcclusionLevelsFor(block, reference));
+      expect(blockOcclusionFor(block, numeric)).toBe(blockOcclusionFor(block, reference));
+      const normals = [[0,-1,0],[0,1,0],[0,0,-1],[0,0,1],[-1,0,0],[1,0,0]];
+      const visible = faceOcclusionLevelsFor(block, reference).filter((_, face) => {
+        const n = normals[face]!;
+        return !reference.occupied.has(`${block.x+n[0]!}:${block.y+n[1]!}:${block.z+n[2]!}`);
+      });
+      const scalar = visible.length ? Math.max(...visible)/3*.65
+        + visible.reduce((sum, level) => sum+level, 0)/visible.length/3*.35 : 0;
+      expect(blockOcclusionFor(block, numeric)).toBe(scalar);
+    }
+    expect(numeric.has?.(999, 0, 0)).toBe(false);
+  });
+  it("fractional coordinates and enormous sparse bounds keep the exact string fallback", () => {
+    for (const blocks of [[voxel(.5, 0, .5), voxel(1.5, 0, .5)], [voxel(-1e12, -1e12, -1e12), voxel(1e12, 1e12, 1e12)]]) {
+      const field = createLocalOcclusionField(blocks);
+      expect(field.has).toBeUndefined();
+      expect(field.occupied.size).toBe(2);
+      expect(blockOcclusionFor(blocks[0]!, field)).toBeGreaterThanOrEqual(0);
+    }
+  });
   it("indexes a dense 60 x 60 x 60 blueprint without spreading its voxels as arguments", () => {
     const voxels = Array.from({ length: 60 ** 3 }, (_, index) => voxel(
       index % 60,

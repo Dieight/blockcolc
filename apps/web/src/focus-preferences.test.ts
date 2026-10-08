@@ -2,6 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { defaultFocusPreferences, FOCUS_PREFERENCES_KEY, loadFocusPreferences, parseFocusPreferences, saveFocusPreferences } from './focus-preferences';
 
 describe('local focus preferences', () => {
+  it('checks updates only after explicit opt-in and preserves it locally',()=>{
+    expect(defaultFocusPreferences().autoCheckUpdates).toBe(false);
+    for(const autoCheckUpdates of [undefined,'true',1,null])expect(parseFocusPreferences({focusMinutes:45,breakMinutes:5,autoCheckUpdates}).autoCheckUpdates).toBe(false);
+    let saved='';saveFocusPreferences({setItem:(_key,value)=>{saved=value;}},{...defaultFocusPreferences(),autoCheckUpdates:true});
+    expect(loadFocusPreferences({getItem:()=>saved}).autoCheckUpdates).toBe(true);
+  });
   it('migrates neutral world colour and persists independent bounded controls', () => {
     const neutral = { saturation: 100, brightness: 100, contrast: 100 };
     expect(parseFocusPreferences({ focusMinutes: 25, breakMinutes: 5 }).worldColorAdjustment).toEqual(neutral);

@@ -1,6 +1,6 @@
 import type { BlueprintVoxel, MaterialId } from './blueprint';
 import type { EnvironmentStyle } from './environment';
-import { mosaicRegionAt, mosaicSeed, sampleMosaicTerrain } from './mosaic-terrain';
+import { mosaicGridPosition, mosaicRegionAt, mosaicSeed, mosaicSeabedHeight, sampleMosaicTerrain } from './mosaic-terrain';
 import { createReefField } from './reef-field';
 
 /** Read-only samples of the *rendered* terrain, including its coarse far cells. */
@@ -126,7 +126,7 @@ function farmBlocks(): ReturnType<Blocks['result']> {
   return b.result();
 }
 
-export function sceneryTreeBlocks(species: 'oak' | 'birch' | 'spruce' | 'pale_oak' | 'poplar', variant: number): ReturnType<Blocks['result']> {
+export function sceneryTreeBlocks(species: 'oak' | 'birch' | 'spruce' | 'pale_oak' | 'poplar', variant: number, tallSpruce = false): ReturnType<Blocks['result']> {
   const b = new Blocks();
   if(species==='poplar') {
     // 26.3: 7–11 block trunks, branching below the crown and three warm
@@ -147,11 +147,13 @@ export function sceneryTreeBlocks(species: 'oak' | 'birch' | 'spruce' | 'pale_oa
     }
     return b.result();
   }
-  const height = species === 'spruce' ? 7 + variant % 2 : 4 + variant % 3;
+  const height = species === 'spruce' ? tallSpruce ? 9 + variant % 4 : 7 + variant % 2 : 4 + variant % 3;
   for (let y = 0; y < height; y++) b.put(0, y, 0, `${species}_log`, 'wood', true, { axis: 'y' });
   if (species !== 'spruce') b.put(1, height - 2, 0, `${species}_log`, 'wood', true, { axis: 'x' });
   const layers = species === 'spruce'
-    ? Array.from({ length: 6 }, (_, i) => ({ y: height - 5 + i, radius: [2, 1, 2, 1, 1, 0][i]! }))
+    ? tallSpruce
+      ? Array.from({ length: 8 }, (_, i) => ({ y: height - 7 + i, radius: [3, 2, 3, 2, 2, 1, 1, 0][i]! }))
+      : Array.from({ length: 6 }, (_, i) => ({ y: height - 5 + i, radius: [2, 1, 2, 1, 1, 0][i]! }))
     : [{ y: height - 2, radius: 2 }, { y: height - 1, radius: 2 }, { y: height, radius: 1 }, { y: height + 1, radius: 1 }];
   for (const { y, radius } of layers) for (let x = -radius; x <= radius; x++) for (let z = -radius; z <= radius; z++) {
     if (x === 0 && z === 0 && y < height) continue;
@@ -175,11 +177,21 @@ function overlaps(a: SceneryProtectedRect, b: SceneryProtectedRect, gap = 0): bo
 
 export function scenerySurfaceAt(surfaces: readonly ScenerySurface[], x: number, z: number): ScenerySurface | undefined {
   // Highest dry ground wins only when it is genuinely above the water surface.
-  const covering = surfaces.filter(s => s.minX < s.maxX && s.minZ < s.maxZ
-    && x >= s.minX && x <= s.maxX && z >= s.minZ && z <= s.maxZ);
-  const ground = covering.filter(s => !s.water).sort((a, b) => b.supportY - a.supportY)[0];
-  const water = covering.filter(s => s.water).sort((a, b) => b.supportY - a.supportY)[0];
+  // Each bucket is visited many times. Keep first-in-input ties, as the former
+  // stable sort did, without allocating and sorting three arrays per sample.
+  let ground: ScenerySurface | undefined, water: ScenerySurface | undefined;
+  for (const s of surfaces) {
+    if (!(s.minX < s.maxX && s.minZ < s.maxZ && x >= s.minX && x <= s.maxX && z >= s.minZ && z <= s.maxZ)) continue;
+    if (s.water) { if (!water || s.supportY > water.supportY) water = s; }
+    else if (!ground || s.supportY > ground.supportY) ground = s;
+  }
   return ground && (!water || ground.supportY > water.supportY + .01) ? ground : water;
+}
+
+/** Compute deterministic expensive scores once, preserving stable ties. */
+function orderedBy<T>(values: readonly T[], score: (value: T) => number): T[] {
+  return values.map(value => ({ value, score: score(value) }))
+    .sort((a, b) => a.score - b.score).map(entry => entry.value);
 }
 
 /** Terrain is sampled many times while fitting a locality. Index it once. */
@@ -258,23 +270,23 @@ export function planWorldScenery(input: {
   ]).filter(p => {
     const distance = Math.hypot(p.x - coreX, p.z - coreZ);
     return distance >= coreRadius + 43 && distance <= coreRadius + 140;
-  }).sort((a, b) => {
+  }).map(point => {
     const score = (p: { x: number; z: number }) =>
       Math.abs(Math.hypot(p.x - coreX, p.z - coreZ) - coreRadius - 62)
       // The default camera looks from +X/+Z: prefer a far locality behind the
       // task center, not one clipped off the narrow portrait side of the world.
       + Math.abs((p.x - coreX) - (p.z - coreZ)) * .55
       + Math.max(0, (p.x - coreX) + (p.z - coreZ)) * .4;
-    return score(a) - score(b) || hash(`${input.worldSeed}:${a.x}:${a.z}`) - hash(`${input.worldSeed}:${b.x}:${b.z}`)
-      || a.x - b.x || a.z - b.z;
-  });
+    return { point, score: score(point), tie: hash(`${input.worldSeed}:${point.x}:${point.z}`) };
+  }).sort((a, b) => a.score - b.score || a.tie - b.tie || a.point.x - b.point.x || a.point.z - b.point.z)
+    .map(entry => entry.point);
   const anchor = compact ? undefined : candidates.find(p => modules.every(m => supports(p.x + m.x, p.z + m.z, m.width, m.depth)));
   const village = anchor ? { ...anchor, width: villageWidth, depth: villageDepth } : null;
   const anchors = anchor ? [anchor] : [];
   // Separate localities on supported far land, never a decorative ring around tasks.
   const localityBudget = compact ? 0 : Math.min(3, Math.max(1, 1 + Math.floor(distantArea / 1_200_000)));
-  const farVillageSites = distantLand.map(s=>({x:Math.round((s.minX+s.maxX)/2),z:Math.round((s.minZ+s.maxZ)/2)}))
-    .sort((a,b)=>hash(`${input.worldSeed}:far-village:${a.x}:${a.z}`)-hash(`${input.worldSeed}:far-village:${b.x}:${b.z}`));
+  const farVillageSites = orderedBy(distantLand.map(s=>({x:Math.round((s.minX+s.maxX)/2),z:Math.round((s.minZ+s.maxZ)/2)})),
+    p=>hash(`${input.worldSeed}:far-village:${p.x}:${p.z}`));
   for (const site of farVillageSites) {
     if (anchors.length >= localityBudget || compact) break;
     if (Math.hypot(site.x-coreX,site.z-coreZ)<coreRadius+70 || anchors.some(p=>Math.hypot(p.x-site.x,p.z-site.z)<180))continue;
@@ -316,13 +328,14 @@ export function planWorldScenery(input: {
     || objects.some(o => o.role !== 'path' && overlaps(p, o, gap))
     || input.roads.some(r => overlaps(p, { ...r, width: 1, depth: 1 }, gap));
   // One or two readable landmarks, not every possible structure sprinkled everywhere.
-  const landSites = surfaces.filter(s => !s.water).map(s => ({ x: Math.round((s.minX + s.maxX) / 2), z: Math.round((s.minZ + s.maxZ) / 2) }))
-    .filter(p => Math.hypot(p.x - coreX, p.z - coreZ) > coreRadius + (compact ? 6 : 15))
-    .sort((a, b) => hash(`${input.worldSeed}:landmark:${a.x}:${a.z}`) - hash(`${input.worldSeed}:landmark:${b.x}:${b.z}`));
+  const landSites = orderedBy(surfaces.filter(s => !s.water).map(s => ({ x: Math.round((s.minX + s.maxX) / 2), z: Math.round((s.minZ + s.maxZ) / 2) }))
+    .filter(p => Math.hypot(p.x - coreX, p.z - coreZ) > coreRadius + (compact ? 6 : 15)),
+    p => hash(`${input.worldSeed}:landmark:${p.x}:${p.z}`));
   function landStructure(role: SceneryRole, width: number, depth: number, blocks: ReturnType<Blocks['result']>, preferredDistance: number,
     accept: (x:number,z:number)=>boolean = ()=>true, suffix=''): void {
-    const site = [...landSites].sort((a, b) => Math.abs(Math.hypot(a.x - coreX, a.z - coreZ) - preferredDistance)
-      - Math.abs(Math.hypot(b.x - coreX, b.z - coreZ) - preferredDistance)).find(p => accept(p.x,p.z) && !occupied({ ...p, width, depth }) && supports(p.x, p.z, width, depth));
+    const site = orderedBy(landSites.filter(p => accept(p.x,p.z) && !occupied({ ...p, width, depth })),
+      p => Math.abs(Math.hypot(p.x - coreX, p.z - coreZ) - preferredDistance))
+      .find(p => supports(p.x, p.z, width, depth));
     if (!site) return;
     const datum = supports(site.x, site.z, width, depth)!.max, footing = new Blocks();
     for (const v of blocks.voxels.filter(v => v.y === 0)) {
@@ -358,35 +371,27 @@ export function planWorldScenery(input: {
         width:7,depth:7,voxels:[...spire.voxels,...base.voxels],distantVoxels:[...spire.distantVoxels,...base.distantVoxels]});
       spikes++;
     }
-    // Large, irregular reef beds share real warm water, not repeated tiny prefabs.
-    const reefSites=new Map<string,{x:number;z:number}>();
-    // Terrain buffer order starts at the far corner. Prefer actual coastal
-    // shelves, otherwise the complete quota can be spent outside the view.
-    for(const site of landSites)for(const offset of [14,24,36])for(const [dx,dz] of [[offset,0],[-offset,0],[0,offset],[0,-offset]]){
-      const x=site.x+dx!,z=site.z+dz!;
-      if(['13','23'].includes(region(x,z))&&surfaceAt(x,z)?.water)reefSites.set(`${x}:${z}`,{x,z});
-    }
-    for (const s of surfaces.filter(s=>s.water)) {
-      for (const [dx,dz] of [[.2,.2],[.6,.3],[.4,.7]]) {
-        const x=Math.round(s.minX+(s.maxX-s.minX)*dx!),z=Math.round(s.minZ+(s.maxZ-s.minZ)*dz!);
-        if(['13','23'].includes(region(x,z)))reefSites.set(`${x}:${z}`,{x,z});
+    // One world-coordinate reef, partitioned only for culling and batching.
+    // No independently seeded ellipses or regularly spaced prefab gaps.
+    const seed=mosaicSeed(input.worldSeed),spacing=mosaicGridPosition(0,0,coreRadius).spacing;
+    const centerX=coreX+.25*spacing/Math.SQRT2,centerZ=coreZ-1.55*spacing/Math.SQRT2;
+    const radius=Math.max(88,Math.min(150,spacing*.6)),tile=40,half=tile/2;
+    const dryStructures=objects.filter(o=>o.role!=='path');
+    for(let x=Math.floor((centerX-radius)/tile)*tile;x<=centerX+radius;x+=tile)
+      for(let z=Math.floor((centerZ-radius)/tile)*tile;z<=centerZ+radius;z+=tile){
+        const allowed=(dx:number,dz:number)=>{
+          if(dx< -half||dx>=half||dz< -half||dz>=half)return false;
+          const wx=x+dx,wz=z+dz,at=surfaceAt(wx,wz);
+          const fringe=radius+(hash(`${input.worldSeed}:reef-edge:${Math.floor(wx/12)}:${Math.floor(wz/12)}`)%9-4);
+          return Boolean(at?.water&&['13','23'].includes(region(wx,wz))&&Math.hypot(wx-centerX,wz-centerZ)<fringe
+            &&!protectedRects.some(r=>overlaps({x:wx,z:wz,width:1,depth:1},r,2))
+            &&!dryStructures.some(r=>overlaps({x:wx,z:wz,width:1,depth:1},r,1)));
+        };
+        const reef=createReefField(seed,half,half,allowed,{originX:x,originZ:z,
+          baseY:(dx,dz)=>Math.floor(mosaicSeabedHeight(x+dx-coreX,z+dz-coreZ,seed,coreRadius)+.5)});
+        if(reef.voxels.length<12)continue;
+        objects.push({id:`scenery:${input.worldSeed}:reef:${x}:${z}`,role:'rock',x,z,y:0,width:tile,depth:tile,...reef});
       }
-    }
-    let reefs=0;
-    for(const {x,z} of [...reefSites.values()].sort((a,b)=>Math.hypot(a.x-coreX,a.z-coreZ)-Math.hypot(b.x-coreX,b.z-coreZ)||a.x-b.x||a.z-b.z)){
-      if(reefs>=7)break;
-      const s=surfaceAt(x,z);
-      const seed=hash(`${input.worldSeed}:reef:${x}:${z}`),halfX=23+seed%13,halfZ=17+(seed>>>8)%11;
-      const width=halfX*2+5,depth=halfZ*2+5;
-      if(!s?.water||occupied({x,z,width,depth},3)
-        ||![-halfX*.5,0,halfX*.5].every(dx=>[-halfZ*.5,0,halfZ*.5].every(dz=>surfaceAt(x+dx,z+dz)?.water)))continue;
-      const reef=createReefField(seed,halfX,halfZ,(dx,dz)=>{
-        const at=surfaceAt(x+dx,z+dz);
-        return Boolean(at?.water&&['13','23'].includes(region(x+dx,z+dz)));
-      });
-      if(reef.voxels.length<800)continue;
-      objects.push({id:`scenery:${input.worldSeed}:reef:${reefs++}`,role:'rock',x,z,y:s.supportY-5,width,depth,...reef});
-    }
   }
   if (input.environmentStyle === 'natural-valley') {
     landStructure('camp', 13, 11, sceneryCampBlocks(), coreRadius + 27);
@@ -428,15 +433,35 @@ export function planWorldScenery(input: {
       width: 7, depth: 15, ...sceneryDockBlocks() });
   }
   // Keep deterministic tree sites, replace the giant-box model with unit blocks.
-  const treeSites = [...input.trees];
+  const coldRegionCache = new Map<string,boolean>();
+  const sceneryClimateSeed = mosaicSeed(input.worldSeed);
+  const coldTreeRegion = (x:number,z:number) => {
+    if (input.environmentStyle !== 'mosaic-coast') return false;
+    const key=`${x}:${z}`,cached=coldRegionCache.get(key);
+    if(cached!==undefined)return cached;
+    const surface = surfaceAt(x,z);
+    // A crown belongs to the snow grove even when its trunk falls on a grass
+    // border cell. Centre-only classification left old oak/birch beside ice.
+    const cold=surface?.material === 'snow' || surface?.material === 'ice'
+      || mosaicRegionAt(x-coreX,z-coreZ,coreRadius) === '21'
+      || sampleMosaicTerrain(x-coreX,z-coreZ,sceneryClimateSeed,coreRadius).biome === 'glacier'
+      || [[-8,0],[8,0],[0,-8],[0,8],[-6,-6],[-6,6],[6,-6],[6,6]].some(([dx,dz])=>{
+        const material=surfaceAt(x+dx!,z+dz!)?.material;
+        return material==='snow'||material==='ice';
+      });
+    coldRegionCache.set(key,cold);return cold;
+  };
+  // The snow grove owns all cold-region trees. Don't retain old generic tree
+  // sites alongside the new tall spruce placement pass.
+  const treeSites = input.trees.filter(tree => !coldTreeRegion(tree.x,tree.z));
   if (!compact && input.normalBounds) {
     const farTreeBudget = Math.min(320, Math.floor(Math.sqrt(distantArea) / 8));
-    const farSites = distantLand.map(s=>({x:Math.round((s.minX+s.maxX)/2),z:Math.round((s.minZ+s.maxZ)/2)}))
-      .sort((a,b)=>hash(`${input.worldSeed}:far-tree:${a.x}:${a.z}`)-hash(`${input.worldSeed}:far-tree:${b.x}:${b.z}`));
+    const farSites = orderedBy(distantLand.map(s=>({x:Math.round((s.minX+s.maxX)/2),z:Math.round((s.minZ+s.maxZ)/2)})),
+      p=>hash(`${input.worldSeed}:far-tree:${p.x}:${p.z}`));
     let count=0;
     for (const site of farTreeBudget > 0 ? farSites : []) {
       const s=surfaceAt(site.x,site.z);
-      if (!s || s.water || (s.material && !['grass'].includes(s.material)) || occupied({...site,width:7,depth:7})
+      if (!s || s.water || coldTreeRegion(site.x,site.z) || (s.material && !['grass'].includes(s.material)) || occupied({...site,width:7,depth:7})
         || treeSites.some(t=>Math.hypot(t.x-site.x,t.z-site.z)<14) || !supports(site.x,site.z,3,3))continue;
       treeSites.push({...site,y:s.supportY,scale:1});
       if (++count >= farTreeBudget) break;
@@ -457,28 +482,38 @@ export function planWorldScenery(input: {
         ||!supports(site.x,site.z,3,3)||treeSites.some(t=>Math.hypot(t.x-site.x,t.z-site.z)<11))continue;
       treeSites.push({...site,y:s.supportY,scale:1});grove++;
     }
+    let taiga=0;
+    for(const site of landSites){
+      if(taiga>=65)break;
+      const s=surfaceAt(site.x,site.z);
+      if(!coldTreeRegion(site.x,site.z)||!s||s.water||s.material!=='snow'||occupied({...site,width:9,depth:9},3)
+        ||!supports(site.x,site.z,5,5)||treeSites.some(t=>Math.hypot(t.x-site.x,t.z-site.z)<11))continue;
+      treeSites.push({...site,y:s.supportY,scale:1});taiga++;
+    }
   }
   for (const [index, tree] of treeSites.entries()) {
     const x = Math.round(tree.x), z = Math.round(tree.z);
-    const poplar=input.environmentStyle==='mosaic-coast'&&sampleMosaicTerrain(x-coreX,z-coreZ,mosaicSeed(input.worldSeed),coreRadius).biome==='forest';
-    const footprint=poplar?9:5;
+    const mosaicBiome=input.environmentStyle==='mosaic-coast'?sampleMosaicTerrain(x-coreX,z-coreZ,mosaicSeed(input.worldSeed),coreRadius).biome:null;
+    const poplar=mosaicBiome==='forest',taiga=coldTreeRegion(x,z);
+    const footprint=poplar?9:taiga?7:5;
     if (objects.filter(o => o.role !== 'path').some(o => overlaps({ x, z, width: footprint+2, depth: footprint+2 }, o, 2))
       || protectedRects.some(r => overlaps({ x, z, width: footprint+2, depth: footprint+2 }, r, 2))
       || input.roads.some(r => Math.abs(r.x - x) < 5 && Math.abs(r.z - z) < 5)) continue;
     const support = surfaceAt(x, z);
     if (!support || support.water || (support.material && !['grass','snow'].includes(support.material)) || !supports(x,z,3,3)) continue;
     const biome = sceneryBiome(input.worldSeed, x, z, input.environmentStyle, support.supportY);
-    if (!poplar && biome === 'meadow' && hash(`${input.worldSeed}:open:${x}:${z}`) % 4 !== 0) continue;
+    if (!poplar && !taiga && biome === 'meadow' && hash(`${input.worldSeed}:open:${x}:${z}`) % 4 !== 0) continue;
     const species = poplar ? 'poplar'
-      : biome === 'highland' ? 'spruce' : biome === 'birch-grove' ? 'birch' : 'oak';
+      : taiga || biome === 'highland' ? 'spruce' : biome === 'birch-grove' ? 'birch' : 'oak';
     const variant=poplar?hash(`${input.worldSeed}:poplar:${Math.floor(x/24)}:${Math.floor(z/24)}`):index;
     objects.push({ id: `scenery:${input.worldSeed}:tree:${index}`, role: 'tree', x, y: support.supportY, z,
-      width: footprint, depth: footprint, ...sceneryTreeBlocks(species, variant) });
+      width: footprint, depth: footprint, ...sceneryTreeBlocks(species, variant, taiga) });
   }
   if (anchor) {
     const groveSites = [{ x: anchor.x - 16, z: anchor.z - 3 }, { x: anchor.x - 12, z: anchor.z - 13 },
       { x: anchor.x + 15, z: anchor.z + 2 }];
     for (const [index, site] of groveSites.entries()) {
+      if (coldTreeRegion(site.x,site.z)) continue;
       const support = surfaceAt(site.x, site.z);
       if (!support || support.water || (support.material && support.material!=='grass') || !supports(site.x,site.z,3,3) || objects.some(o => o.role !== 'path' && overlaps({ ...site, width: 7, depth: 7 }, o, 1))
         || protectedRects.some(r => overlaps({ ...site, width: 7, depth: 7 }, r, 2))
@@ -490,9 +525,11 @@ export function planWorldScenery(input: {
   // Compact mixed patches, with clustered species rather than isolated petals.
   const flowerKinds = ['poppy', 'dandelion', 'oxeye_daisy', 'cornflower'] as const;
   const meadowSites = landSites.filter(p => {
+    if (Math.hypot(p.x - coreX, p.z - coreZ) >= coreRadius + (compact ? 20 : 60)
+      || occupied({ ...p, width: 9, depth: 7 })) return false;
     const s = surfaceAt(p.x, p.z);
-    return s && !s.water && (!s.material || s.material==='grass') && supports(p.x,p.z,9,7) && sceneryBiome(input.worldSeed, p.x, p.z, input.environmentStyle, s.supportY) === 'meadow'
-      && Math.hypot(p.x - coreX, p.z - coreZ) < coreRadius + (compact ? 20 : 60) && !occupied({ ...p, width: 9, depth: 7 });
+    return s && !s.water && (!s.material || s.material==='grass')
+      && sceneryBiome(input.worldSeed, p.x, p.z, input.environmentStyle, s.supportY) === 'meadow' && supports(p.x,p.z,9,7);
   });
   const gardenSites = anchor ? [{ x: anchor.x - 15, z: anchor.z + 5 }, { x: anchor.x + 6, z: anchor.z + 14 }] : [];
   for (const site of meadowSites) {
@@ -502,7 +539,8 @@ export function planWorldScenery(input: {
   if (!compact && input.normalBounds) {
     const farGardenBudget = Math.min(24, Math.floor(Math.sqrt(distantArea)/110));
     let count=0;
-    for (const s of (farGardenBudget > 0 ? distantLand : []).slice().sort((a,b)=>hash(`${input.worldSeed}:far-garden:${a.minX}:${a.minZ}`)-hash(`${input.worldSeed}:far-garden:${b.minX}:${b.minZ}`))) {
+    for (const s of orderedBy(farGardenBudget > 0 ? distantLand : [],
+      p=>hash(`${input.worldSeed}:far-garden:${p.minX}:${p.minZ}`))) {
       if(s.material && s.material !== 'grass')continue;
       const site={x:Math.round((s.minX+s.maxX)/2),z:Math.round((s.minZ+s.maxZ)/2)};
       if(sceneryBiome(input.worldSeed,site.x,site.z,input.environmentStyle,s.supportY)!=='meadow'

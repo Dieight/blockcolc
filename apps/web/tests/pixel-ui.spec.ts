@@ -134,7 +134,7 @@ test('compact memory and pixel setup, goal, management and about preserve their 
   await page.getByRole('button',{name:'调整今日目标'}).click();
   const goal=page.getByRole('dialog',{name:'调整今日目标'});
   await expect(goal.locator('[data-pixel-icon="flag"]')).toBeVisible();
-  await goal.getByRole('button',{name:'增加目标轮数'}).click();
+  await goal.getByLabel('今日目标次数').press('ArrowRight');
   await expect(goal.getByLabel('今日目标次数')).toHaveValue('9');
   await page.screenshot({path:testInfo.outputPath('pixel-goal.png')});
   await goal.getByRole('button',{name:'关闭今日目标'}).click();
@@ -186,7 +186,7 @@ test('memory fills the workbench for both continuing and memorial buildings',asy
   }
 });
 
-for(const kind of ['finite','habit'] as const) test(`pixel plan sheets and paired entry buttons keep their real actions (${kind})`,async({page},info)=>{
+for(const kind of ['finite','habit'] as const) test(`pixel plan sheets and the sole portal entry keep their real actions (${kind})`,async({page},info)=>{
   test.setTimeout(75_000);
   await page.clock.setFixedTime(new Date('2026-10-03T08:00:00Z'));
   await page.setViewportSize({width:412,height:915});await page.goto('/');
@@ -196,19 +196,20 @@ for(const kind of ['finite','habit'] as const) test(`pixel plan sheets and paire
   await page.getByRole('checkbox',{name:'开启极简模式'}).check();
   await page.getByRole('button',{name:'计时',exact:true}).click();
   await page.locator('.minimal-exit').focus();await page.keyboard.press('Enter');
+  await expect(page.locator('.app-shell')).not.toHaveAttribute('data-mode-portal-active','true');
   const entries=page.locator('.workbench-heading-actions');
-  await expect(entries.locator('.task-switch-action')).toHaveCount(2);
+  await expect(entries.locator('.task-switch-action')).toHaveCount(1);
   const boxes=await entries.locator('.task-switch-action').evaluateAll(nodes=>nodes.map(node=>{const hit=node.getBoundingClientRect(),glyph=node.querySelector('svg')!.getBoundingClientRect();return {left:hit.left,right:hit.right,width:hit.width,height:hit.height,glyphLeft:glyph.left,glyphRight:glyph.right,glyphWidth:glyph.width,glyphHeight:glyph.height};}));
   for(const box of boxes)expect([box.width,box.height,box.glyphWidth,box.glyphHeight]).toEqual([44,44,22,22]);
-  expect(boxes[1]!.left).toBeGreaterThanOrEqual(boxes[0]!.right);
-  expect(boxes[1]!.glyphLeft-boxes[0]!.glyphRight).toBeLessThanOrEqual(16);
-  await page.screenshot({path:info.outputPath(`paired-entry-${kind}.png`)});
-  await entries.getByRole('button',{name:'切换当前工作',exact:true}).click();
+  await expect(entries.getByRole('button',{name:'切换当前工作',exact:true})).toHaveCount(0);
+  await page.screenshot({path:info.outputPath(`sole-portal-entry-${kind}.png`)});
+  await page.getByRole('navigation',{name:'主导航'}).getByRole('button',{name:'任务',exact:true}).click();
   await expect(page.locator('.tasks-page')).toBeVisible();
   await page.getByRole('button',{name:'计时',exact:true}).click();
   await page.getByRole('button',{name:'进入极简模式',exact:true}).click();
   await expect(page.locator('.minimal-clock-gesture')).toBeVisible();
   await page.locator('.minimal-exit').focus();await page.keyboard.press('Enter');
+  await expect(page.locator('.app-shell')).not.toHaveAttribute('data-mode-portal-active','true');
   await page.getByRole('button',{name:'调整本次计划',exact:true}).click();
   const sheet=page.getByRole('dialog',{name:kind==='finite'?'安排下一轮':'安排习惯专注'});
   await expect(sheet.locator('.sheet-heading [data-pixel-icon="clock"]')).toBeVisible();
@@ -248,14 +249,26 @@ test('pixel navigation and grouped goals retain readable values across themes an
   test.setTimeout(60_000);
   await page.goto('/');
   await page.getByRole('button', { name: '开始建造' }).click();
+  // Old goals above the new slider range remain intact until explicitly edited.
+  await page.evaluate(async () => {
+    const db = await new Promise<IDBDatabase>((resolve, reject) => { const r = indexedDB.open('blockcolc-v1'); r.onsuccess = () => resolve(r.result); r.onerror = () => reject(r.error); });
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction('appState', 'readwrite'), store = tx.objectStore('appState'), read = store.get('current');
+      read.onsuccess = () => { const record = read.result; record.state.dailyGoals = [{ date: new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai' }).format(new Date()), targetPomodoros: 56, enabled: true, reachedAt: null }]; record.revision++; store.put(record); };
+      tx.oncomplete = () => resolve(); tx.onerror = () => reject(tx.error);
+    }); db.close();
+  });
+  await page.reload();
   const navigation = page.getByRole('navigation', { name: '主导航' });
   await expect(navigation.locator('[data-pixel-icon]')).toHaveCount(4);
   await page.getByRole('button', { name: '任务', exact: true }).click();
   await page.getByRole('button', { name: '调整今日目标' }).click();
   const sheet = page.getByRole('dialog', { name: '调整今日目标', exact: true });
   const input = sheet.getByLabel('今日目标次数');
-  await input.fill('56');
-  await input.blur();
+  await expect(input).toHaveValue('20');
+  await expect(sheet).toContainText('原目标 56 轮保留');
+  await sheet.getByRole('switch').click(); await expect(input).toHaveValue('0');
+  await expect(sheet.getByRole('switch')).toBeEnabled(); await sheet.getByRole('switch').click();
   await expect(sheet).toContainText('今日已完成 0 / 56 轮');
   await sheet.getByRole('button', { name: '关闭今日目标' }).click();
   const goal = page.getByRole('progressbar', { name: '今日 0 / 56 轮', exact: true });

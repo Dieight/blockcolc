@@ -138,7 +138,7 @@ test.describe('packaged local blueprint catalog', () => {
       if (!catalog || !catalog.delete(blueprintId)) throw new Error('Expected local blueprint resolver entry');
     }, large.id);
     await page.getByRole('button', { name: '设置', exact: true }).click();
-    await page.getByRole('group', { name: '聚落环境' }).getByRole('button', { name: '经典空岛' }).click();
+    await page.getByRole('group', { name: '聚落环境' }).getByRole('button', { name: '空岛' }).click();
     await page.getByRole('button', { name: '计时', exact: true }).click();
     const canvas = page.getByLabel('项目建筑世界');
     await expect(canvas).toBeVisible();

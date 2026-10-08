@@ -21,7 +21,7 @@ test('prints fog and camera diagnostics', async ({ page }) => {
   // Classic island must keep its old fog range (its terrain extent is smaller
   // than the settlement framing).
   await page.getByRole('button', { name: '设置', exact: true }).click();
-  await page.getByRole('group', { name: '聚落环境' }).getByRole('button', { name: '经典空岛' }).click();
+  await page.getByRole('group', { name: '聚落环境' }).getByRole('button', { name: '空岛' }).click();
   await page.getByRole('button', { name: '计时', exact: true }).click();
   await expect(canvas).toHaveAttribute('data-environment-style', 'classic-island');
   await page.waitForTimeout(800);
