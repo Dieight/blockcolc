@@ -1,4 +1,5 @@
 import { holidaysOnDate } from './holidays.js';
+import { copyDomainState } from './state-copy.js';
 import {
   assertISODate,
   assertValidTimeZone,
@@ -25,7 +26,8 @@ import type {
 export function createInitialState(timeZone = "UTC", restWeekdays: number[] = [0, 6]): DomainState {
   assertCalendar(timeZone, restWeekdays);
   return {
-    schemaVersion: 13,
+    schemaVersion: 14,
+    quickNotes: [],
     projects: [],
     habitBuildings: [],
     activeProjectId: null,
@@ -53,7 +55,21 @@ export function createInitialState(timeZone = "UTC", restWeekdays: number[] = [0
 
 export function execute(state: DomainState, command: DomainCommand, clock: Clock): CommandResult {
   try {
-    const result = handle(structuredClone(state), command, clock);
+    // These exact lifecycle states perform no mutation. Validate the clock
+    // even on this path, and complete an elapsed session before deduplicating.
+    if (command.type === 'RecordFocusBackgrounded' || command.type === 'RecordFocusForegrounded' || command.type === 'GrantFocusLifecycleExemption') {
+      const now = validNow(clock);
+      const active = state.activeFocusSession;
+      const noop = command.type === 'GrantFocusLifecycleExemption'
+        ? !active || active.integrity.exemptionPending
+        : !active || (now.getTime() < Date.parse(active.endsAt) && (command.type === 'RecordFocusBackgrounded'
+          ? active.integrity.backgroundedAt !== null
+          : active.integrity.backgroundedAt === null || active.integrity.backgroundReason === null));
+      if (noop) return ok(state, []);
+      const result = handle(copyDomainState(state), command, { now: () => now });
+      return result.ok ? result : { ...result, state };
+    }
+    const result = handle(copyDomainState(state), command, clock);
     return result.ok ? result : { ...result, state };
   } catch (error) {
     if (isDomainException(error)) return fail(state, error.domainCode, error.message);
@@ -89,6 +105,25 @@ export function completedPomodorosOn(state: DomainState, date: string): number {
 function handle(state: DomainState, command: DomainCommand, clock: Clock): CommandResult {
   const now = validNow(clock).toISOString();
   switch (command.type) {
+    case 'AddQuickNote': {
+      requireNonBlank(command.noteId, 'noteId');
+      requireNonBlank(command.text, 'text');
+      if (command.noteId.length > 128 || command.text.trim().length > 200 || state.quickNotes.length >= 100) return fail(state, 'INVALID_INPUT', 'At most 100 notes, 200 characters each');
+      if (state.quickNotes.some(note => note.id === command.noteId)) return fail(state, 'DUPLICATE_ID', 'Duplicate note');
+      state.quickNotes.push({ id: command.noteId, text: command.text.trim(), completed: false, createdAt: now });
+      return ok(state, [{type:'QuickNotesChanged'}]);
+    }
+    case 'SetQuickNoteCompleted': {
+      const note = state.quickNotes.find(item => item.id === command.noteId);
+      if (!note || typeof command.completed !== 'boolean') return fail(state, 'INVALID_INPUT', 'Note not found');
+      note.completed = command.completed;
+      return ok(state, [{type:'QuickNotesChanged'}]);
+    }
+    case 'DeleteQuickNote': {
+      if (!state.quickNotes.some(note => note.id === command.noteId)) return fail(state, 'INVALID_INPUT', 'Note not found');
+      state.quickNotes = state.quickNotes.filter(note => note.id !== command.noteId);
+      return ok(state, [{type:'QuickNotesChanged'}]);
+    }
     case "CreateProject": {
       if (state.activeFocusSession !== null) return fail(state, "ACTIVE_FOCUS_PREVENTS_PROJECT_SWITCH", "Cancel or complete active focus before creating another project");
       if (activeProjectHasUnreportedFocus(state)) return fail(state, "UNREPORTED_FOCUS_PREVENTS_PROJECT_SWITCH", "Report completed focus progress before creating another project");

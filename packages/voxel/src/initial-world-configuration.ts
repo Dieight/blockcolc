@@ -6,7 +6,7 @@ export interface InitialWorldConfigurationPorts<Worlds, Pack, Staged, Previous> 
   isCurrent(): boolean;
   capture(): Previous;
   /** Adopt the world and staged pack together, then perform exactly one rebuild. */
-  commit(worlds: Worlds, staged: Staged): void;
+  commit(worlds: Worlds, staged: Staged): void | Promise<void>;
   /** Restore previous state if commit/rebuild fails. */
   rollback(previous: Previous, staged: Staged): void;
   disposeStaged(staged: Staged): void;
@@ -30,7 +30,7 @@ export async function initializeWorldConfiguration<Worlds, Pack, Staged, Previou
   }
   const previous = ports.capture();
   try {
-    ports.commit(worlds, staged);
+    await ports.commit(worlds, staged);
   } catch (error) {
     try {
       ports.rollback(previous, staged);

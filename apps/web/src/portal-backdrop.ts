@@ -8,7 +8,7 @@ export function registerPortalFrame(canvas: HTMLCanvasElement, capture: (target:
 
 /** Freeze the actual minimal view before changing the resident canvas layout. */
 export function capturePortalBackdrop(root: HTMLElement) {
-  const source = root.querySelector<HTMLCanvasElement>('canvas[aria-label="项目建筑世界"]');
+  const source = root.querySelector<HTMLCanvasElement>('canvas[data-world-canvas]');
   const capture = source && captures.get(source);
   if (!source || !capture) throw new Error('World presentation is unavailable');
   const bitmap = document.createElement('canvas');

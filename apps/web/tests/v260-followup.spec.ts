@@ -97,8 +97,11 @@ test('task disclosure keeps both icon centers, portal is the only timer action a
   const bounds=()=>disclosure.evaluate(button=>{const parent=button.getBoundingClientRect();return [...button.querySelectorAll(':scope > svg')].map(icon=>{const r=icon.getBoundingClientRect();return{x:r.x-parent.x,y:r.y-parent.y,width:r.width,height:r.height,transform:getComputedStyle(icon).transform};});});
   const initial=await bounds();await disclosure.click();await page.waitForTimeout(1100);
   expect(await bounds()).toEqual(initial);await expect(disclosure).toHaveAttribute('aria-expanded','true');
-  expect(await disclosure.locator('.pixel-disclosure-stem').evaluate(e=>new DOMMatrix(getComputedStyle(e).transform).d)).toBe(0);
+  const arrow=disclosure.locator('.pixel-disclosure');
+  await expect(arrow).toHaveAttribute('data-disclosure-turns','180');
+  expect(await arrow.evaluate(e=>getComputedStyle(e).rotate)).toBe('180deg');
   await disclosure.click();await page.waitForTimeout(1100);expect(await bounds()).toEqual(initial);
+  await expect(arrow).toHaveAttribute('data-disclosure-turns','360');
   const edit=page.getByRole('button',{name:'调整今日目标',exact:true});
   const editMotion=await edit.evaluate(button=>{(button as HTMLButtonElement).click();return button.querySelector('svg')!.getAnimations().map(a=>(a.effect as KeyframeEffect).getKeyframes());});
   expect(editMotion[0]?.some(k=>String(k.transform).includes('rotate'))).toBe(true);await page.getByRole('button',{name:'关闭今日目标',exact:true}).click();
@@ -118,11 +121,16 @@ test('outline switches retain the world, startup drains its queue, heatmap light
   await page.getByRole('button',{name:'设置',exact:true}).click();
   const outlines=page.getByRole('group',{name:'施工轮廓',exact:true});
   for(const [name,value] of [['全部','all'],['关闭','off'],['当前','current']]){
+    const prior=await canvas.getAttribute('data-construction-outline-visibility');
     await outlines.getByRole('button',{name,exact:true}).click();
-    await expect(page.locator('.app-shell')).not.toHaveAttribute('data-world-preparing','true');
+    await expect(outlines.getByRole('button',{name,exact:true})).toHaveAttribute('aria-pressed','true');
+    await expect(page.locator('.boot-page')).toHaveCount(0);
+    await expect(canvas).toHaveAttribute('data-construction-outline-visibility',prior!);
+    await page.getByRole('button',{name:'计时',exact:true}).click();await waitForPreparedWorld(page);
     await expect(canvas).toHaveAttribute('data-construction-outline-visibility',value);
     await expect(canvas).toHaveAttribute('data-renderer-generation',initial.generation!);await expect(canvas).toHaveAttribute('data-world-rebuild-count',initial.rebuilds!);
     const count=Number(await canvas.getAttribute('data-planned-outline-voxel-count'));expect(value==='off'?count===0:count>0).toBe(true);
+    await page.getByRole('button',{name:'设置',exact:true}).click();
   }
   await page.getByRole('button',{name:'统计',exact:true}).click();await page.emulateMedia({reducedMotion:'no-preference'});
   const chart=page.locator('.focus-calendar-chart');await expect(chart).toHaveClass(/is-revealed/);

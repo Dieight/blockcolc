@@ -1,7 +1,9 @@
+import { t, useI18n } from '../i18n';
 import { useEffect, useId, useRef, useState, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 import { holidayEmblemsOnDate } from '@blockcolc/domain';
 import { useBackLayer } from '../back-layer';
+import {PixelClose} from './PixelIcon';
 
 // Original, integer-grid sprites. No emoji font or downloaded festival artwork.
 const SPRITES:Record<string,string[]>={
@@ -65,11 +67,13 @@ const SYMBOLS:Record<string,[string,string,string,string]>={
  '常青树':['tree','#699269','#afbf79','#927457'],'铃铛':['bell','#e2bb61','#f5daa0','#bb9252'],'彩色小伞':['umbrella','#dd798e','#e7c360','#729fba'],'鼓':['drum','#bf8569','#e9dab1','#777c71'],
 };
 export function HolidayPixelGlyph({emblem}:{emblem:string}){
+  useI18n();
  const [sprite,a,b,c]=SYMBOLS[emblem]!;const rows=SPRITES[sprite]!;
  return <svg viewBox="0 0 12 12" className="holiday-pixel" aria-hidden="true" shapeRendering="crispEdges">{rows.flatMap((row,y)=>[...row].flatMap((cell,x)=>cell==='.'?[]:<rect key={`${x}:${y}`} x={x+.5} y={y+(12-rows.length)/2} width="1" height="1" fill={{a,b,c}[cell as 'a'|'b'|'c']}/>))}</svg>;
 }
 
 export function HolidayEmblem({date,slot}:{date:string;slot:0|1|2}){
+  useI18n();
  const entry=holidayEmblemsOnDate(date)[slot];const [open,setOpen]=useState(false);
  const button=useRef<HTMLButtonElement>(null),popover=useRef<HTMLDivElement>(null);const id=useId();
  const [position,setPosition]=useState<CSSProperties>({});
@@ -87,7 +91,7 @@ export function HolidayEmblem({date,slot}:{date:string;slot:0|1|2}){
  },[open]);
  if(!entry)return null;
  return <span className="holiday-emblem" data-holiday={entry.holiday.id} onPointerDown={e=>e.stopPropagation()} onPointerUp={e=>e.stopPropagation()}>
-  <button ref={button} type="button" className="holiday-emblem-button" aria-label={`${entry.holiday.name} · ${entry.emblem}`} aria-expanded={open} aria-controls={open?id:undefined} onClick={()=>setOpen(v=>!v)}><HolidayPixelGlyph emblem={entry.emblem}/></button>
-  {open&&createPortal(<div ref={popover} id={id} className="holiday-intro" role="dialog" aria-label={`${entry.holiday.name}介绍`} style={position}><div><strong>{entry.holiday.name}</strong><button type="button" aria-label="关闭节日介绍" onClick={close}>×</button></div><p>{entry.holiday.description}</p></div>,document.body)}
+  <button ref={button} type="button" className="holiday-emblem-button" aria-label={`${t(entry.holiday.name)} · ${t(entry.emblem)}`} aria-expanded={open} aria-controls={open?id:undefined} onClick={()=>setOpen(v=>!v)}><HolidayPixelGlyph emblem={entry.emblem}/></button>
+  {open&&createPortal(<div ref={popover} id={id} className="holiday-intro" role="dialog" aria-label={t("{0}介绍", t(entry.holiday.name))} style={position}><div><strong>{t(entry.holiday.name)}</strong><button type="button" aria-label={t("关闭节日介绍")} onClick={close}><PixelClose size={16}/></button></div><p>{t(entry.holiday.description)}</p></div>,document.body)}
  </span>;
 }

@@ -9,7 +9,7 @@ const expectedImports = [
   'tokens.css', 'base.css', 'pixel-ui.css', 'foundation.css', 'settings.css', 'workbench.css',
   'tasks-stats.css', 'setup.css', 'loading-scenes.css', 'world.css', 'minimal-mode.css', 'theme.css',
   'focus-report.css', 'building-memory.css', 'glass-overlays.css', 'about.css', 'focus-plan.css', 'world-debug.css',
-  'holidays.css', 'pixel-trial.css', 'navigation-motion.css', 'mode-portal.css', 'focus-surfaces.css', 'physical-slider.css', 'onboarding.css',
+  'holidays.css', 'pixel-trial.css', 'navigation-motion.css', 'mode-portal.css', 'focus-surfaces.css', 'physical-slider.css', 'onboarding.css', 'followup.css',
 ];
 
 describe('style architecture', () => {

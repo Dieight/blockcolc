@@ -27,6 +27,7 @@
     "v256-sky-seam.diagnostic.spec.ts",
     "v260-review.diagnostic.spec.ts",
     "void-probe.spec.ts",
+    "world-cache-benchmark.diagnostic.spec.ts",
     "world-visual-audit.diagnostic.spec.ts"
   ],
   "suites": [
@@ -101,6 +102,10 @@
         "world-coordinate-setting.spec.ts",
         "world-followup-f05-f07.spec.ts",
         "world-presentation.spec.ts",
+        "v270-performance-and-ui.spec.ts",
+        "v270-followup.spec.ts",
+        "v270-feedback.spec.ts",
+        "v270-feedback75.spec.ts",
         "world-shadow-cache.spec.ts",
         "world-weather-lifecycle.spec.ts",
         "world-weather-coverage.spec.ts",

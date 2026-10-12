@@ -15,14 +15,18 @@
 .boot-scene[data-paused='true'] :is(.tomato-sprout,.tomato-canopy,.tomato-green-layer,.tomato-ripe-layer,.tomato-fall,.boot-windmill-rotor){animation-play-state:paused}
 @keyframes tomato-sprout{0%{opacity:1}100%{opacity:0}}
 @keyframes tomato-canopy{0%{opacity:0}100%{opacity:1}}
-@keyframes tomato-green{0%{opacity:1}30%,100%{opacity:0}}
-@keyframes tomato-ripe{0%{opacity:0}30%{opacity:1}55%,100%{opacity:0}}
+@keyframes tomato-green{0%,12%{opacity:0}13%,38%{opacity:1}39%,100%{opacity:0}}
+@keyframes tomato-ripe{0%,38%{opacity:0}39%{opacity:1}59%,100%{opacity:0}}
 @keyframes tomato-fall{
-  0%,54.999%{opacity:0;transform:translate(0,0)}
-  55%{opacity:1;transform:translate(0,0);animation-timing-function:cubic-bezier(.42,0,1,1)}
+  0%,58.999%{opacity:0;transform:translate(0,0)}
+  59%{opacity:1;transform:translate(0,0);animation-timing-function:cubic-bezier(.42,0,1,1)}
   77%{opacity:1;transform:translate(-5px,26px);animation-timing-function:cubic-bezier(0,.65,.35,1)}
   82.5%{opacity:1;transform:translate(-6px,19px);animation-timing-function:cubic-bezier(.45,0,1,1)}
   88%,92%{opacity:1;transform:translate(-7px,26px)}
-  97%,100%{opacity:0;transform:translate(-7px,26px)}
+  94%,100%{opacity:0;transform:translate(-7px,26px)}
 }
+.boot-house-block{opacity:0;animation:pixel-house-build 4.8s steps(1,end) infinite}
+.boot-scene[data-paused='true'] .boot-house-block{animation-play-state:paused}
+@keyframes pixel-house-build{0%{opacity:0}8%,80%{opacity:1}100%{opacity:0}}
+@media(prefers-reduced-motion:reduce){.boot-house-block{animation:none;opacity:1}}
 @media(prefers-reduced-motion:reduce){.boot-tomato :is(.tomato-sprout,.tomato-canopy,.tomato-green-layer,.tomato-ripe-layer,.tomato-fall){animation:none}.tomato-sprout,.tomato-green-layer,.tomato-fall{opacity:0}.tomato-canopy,.tomato-ripe-layer{opacity:1}}

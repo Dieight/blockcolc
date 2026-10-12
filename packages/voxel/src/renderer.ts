@@ -7,9 +7,11 @@ import { mosaicColdDirection, mosaicSeed } from './mosaic-terrain';
 import { createMosaicSeabed } from './mosaic-seabed';
 import { detachTerrainWaterSurface } from './terrain-water-surface';
 import { terrainGeometryBytes, TERRAIN_CACHE_BYTES } from './terrain-cache';
+import { restoreWorldSceneCache, sceneryGenerationInputKey, WORLD_SCENE_CACHE_REVISION, type WorldSceneCachePort } from './world-scene-cache';
 import type { WorldColorAdjustment } from './world-color-adjustment';
 import { cloudDisplacement, patchCloudMotion } from './cloud-motion';
 import { cloudDrawCountForQuality, cloudGroupsForBudget, type CloudGroup } from './cloud-layout';
+import { cloudVoxels } from './cloud-shape';
 import { patchWeatherWaterMaterial } from './water-weather';
 import { FrameRequestScheduler, PointerOwnership, type ReleasedPointer } from "./input-frame-scheduler";
 import { cameraZoomBounds, clampCameraDistance, openingZoomDistance } from "./camera-zoom";
@@ -125,6 +127,7 @@ import {
 import { blockOcclusionFor, createLocalOcclusionField, type LocalOcclusionField } from "./local-occlusion";
 import { chunkSceneryTrees } from './scenery-chunks';
 import { SceneryInstanceCulling } from './scenery-instance-culling';
+import { isReefSolid, staticVoxelSurface } from './static-voxel-surface';
 import { compactTerrainRenderMesh } from './terrain-render-mesh';
 import { materialResponse, materialResponseForMaterialId } from "./material-response";
 import {
@@ -157,6 +160,8 @@ import {
   planOriginalStaticShapeBatches,
 } from "./original-static-shapes";
 import { initializeWorldConfiguration } from "./initial-world-configuration";
+import { buildingCpuKey, prepareBuildingCpuRecipe, createBuildingCpuCache, captureCpuGeometry, restoreCpuGeometry,
+  type BuildingCpuCachePort, type BuildingCpuRecipe, type OriginalCpuPlan } from './building-cpu-cache';
 import { ambientEnvironmentDecorations, naturalDecorationParts, naturalTreeMushroomCandidates, NATURAL_SHELF_MUSHROOM_RENDER_SCALE, visibleNaturalTreeCount, type NaturalDecorationKind, type NaturalDecorationLod, type NaturalDecorationPart } from "./natural-decorations";
 import { planWorldScenery, sceneryLod, sceneryTreeBlocks, sceneryGeometryLayers, surfaceSampler, type SceneryObject } from './scenery';
 import { waitForGpuCompletion } from './gpu-ready';
@@ -237,6 +242,25 @@ interface RainAnimation extends PrecipitationAnimation {
 }
 
 type SnowAnimation = PrecipitationAnimation;
+
+/** Numeric-only opt-in samples. No world identity or product text. */
+export interface RendererFramePerformance {
+  atMs: number;
+  preparationMs: number;
+  renderMs: number;
+  adaptiveMs: number;
+  qualityBefore: QualityTier;
+  qualityAfter: QualityTier;
+  interacting: boolean;
+  refreshedShadow: boolean;
+  colorCalls: number;
+  colorTriangles: number;
+  interactionSamples: number;
+  interactionP95Ms: number | null;
+  programCountBefore: number;
+  programCountAfter: number;
+  resizeCount: number;
+}
 
 export interface RendererDiagnostics {
   qualityTier: QualityTier;
@@ -462,7 +486,7 @@ export interface VoxelRenderer {
    * the full-canvas center. Each value is that band's size as a fraction of the
    * viewport (0 = no band on that side).
    */
-  setImmersiveBandFraction(bottomFraction: number, rightFraction: number): void;
+  setImmersiveBandFraction(bottomFraction: number, rightFraction: number, framingBottom?:number, framingRight?:number): void;
   /** Presentation-only GPU scattering; never changes text, input or world geometry. */
   setGlassSurface(preference: GlassSurfacePreference | null): void;
   setWorldColorAdjustment(preference: WorldColorAdjustment | null): void;
@@ -689,9 +713,16 @@ export function createVoxelRenderer(
     environmentStyle?: TerrainEnvironmentStyle;
     worldSeed?: string;
     terrainGenerationVersion?: TerrainGenerationVersion;
+    /** Derived CPU layout only; the host owns optional storage/idle scheduling. */
+    worldSceneCache?: WorldSceneCachePort;
+    buildingCpuCache?: BuildingCpuCachePort;
+    /** Yield between cold scene stages/buildings so the clock remains usable. */
+    progressiveInitialization?: boolean;
     onSelectProject?: (projectId: string) => void;
     /** Explicit diagnostic builds only; includes CPU submission, not GPU elapsed time. */
-    onPerformanceFrame?: (cpuMs: number) => void;
+    onPerformanceFrame?: (cpuMs: number, frame: RendererFramePerformance) => void;
+    /** Per-run diagnostic only: retain the selected tier without saving preferences. */
+    performanceHoldQuality?: () => boolean;
     /** Diagnostic: a light tap reports the terrain cell under the pointer. */
     onPickTerrain?: (position: { x: number; y: number; z: number }) => void;
     /** Previews keep the camera fitted to the building while terrain extends past the viewport. */
@@ -928,6 +959,7 @@ export function createVoxelRenderer(
     ? weatherForLocalDate(localDateForDate(initialDate), options.environmentStyle === 'ocean-island')
     : weatherForExternalOverride(localDateForDate(initialDate), initialWeather);
   const preparedFrameWaiters = new Set<(ready: boolean) => void>();
+  const cancelPreparedFrames=()=>{for(const resolve of preparedFrameWaiters)resolve(false);preparedFrameWaiters.clear();};
   let initialPresentationPreparing = false;
   let initialPreparationRenderCount = 0;
   let lightingTransition: { from: SunState; startedAtMs: number; durationMs: number } | null = null;
@@ -954,6 +986,7 @@ export function createVoxelRenderer(
   let qualityProfile = QUALITY_PROFILES[qualityTier];
   let adaptiveQualityCap: QualityTier = "high";
   const fallbackOcclusionMeshes = new Map<THREE.InstancedMesh, { voxels: BlueprintV1["voxels"]; field: LocalOcclusionField; occlusions: Float64Array }>();
+  const staticSurfaceOcclusionMeshes = new Map<THREE.Mesh, { data: ReturnType<typeof staticVoxelSurface>; occlusions: Float64Array }>();
   const sceneryInstanceCulling = new SceneryInstanceCulling();
   let interactionFrameDurations: number[] = [];
   let interactionTotalDurations: number[] = [];
@@ -1034,6 +1067,19 @@ export function createVoxelRenderer(
   let terrainGenerationCache: { key: string; data: MergedGeometryData; renderMesh?: ReturnType<typeof compactTerrainRenderMesh> } | null = null;
   let terrainMeshResourcePack: VoxelResourcePack | null = null;
   let sceneryPlanCache: { key:string; plan:ReturnType<typeof planWorldScenery> } | null = null;
+  let sceneCacheRead = false;
+  let buildingCacheRead=false;
+  const buildingCpuCache=createBuildingCpuCache();
+  let currentBuildingRecipe:BuildingCpuRecipe|null=null;
+  let currentBuildingIndices:Map<BlueprintVoxel,number>|null=null;
+  let buildingCpuDirty=false;
+  let buildingCpuHits=0,buildingCpuMisses=0,originalCpuHits=0;
+  type LiveBuilding={key:string;root:THREE.Group;points:{point:EmissivePoint;color:number}[];
+    emissives:TrackedEmissiveMaterial[];outlines:typeof constructionOutlines;
+    occlusion:[THREE.InstancedMesh,{voxels:BlueprintV1['voxels'];field:LocalOcclusionField;occlusions:Float64Array}][];
+    stats:ReturnType<typeof buildingCounters>};
+  const liveBuildings=new Map<string,LiveBuilding>();let buildingMeshHits=0;
+  let persistedSceneSignature: string | null = null;
   let firstNonemptyFrameMs: number | null = null;
   let qualityFramePendingSinceMs: number | null = null;
   let pointerMoveCount = 0;
@@ -1189,6 +1235,7 @@ export function createVoxelRenderer(
   const settlementProjected = new THREE.Vector3();
   /** V21: fraction of the viewport covered by the immersive bottom band (0 = none). */
   let immersiveBottomBand = 0;
+  let immersiveFramingBottom=0,immersiveFramingRight=0;
   /** V21: fraction of the viewport covered by the immersive right-hand column (0 = none). */
   let immersiveRightBand = 0;
   const pointerOwnership = new PointerOwnership(2_500);
@@ -1419,6 +1466,8 @@ export function createVoxelRenderer(
   let totalRenderedFrames = 0;
   function renderFrame(frameStarted: number): boolean {
     const probeFrameStarted = options.onPerformanceFrame ? performance.now() : 0;
+    const probeQualityBefore = qualityTier;
+    const probeProgramsBefore = options.onPerformanceFrame ? renderer.info.programs?.length ?? 0 : 0;
     if(initialPresentationPreparing)canvas.dataset.initialPreparationRenderCount=String(++initialPreparationRenderCount);
     lastWeatherFrameStartedMs = frameStarted;
     if (rainAnimation !== null || snowAnimation !== null) lastAmbientFrameStartedMs = frameStarted;
@@ -1564,7 +1613,11 @@ export function createVoxelRenderer(
       if (interactionTotalDurations.length > 60) interactionTotalDurations.shift();
       interactionTotalMaxMs = Math.max(interactionTotalMaxMs, totalElapsed);
     } else lastInteractionAnimationFrameMs = null;
+    const adaptiveStarted = options.onPerformanceFrame ? performance.now() : 0;
+    const probeInteractionSamples = interactionFrameDurations.length;
+    const probeInteractionP95 = options.onPerformanceFrame ? interactionP95() : null;
     maybeDowngradeQuality(refreshedShadow);
+    const adaptiveMs = options.onPerformanceFrame ? performance.now() - adaptiveStarted : 0;
     if (pulseActive) {
       renderer.toneMappingExposure /= 1 + pulseGlow * 0.35;
       for (const entry of emissiveMaterials) entry.material.emissiveIntensity /= 1 + pulseGlow * 0.8;
@@ -1572,7 +1625,13 @@ export function createVoxelRenderer(
       constructionPulseUntilMs = 0;
       updateLighting(new Date());
     }
-    if (options.onPerformanceFrame) options.onPerformanceFrame(performance.now() - probeFrameStarted);
+    if (options.onPerformanceFrame) options.onPerformanceFrame(performance.now() - probeFrameStarted, {
+      atMs: probeFrameStarted, preparationMs: started - probeFrameStarted, renderMs: elapsed, adaptiveMs,
+      qualityBefore: probeQualityBefore, qualityAfter: qualityTier, interacting, refreshedShadow,
+      colorCalls: colorRender.calls, colorTriangles: colorRender.triangles,
+      interactionSamples: probeInteractionSamples, interactionP95Ms: probeInteractionP95,
+      programCountBefore: probeProgramsBefore, programCountAfter: renderer.info.programs?.length ?? 0, resizeCount,
+    });
     return cameraStillMoving;
   }
 
@@ -1657,6 +1716,10 @@ export function createVoxelRenderer(
   }
 
   function rebuild(worlds: readonly WorldSnapshot[], previousWorlds: readonly WorldSnapshot[] = lastWorlds): void {
+    for (const _ of rebuildSteps(worlds,previousWorlds)) { /* Ordinary updates remain atomic. */ }
+  }
+  function* rebuildSteps(worlds: readonly WorldSnapshot[], previousWorlds: readonly WorldSnapshot[]): Generator<void> {
+    buildingCpuHits=0;buildingCpuMisses=0;originalCpuHits=0;buildingMeshHits=0;
     canvas.dataset.sceneryWreckProjection = 'null';
     if (openingReveal) finishOpeningReveal("cancelled");
     if (environmentReveal) finishEnvironmentReveal(true);
@@ -1670,10 +1733,14 @@ export function createVoxelRenderer(
     };
     const preserveCameraView = positionedWorlds.length > 0 && sameSpatialWorldLayout(previousWorlds, worlds);
     sceneRevision += 1;
+    // Retain eligible completed mesh subtrees before retiring scenery/rewards.
+    // Changed progress/condition/placement still replaces that building only.
+    for(const entry of liveBuildings.values())buildingGroup.remove(entry.root);
     constructionOutlines.length=0;
     clearGroup(buildingGroup);
     sceneryInstanceCulling.clear();
     fallbackOcclusionMeshes.clear();
+    staticSurfaceOcclusionMeshes.clear();
     cutoutShadowMeshes.clear();
     blockEntityDisplay.reset();
     // A rebuild invalidates every per-frame animation state whose meshes just got
@@ -1776,6 +1843,7 @@ export function createVoxelRenderer(
     );
     canvas.dataset.importedDecorationCount=String(importedDecorations.length);
     finishRebuildStage("layout");
+    yield;
     const terrainPads = buildingPads;
     const terrainMinimumRadius = previewMode ? { x: 64, z: 64 } : undefined;
     const terrainOptions = {
@@ -1818,6 +1886,7 @@ export function createVoxelRenderer(
     positionedDecorations=importedDecorations;
     canvas.dataset.rewardGroundSupport=JSON.stringify(importedDecorations.map(d=>({id:d.rewardId,x:d.worldPosition.x,y:d.worldPosition.y,z:d.worldPosition.z})));
     finishRebuildStage("terrainGeneration");
+    yield;
     canvas.dataset.environmentStyle = environmentStyle;
     canvas.dataset.terrainGenerationVersion = String(terrainData.terrainGenerationVersion);
     canvas.dataset.terrainCellCount = String(terrainData.cellCount);
@@ -1847,6 +1916,7 @@ export function createVoxelRenderer(
     }
     canvas.dataset.terrainMeshCacheHit=String(terrainMeshCacheHit);
     finishRebuildStage("terrainMesh");
+    yield;
     const roadGroundHeightAt = (x: number, z: number) => supportGroundHeightAt(
       x,
       z,
@@ -1865,11 +1935,31 @@ export function createVoxelRenderer(
     const emissivePoints: EmissivePoint[] = [];
     addRoadLamps(roads, positioned, emissivePoints, roadGroundHeightAt);
     finishRebuildStage("roadsAndLamps");
-    for (const world of positioned) addBuilding(world, emissivePoints, revealPlans.get(world.projectId) ?? null);
-    for (const decoration of importedDecorations) addImportedDecoration(decoration, emissivePoints,decorationFoundationVoxels(decoration,rewardSupport));
+    for (const world of positioned) { addBuilding(world, emissivePoints, revealPlans.get(world.projectId) ?? null); yield; }
+    const currentProjects=new Set(positioned.map(world=>world.projectId));
+    for(const [id,entry] of liveBuildings)if(!currentProjects.has(id)){retireBuildingRoot(entry.root);liveBuildings.delete(id);}
+    for (const decoration of importedDecorations) { addImportedDecoration(decoration, emissivePoints,decorationFoundationVoxels(decoration,rewardSupport)); yield; }
     finishRebuildStage("buildings");
     if (sceneryEnabled) addWorldScenery(positioned, roads, importedDecorations, environmentStyle, terrainData, terrainKey);
+    yield;
     finishRebuildStage("naturalDecorations");
+    canvas.dataset.buildingCpuCacheHits=String(buildingCpuHits);
+    canvas.dataset.buildingCpuCacheMisses=String(buildingCpuMisses);
+    canvas.dataset.originalGeometryCacheHits=String(originalCpuHits);
+    canvas.dataset.buildingMeshCacheHits=String(buildingMeshHits);
+    if(buildingCpuDirty&&options.buildingCpuCache&&!previewMode){
+      try{options.buildingCpuCache.write(buildingCpuCache.snapshot());buildingCpuDirty=false;}catch{/* Optional cache only. */}
+    }
+    if (options.worldSceneCache && terrainGenerationCache && !previewMode) {
+      const scenery = sceneryEnabled ? sceneryPlanCache : null;
+      const signature = `${terrainGenerationCache.key}|${scenery?.key ?? ''}`;
+      if (persistedSceneSignature !== signature) {
+        try {
+          options.worldSceneCache.write({ revision: WORLD_SCENE_CACHE_REVISION, terrain: terrainGenerationCache, scenery });
+          persistedSceneSignature = signature;
+        } catch { /* Optional derived storage never fails a world/command. */ }
+      }
+    }
     activeResourcePack?.atlas.pages.forEach((page, pageIndex) => {
       const controller = atlasAnimationControllers[pageIndex];
       if (page.animationLookup && controller) controller.setActiveTextureIndices(referencedAnimatedTextureIndices.get(pageIndex) ?? []);
@@ -2138,6 +2228,38 @@ export function createVoxelRenderer(
   }
 
   function addBuilding(world: PositionedWorldSnapshot, emissivePoints: EmissivePoint[], reveal: { previousCompletionBasisPoints: number } | null): void {
+    const completion=Math.max(0,Math.min(10_000,world.buildingCompletionBasisPoints));
+    const key=buildingCpuKey(world.blueprint,world.projectId,completion,world.buildingConditionBasisPoints);
+    const meshKey=JSON.stringify([key,world.worldPosition,world.blueprintOffset,world.rotationY,world.isActive,world.decorationDates,constructionOutlineVisibility]);
+    const previous=liveBuildings.get(world.projectId);
+    const retainable=!activeResourcePack&&!reveal&&!world.blueprint.voxels.some(v=>v.sign||v.campfire||v.sourceBlockId?.endsWith('_sign')||v.sourceBlockId?.endsWith('campfire'));
+    if(retainable&&previous?.key===meshKey){
+      buildingGroup.add(previous.root);buildingMeshHits++;
+      for(const {point,color} of previous.points)registerEmissivePoint(emissivePoints,emissivePointColors,point,color);
+      emissiveMaterials.push(...previous.emissives);constructionOutlines.push(...previous.outlines);
+      restoreBuildingCounters(previous.stats);
+      for(const [mesh,data] of previous.occlusion){fallbackOcclusionMeshes.set(mesh,data);applyFallbackOcclusion(mesh,data.voxels,data.field);}
+      return;
+    }
+    if(previous){retireBuildingRoot(previous.root);liveBuildings.delete(world.projectId);}
+    const cached=buildingCpuCache.get(key);
+    const recipe=cached??prepareBuildingCpuRecipe(key,world.blueprint,world.projectId,completion,world.buildingConditionBasisPoints);
+    if(cached)buildingCpuHits++;else{buildingCpuMisses++;buildingCpuDirty=true;}
+    currentBuildingRecipe=recipe;
+    currentBuildingIndices=new Map(recipe.visual.intactVoxels.map((voxel,index)=>[voxel,index]));
+    const before=buildingCounters(),pointStart=emissivePoints.length,emissiveStart=emissiveMaterials.length,outlineStart=constructionOutlines.length;
+    try{
+      const root=addPreparedBuilding(world,emissivePoints,reveal);buildingCpuCache.put(recipe);
+      if(retainable){
+        const after=buildingCounters(),stats=Object.fromEntries(Object.entries(after).map(([name,value])=>[name,value-before[name as keyof typeof before]])) as typeof after;
+        const occlusion:LiveBuilding['occlusion']=[];root.traverse(child=>{if(child instanceof THREE.InstancedMesh){const data=fallbackOcclusionMeshes.get(child);if(data)occlusion.push([child,data]);}});
+        liveBuildings.set(world.projectId,{key:meshKey,root,stats,occlusion,outlines:constructionOutlines.slice(outlineStart),emissives:emissiveMaterials.slice(emissiveStart),
+          points:emissivePoints.slice(pointStart).map(point=>({point,color:emissiveColorForPoint(point,emissivePointColors)}))});
+      }
+    }
+    finally{currentBuildingRecipe=null;currentBuildingIndices=null;}
+  }
+  function addPreparedBuilding(world: PositionedWorldSnapshot, emissivePoints: EmissivePoint[], reveal: { previousCompletionBasisPoints: number } | null): THREE.Group {
     const root = new THREE.Group();
     root.position.set(world.worldPosition.x, world.worldPosition.y, world.worldPosition.z);
     root.rotation.y = world.rotationY;
@@ -2149,9 +2271,7 @@ export function createVoxelRenderer(
     const completion = Math.max(0, Math.min(10_000, world.buildingCompletionBasisPoints));
     // Moved piston blocks stay render-only clones: their source blueprint and
     // persisted build-order prefix remain authoritative for construction.
-    const renderVoxels = planMovingPistonRenderVoxels(world.blueprint.voxels).displayVoxels;
-    const visible = renderVoxels.filter((voxel) => voxel.buildOrder <= completion);
-    const conditionVisual = conditionVisualForVoxels(world.projectId, visible, world.buildingConditionBasisPoints);
+    const conditionVisual = currentBuildingRecipe!.visual;
     const occlusionField = createLocalOcclusionField(conditionVisual.intactVoxels);
     for (const voxel of conditionVisual.intactVoxels) {
       const sourceEmission = sourceLanternEmissionForVoxel(voxel) ?? sourceCandleEmissionForVoxel(voxel);
@@ -2247,7 +2367,10 @@ export function createVoxelRenderer(
       const mesh = new THREE.InstancedMesh(new THREE.BoxGeometry(0.97, 0.97, 0.97), meshMaterial, voxels.length);
       const matrix = new THREE.Matrix4();
       const hiddenMatrix = new THREE.Matrix4();
-      voxels.forEach((voxel, index) => {
+      const matrixKey=voxels.map(voxel=>currentBuildingIndices!.get(voxel)).join(',');
+      const cachedMatrices=!revealing?currentBuildingRecipe!.cubeMatrices.get(matrixKey):undefined;
+      if(cachedMatrices&&cachedMatrices.length===mesh.instanceMatrix.array.length)mesh.instanceMatrix.array.set(cachedMatrices);
+      else voxels.forEach((voxel, index) => {
         const orderIndex = revealOrderIndex?.get(voxel);
         if (orderIndex !== undefined) {
           // Zero scale hides the block until its pop moment; the pop animation
@@ -2266,6 +2389,7 @@ export function createVoxelRenderer(
         matrix.makeTranslation(voxel.x, voxel.y, voxel.z);
         mesh.setMatrixAt(index, matrix);
       });
+      if(!revealing&&!cachedMatrices){currentBuildingRecipe!.cubeMatrices.set(matrixKey,Float32Array.from(mesh.instanceMatrix.array));buildingCpuDirty=true;}
       mesh.instanceMatrix.needsUpdate = true;
       applyFallbackOcclusion(mesh, voxels, occlusionField);
       mesh.castShadow = !translucent;
@@ -2282,6 +2406,22 @@ export function createVoxelRenderer(
     outlineRoot.visible=showOutline;
     addPlannedOutline(outlineRoot, world.blueprint, completion, showOutline);
     addDecorations(structure, world, emissivePoints);
+    return root;
+  }
+
+  function retireBuildingRoot(root:THREE.Group){const retired=new THREE.Group();retired.add(root);clearGroup(retired);}
+  function buildingCounters(){return {texturedBatchCount,texturedVoxelCount,originalStaticShapeVoxelCount,originalStaticShapeBatchCount,originalStaticShapeTopologyCount,
+    originalStaticShapeMaterialGroupCount,originalStaticShapeEmissiveMaterialGroupCount,originalStaticShapeTopologyOverflow,originalStaticShapeMaterialGroupOverflow,
+    originalStaticShapeBudgetFallbackVoxelCount,sourceLanternPointLightCount,resourceFluidVoxelCount,resourceSpecialVoxelCount,fallbackVoxelCount,transformedUvVoxelCount,
+    geometrySignatureBatchCount,geometryVoxelCount,geometryElementInstanceCount,geometryQuadInstanceCount,multipartGeometryVoxelCount,translucentGeometryVoxelCount,tintedVoxelCount,plannedOutlineVoxelCount,naturalFlowerPackPlacementCount,naturalFlowerOriginalFallbackCount};}
+  function restoreBuildingCounters(s:ReturnType<typeof buildingCounters>){
+    texturedBatchCount+=s.texturedBatchCount;texturedVoxelCount+=s.texturedVoxelCount;originalStaticShapeVoxelCount+=s.originalStaticShapeVoxelCount;originalStaticShapeBatchCount+=s.originalStaticShapeBatchCount;
+    originalStaticShapeTopologyCount+=s.originalStaticShapeTopologyCount;originalStaticShapeMaterialGroupCount+=s.originalStaticShapeMaterialGroupCount;originalStaticShapeEmissiveMaterialGroupCount+=s.originalStaticShapeEmissiveMaterialGroupCount;
+    originalStaticShapeTopologyOverflow+=s.originalStaticShapeTopologyOverflow;originalStaticShapeMaterialGroupOverflow+=s.originalStaticShapeMaterialGroupOverflow;originalStaticShapeBudgetFallbackVoxelCount+=s.originalStaticShapeBudgetFallbackVoxelCount;
+    sourceLanternPointLightCount+=s.sourceLanternPointLightCount;resourceFluidVoxelCount+=s.resourceFluidVoxelCount;resourceSpecialVoxelCount+=s.resourceSpecialVoxelCount;fallbackVoxelCount+=s.fallbackVoxelCount;
+    transformedUvVoxelCount+=s.transformedUvVoxelCount;geometrySignatureBatchCount+=s.geometrySignatureBatchCount;geometryVoxelCount+=s.geometryVoxelCount;geometryElementInstanceCount+=s.geometryElementInstanceCount;
+    geometryQuadInstanceCount+=s.geometryQuadInstanceCount;multipartGeometryVoxelCount+=s.multipartGeometryVoxelCount;translucentGeometryVoxelCount+=s.translucentGeometryVoxelCount;tintedVoxelCount+=s.tintedVoxelCount;plannedOutlineVoxelCount+=s.plannedOutlineVoxelCount;
+    naturalFlowerPackPlacementCount+=s.naturalFlowerPackPlacementCount;naturalFlowerOriginalFallbackCount+=s.naturalFlowerOriginalFallbackCount;
   }
 
   function addImportedDecoration(decoration: ImportedDecorationPlacement, emissivePoints: EmissivePoint[],foundation:readonly BlueprintVoxel[]=[]): void {
@@ -2316,8 +2456,9 @@ export function createVoxelRenderer(
   }
 
   /** Shared with read-only scenery: no reward/project identity or construction state. */
-  function addStaticVoxelStructure(structure: THREE.Group, renderVoxels: readonly BlueprintVoxel[], sharedOcclusion?: LocalOcclusionField): { packed: number; fallback: number } {
+  function addStaticVoxelStructure(structure: THREE.Group, renderVoxels: readonly BlueprintVoxel[], sharedOcclusion?: LocalOcclusionField, reefSurfaces=false): { packed: number; fallback: number } {
     const occlusionField = sharedOcclusion ?? createLocalOcclusionField(renderVoxels);
+    const reefField=reefSurfaces&&!activeResourcePack?createLocalOcclusionField(renderVoxels.filter(isReefSolid)):null;
     const staticShapeCandidates = renderVoxels.filter((voxel) => isOriginalStaticShapeBlockId(voxel.sourceBlockId));
     const genericTextureCandidates = renderVoxels.filter((voxel) => !isOriginalStaticShapeBlockId(voxel.sourceBlockId));
     const texturePlan = activeResourcePack
@@ -2359,6 +2500,26 @@ export function createVoxelRenderer(
       const translucent = materialId === "glass" || parseFallbackVisualKey(materialId!)?.transparent === true;
       trackMaterialEffects(meshMaterial, translucent ? 0.22 : 0.12);
       if (emissiveActive) emissiveMaterials.push({ material: meshMaterial, level: level > 0 ? level : 15, kind: emissiveKind || "light" });
+      if (reefSurfaces && !activeResourcePack && !translucent && !emissiveActive && voxels.every(isReefSolid)) {
+        const data=staticVoxelSurface(voxels,reefField!);
+        if(!data.indices.length)continue;
+        const geometry=new THREE.BufferGeometry();
+        geometry.setAttribute('position',new THREE.Float32BufferAttribute(data.positions,3));
+        geometry.setAttribute('normal',new THREE.Float32BufferAttribute(data.normals,3));
+        geometry.setAttribute('uv',new THREE.Float32BufferAttribute(data.uvs,2));
+        geometry.setAttribute('color',new THREE.Float32BufferAttribute(new Float32Array(data.voxelIndices.length*3),3));
+        geometry.setIndex(data.indices);
+        const surfaceMaterial=meshMaterial.clone();surfaceMaterial.vertexColors=true;
+        // This merged geometry uses world positions, not a unit cube's local
+        // axes. Keep the face lighting/AO; a cube-local edge shader would darken
+        // the whole reef instead of only its edges.
+        trackMaterialEffects(surfaceMaterial,0);
+        const mesh=new THREE.Mesh(geometry,surfaceMaterial);mesh.name='scenery-reef-surface';
+        mesh.castShadow=true;mesh.receiveShadow=true;mesh.userData.ownedMaterial=surfaceMaterial;
+        staticSurfaceOcclusionMeshes.set(mesh,{data,occlusions:Float64Array.from(voxels,voxel=>blockOcclusionFor(voxel,occlusionField))});
+        applyStaticSurfaceOcclusion(mesh);
+        structure.add(mesh);continue;
+      }
       const mesh = new THREE.InstancedMesh(new THREE.BoxGeometry(0.97, 0.97, 0.97), meshMaterial, voxels.length);
       const matrix = new THREE.Matrix4();
       voxels.forEach((voxel, index) => { matrix.makeTranslation(voxel.x, voxel.y, voxel.z); mesh.setMatrixAt(index, matrix); });
@@ -2434,7 +2595,10 @@ export function createVoxelRenderer(
   ): void {
     const previous = fallbackOcclusionMeshes.get(mesh);
     const occlusions = previous?.voxels === voxels && previous.field === field ? previous.occlusions
-      : Float64Array.from(voxels, voxel => blockOcclusionFor(voxel, field));
+      : Float64Array.from(voxels, voxel => {
+        const index=currentBuildingIndices?.get(voxel);
+        return index===undefined?blockOcclusionFor(voxel,field):currentBuildingRecipe!.occlusion[index]!;
+      });
     fallbackOcclusionMeshes.set(mesh, { voxels, field, occlusions });
     const strength = LIGHTWEIGHT_SHADING_PROFILES[tier].ambientOcclusionStrength * 0.7;
     const color = new THREE.Color();
@@ -2445,6 +2609,14 @@ export function createVoxelRenderer(
     });
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     sceneryInstanceCulling.refreshColors(mesh);
+  }
+
+  function applyStaticSurfaceOcclusion(mesh:THREE.Mesh,tier:QualityTier=qualityTier):void {
+    const entry=staticSurfaceOcclusionMeshes.get(mesh);if(!entry)return;
+    const color=mesh.geometry.getAttribute('color');
+    const strength=LIGHTWEIGHT_SHADING_PROFILES[tier].ambientOcclusionStrength*.7;
+    entry.data.voxelIndices.forEach((voxel,index)=>{const brightness=1-entry.occlusions[voxel]!*strength;color.setXYZ(index,brightness,brightness,brightness);});
+    color.needsUpdate=true;
   }
 
   function addGeometryBatches(
@@ -2777,7 +2949,7 @@ export function createVoxelRenderer(
   ): void {
     const measureScenery = lifecycleProbeEnabled || options.onPerformanceFrame !== undefined;
     const planningStartedMs = measureScenery ? performance.now() : 0;
-    const sceneryKey=`${terrainKey}|${importedDecorations.map(d=>`${d.rewardId}:${d.worldPosition.x}:${d.worldPosition.z}`).join(',')}`;
+    const sceneryKey=sceneryGenerationInputKey(terrainKey,importedDecorations);
     const planCacheHit=sceneryPlanCache?.key===sceneryKey;
     const plan = planCacheHit ? sceneryPlanCache!.plan : planWorldScenery({ environmentStyle, worldSeed: options.worldSeed ?? 'world-default',
       surfaces: terrainSurfaceRectangles(terrain), trees: terrain.naturalTrees, roads, normalBounds: terrain.nearDetailBounds,
@@ -2797,23 +2969,21 @@ export function createVoxelRenderer(
     // tree on the GPU even when the camera showed only one small building.
     // All chunks share world-coordinate occlusion, including across boundaries.
     if (trees.length) {
-      // Original materials favour tighter triangle culling. Imported model/
-      // atlas routes have more material batches, so coarser local bounds avoid
-      // multiplying draw calls; neither route changes any tree's blocks.
-      const chunks = chunkSceneryTrees(trees, 64, activeResourcePack ? 4 : Infinity);
+      // Bound draw submissions for both original and imported materials. Fine
+      // visibility belongs to the instance clusters below, not hundreds of
+      // independently submitted groves. Every block and shadow is retained.
+      const chunks = chunkSceneryTrees(trees, 64, 4);
       const occlusion = createLocalOcclusionField([...chunks.values()].flat());
       for (const [key, voxels] of chunks) {
         const grove = new THREE.Group(); grove.name = `scenery-block-grove-${key}`; root.add(grove);
         addStaticVoxelStructure(grove, voxels, occlusion);
-        if (activeResourcePack) {
-          const meshes = grove.children.filter((child): child is THREE.InstancedMesh => child instanceof THREE.InstancedMesh);
-          for (const mesh of meshes) {
-            const shadow = sceneryInstanceCulling.register(mesh);
-            if (shadow) {
-              shadow.name = 'scenery-depth-only';
-              grove.add(shadow);
-              if (cutoutShadowMeshes.delete(mesh)) cutoutShadowMeshes.add(shadow);
-            }
+        const meshes = grove.children.filter((child): child is THREE.InstancedMesh => child instanceof THREE.InstancedMesh);
+        for (const mesh of meshes) {
+          const shadow = sceneryInstanceCulling.register(mesh);
+          if (shadow) {
+            shadow.name = 'scenery-depth-only';
+            grove.add(shadow);
+            if (cutoutShadowMeshes.delete(mesh)) cutoutShadowMeshes.add(shadow);
           }
         }
       }
@@ -2844,7 +3014,7 @@ export function createVoxelRenderer(
       .map(voxel => ({ ...voxel, x: voxel.x + object.x, y: voxel.y + object.y, z: voxel.z + object.z })));
     if (silhouetteVoxels.length) {
       const silhouettes = new THREE.Group(); silhouettes.name = 'scenery-landmark-silhouettes'; root.add(silhouettes);
-      addStaticVoxelStructure(silhouettes, silhouetteVoxels);
+      addStaticVoxelStructure(silhouettes, silhouetteVoxels, undefined, true);
     }
     for (const object of plan.objects.filter(o => o.role !== 'tree' && !batchedGardens.has(o))) {
       const group = new THREE.Group(); group.name = object.id;
@@ -3050,6 +3220,7 @@ export function createVoxelRenderer(
     // with the previous sun/moon/shadow vectors.
     canvas.dataset.lightingUpdateCount = String(lightingUpdateCount);
     canvas.dataset.lightingSampledAtMs = String(lightingSampledAtMs);
+    canvas.dataset.dayPhase = state.phase;
     canvas.dataset.lightingFingerprint = lightingDirectionFingerprint(state);
     canvas.dataset.sunPosition = state.sunPosition.map((value) => value.toFixed(4)).join(",");
     canvas.dataset.moonPosition = state.moonPosition.map((value) => value.toFixed(4)).join(",");
@@ -3538,7 +3709,8 @@ export function createVoxelRenderer(
     cloudBudgetMode = cloudBudget.previewMode ? "preview" : "main-world";
     cloudBlockScale = cloudBudget.blockScale;
     const cloudGroups = cloudGroupsForBudget(cloudBudget, currentWeather, random);
-    const totalInstances = cloudGroups.reduce((sum, group) => sum + group.blocks, 0);
+    const cloudShapes = cloudGroups.map(group => cloudVoxels(group.kind, Math.floor(random()*0x7fffffff)));
+    const totalInstances = cloudShapes.reduce((sum, shape) => sum + shape.length, 0);
     cloudBlockCount = totalInstances;
     canvas.dataset.cloudNearSpanX = String(Math.round(cloudBudget.nearSpanX));
     canvas.dataset.cloudNearSpanZ = String(Math.round(cloudBudget.nearSpanZ));
@@ -3546,6 +3718,8 @@ export function createVoxelRenderer(
     canvas.dataset.cloudFarGroupCount = String(cloudGroups.filter(group => group.region === 'far').length);
     canvas.dataset.cloudBankGroupCount = String(cloudGroups.filter(group => group.kind === 'bank').length);
     canvas.dataset.cloudFarBlockScale = cloudBudget.farBlockScale.toFixed(3);
+    canvas.dataset.cloudShapeKinds = [...new Set(cloudGroups.map(group=>group.kind))].join(',');
+    canvas.dataset.cloudCubicVoxels = 'true';
     canvas.dataset.cloudVisibleNearGroupCount = '0';
     canvas.dataset.cloudVisibleFarGroupCount = '0';
     const matrix = new THREE.Matrix4();
@@ -3571,8 +3745,8 @@ export function createVoxelRenderer(
     // clouds stay crisp white against the hazy sky instead of dissolving into it.
     let instanceIndex = 0;
     const groupEnds: number[] = [];
-    const placeBlocks = (group: CloudGroup): void => {
-      const { kind, blocks, horizontalScale } = group;
+    const placeBlocks = (group: CloudGroup, groupIndex: number): void => {
+      const { kind, horizontalScale } = group;
       const altitudeOffset = previewMode
         ? kind === "cirrus" ? 1.5 + random() * 2 : kind === "stratus" ? -0.5 + random() * 0.5 : 0
         : kind === "cirrus" ? 5 + random() * 6 : kind === "stratus" || kind === 'bank' ? -2 + random() * 2 : 0;
@@ -3581,28 +3755,16 @@ export function createVoxelRenderer(
         cloudBase + altitudeOffset + random() * 1.5,
         localityCenter.z + group.z,
       );
-      const spanLocal = (kind === "cirrus" ? 5 : kind === "stratus" ? 6 : 4.6)
-        * (previewMode ? cloudBudget.blockScale : 1);
-      const layers = kind === "storm" ? 3 + Math.floor(random() * 2) : kind === "cirrus" || kind === 'bank' ? 1 : 2;
-      const verticalScale = Math.min(2.6, Math.sqrt(horizontalScale));
       const speed = cloudAdvectionSpeed(currentWeather) * (previewMode ? .25 : 1)
         * (group.region === 'far' ? .62 : .8 + random() * .5);
       const windAngle = Math.PI / 5 + (random() - .5) * .44;
-      for (let block = 0; block < blocks; block += 1) {
-        const columns = kind === 'bank' ? 8 : 4;
-        const gx = (previewMode ? (random() * 2 - 1) * spanLocal * (kind === 'stratus' ? .95 : .75)
-          : kind === 'cirrus' ? (block - blocks / 2) * 2.3 : (block % columns - (columns - 1) / 2) * 2.9) * horizontalScale;
-        const gz = (previewMode ? (random() * 2 - 1) * spanLocal * .62
-          : kind === 'cirrus' ? (random() - .5) * 1.8 : (Math.floor(block / columns) - (Math.ceil(blocks / columns) - 1) / 2) * 2.6) * horizontalScale;
-        const layer = Math.floor(random() * layers);
-        const gy = (layer * (previewMode ? 0.35 : 1.0) + random() * 0.3) * verticalScale;
-        const blockSize = ((kind === 'bank' ? 3.2 : 2.3) + random() * 1.7) * cloudBudget.blockScale;
+      const blockSize = 1.2 * cloudBudget.blockScale * horizontalScale;
+      for (const voxel of cloudShapes[groupIndex]!) {
+        const gx = voxel.x * blockSize, gz = voxel.z * blockSize, gy = voxel.y * blockSize;
         matrix.compose(
           new THREE.Vector3(center.x + gx, center.y + gy, center.z + gz),
           quaternion,
-          new THREE.Vector3(blockSize * horizontalScale,
-            blockSize * verticalScale * (kind === 'bank' ? .4 + random() * .15 : .72 + random() * .3),
-            blockSize * horizontalScale * (.85 + random() * .3)),
+          new THREE.Vector3(blockSize, blockSize, blockSize),
         );
         clouds.setMatrixAt(instanceIndex, matrix);
         cloudBasePositions[instanceIndex * 3] = center.x + gx;
@@ -3909,6 +4071,7 @@ export function createVoxelRenderer(
 
   function syncQualityVisibility(): void {
     for (const [mesh, data] of fallbackOcclusionMeshes) applyFallbackOcclusion(mesh, data.voxels, data.field, qualityTier);
+    for (const mesh of staticSurfaceOcclusionMeshes.keys()) applyStaticSurfaceOcclusion(mesh, qualityTier);
     for (const [index, entry] of localLights.entries()) entry.light.visible = index < qualityProfile.maxLocalLights;
     for (const [index, entry] of glowSprites.entries()) entry.sprite.visible = index < qualityProfile.maxGlowSprites
       && glowMaterial.opacity > 0.015;
@@ -3942,6 +4105,38 @@ export function createVoxelRenderer(
   ): Set<BlueprintV1["voxels"][number]> {
     const handled = new Set<BlueprintV1["voxels"][number]>();
     if (voxels.length === 0) return handled;
+    if(currentBuildingRecipe&&currentBuildingIndices&&!revealOrderIndex&&voxels.every(voxel=>currentBuildingIndices!.has(voxel))){
+      const key=voxels.map(voxel=>currentBuildingIndices!.get(voxel)).join(',');
+      let compiled=currentBuildingRecipe.originals.get(key);
+      if(compiled)originalCpuHits++;
+      else{
+        compiled=compileOriginalBuildingShapes(voxels,currentBuildingIndices);
+        currentBuildingRecipe.originals.set(key,compiled);buildingCpuDirty=true;
+      }
+      originalStaticShapeTopologyCount+=compiled.topologies;
+      originalStaticShapeTopologyOverflow+=compiled.topologyOverflow;
+      originalStaticShapeMaterialGroupCount+=compiled.materialGroups;
+      originalStaticShapeMaterialGroupOverflow+=compiled.materialOverflow;
+      originalStaticShapeBudgetFallbackVoxelCount+=compiled.fallbackCount;
+      for(const index of compiled.handled)handled.add(currentBuildingRecipe.visual.intactVoxels[index]!);
+      for(const batch of compiled.batches){
+        const {materialId,emissiveKind,emissiveLevel:level}=batch;
+        const owned=weathering>0||level>0;
+        const meshMaterial=owned?material(materialId).clone():material(materialId);
+        const translucent=materialId==='glass'||parseFallbackVisualKey(materialId)?.transparent===true;
+        trackMaterialEffects(meshMaterial,translucent ? .22 : .12);
+        if(weathering>0){meshMaterial.color.multiplyScalar(1-weathering*.28);meshMaterial.roughness=Math.min(1,meshMaterial.roughness+weathering*.1);}
+        if(level>0){emissiveMaterials.push({material:meshMaterial,level,kind:emissiveKind||'light'});originalStaticShapeEmissiveMaterialGroupCount++;}
+        const mesh=new THREE.InstancedMesh(restoreCpuGeometry(batch.geometry),meshMaterial,batch.indices.length);
+        mesh.instanceMatrix.array.set(batch.matrices);mesh.instanceMatrix.needsUpdate=true;
+        applyFallbackOcclusion(mesh,[...batch.indices].map(index=>currentBuildingRecipe!.visual.intactVoxels[index]!),occlusionField);
+        mesh.castShadow=!translucent;mesh.receiveShadow=true;if(translucent)mesh.renderOrder=10;
+        if(owned)mesh.userData.ownedMaterial=meshMaterial;
+        mesh.userData.originalStaticTopology=batch.topologyKey;root.add(mesh);originalStaticShapeBatchCount++;
+      }
+      originalStaticShapeVoxelCount+=handled.size;
+      return handled;
+    }
     const plan = planOriginalStaticShapeBatches(voxels);
     const grouped = groupOriginalStaticShapeEntries(
       plan,
@@ -4023,6 +4218,36 @@ export function createVoxelRenderer(
     // The planner caps topology batches at 64; over-budget and invalid entries
     // remain untouched so the caller routes them through the established cube path.
     return handled;
+  }
+
+  function compileOriginalBuildingShapes(voxels:readonly BlueprintVoxel[],indices:Map<BlueprintVoxel,number>):OriginalCpuPlan {
+    const plan=planOriginalStaticShapeBatches(voxels);
+    const grouped=groupOriginalStaticShapeEntries(plan,(voxel,componentKey='')=>fallbackVisualStyleForOriginalComponent(voxel,componentKey).key,64,
+      (voxel,componentKey)=>{
+        if(componentKey==='lantern-frame'||componentKey==='candle-wax')return {kind:'',level:0};
+        if((componentKey.startsWith('lantern-core-')||componentKey==='candle-wick')&&voxel.emissiveLevel===0)return {kind:'',level:0};
+        const emission=sourceLanternEmissionForVoxel(voxel)??sourceCandleEmissionForVoxel(voxel);
+        return (componentKey.startsWith('lantern-core-')||componentKey==='candle-wick')&&emission?emission:undefined;
+      });
+    const handled=new Set<number>();
+    const batches:OriginalCpuPlan['batches']=[];
+    const matrix=new THREE.Matrix4(),transform=new THREE.Matrix4();
+    for(const group of grouped.groups){
+      if(group.entries[0]?.shape.kind!=='original-approximation')continue;
+      const geometry=createOriginalStaticShapeComponentGeometry(group.component);
+      const data=captureCpuGeometry(geometry);geometry.dispose();
+      const matrices=new Float32Array(group.entries.length*16);
+      const sourceIndices=Uint32Array.from(group.entries.map(entry=>indices.get(entry.voxel)!));
+      group.entries.forEach((entry,index)=>{
+        handled.add(sourceIndices[index]!);
+        const component=entry.shape.kind==='original-approximation'?entry.shape.components?.find(c=>c.key===group.componentKey&&c.topologyKey===group.topologyKey):undefined;
+        transform.fromArray(component?.transform??group.component.transform);
+        matrix.makeTranslation(entry.voxel.x,entry.voxel.y,entry.voxel.z).multiply(transform).toArray(matrices,index*16);
+      });
+      batches.push({topologyKey:group.topologyKey,materialId:group.materialKey,emissiveKind:group.emissiveKind,emissiveLevel:group.emissiveLevel,indices:sourceIndices,matrices,geometry:data});
+    }
+    return {batches,handled:Uint32Array.from(handled),topologies:plan.budget.actual,topologyOverflow:plan.budget.overflow,
+      materialGroups:grouped.groups.length,materialOverflow:grouped.overflow,fallbackCount:new Set(grouped.fallbackEntries.map(e=>e.voxel)).size};
   }
 
   function updateAmbientMotion(nowMs: number): void {
@@ -4254,24 +4479,24 @@ export function createVoxelRenderer(
   const immersiveLookTargetValue = new THREE.Vector3();
   function immersiveLookTarget(): THREE.Vector3 {
     immersiveLookTargetValue.copy(cameraTarget);
-    if (immersiveBottomBand <= 0 && immersiveRightBand <= 0) return immersiveLookTargetValue;
+    if (immersiveFramingBottom <= 0 && immersiveFramingRight <= 0) return immersiveLookTargetValue;
     const view = new THREE.Vector3().subVectors(cameraTarget, camera.position).normalize();
     // The immersive band hides part of the full-screen world. Tilt the view axis
     // so the settlement (the look-at centroid) lands in the visible window's
     // center: a fractional screen offset f maps to the aim angle atan(f*tan(halfFov)).
-    if (immersiveBottomBand > 0) {
+    if (immersiveFramingBottom > 0) {
       const halfFov = THREE.MathUtils.degToRad(camera.fov) / 2;
-      const aimDown = Math.atan(immersiveBottomBand * Math.tan(halfFov));
+      const aimDown = Math.atan(immersiveFramingBottom * Math.tan(halfFov));
       const axis = new THREE.Vector3().crossVectors(view, camera.up).normalize();
       if (axis.lengthSq() > 1e-6) view.applyAxisAngle(axis, -aimDown);
     }
-    if (immersiveRightBand > 0) {
+    if (immersiveFramingRight > 0) {
       const halfFovV = THREE.MathUtils.degToRad(camera.fov) / 2;
       const halfFovX = Math.atan(Math.tan(halfFovV) * Math.max(0.1, camera.aspect));
       // An azimuth rotation projects at screen-x scaled by cos(pitch), so the
       // aim angle that lands the settlement at NDC x = -right is
       // atan(right * tan(halfFovX) / cos(pitch)).
-      const aimRight = Math.atan(immersiveRightBand * Math.tan(halfFovX) / Math.max(0.05, Math.cos(cameraPitch)));
+      const aimRight = Math.atan(immersiveFramingRight * Math.tan(halfFovX) / Math.max(0.05, Math.cos(cameraPitch)));
       // Pan the view leftward (negative yaw) so the settlement moves right-to-left
       // into the visible window left of the right-hand column.
       view.applyAxisAngle(THREE.Object3D.DEFAULT_UP, -aimRight);
@@ -4697,6 +4922,7 @@ export function createVoxelRenderer(
   }
 
   function maybeDowngradeQuality(refreshedShadow: boolean): void {
+    if (options.performanceHoldQuality?.()) return;
     // A HUD tap or the first compiled orbit frame is not sustained camera load.
     if (qualityTier === "low" || !interacting || openingReveal || interactionFrameDurations.length < 24) return;
     const p95 = interactionP95();
@@ -5227,7 +5453,7 @@ export function createVoxelRenderer(
     resize();
   };
   const visibilityChange = (): void => {
-    if (document.hidden) precipitationViewCache = invalidatePrecipitationViewCache(precipitationViewCache);
+    if (document.hidden) {precipitationViewCache = invalidatePrecipitationViewCache(precipitationViewCache);cancelPreparedFrames();}
     for (const controller of atlasAnimationControllers) controller?.setVisible(!document.hidden && paneVisible);
     syncPrecipitationMotionGate(performance.now());
     if (!document.hidden) { updateLighting(new Date(), true); updateWeather(localDateForDate(new Date())); }
@@ -5288,6 +5514,34 @@ export function createVoxelRenderer(
     },
     async initializeWorlds(worlds, pack) {
       const generation = ++resourcePackGeneration;
+      // The two disposable caches read in parallel; never add a second serial
+      // disk wait to startup. Either may fail independently.
+      const buildingRestore=!buildingCacheRead&&options.buildingCpuCache&&!previewMode?(async()=>{
+        buildingCacheRead=true;const started=performance.now();
+        try{
+          const entry=await options.buildingCpuCache!.read();
+          if(disposed||generation!==resourcePackGeneration)return;
+          canvas.dataset.buildingCpuCacheRead=buildingCpuCache.restore(entry)?'restored':entry==null?'miss':'invalid';
+        }catch{canvas.dataset.buildingCpuCacheRead='unavailable';}
+        canvas.dataset.buildingCpuCacheReadMs=(performance.now()-started).toFixed(2);
+      })():Promise.resolve();
+      if (!sceneCacheRead && options.worldSceneCache && !previewMode) {
+        sceneCacheRead = true;
+        const started = performance.now();
+        try {
+          const stored = await options.worldSceneCache.read();
+          if (disposed || generation !== resourcePackGeneration) return;
+          const restored = restoreWorldSceneCache(stored);
+          canvas.dataset.worldSceneCacheRead = restored ? 'restored' : stored == null ? 'miss' : 'invalid';
+          if (restored) {
+            terrainGenerationCache = restored.terrain; sceneryPlanCache = restored.scenery;
+            persistedSceneSignature = `${restored.terrain.key}|${restored.scenery?.key ?? ''}`;
+          }
+        } catch { canvas.dataset.worldSceneCacheRead = 'unavailable'; }
+        canvas.dataset.worldSceneCacheReadMs = (performance.now() - started).toFixed(2);
+      }
+      await buildingRestore;
+      if (disposed || generation !== resourcePackGeneration) return;
       await initializeWorldConfiguration(worlds, pack, {
         async prepare(selectedPack) {
           if (selectedPack === null) return { pack: null, atlas: null, controllers: [] as Array<AtlasAnimationController | null> };
@@ -5305,21 +5559,27 @@ export function createVoxelRenderer(
         },
         isCurrent: () => !disposed && generation === resourcePackGeneration,
         capture: () => ({ worlds: lastWorlds, pack: activeResourcePack, controllers: atlasAnimationControllers }),
-        commit(stagedWorlds, staged) {
+        async commit(stagedWorlds, staged) {
           const previousWorlds = lastWorlds;
           lastWorlds = [...stagedWorlds];
           activeResourcePack = staged.atlas === null || staged.pack === null
             ? null
             : { ...staged.pack, atlas: staged.atlas };
           atlasAnimationControllers = staged.controllers;
-          rebuild(worldsWithDebugDecay(lastWorlds), worldsWithDebugDecay(previousWorlds));
+          const worlds=worldsWithDebugDecay(lastWorlds), previous=worldsWithDebugDecay(previousWorlds);
+          if(options.progressiveInitialization){
+            for(const _ of rebuildSteps(worlds,previous)){
+              await new Promise<void>(resolve=>setTimeout(resolve,0));
+              if(disposed||generation!==resourcePackGeneration)throw new Error('World initialization superseded');
+            }
+          }else rebuild(worlds,previous);
         },
         rollback(previous, staged) {
           lastWorlds = previous.worlds;
           activeResourcePack = previous.pack;
           atlasAnimationControllers = previous.controllers;
           try {
-            rebuild(worldsWithDebugDecay(previous.worlds), worldsWithDebugDecay(previous.worlds));
+            if(!disposed)rebuild(worldsWithDebugDecay(previous.worlds), worldsWithDebugDecay(previous.worlds));
           } catch {
             // Preserve the original failed commit; renderer references are already
             // restored so a later world update can rebuild from the prior state.
@@ -5343,6 +5603,7 @@ export function createVoxelRenderer(
     },
     async prepareInitialPresentation(openingProjectId) {
       if (disposed) return false;
+      canvas.dataset.initialPresentationReady='false';
       initialPresentationPreparing=true;initialPreparationRenderCount=0;
       const preparationStarted=performance.now();
       lightingTransition = null;
@@ -5374,6 +5635,8 @@ export function createVoxelRenderer(
         canvas.dataset.initialGpuPreparation=await waitForGpuCompletion(renderer.getContext(),()=>!disposed&&paneVisible&&!document.hidden);
         canvas.dataset.initialGpuPreparationMs=(performance.now()-gpuStarted).toFixed(2);
         canvas.dataset.openingPreparedFrames=String(initialPreparationRenderCount);
+        if(disposed||!paneVisible||document.hidden||['cancelled','failed'].includes(canvas.dataset.initialGpuPreparation))return false;
+        canvas.dataset.initialPresentationReady='true';
         return true;
       } finally {
         initialPresentationPreparing=false;
@@ -5562,6 +5825,7 @@ export function createVoxelRenderer(
       if (!value) precipitationViewCache = invalidatePrecipitationViewCache(precipitationViewCache);
       syncPrecipitationMotionGate(performance.now());
       if (!value) {
+        cancelPreparedFrames();
         if (lightingTransition) {
           lightingTransition = null;
           environmentTransitionCancelledCount += 1;
@@ -5597,15 +5861,20 @@ export function createVoxelRenderer(
       canvas.dataset.worldColorAdjustment = JSON.stringify(preference);
       requestRender();
     },
-    setImmersiveBandFraction(bottomFraction, rightFraction = 0) {
+    setImmersiveBandFraction(bottomFraction, rightFraction = 0, framingBottom=bottomFraction, framingRight=rightFraction) {
       const bottom = Number.isFinite(bottomFraction) ? Math.max(0, Math.min(0.75, bottomFraction)) : 0;
       const right = Number.isFinite(rightFraction) ? Math.max(0, Math.min(0.75, rightFraction)) : 0;
       canvas.dataset.immersiveBandFraction = bottom.toFixed(3);
       canvas.dataset.immersiveRightBandFraction = right.toFixed(3);
-      if (bottom === immersiveBottomBand && right === immersiveRightBand) return;
+      const viewBottom=Number.isFinite(framingBottom)?Math.max(0,Math.min(.75,framingBottom)):bottom;
+      const viewRight=Number.isFinite(framingRight)?Math.max(0,Math.min(.75,framingRight)):right;
+      canvas.dataset.immersiveFramingBottom=viewBottom.toFixed(3);canvas.dataset.immersiveFramingRight=viewRight.toFixed(3);
+      if (bottom === immersiveBottomBand && right === immersiveRightBand&&viewBottom===immersiveFramingBottom&&viewRight===immersiveFramingRight) return;
+      const viewChanged=viewBottom!==immersiveFramingBottom||viewRight!==immersiveFramingRight;
       immersiveBottomBand = bottom;
       immersiveRightBand = right;
-      updateCamera();
+      immersiveFramingBottom=viewBottom;immersiveFramingRight=viewRight;
+      if(viewChanged)updateCamera();
       requestRender();
     },
     resize,
@@ -5613,6 +5882,10 @@ export function createVoxelRenderer(
     dispose() {
       precipitationGroundTexture.dispose();
       disposed = true;
+      // Kept roots normally belong to buildingGroup; disposal below owns their
+      // GPU resources. Do not leave a second strong registry behind.
+      for(const entry of liveBuildings.values())if(entry.root.parent!==buildingGroup)buildingGroup.add(entry.root);
+      liveBuildings.clear();
       terrainGenerationCache = null;
       if (lightingTransition) {
         lightingTransition = null;
@@ -5632,8 +5905,7 @@ export function createVoxelRenderer(
       canvas.removeEventListener("webglcontextlost", contextLost);
       canvas.removeEventListener("webglcontextrestored", contextRestored);
       canvas.removeEventListener("pointerdown", pointerDown);
-      for (const resolve of preparedFrameWaiters) resolve(false);
-      preparedFrameWaiters.clear();
+      cancelPreparedFrames();
       canvas.removeEventListener("pointermove", pointerMove);
       canvas.removeEventListener("pointerup", pointerUp);
       canvas.removeEventListener("pointercancel", pointerCancel);
@@ -5642,6 +5914,7 @@ export function createVoxelRenderer(
       window.removeEventListener("blur", windowBlur);
       clearGroup(buildingGroup);
       sceneryInstanceCulling.clear();
+      staticSurfaceOcclusionMeshes.clear();
       blockEntityDisplay.reset();
       clearGroup(terrainGroup);
       for (const texture of terrainPackTextures) texture.dispose();

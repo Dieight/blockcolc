@@ -1,5 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { waitForPreparedWorld } from './world-ready';
+import { readPersistedDomainState } from './persisted-domain-state';
+import { finishPaintedReportReceipt } from './focus-plan-controls';
 
 /**
  * Focus/native source-level regression probes for F02/F14/F16/F17.
@@ -54,6 +56,11 @@ test.describe('focus/native bundle F02/F14/F16/F17', () => {
     await page.clock.fastForward(61_000);
     await expect(page.getByRole('heading', { name: '这次工作推进到哪里？' })).toBeVisible();
     await page.getByRole('button', { name: '推进至 25%' }).click();
+    await expect(page.getByRole('button', { name: '材料已送达！', exact: true })).toBeVisible();
+    await expect.poll(async () => (await readPersistedDomainState(page)).state.progressReports.length).toBe(1);
+    await finishPaintedReportReceipt(page);
+    await expect(page.getByRole('heading', { name: '这次工作推进到哪里？' })).toHaveCount(0);
+    await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem('blockcolc-round-plan-v1') ?? 'null')?.status)).toBe('break');
     await expect(page.locator('.world-screen')).toHaveClass(/is-focusing/);
     await expect(page.locator('.timer-break')).toContainText('休息中');
     await expect(page.getByRole('button', { name: '返回完整模式' })).toHaveCount(0);

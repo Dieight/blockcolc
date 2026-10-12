@@ -4,6 +4,9 @@ import { resolve } from 'node:path';
 import { showWorldOverview } from './world-overview';
 import { selectValleyFixture } from './valley-fixture';
 import { waitForPreparedWorld } from './world-ready';
+import { openBlueprintLibrary, openImportedBlueprints } from './blueprint-library-controls';
+import { readPersistedDomainState } from './persisted-domain-state';
+import { finishPaintedReportReceipt } from './focus-plan-controls';
 
 test.beforeEach(async ({ page }) => {
   // Keep navigation and persistence checks independent of today's random
@@ -257,6 +260,7 @@ test('renders a monument with the active building and restores both after deleti
   await startFocus(page);
   await page.clock.fastForward(61_000);
   await page.getByRole('button', { name: '完成小任务' }).click();
+  await finishPaintedReportReceipt(page);
   await page.getByRole('button', { name: '回到聚落' }).click();
 
   await expect(page.locator('.setup')).toHaveCount(0);
@@ -305,7 +309,7 @@ test('adds and switches unfinished large projects without moving their buildings
   let summary = page.locator('#world-summary');
   await expect(summary).toContainText('我的第一座工坊，林边工坊，暂停建造');
   await expect(summary).toContainText('第二项长期工作，河岸木屋，正在建造');
-  await expect(page.getByText('海岛聚落 · 2 栋')).toBeVisible();
+  await expect(summary).toContainText('海岛聚落，共 2 栋建筑');
 
   await openTasks(page);
   const selector = page.locator('.choice-menu').filter({ has: page.getByText('当前任务', { exact: true }) });
@@ -479,6 +483,7 @@ test('@smoke expired focus resumes into progress reporting and grows the buildin
   await page.clock.fastForward(45 * 60 * 1000 + 1_000);
   await expect(page.getByRole('heading', { name: '这次工作推进到哪里？' })).toBeVisible();
   await page.getByRole('button', { name: '推进至 50%' }).click();
+  await finishPaintedReportReceipt(page);
   await expect(page.locator('.workbench-context')).toContainText('已完成 50%');
   await page.waitForTimeout(300);
   await page.screenshot({ path: testInfo.outputPath('building-50-percent.png'), fullPage: true });
@@ -543,6 +548,7 @@ test('runs a configured multi-round focus and break plan', async ({ page }) => {
   await page.clock.fastForward(61_000);
   await expect(page.getByRole('heading', { name: '这次工作推进到哪里？' })).toBeVisible();
   await page.getByRole('button', { name: '推进至 25%' }).click();
+  await finishPaintedReportReceipt(page);
   await expect(page.locator('.focus-task-context strong').filter({ hasText: '休息中' })).toBeVisible();
   await page.clock.fastForward(61_000);
   await expect(page.getByRole('button', { name: '开始下一轮' })).toBeVisible();
@@ -636,6 +642,7 @@ test('keeps zero progress editable and locks structure after positive progress',
   await page.clock.fastForward(45 * 60 * 1000 + 1_000);
   await expect(page.getByRole('heading', { name: '这次工作推进到哪里？' })).toBeVisible();
   await page.getByRole('button', { name: '保持 0%' }).click();
+  await finishPaintedReportReceipt(page);
   await openTasks(page);
   await enableTaskEditing(page);
   await expect(page.getByLabel('新增小任务')).toBeVisible();
@@ -646,6 +653,7 @@ test('keeps zero progress editable and locks structure after positive progress',
   await page.clock.fastForward(45 * 60 * 1000 + 1_000);
   await expect(page.getByRole('heading', { name: '这次工作推进到哪里？' })).toBeVisible();
   await page.getByRole('button', { name: '推进至 25%' }).click();
+  await finishPaintedReportReceipt(page);
   await openTasks(page);
   await enableTaskEditing(page);
 
@@ -712,16 +720,21 @@ test('renames an imported building blueprint without changing its stored snapsho
   test.skip(!existsSync(sample), 'The real Litematic compatibility fixture stays local.');
   await createDefaultProject(page);
   await page.getByRole('button', { name: '设置' }).click();
+  await openBlueprintLibrary(page);
   await page.getByLabel('导入 .litematic').setInputFiles(sample);
-  const importPreview = page.locator('.imported-blueprint-role .blueprint-preview');
+  const importDialog = page.getByRole('dialog', {name:'蓝图预览',exact:true});
+  const importPreview = importDialog.locator('.blueprint-preview');
   await expect(importPreview).toBeVisible();
   await expect(importPreview.getByRole('img', { name: /完整建筑预览，可拖动旋转/ })).toHaveAttribute('data-preview-blueprint-id', /.+/);
   await expect(importPreview.getByRole('button', { name: '重置预览视角' })).toBeVisible();
   await importPreview.screenshot({ path: testInfo.outputPath('v27-library-import-preview.png') });
+  await importDialog.getByRole('button', {name:'关闭蓝图预览'}).click();
   await page.getByRole('button', { name: '深色', exact: true }).click();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  await page.getByLabel('导入 .litematic').setInputFiles(sample);
+  await expect(importPreview).toBeVisible();
   const darkStyle = await importPreview.evaluate((preview) => {
-    const card = preview.closest('.imported-blueprint-role') as HTMLElement;
+    const card = preview.closest('.library-preview-dialog') as HTMLElement;
     const cardStyle = getComputedStyle(card);
     const previewStyle = getComputedStyle(preview);
     const hudTextStyle = getComputedStyle(preview.querySelector('.preview-hud span')!);
@@ -732,7 +745,10 @@ test('renames an imported building blueprint without changing its stored snapsho
     Object.assign(loading.style, { position: 'absolute', inset: '0', zIndex: '6' });
     preview.append(loading);
     const loadingStyle = getComputedStyle(loading);
+    const sheet = document.createElement('div');sheet.style.background='var(--sheet-glass-background)';document.body.append(sheet);
+    const sheetBackground = getComputedStyle(sheet).backgroundColor;sheet.remove();
     const result = {
+      sheetBackground,
       cardBackground: cardStyle.backgroundColor,
       cardBorder: cardStyle.borderTopColor,
       previewBackground: previewStyle.backgroundColor,
@@ -747,8 +763,9 @@ test('renames an imported building blueprint without changing its stored snapsho
     return result;
   });
   expect(darkStyle).toEqual({
-    cardBackground: 'rgb(23, 33, 28)',
-    cardBorder: 'rgb(64, 82, 71)',
+    sheetBackground: darkStyle.sheetBackground,
+    cardBackground: darkStyle.sheetBackground,
+    cardBorder: 'rgba(230, 239, 233, 0.16)',
     previewBackground: 'rgb(16, 25, 21)',
     previewBorder: 'rgb(64, 82, 71)',
     hudText: 'rgb(243, 250, 246)',
@@ -766,32 +783,43 @@ test('renames an imported building blueprint without changing its stored snapsho
   });
   await importPreview.screenshot({ path: testInfo.outputPath('v27-library-import-preview-loading-dark.png') });
   await importPreview.locator('.blueprint-loading').evaluate(element => element.remove());
-  await page.locator('.imported-blueprint-role').screenshot({ path: testInfo.outputPath('v27-library-import-preview-dark.png') });
+  await importDialog.screenshot({ path: testInfo.outputPath('v27-library-import-preview-dark.png') });
   const saveToLibrary = page.getByRole('button', { name: '保存到建筑蓝图库' });
   await expect(saveToLibrary).toBeVisible();
   // V19 regression: the confirm row must keep both buttons readable and evenly sized.
   const saveBox = await saveToLibrary.boundingBox();
   const cancelBox = await page.getByRole('button', { name: '取消', exact: true }).boundingBox();
-  if (saveBox && cancelBox) {
-    expect(saveBox.width).toBeGreaterThan(100);
-    expect(saveBox.height).toBeGreaterThanOrEqual(40);
-    expect(cancelBox.width).toBeLessThanOrEqual(saveBox.width + 2);
-    expect(Math.abs(saveBox.height - cancelBox.height)).toBeLessThanOrEqual(4);
-  }
+  expect(saveBox).not.toBeNull();
+  expect(cancelBox).not.toBeNull();
+  expect(saveBox!.width).toBeGreaterThan(100);
+  expect(saveBox!.height).toBeGreaterThanOrEqual(44);
+  expect(cancelBox!.width).toBeGreaterThanOrEqual(88);
+  expect(cancelBox!.width).toBeLessThanOrEqual(saveBox!.width + 2);
+  expect(Math.abs(saveBox!.height - cancelBox!.height)).toBeLessThanOrEqual(4);
   await saveToLibrary.click();
 
+  const imported = await openImportedBlueprints(page);
+  const original = (await readPersistedDomainState(page)).state.buildingBlueprintResources[0];
+  expect(original).toBeDefined();
   const rename = page.getByRole('button', { name: /重命名“/ }).first();
   await expect(rename).toBeVisible();
   await rename.click();
-  const input = page.getByRole('textbox', { name: /重命名“/ });
+  const input = page.getByRole('textbox', { name: '蓝图名称', exact: true });
   await enterNativeCompositionWithoutReactChange(input, 'V13 阅读大厅');
   await page.getByRole('button', { name: '保存蓝图名称' }).click();
-  await expect(page.locator('.building-blueprint-list strong')).toHaveText('V13 阅读大厅');
+  await expect(imported.locator('.library-tiles strong')).toHaveText('V13 阅读大厅');
+  const renamed = (await readPersistedDomainState(page)).state.buildingBlueprintResources[0];
+  expect(renamed.id).toBe(original.id);
+  expect(renamed.blueprint).toEqual(original.blueprint);
   await page.screenshot({ path: testInfo.outputPath('v13-blueprint-library.png'), fullPage: true });
 
   await page.reload();
   await page.getByRole('button', { name: '设置' }).click();
-  await expect(page.locator('.building-blueprint-list strong')).toHaveText('V13 阅读大厅');
+  await openImportedBlueprints(page);
+  await expect(imported.locator('.library-tiles strong')).toHaveText('V13 阅读大厅');
+  const restored = (await readPersistedDomainState(page)).state.buildingBlueprintResources[0];
+  expect(restored.displayName).toBe('V13 阅读大厅');
+  expect(restored.blueprint).toEqual(original.blueprint);
 
   // BL-01: the world speaks the library label, not the stored blueprint title.
   await page.getByRole('button', { name: '任务', exact: true }).click();

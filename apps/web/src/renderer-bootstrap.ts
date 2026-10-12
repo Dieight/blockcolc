@@ -14,7 +14,9 @@ export interface RendererWorldSnapshotPort<T> {
 
 export interface RendererWorldSnapshotOwner<T> {
   latest(): KeyedWorldSnapshot<T>;
-  observe(snapshot: KeyedWorldSnapshot<T>): void;
+  status(): { paused: boolean; adoptedKey: string | null };
+  observe(snapshot: KeyedWorldSnapshot<T>, paused?: boolean): void;
+  setPaused(paused: boolean): void;
   prepared(adoptedSnapshotKey: string): void;
   dispose(): void;
 }
@@ -26,9 +28,10 @@ export function createRendererWorldSnapshotCoordinator<
   let latest = initial;
   let adoptedKey: string | null = null;
   let phase: 'initializing' | 'prepared' | 'disposed' = 'initializing';
+  let paused=false;
 
   const applyLatestIfChanged = (): void => {
-    if (phase !== 'prepared' || adoptedKey === latest.key) return;
+    if (phase !== 'prepared' || paused || adoptedKey === latest.key) return;
     onWorldsRebuildRequested?.(latest);
     renderer.setWorlds(latest.worlds);
     adoptedKey = latest.key;
@@ -38,11 +41,14 @@ export function createRendererWorldSnapshotCoordinator<
     latest(): KeyedWorldSnapshot<TWorlds> {
       return latest;
     },
-    observe(snapshot: KeyedWorldSnapshot<TWorlds>): void {
+    status() { return { paused, adoptedKey }; },
+    observe(snapshot: KeyedWorldSnapshot<TWorlds>, pause?: boolean): void {
       if (phase === 'disposed') return;
       latest = snapshot;
+      if (pause !== undefined) paused = pause;
       applyLatestIfChanged();
     },
+    setPaused(value:boolean) { paused=value;applyLatestIfChanged(); },
     prepared(adoptedSnapshotKey: string): void {
       if (phase === 'disposed') return;
       if (phase === 'prepared') {

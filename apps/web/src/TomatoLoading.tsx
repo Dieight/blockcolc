@@ -1,6 +1,8 @@
-export const TOMATO_STAGES = ['萌芽', '完整茎', '青番茄', '成熟', '落果'] as const;
+import { t, useI18n } from './i18n';
+export const TOMATO_STAGES = ["萌芽", "完整茎", "青番茄", "成熟", "落果"] as const;
 
 function Stem() {
+  useI18n();
   return <>
     <path className="tomato-stem" d="M24 13h2v22h-2zM17 24h9v2h-9zM24 15h9v2h-9zM31 15h2v6h-2z"/>
     <path className="tomato-leaf" d="M14 21h8v3h-8zM18 16h6v3h-6zM19 29h5v2h-5z"/>
@@ -8,6 +10,7 @@ function Stem() {
   </>;
 }
 function Fruit({ green = false }: { green?: boolean }) {
+  useI18n();
   return <g className={green ? 'tomato-fruit-green' : 'tomato-fruit-red'}>
     <path d="M29 18h6v1h1v5h-1v1h-6v-1h-1v-5h1z"/>
     <rect className="tomato-fruit-shade" x="33" y="20" width="3" height="4"/>
@@ -18,6 +21,7 @@ function Fruit({ green = false }: { green?: boolean }) {
 
 /** The plant grows once; each fruit lands, rebounds, then fades away. */
 export function TomatoLoading() {
+  useI18n();
   return <div className="boot-page-model boot-tomato" data-boot-scene="tomato" aria-hidden="true">
     <svg className="tomato-art tomato-earth" viewBox="0 0 48 40" shapeRendering="crispEdges">
       <path className="tomato-soil-side" d="M9 34h30v4H9z"/>

@@ -14,13 +14,21 @@ export function iconPartMotion(name: string, part = ''): IconPartMotion | null {
     return motion([{ transform: 'rotate(0deg)' }, { transform: `rotate(${part === 'hour' ? 360 : 4320}deg)` }], '5.5px 5.5px');
   if (name === 'gear' && part === 'outer') return motion([{ transform: 'rotate(0deg)' }, { transform: 'rotate(360deg)' }]);
   if (name === 'chart' && part.startsWith('bar-')) return motion([{ transform: 'scaleY(.06)' }, { transform: 'scaleY(1)' }], '0 9px', true);
+  if(name==='calendar'&&part==='turning-page')return motion([
+    {transform:'perspective(32px) rotateX(0deg)',opacity:1},
+    {transform:'perspective(32px) rotateX(90deg)',opacity:1,offset:.34},
+    {transform:'perspective(32px) rotateX(172deg) translateY(-.7px)',opacity:1,offset:.68},
+    {transform:'perspective(32px) rotateX(180deg) translateY(-.7px)',opacity:0,offset:.88},
+    {transform:'perspective(32px) rotateX(180deg) translateY(-.7px)',opacity:0},
+  ],'6px 4px');
   if (part) return null;
   if (name === 'plus') return motion([{ transform: 'scale(.65) rotate(-90deg)' }, { transform: 'scale(1.12) rotate(0deg)', offset: .65 }, { transform: 'scale(1)' }]);
   if (name === 'edit') return motion([{ transform: 'rotate(0deg)' }, { transform: 'translate(1px,-1px) rotate(-12deg)', offset: .35 }, { transform: 'translate(-.5px,.5px) rotate(5deg)', offset: .7 }, { transform: 'none' }], '50% 50%');
   if (name === 'brand') return motion([{ transform: 'translateY(0) scale(1)' }, { transform: 'translateY(2px) scale(1.16,.82)', offset: .15 }, { transform: 'translateY(-5px) scale(.86,1.12)', offset: .4 }, { transform: 'translateY(1px) scale(1.06,.94)', offset: .7 }, { transform: 'none' }], '50% 100%');
   if (name === 'play') return motion([{ transform: 'translateX(-2px) scale(.8)' }, { transform: 'translateX(1px) scale(1.05)', offset: .65 }, { transform: 'none' }]);
   if (name === 'flag') return motion([{ transform: 'skewX(0deg)' }, { transform: 'skewX(-12deg)', offset: .3 }, { transform: 'skewX(7deg)', offset: .6 }, { transform: 'none' }], '3px 10px');
-  if (name === 'calendar' || name === 'map') return motion([{ transform: 'scaleX(.7)' }, { transform: 'scaleX(1.08)', offset: .6 }, { transform: 'scaleX(1)' }]);
+  if (name === 'map') return motion([{ transform: 'scaleX(.7)' }, { transform: 'scaleX(1.08)', offset: .6 }, { transform: 'scaleX(1)' }]);
+  if (name === 'close') return motion([{transform:'rotate(0deg)'},{transform:'rotate(180deg)'}],'50% 50%');
   if (name === 'chest') return motion([{ transform: 'translateY(0px)' }, { transform: 'translateY(-2px)', offset: .35 }, { transform: 'translateY(0px)', offset: .7 }, { transform: 'none' }]);
   return null; // Refresh, destructive controls and busy indicators keep their own meaning.
 }
@@ -31,8 +39,18 @@ export function installButtonIconMotion(host: Document): () => void {
   const click = (event: Event) => {
     const button = event.target instanceof Element ? event.target.closest<HTMLButtonElement>('button') : null;
     if (!button || button.disabled || button.getAttribute('aria-busy') === 'true' || button.closest('.bottom-nav')
-      || !button.closest('.app-shell,.dialog-backdrop') || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+      || !button.closest('.app-shell,.dialog-backdrop,[role="dialog"]') || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
     for (const icon of button.querySelectorAll<SVGElement>('[data-pixel-icon]')) {
+      if(icon.dataset.pixelIcon==='close'){
+        // The sheet can close immediately; keep a pointer-transparent visual
+        // receipt alive independently rather than delaying its business action.
+        const rect=icon.getBoundingClientRect(),ghost=icon.cloneNode(true) as SVGElement;
+        Object.assign(ghost.style,{position:'fixed',left:`${rect.left}px`,top:`${rect.top}px`,width:`${rect.width}px`,height:`${rect.height}px`,color:getComputedStyle(icon).color,zIndex:'10001',pointerEvents:'none'});
+        ghost.setAttribute('aria-hidden','true');host.body.append(ghost);
+        const animation=ghost.animate([{transform:'rotate(0deg)',opacity:1},{transform:'rotate(180deg)',opacity:0}],{duration:260,easing:'ease-out'});
+        active.set(ghost,[animation]);void animation.finished.catch(()=>{}).finally(()=>{ghost.remove();active.delete(ghost);});
+        continue;
+      }
       active.get(icon)?.forEach(animation => animation.cancel());
       const parts = icon.dataset.pixelIcon === 'brand' ? [] : [...icon.querySelectorAll<SVGElement>('[data-icon-part]')];
       const motions: Animation[] = [];

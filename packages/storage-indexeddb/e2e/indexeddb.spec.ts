@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 const state = (title: string) => ({
-  schemaVersion: 13 as const,
+  schemaVersion: 14 as const, quickNotes: [],
   projects: [{ id: "p1", kind: "finite" as const, habit: null, settlementIndex: 0, title, blueprintId: "small", importedBlueprint: null, createdAt: "2026-07-23T08:00:00.000Z", status: "active" as const, subtaskStructureLocked: false, subtasks: [{ id: "s1", title: "First", order: 0, progressBasisPoints: 0 }] }],
   habitBuildings: [],
   activeProjectId: "p1",
@@ -82,17 +82,24 @@ test("real browser saves across reload, previews without mutation, replaces and 
   const upgrade = await page.evaluate(async () => {
     const held = window.storageHarness.create("browser-storage");
     await held.load();
+    const current = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open("browser-storage");
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    const nextVersion = current.version + 1;
+    current.close();
     return new Promise<string>((resolve, reject) => {
-      const request = indexedDB.open("browser-storage", 3);
-      const timeout = window.setTimeout(() => reject(new Error("external v3 upgrade remained blocked")), 2000);
-      request.onupgradeneeded = () => request.result.createObjectStore("external-v3-proof");
+      const request = indexedDB.open("browser-storage", nextVersion);
+      const timeout = window.setTimeout(() => reject(new Error("external upgrade remained blocked")), 2000);
+      request.onupgradeneeded = () => request.result.createObjectStore("external-upgrade-proof");
       request.onerror = () => { window.clearTimeout(timeout); reject(request.error); };
-      request.onblocked = () => { /* Allow onversionchange handlers time to release every v2 connection. */ };
+      request.onblocked = () => { /* Allow onversionchange handlers time to release held repository connections. */ };
       request.onsuccess = () => {
         window.clearTimeout(timeout);
         const names = Array.from(request.result.objectStoreNames);
         request.result.close();
-        resolve(names.includes("external-v3-proof") ? "upgraded" : "missing-proof-store");
+        resolve(names.includes("external-upgrade-proof") ? "upgraded" : "missing-proof-store");
       };
     });
   });

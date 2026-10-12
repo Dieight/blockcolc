@@ -1,8 +1,11 @@
 import { Capacitor, registerPlugin } from '@capacitor/core';
 import type { Plugin, PluginListenerHandle } from '@capacitor/core';
 import type { BreakCompletionNotification, FocusCompletionNotification } from '@blockcolc/application';
+import {setPresentationLanguage} from './presentation-language';
 
 export interface BreakLiveUpdateCapability {
+  originOs?: boolean;
+  originOsSceneAllowed?: boolean;
   supported: boolean;
   allowed: boolean;
   settingsAvailable: boolean;
@@ -50,6 +53,7 @@ export interface AutomaticContinuationDeadlineSchedule {
 type TimerLiveUpdateKind = 'focus' | 'break';
 
 interface TimerLiveUpdatePlugin extends Plugin {
+  setLanguage(options:{language:'zh-CN'|'en'}):Promise<void>;
   show(options: {
     kind: TimerLiveUpdateKind;
     updateKey: string;
@@ -76,6 +80,10 @@ interface TimerLiveUpdatePlugin extends Plugin {
 }
 
 const nativeTimerLiveUpdate = registerPlugin<TimerLiveUpdatePlugin>('BreakLiveUpdate');
+export async function setNativePresentationLanguage(language:'zh-CN'|'en'){
+  setPresentationLanguage(language);
+  if(Capacitor.isNativePlatform())await nativeTimerLiveUpdate.setLanguage({language});
+}
 
 export function breakLiveUpdateOptions(notification: BreakCompletionNotification): Parameters<TimerLiveUpdatePlugin['show']>[0] {
   return {

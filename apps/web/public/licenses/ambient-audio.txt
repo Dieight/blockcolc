@@ -1,0 +1,11 @@
+Blockcolc optional nature recordings
+
+Rain: "Rain (1)" by ezwa, public domain as declared by its author.
+Source: https://commons.wikimedia.org/wiki/File:Rain_(1).ogg
+Source revision: https://commons.wikimedia.org/w/index.php?title=File:Rain_(1).ogg&oldid=899302123
+Blockcolc adaptation: low-frequency filtering, level matching and loop crossfade.
+
+Morning birdsong: recording supplied by the Blockcolc
+project owner for inclusion as built-in ambience. Processed for noise reduction
+and continuous looping. This notice does not grant a separate open license to
+these recordings. The source-code license does not change their ownership.

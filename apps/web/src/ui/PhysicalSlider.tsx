@@ -1,3 +1,4 @@
+import { t, useI18n } from '../i18n';
 import { useEffect, useRef, useState, type CSSProperties, type PointerEvent } from 'react';
 import { sliderBounceOffset, sliderFlight, sliderFlightPosition, sliderValueAt, sliderLandingValueAt, sliderFirstBounceDuration, type SliderFlight } from './physical-slider';
 
@@ -11,6 +12,7 @@ interface PhysicalSliderProps {
 /** Ball and rail preview are transient. Persisted values always come from the owner. */
 export function PhysicalSlider({ label, value, min = 0, max = 100, step = 5, id, unit = '%',
   disabled = false, commitOnRelease = false, onChange, onPreviewChange }: PhysicalSliderProps) {
+  useI18n();
   const rail = useRef<HTMLDivElement>(null), frame = useRef(0), flightRef = useRef<SliderFlight | null>(null);
   const widthRef = useRef(1), valueRef = useRef(value), callback = useRef(onChange);
   const previewCallback = useRef(onPreviewChange), announced = useRef<number | null>(null);
@@ -103,14 +105,14 @@ export function PhysicalSlider({ label, value, min = 0, max = 100, step = 5, id,
     onLostPointerCapture={() => { if (drag.current) { drag.current = null; clear(); } }}>
     <input id={id} className="sr-only" aria-label={label} type="range" min={min} max={max} step={step}
       value={Math.max(min, Math.min(max, value))} disabled={disabled}
-      aria-valuetext={`${predicted ?? value}${unit}${predicted === null ? '' : '，预计落点'}`}
+      aria-valuetext={t("{0}{1}{2}", predicted ?? value, unit, predicted === null ? '' : '，预计落点')}
       onChange={event => { clear(); onChange(Number(event.target.value)); }}/>
     <div ref={rail} className="physical-slider-rail" style={{ '--range-progress': `${(displayedValue - min) / (max - min) * 100}%` } as CSSProperties}>
       <span className="physical-slider-progress" aria-hidden="true"/>
       <i className="physical-slider-ball" aria-hidden="true" style={pose ? { left: pose.x, transform: `translate(-50%,${pose.y}px)` } : { left: `${(displayedValue - min) / (max - min) * 100}%` }}/>
       {preview && <><svg className="physical-slider-arc" aria-hidden="true"><path d={path.map((point, i) => `${i ? 'L' : 'M'}${point.x},${point.y + 180}`).join(' ')}/></svg>
         <i className="physical-slider-ball is-predicted" aria-hidden="true" style={{ left: predictedX }}/>
-        {!onPreviewChange && <output className="physical-slider-preview">预计 {predicted}{unit}</output>}</>}
+        {!onPreviewChange && <output className="physical-slider-preview">{t("预计")}{predicted}{unit}</output>}</>}
     </div>
   </div>;
 }

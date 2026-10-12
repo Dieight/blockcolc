@@ -212,8 +212,8 @@
 .monument-statistics[open],.achievements-disclosure[open]{padding-bottom:18px}
 .monument-statistics>summary,.achievements-disclosure>summary{min-height:64px;padding:14px 0;display:flex;align-items:center;gap:12px;cursor:pointer;font-weight:600;list-style:none}
 .monument-statistics>summary::-webkit-details-marker,.achievements-disclosure>summary::-webkit-details-marker{display:none}
-.monument-statistics>summary::after,.achievements-disclosure>summary::after{content:"＋";margin-left:auto;color:var(--muted);font-size:18px}
-.monument-statistics[open]>summary::after,.achievements-disclosure[open]>summary::after{content:"−"}
+.monument-statistics>summary>.pixel-disclosure,.achievements-disclosure>summary>.pixel-disclosure{margin-left:auto;flex:none;color:var(--muted)}
+.monument-statistics[open]>summary .pixel-disclosure-stem,.achievements-disclosure[open]>summary .pixel-disclosure-stem{transform:scaleY(0)}
 .monument-statistics>summary small,.achievements-disclosure>summary small{font-size:12px;color:var(--muted);font-weight:500}
 .monument-statistics>summary>.pixel-icon,.achievements-disclosure>summary>.pixel-icon{width:20px;height:20px;color:var(--focus)}
 .monument-intro{margin:0 0 14px;color:var(--muted);font-size:12px;line-height:1.5}

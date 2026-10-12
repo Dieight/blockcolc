@@ -14,6 +14,10 @@ public final class BreakDeadlineReceiver extends BroadcastReceiver {
     public void onReceive(Context context, Intent intent) {
         if (intent == null) return;
         String action = intent.getAction();
+        if (BreakLiveUpdatePlugin.ACTION_FOCUS_DEADLINE.equals(action)) {
+            BreakLiveUpdatePlugin.onFocusDeadline(context, intent);
+            return;
+        }
         if (BreakLiveUpdatePlugin.ACTION_AUTO_CONTINUATION_DEADLINE.equals(action)) {
             BreakLiveUpdatePlugin.onAutomaticContinuationDeadline(context, intent);
             return;

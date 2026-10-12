@@ -7,11 +7,12 @@ if ($metadata.PerformanceDiagnostics) { throw 'Final APK has performance diagnos
 $archive = [IO.Compression.ZipFile]::OpenRead((Resolve-Path -LiteralPath $ApkPath).Path)
 try {
     foreach ($entry in $archive.Entries) {
+        if ($entry.FullName -match '^assets/public/.*\.map$') { throw 'Diagnostic source map found in final APK.' }
         if ($entry.FullName -notmatch '^classes\d*\.dex$|^assets/public/.*\.(js|html)$') { continue }
         $reader = [IO.StreamReader]::new($entry.Open(), [Text.Encoding]::UTF8)
         try {
             $content = $reader.ReadToEnd()
-            foreach ($marker in @('__blockcolcPerformanceProbe', 'BlockcolcPerformance', 'Lcom/blockcolc/app/PerformanceProbePolicy;')) {
+            foreach ($marker in @('__blockcolcPerformanceProbe', 'BlockcolcPerformance', 'blockcolc-diagnostic-', 'blockcolc_diagnostic_timer', 'Lcom/blockcolc/app/PerformanceProbePolicy;')) {
                 if ($content.Contains($marker)) { throw "Diagnostic implementation in final APK entry: $($entry.FullName)" }
             }
         } finally { $reader.Dispose(); $content = $null }

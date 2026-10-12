@@ -205,11 +205,11 @@
       "role": "preserved-approved-semantic-icon",
       "approval": {
         "status": "approved",
-        "approvedByProductRule": "Keep the native outline tomato notification icon unchanged.",
-        "sha256": "9F612EE43B64B46039EE95E063BBDF61CE99AC8D4E19EEBC1FF8F24AFA49706D"
+        "approvedByProductRule": "v2.7.0 feedback: pixelate the original oval tomato clock outline, preserving its silhouette, hollow dial and leaf positions; do not redesign the shape.",
+        "sha256": "5A1D953E7CE4AFA56B61203C5194973447D257CA58DE66FBC807ACAD797D3FCB"
       },
-      "sha256": "9F612EE43B64B46039EE95E063BBDF61CE99AC8D4E19EEBC1FF8F24AFA49706D",
-      "bytes": 975
+      "sha256": "5A1D953E7CE4AFA56B61203C5194973447D257CA58DE66FBC807ACAD797D3FCB",
+      "bytes": 861
     },
     {
       "path": "apps/android/android/app/src/main/res/drawable/ic_stat_blockcolc.xml",

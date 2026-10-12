@@ -2,6 +2,7 @@ import { Capacitor } from '@capacitor/core';
 import { LocalNotifications, type PermissionStatus } from '@capacitor/local-notifications';
 import type { BreakCompletionNotification, FocusCompletionNotification, NotificationCapability, NotificationPermission, NotificationPort } from '@blockcolc/application';
 import { setNativeProductSystemUiOpen } from './lifecycle';
+import {notificationText as ui} from './presentation-language';
 import { breakNotificationKey, cancelBreakLiveUpdate, cancelFocusLiveUpdate, showBreakLiveUpdate, showFocusLiveUpdate } from './break-live-update';
 
 export const FOCUS_NOTIFICATION_ID = 42001;
@@ -50,8 +51,8 @@ export class CapacitorNotificationPort implements NotificationPort {
     await LocalNotifications.cancel({ notifications: [{ id: FOCUS_NOTIFICATION_ID }] });
     await LocalNotifications.schedule({ notifications: [{
       id: FOCUS_NOTIFICATION_ID,
-      title: '专注完成',
-      body: '回来记录这次小任务的实际进度。',
+      title: ui('专注完成','Focus complete'),
+      body: ui('回来记录这次小任务的实际进度。','Return to report your progress.'),
       schedule: { at: new Date(notification.endsAt), allowWhileIdle: true },
       extra: { kind: 'focus-completed', sessionId: notification.sessionId, endsAt: notification.endsAt },
     }] });
@@ -104,8 +105,8 @@ export class CapacitorNotificationPort implements NotificationPort {
         try {
           await LocalNotifications.schedule({ notifications: [{
             id: BREAK_COMPLETION_NOTIFICATION_ID,
-            title: notification.returnToFocus === true ? '返回专注' : '休息结束',
-            body: notification.returnToFocus === true ? '休息已结束，回来开始下一轮专注。' : '回来开始下一轮专注。',
+            title: notification.returnToFocus === true ? ui('返回专注','Return to focus') : ui('休息结束','Break finished'),
+            body: notification.returnToFocus === true ? ui('休息已结束，回来开始下一轮专注。','Break finished. Start your next round.') : ui('回来开始下一轮专注。','Start your next focus round.'),
             // A due fallback must display now, not schedule an invalid date
             // in the past. The original deadline remains in extra below.
             ...(!deadlineReached ? { schedule: { at: new Date(notification.endsAt), allowWhileIdle: true } } : {}),

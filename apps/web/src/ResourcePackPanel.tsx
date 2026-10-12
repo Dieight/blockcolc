@@ -1,3 +1,4 @@
+import { t, useI18n } from './i18n';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertTriangle, FileArchive, PackageCheck, Trash2 } from 'lucide-react';
 import { JAVA_263_CLIENT_JAR_LIMITS, ResourcePackError, parseJava16xResourcePack } from '@blockcolc/resource-pack';
@@ -14,6 +15,7 @@ export const RESOURCE_PACK_PICKER_MAX_BYTES = JAVA_263_CLIENT_JAR_LIMITS.maxInpu
 type PackListState = { status: 'idle' | 'loading' } | { status: 'ready'; packs: ResourcePackListItem[] } | { status: 'error'; message: string };
 
 export function ResourcePackPanel({active,repository}:{active:boolean;repository:ResourcePackRepository}) {
+  useI18n();
   const [listState,setListState]=useState<PackListState>({status:'idle'});
   const [busy,setBusy]=useState(false);
   const [pendingAction,setPendingAction]=useState('');
@@ -95,7 +97,7 @@ export function ResourcePackPanel({active,repository}:{active:boolean;repository
       const imported=await importResourcePackFromPicker(ticket.repository,load);
       if(!imported)return;
       await reload(ticket.repository,ticket.owner);
-      if(actionIsCurrent(ticket))setNotice(`已导入并启用：${imported.textures.length} 张纹理、${imported.blockStates.length} 个状态、${imported.models.length} 个模型。`);
+      if(actionIsCurrent(ticket))setNotice(t("已导入并启用：{0} 张纹理、{1} 个状态、{2} 个模型。", imported.textures.length, imported.blockStates.length, imported.models.length));
     }catch(cause){if(actionIsCurrent(ticket))setError(resourcePackErrorMessage(cause));}
     finally{if(actionIsCurrent(ticket))importInFlight.current=false;finishAction(ticket);}
   };
@@ -108,21 +110,21 @@ export function ResourcePackPanel({active,repository}:{active:boolean;repository
   const select=async(id:string|null)=>{
     if(listStateRef.current.status!=='ready'||(id!==null&&!listStateRef.current.packs.some(pack=>pack.id===id)))return;
     const ticket=beginAction(`select:${id}`);if(!ticket)return;
-    try{if(id===null){await ticket.repository.select(null);await ticket.repository.selectBase(null);}else await ticket.repository.select(id);await reload(ticket.repository,ticket.owner);if(actionIsCurrent(ticket))setNotice(id===null?'已切回方块钟原创材质。':'已切换外观资源包；缺失资源仍可由基础包补全。');}
+    try{if(id===null){await ticket.repository.select(null);await ticket.repository.selectBase(null);}else await ticket.repository.select(id);await reload(ticket.repository,ticket.owner);if(actionIsCurrent(ticket))setNotice(id===null?t("已切回方块钟原创材质。"):t("已切换外观资源包；缺失资源仍可由基础包补全。"));}
     catch(cause){if(actionIsCurrent(ticket))setError(resourcePackErrorMessage(cause));}
     finally{finishAction(ticket);}
   };
   const selectBase=async(id:string|null)=>{
     if(listStateRef.current.status!=='ready'||(id!==null&&!listStateRef.current.packs.some(pack=>pack.id===id)))return;
     const ticket=beginAction(`base:${id}`);if(!ticket)return;
-    try{await ticket.repository.selectBase(id);await reload(ticket.repository,ticket.owner);if(actionIsCurrent(ticket))setNotice(id===null?'已关闭基础资源包。':'已设置基础资源包，将补全当前外观包缺失的资源。');}
+    try{await ticket.repository.selectBase(id);await reload(ticket.repository,ticket.owner);if(actionIsCurrent(ticket))setNotice(id===null?t("已关闭基础资源包。"):t("已设置基础资源包，将补全当前外观包缺失的资源。"));}
     catch(cause){if(actionIsCurrent(ticket))setError(resourcePackErrorMessage(cause));}
     finally{finishAction(ticket);}
   };
   const remove=async()=>{
     if(!deleteTarget||listStateRef.current.status!=='ready'||!listStateRef.current.packs.some(pack=>pack.id===deleteTarget.id))return;
     const ticket=beginAction('delete');if(!ticket)return;
-    try{const wasSelected=deleteTarget.active||deleteTarget.base;await ticket.repository.delete(deleteTarget.id);if(actionIsCurrent(ticket))setDeleteTarget(null);await reload(ticket.repository,ticket.owner);if(actionIsCurrent(ticket))setNotice(wasSelected?'已删除资源包；相关外观或基础层已自动取消。':'已删除资源包。');}
+    try{const wasSelected=deleteTarget.active||deleteTarget.base;await ticket.repository.delete(deleteTarget.id);if(actionIsCurrent(ticket))setDeleteTarget(null);await reload(ticket.repository,ticket.owner);if(actionIsCurrent(ticket))setNotice(wasSelected?t("已删除资源包；相关外观或基础层已自动取消。"):t("已删除资源包。"));}
     catch(cause){if(actionIsCurrent(ticket))setError(resourcePackErrorMessage(cause));}
     finally{finishAction(ticket);}
   };
@@ -131,17 +133,17 @@ export function ResourcePackPanel({active,repository}:{active:boolean;repository
   const originalActive=visibleListState.status==='ready'&&!packs.some(pack=>pack.active||pack.base);
 
   return <section className="resource-pack-panel" aria-labelledby="resource-pack-title" aria-busy={busy}>
-    <header><h2 id="resource-pack-title">方块材质包</h2><p>导入 ZIP 或 Java 26.3 JAR，外观优先、基础包补缺。</p></header>
-    {visibleListState.status==='ready'&&<div className={originalActive?'resource-pack-original active':'resource-pack-original'}><div><b>方块钟原创材质</b><small>{originalActive?'正在使用':'安全回退外观'}</small></div><button type="button" disabled={busy||originalActive} aria-busy={pendingAction==='select:null'} onClick={()=>void select(null)}>{originalActive?<PackageCheck/>:null}{pendingAction==='select:null'?'切换中…':originalActive?'使用中':'使用'}</button></div>}
-    {visibleListState.status==='idle'&&<p className="resource-pack-list-status" role="status">尚未读取本机资源包。</p>}
-    {visibleListState.status==='loading'&&<p className="resource-pack-list-status" role="status" aria-busy="true">正在读取本机资源包…</p>}
-    {visibleListState.status==='error'&&<div className="resource-pack-list-error" role="alert"><p>无法读取资源包：{visibleListState.message}</p><button type="button" disabled={busy} aria-busy={pendingAction==='reload'} onClick={()=>{const ticket=beginAction('reload');if(ticket)void reload().catch(()=>{}).finally(()=>finishAction(ticket));}}><PixelRefresh/>重试</button></div>}
-    {nativePicker?<button className="resource-pack-import" type="button" disabled={busy} aria-busy={pendingAction==='import'} onClick={()=>void importNativePack()}><FileArchive/><span>{pendingAction==='import'?'正在导入…':'导入 Java 资源包 ZIP / JAR'}</span></button>:<label className="resource-pack-import" aria-busy={pendingAction==='import'} aria-disabled={busy}><FileArchive/><span>{pendingAction==='import'?'正在导入…':'导入 Java 资源包 ZIP / JAR'}</span><input aria-label="导入 Java 资源包 ZIP / JAR" type="file" accept=".zip,.jar,application/zip,application/x-zip-compressed,application/java-archive" disabled={busy} onChange={event=>{const file=event.target.files?.[0];event.currentTarget.value='';void importBrowserPack(file);}}/></label>}
-    <p className="resource-pack-license">资源需自备并有权使用，不上传、不含在备份中；缺失部分用原创材质。</p>
+    <header><h2 id="resource-pack-title">{t("方块材质包")}</h2><p>{t("导入 ZIP 或 Java 26.3 JAR，外观优先、基础包补缺。")}</p></header>
+    {visibleListState.status==='ready'&&<div className={originalActive?'resource-pack-original active':'resource-pack-original'}><div><b>{t("方块钟原创材质")}</b><small>{originalActive?t("正在使用"):t("安全回退外观")}</small></div><button type="button" disabled={busy||originalActive} aria-busy={pendingAction==='select:null'} onClick={()=>void select(null)}>{originalActive?<PackageCheck/>:null}{pendingAction==='select:null'?t("切换中…"):originalActive?t("使用中"):t("使用")}</button></div>}
+    {visibleListState.status==='idle'&&<p className="resource-pack-list-status" role="status">{t("尚未读取本机资源包。")}</p>}
+    {visibleListState.status==='loading'&&<p className="resource-pack-list-status" role="status" aria-busy="true">{t("正在读取本机资源包…")}</p>}
+    {visibleListState.status==='error'&&<div className="resource-pack-list-error" role="alert"><p>{t("无法读取资源包：")}{visibleListState.message}</p><button type="button" disabled={busy} aria-busy={pendingAction==='reload'} onClick={()=>{const ticket=beginAction('reload');if(ticket)void reload().catch(()=>{}).finally(()=>finishAction(ticket));}}><PixelRefresh/>{t("重试")}</button></div>}
+    {nativePicker?<button className="resource-pack-import" type="button" disabled={busy} aria-busy={pendingAction==='import'} onClick={()=>void importNativePack()}><FileArchive/><span>{pendingAction==='import'?t("正在导入…"):t("导入 Java 资源包 ZIP / JAR")}</span></button>:<label className="resource-pack-import" aria-busy={pendingAction==='import'} aria-disabled={busy}><FileArchive/><span>{pendingAction==='import'?t("正在导入…"):t("导入 Java 资源包 ZIP / JAR")}</span><input aria-label={t("导入 Java 资源包 ZIP / JAR")} type="file" accept=".zip,.jar,application/zip,application/x-zip-compressed,application/java-archive" disabled={busy} onChange={event=>{const file=event.target.files?.[0];event.currentTarget.value='';void importBrowserPack(file);}}/></label>}
+    <p className="resource-pack-license">{t("资源需自备并有权使用，不上传、不含在备份中；缺失部分用原创材质。")}</p>
     {error&&<p className="backup-error" role="alert"><AlertTriangle/>{error}</p>}{notice&&<p className="backup-notice" role="status">{notice}</p>}
-    {visibleListState.status==='ready'&&packs.length===0&&<p className="resource-pack-list-status" role="status">本机尚无导入的资源包。</p>}
-    {visibleListState.status==='ready'&&packs.length>0&&<ul className="resource-pack-list">{packs.map(pack=><li className={pack.active||pack.base?'active':''} key={pack.id}><div><strong>{pack.name}</strong><span>pack_format {pack.packFormat} · {pack.textureCount} 张纹理 · {formatBytes(pack.archiveBytes)}</span>{(pack.active||pack.base)&&<small>{[pack.active?'外观层':null,pack.base?'基础层':null].filter(Boolean).join(' · ')}</small>}</div><div><button type="button" disabled={busy||pack.active} aria-busy={pendingAction===`select:${pack.id}`} onClick={()=>void select(pack.id)}>{pendingAction===`select:${pack.id}`?'切换中…':pack.active?'使用中':'使用'}</button><button type="button" disabled={busy} aria-busy={pendingAction===`base:${pack.base?null:pack.id}`} onClick={()=>void selectBase(pack.base?null:pack.id)}>{pendingAction===`base:${pack.base?null:pack.id}`?'保存中…':pack.base?'取消基础':'设为基础'}</button><button className="resource-pack-delete" type="button" aria-label={`删除“${pack.name}”`} disabled={busy} onClick={()=>setDeleteTarget(pack)}><Trash2/></button></div></li>)}</ul>}
-    {deleteTarget&&visibleListState.status==='ready'&&<div className="dialog-backdrop" role="presentation"><div className="confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="resource-pack-delete-title" aria-busy={pendingAction==='delete'}><h2 id="resource-pack-delete-title">删除这个资源包？</h2><p>{deleteTarget.active&&!packs.some(pack=>pack.base&&pack.id!==deleteTarget.id)?'删除后会立即回退到方块钟原创材质。':deleteTarget.active||deleteTarget.base?'删除后会取消这个资源包的外观或基础层；其他已选资源包仍保留。':'只删除本机保存的资源包，不影响任务与蓝图。'}</p><div className="dialog-actions"><button ref={cancelRef} disabled={busy} onClick={()=>setDeleteTarget(null)}>取消</button><button className="danger-action" disabled={busy} aria-busy={pendingAction==='delete'} onClick={()=>void remove()}><Trash2/>{pendingAction==='delete'?'删除中…':'删除资源包'}</button></div></div></div>}
+    {visibleListState.status==='ready'&&packs.length===0&&<p className="resource-pack-list-status" role="status">{t("本机尚无导入的资源包。")}</p>}
+    {visibleListState.status==='ready'&&packs.length>0&&<ul className="resource-pack-list">{packs.map(pack=><li className={pack.active||pack.base?'active':''} key={pack.id}><div><strong>{pack.name}</strong><span>pack_format {pack.packFormat} · {pack.textureCount} {t("张纹理 ·")}{' '}{formatBytes(pack.archiveBytes)}</span>{(pack.active||pack.base)&&<small>{[pack.active?t("外观层"):null,pack.base?t("基础层"):null].filter(Boolean).join(' · ')}</small>}</div><div><button type="button" disabled={busy||pack.active} aria-busy={pendingAction===`select:${pack.id}`} onClick={()=>void select(pack.id)}>{pendingAction===`select:${pack.id}`?t("切换中…"):pack.active?t("使用中"):t("使用")}</button><button type="button" disabled={busy} aria-busy={pendingAction===`base:${pack.base?null:pack.id}`} onClick={()=>void selectBase(pack.base?null:pack.id)}>{pendingAction===`base:${pack.base?null:pack.id}`?t("保存中…"):pack.base?t("取消基础"):t("设为基础")}</button><button className="resource-pack-delete" type="button" aria-label={t("删除“{0}”", pack.name)} disabled={busy} onClick={()=>setDeleteTarget(pack)}><Trash2/></button></div></li>)}</ul>}
+    {deleteTarget&&visibleListState.status==='ready'&&<div className="dialog-backdrop" role="presentation"><div className="confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="resource-pack-delete-title" aria-busy={pendingAction==='delete'}><h2 id="resource-pack-delete-title">{t("删除这个资源包？")}</h2><p>{deleteTarget.active&&!packs.some(pack=>pack.base&&pack.id!==deleteTarget.id)?t("删除后会立即回退到方块钟原创材质。"):deleteTarget.active||deleteTarget.base?t("删除后会取消这个资源包的外观或基础层；其他已选资源包仍保留。"):t("只删除本机保存的资源包，不影响任务与蓝图。")}</p><div className="dialog-actions"><button ref={cancelRef} disabled={busy} onClick={()=>setDeleteTarget(null)}>{t("取消")}</button><button className="danger-action" disabled={busy} aria-busy={pendingAction==='delete'} onClick={()=>void remove()}><Trash2/>{pendingAction==='delete'?t("删除中…"):t("删除资源包")}</button></div></div></div>}
   </section>;
 }
 
@@ -161,6 +163,6 @@ export async function importResourcePackFromPicker(
 }
 
 async function contentId(bytes:Uint8Array):Promise<string>{const digest=await crypto.subtle.digest('SHA-256',bytes.slice().buffer);return `sha256:${[...new Uint8Array(digest)].map(value=>value.toString(16).padStart(2,'0')).join('')}`;}
-function displayName(fileName:string):string{return fileName.replace(/\.(?:zip|jar)$/i,'').trim().slice(0,160)||'未命名资源包';}
+function displayName(fileName:string):string{return fileName.replace(/\.(?:zip|jar)$/i,'').trim().slice(0,160)||t("未命名资源包");}
 function formatBytes(value:number):string{return value<1024?`${value} B`:value<1024*1024?`${Math.round(value/1024)} KB`:`${(value/1024/1024).toFixed(1)} MB`;}
-function resourcePackErrorMessage(cause:unknown):string{if(cause instanceof ResourcePackError){if(cause.code==='INPUT_TOO_LARGE')return'资源包超过当前格式的导入上限（普通 ZIP 32 MB，26.3 客户端 JAR 64 MB）。';if(cause.code==='FILE_TOO_LARGE')return'资源包中有单个文件超过 4 MB 安全上限。';if(cause.code==='TOTAL_UNCOMPRESSED_TOO_LARGE')return'资源包展开后超过 64 MB 安全上限。';if(cause.code==='TOO_MANY_FILES')return'资源包文件数超过当前格式的安全上限。';if(cause.code==='MISSING_PACK_MCMETA'||cause.code==='INVALID_PACK_MCMETA')return'资源包缺少有效的 pack.mcmeta；客户端 JAR 还需为 Java 26.3。';if(cause.code==='UNSAFE_PATH'||cause.code==='DUPLICATE_PATH'||cause.code==='CASE_COLLISION'||cause.code==='ENCRYPTED_ENTRY')return'资源包包含不安全、重复、大小写冲突或加密的文件路径。';return'无法解析这个 Java 资源包。';}return cause instanceof Error?cause.message:'资源包操作失败，请重试。';}
+function resourcePackErrorMessage(cause:unknown):string{if(cause instanceof ResourcePackError){if(cause.code==='INPUT_TOO_LARGE')return t("资源包超过当前格式的导入上限（普通 ZIP 32 MB，26.3 客户端 JAR 64 MB）。");if(cause.code==='FILE_TOO_LARGE')return t("资源包中有单个文件超过 4 MB 安全上限。");if(cause.code==='TOTAL_UNCOMPRESSED_TOO_LARGE')return t("资源包展开后超过 64 MB 安全上限。");if(cause.code==='TOO_MANY_FILES')return t("资源包文件数超过当前格式的安全上限。");if(cause.code==='MISSING_PACK_MCMETA'||cause.code==='INVALID_PACK_MCMETA')return t("资源包缺少有效的 pack.mcmeta；客户端 JAR 还需为 Java 26.3。");if(cause.code==='UNSAFE_PATH'||cause.code==='DUPLICATE_PATH'||cause.code==='CASE_COLLISION'||cause.code==='ENCRYPTED_ENTRY')return t("资源包包含不安全、重复、大小写冲突或加密的文件路径。");return t("无法解析这个 Java 资源包。");}return cause instanceof Error?cause.message:t("资源包操作失败，请重试。");}

@@ -9,6 +9,51 @@ type SceneryWindow = typeof window & {
   __sceneryProbe: { app: VoxelRenderer; scene?: THREE.Scene };
 };
 
+test('coastal reef surfaces keep block colors and shadows without drawing hidden cube faces',async({page},info)=>{
+  test.setTimeout(120_000);await page.goto('/');
+  await page.waitForFunction(()=>!!(window as SceneryWindow).__blockcolcVoxelTest);
+  await page.evaluate(async()=>{
+    const scope=window as SceneryWindow,voxel=scope.__blockcolcVoxelTest;
+    const temporary=new voxel.LightingPostProcessor({capabilities:{maxSamples:0}} as THREE.WebGLRenderer);
+    const scene=(temporary as unknown as {quadScene:THREE.Scene}).quadScene;
+    const prototype=Object.getPrototypeOf(Object.getPrototypeOf(scene)) as THREE.Object3D;temporary.dispose();
+    const previous=prototype.onBeforeRender;
+    prototype.onBeforeRender=function(renderer,scene,camera,geometry,material,group){
+      if(renderer.domElement.getAttribute('aria-label')==='海岸珊瑚验证'&&scene.getObjectByName('worldLightRig'))scope.__sceneryProbe.scene=scene as THREE.Scene;
+      previous.call(this,renderer,scene,camera,geometry,material,group);
+    };
+    const canvas=document.createElement('canvas');canvas.setAttribute('aria-label','海岸珊瑚验证');
+    canvas.style.cssText='position:fixed;inset:0;width:100vw;height:100vh;touch-action:none;z-index:99999';document.body.append(canvas);
+    const app=voxel.createVoxelRenderer(canvas,{environmentStyle:'mosaic-coast',worldSeed:'world-default',terrainGenerationVersion:4,
+      lightingQuality:'balanced',initialEnvironment:{weather:{kind:'clear',cloudIntensity:0},astronomy:null,debug:{date:Date.parse('2026-10-12T15:00:00+08:00')}}});
+    scope.__sceneryProbe={app};app.setReducedMotion(true);app.setVisible(false);
+    await app.initializeWorlds(Array.from({length:14},(_,settlementIndex)=>({projectId:`reef-${settlementIndex}`,settlementIndex,
+      blueprintId:'builtin-small-workshop',buildingCompletionBasisPoints:10_000,buildingConditionBasisPoints:10_000,isMonument:false})),null);
+    app.setVisible(true);await app.prepareInitialPresentation();
+  });
+  await expect.poll(()=>page.evaluate(()=>Boolean((window as SceneryWindow).__sceneryProbe.scene))).toBe(true);
+  const result=await page.evaluate(()=>{
+    const scenery=(window as SceneryWindow).__sceneryProbe.scene!.getObjectByName('world-scenery')!;
+    const surfaces:THREE.Mesh[]=[];scenery.traverse(node=>{if(node.name==='scenery-reef-surface')surfaces.push(node as THREE.Mesh);});
+    const reefs=scenery.children.flatMap(node=>node.userData.sceneryObject?.id.includes(':reef:')?[node.userData.sceneryObject]:[]);
+    const solids=reefs.flatMap(object=>object.distantVoxels).filter((v:{sourceBlockId?:string})=>/minecraft:(sand|.*_coral_block)$/.test(v.sourceBlockId??''));
+    return {materials:surfaces.length,triangles:surfaces.reduce((sum,mesh)=>sum+mesh.geometry.index!.count/3,0),solidCubes:solids.length,
+      allCastShadows:surfaces.every(mesh=>mesh.castShadow&&mesh.receiveShadow),
+      colors:surfaces.every(mesh=>mesh.geometry.getAttribute('color').count===mesh.geometry.getAttribute('position').count),
+      groves:scenery.children.filter(node=>node.name.startsWith('scenery-block-grove-')).length};
+  });
+  expect(result.materials).toBeGreaterThanOrEqual(5);expect(result.materials).toBeLessThanOrEqual(6);
+  expect(result.triangles).toBeLessThan(result.solidCubes*6);expect(result.allCastShadows).toBe(true);expect(result.colors).toBe(true);
+  expect(result.groves).toBeLessThanOrEqual(4);
+  const canvas=page.getByLabel('海岸珊瑚验证');await canvas.dispatchEvent('wheel',{deltaY:100_000});
+  await canvas.screenshot({path:info.outputPath('coastal-reef-surfaces.png')});
+  await page.setViewportSize({width:960,height:640});
+  await page.evaluate(async()=>{const app=(window as SceneryWindow).__sceneryProbe.app;app.resize();await app.prepareInitialPresentation();});
+  await canvas.screenshot({path:info.outputPath('coastal-reef-surfaces-landscape.png')});
+  await info.attach('reef-mesh',{body:JSON.stringify(result),contentType:'application/json'});
+  await page.evaluate(()=>(window as SceneryWindow).__sceneryProbe.app.dispose());
+});
+
 test('expanded ocean settlements keep an exposed detailed wreck, including the legacy terrain input',async({page},info)=>{
   test.setTimeout(180_000);
   await page.goto('/');

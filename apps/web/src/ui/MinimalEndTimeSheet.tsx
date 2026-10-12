@@ -1,3 +1,4 @@
+import { t, useI18n } from '../i18n';
 import { useEffect, useRef } from 'react';
 import { X } from 'lucide-react';
 
@@ -34,6 +35,7 @@ export function MinimalEndTimeSheet({ hourDraft, minuteDraft, invalidReason, bus
   onClose: () => void;
   onSubmit: () => void;
 }) {
+  useI18n();
   const sheetRef = useRef<HTMLElement>(null);
   const openerRef = useRef<Element | null>(null);
   const busyRef = useRef(busy);
@@ -93,14 +95,14 @@ export function MinimalEndTimeSheet({ hourDraft, minuteDraft, invalidReason, bus
 
   return <div className="dialog-backdrop minimal-sheet-backdrop" role="presentation" onMouseDown={(event) => { if (!busyRef.current && event.target === event.currentTarget) onCloseRef.current(); }}>
     <section className="minimal-end-sheet" role="dialog" aria-modal="true" aria-labelledby="minimal-end-title" ref={sheetRef} tabIndex={-1}>
-      <div className="sheet-heading"><div><span className="eyebrow">极简模式</span><h2 id="minimal-end-title">专注到</h2></div><button type="button" className="dialog-close" aria-label="关闭专注到" disabled={busy} onClick={onClose}><X/></button></div>
-      <div className="marathon-end-picker" role="group" aria-label="结束时间">
-        <div className="time-stepper"><span>时</span><button type="button" aria-label="减少结束小时" disabled={busy} onClick={() => stepHour(-1)}>−</button><strong aria-label="结束小时">{displayTime.slice(0, 2)}</strong><button type="button" aria-label="增加结束小时" disabled={busy} onClick={() => stepHour(1)}>+</button></div>
+      <div className="sheet-heading"><div><span className="eyebrow">{t("极简模式")}</span><h2 id="minimal-end-title">{t("专注到")}</h2></div><button type="button" className="dialog-close" aria-label={t("关闭专注到")} disabled={busy} onClick={onClose}><X/></button></div>
+      <div className="marathon-end-picker" role="group" aria-label={t("结束时间")}>
+        <div className="time-stepper"><span>{t("时")}</span><button type="button" aria-label={t("减少结束小时")} disabled={busy} onClick={() => stepHour(-1)}>−</button><strong aria-label={t("结束小时")}>{displayTime.slice(0, 2)}</strong><button type="button" aria-label={t("增加结束小时")} disabled={busy} onClick={() => stepHour(1)}>+</button></div>
         <span className="time-colon" aria-hidden="true">:</span>
-        <div className="time-stepper"><span>分</span><button type="button" aria-label="减少结束分钟" disabled={busy} onClick={() => stepMinute(-1)}>−</button><strong aria-label="结束分钟">{displayTime.slice(3)}</strong><button type="button" aria-label="增加结束分钟" disabled={busy} onClick={() => stepMinute(1)}>+</button></div>
+        <div className="time-stepper"><span>{t("分")}</span><button type="button" aria-label={t("减少结束分钟")} disabled={busy} onClick={() => stepMinute(-1)}>−</button><strong aria-label={t("结束分钟")}>{displayTime.slice(3)}</strong><button type="button" aria-label={t("增加结束分钟")} disabled={busy} onClick={() => stepMinute(1)}>+</button></div>
       </div>
-      <p className={`plan-sheet-note${invalidReason ? ' is-invalid' : ''}`}>{invalidReason ?? '全部轮次结束后，统一提交进度。'}</p>
-      <button type="button" className="primary" disabled={!canSubmit} onClick={onSubmit}>{`开始 · 至 ${displayTime}`}</button>
+      <p className={`plan-sheet-note${invalidReason ? ' is-invalid' : ''}`}>{invalidReason ?? t("全部轮次结束后，统一提交进度。")}</p>
+      <button type="button" className="primary" disabled={!canSubmit} onClick={onSubmit}>{t("开始 · 至 {0}", displayTime)}</button>
     </section>
   </div>;
 }

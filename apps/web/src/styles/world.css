@@ -110,7 +110,7 @@
 .cancel-plan-note{display:grid;gap:6px;margin:12px 0;text-align:left;color:var(--ink);font-size:13px;font-weight:700}
 .cancel-plan-count{display:block;margin:-8px 0 8px;color:var(--muted);text-align:right}
 .cancel-plan-reason .primary{width:100%;margin-top:0}
-.dialog-backdrop{animation:ui-fade-in .14s ease-out both}
+.dialog-backdrop{animation:ui-backdrop-in .14s ease-out both}
 /* FX-04 exit: closing controls mirror the entrance with a fade-down so
    pop-in and pop-out read as one symmetric move. The immersive integrity chip
    centers itself with translateX(-50%), so its exit keeps that offset instead
@@ -122,8 +122,10 @@
 .focus-integrity-warning.is-leaving{animation:ui-fade-out .16s ease-in both}
 .focus-integrity-ended.is-leaving{animation:ui-fade-out .16s ease-in both}
 .focus-immersive .is-focusing .focus-integrity-warning.is-leaving{animation:ui-fade-out-centered .16s ease-in both}
-.dialog-leave .dialog-backdrop{animation:ui-fade-out .14s ease-in both}
+.dialog-leave .dialog-backdrop{animation:ui-backdrop-out .14s ease-in both}
 }
+@keyframes ui-backdrop-in{from{opacity:0}to{opacity:1}}
+@keyframes ui-backdrop-out{from{opacity:1}to{opacity:0}}
 @keyframes ui-fade-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
 @keyframes ui-fade-out{from{opacity:1;transform:translateY(0)}to{opacity:0;transform:translateY(8px)}}
 @keyframes ui-fade-out-centered{from{opacity:1;transform:translate(-50%,0)}to{opacity:0;transform:translate(-50%,8px)}}

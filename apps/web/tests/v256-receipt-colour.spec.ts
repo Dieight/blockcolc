@@ -38,8 +38,8 @@ async function seed(page: Page, minimal: boolean, theme: 'light' | 'dark' = mini
       totalRounds: 1, completedRounds: 1, status: 'report', reportedSessionIds: [] }));
   }, { state, minimal, theme, clarity });
   await page.reload();
-  await expect(page.locator('.focus-report-surface')).toBeVisible();
   const canvas = await waitForPreparedWorld(page);
+  await expect(page.locator('.focus-report-surface')).toBeVisible();
   await canvas.evaluate(element => element.setAttribute('data-receipt-identity', 'resident'));
   return canvas;
 }
@@ -83,7 +83,10 @@ for (const theme of ['light', 'dark'] as const) for (const clarity of [0, 100]) 
     }));
     const hiddenInk = await page.addStyleTag({ content: '.focus-report-surface--minimal,.focus-report-surface--minimal *{color:transparent!important;-webkit-text-fill-color:transparent!important}' });
     let scene: Buffer;
-    try { scene = await page.screenshot({ scale: 'css' }); }
+    try {
+      await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+      scene = await page.screenshot({ scale: 'css' });
+    }
     finally { await hiddenInk.evaluate(element => element.parentNode?.removeChild(element)); }
     const contrasts = await page.evaluate(async ({ src, regions }) => {
       const image = new Image(); image.src = src; await image.decode();

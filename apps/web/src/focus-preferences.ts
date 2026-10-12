@@ -1,5 +1,6 @@
 import type { FocusPreferences } from './app-types';
 import { normalizeWorldColor } from '@blockcolc/voxel/world-color-adjustment';
+import {defaultAmbience,parseAmbience} from './ambient-preferences';
 
 export const FOCUS_PREFERENCES_KEY = 'blockcolc-focus-preferences-v1';
 
@@ -14,6 +15,8 @@ export function defaultFocusPreferences(): FocusPreferences {
     autoCheckUpdates: false,
     realWeatherEnabled: false,
     minimalMode: false,
+    progressiveStartup: false,
+    ambience:defaultAmbience(),language:'zh-CN',quickNotesEnabled:false,
   };
 }
 
@@ -52,6 +55,8 @@ export function parseFocusPreferences(input: unknown): FocusPreferences {
     autoCheckUpdates: value.autoCheckUpdates === true,
     realWeatherEnabled: value.realWeatherEnabled === true,
     minimalMode: value.minimalMode === true,
+    progressiveStartup: value.progressiveStartup === true,
+    ambience:parseAmbience(value.ambience),language:value.language==='en'?'en':'zh-CN',quickNotesEnabled:value.quickNotesEnabled===true,
   };
 }
 

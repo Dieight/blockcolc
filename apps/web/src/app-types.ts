@@ -27,4 +27,9 @@ export interface FocusPreferences {
   realWeatherEnabled: boolean;
   /** Local launch preference; leaving the minimal view does not clear it. */
   minimalMode?: boolean;
+  /** Cold launch exposes the clock before the derived world is ready. */
+  progressiveStartup?: boolean;
+  ambience?:import('./ambient-preferences').AmbientPreferences;
+  language?:'zh-CN'|'en';
+  quickNotesEnabled?: boolean;
 }

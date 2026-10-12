@@ -69,4 +69,24 @@ describe('static grove instance culling', () => {
     wide.setMatrixAt(0,new THREE.Matrix4().makeTranslation(20,0,0));culling.register(wide);culling.sync(camera);
     expect(wide.count).toBe(1);
   });
+  it('culls original cube materials with their AO colors and retains full shadow instances', () => {
+    const mesh = new THREE.InstancedMesh(new THREE.BoxGeometry(.97,.97,.97), new THREE.MeshStandardMaterial(), 4);
+    [0, 800, -800, 1600].forEach((x,index) => {
+      mesh.setMatrixAt(index,new THREE.Matrix4().makeTranslation(x,0,0));
+      mesh.setColorAt(index,new THREE.Color(.2+index*.2,.2+index*.2,.2+index*.2));
+    });
+    mesh.castShadow=true;
+    const culling=new SceneryInstanceCulling(),shadow=culling.register(mesh)!;
+    const camera=new THREE.PerspectiveCamera(35,1,.1,100);camera.position.set(-800,0,20);camera.lookAt(-800,0,0);
+    culling.sync(camera);
+    expect(mesh.count).toBe(1);
+    expect(mesh.instanceMatrix.array[12]).toBe(-800);
+    expect(mesh.instanceColor!.getX(0)).toBeCloseTo(.6);
+    shadow.onBeforeShadow(null!,null!,null!,null!,null!,null!,null!);
+    expect(shadow.count).toBe(4);
+    expect(shadow.instanceMatrix.array[60]).toBe(1600);
+    camera.position.set(0,0,20);camera.lookAt(0,0,0);culling.sync(camera);
+    expect(mesh.count).toBe(1);
+    expect(mesh.instanceColor!.getX(0)).toBeCloseTo(.2);
+  });
 });

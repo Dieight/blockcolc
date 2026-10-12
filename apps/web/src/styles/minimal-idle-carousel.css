@@ -1,7 +1,9 @@
-.minimal-idle-carousel{position:relative;width:100%;min-width:0;height:234px;min-height:0;overflow:hidden;touch-action:pan-y;user-select:none;-webkit-user-select:none}
-.minimal-idle-viewport{width:100%;height:100%;overflow:hidden}
+.minimal-idle-carousel{position:relative;width:100%;min-width:0;height:234px;min-height:0;overflow:clip;touch-action:pan-y;user-select:none;-webkit-user-select:none}
+/* hidden creates a horizontal scroll container: focusing a native note input
+   scrolls it independently of the track transform and strands the next page. */
+.minimal-idle-viewport{width:100%;height:100%;overflow:clip}
 .minimal-idle-track{display:flex;width:200%;height:100%;transition:transform .25s cubic-bezier(.2,.8,.2,1);will-change:transform}
-.minimal-idle-page{flex:0 0 50%;box-sizing:border-box;width:50%;min-width:0;height:100%;display:grid;align-content:center;overflow:hidden}
+.minimal-idle-page{flex:0 0 var(--idle-page-width,50%);box-sizing:border-box;width:var(--idle-page-width,50%);min-width:0;height:100%;display:grid;align-content:center;overflow:hidden}
 .minimal-idle-page .focus-face{height:100%}
 .minimal-idle-today-page{align-content:center;padding:4px 0;overflow-y:auto;touch-action:pan-y}
 .minimal-idle-carousel:focus-visible{outline:2px solid var(--focus);outline-offset:-4px}

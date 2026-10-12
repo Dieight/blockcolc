@@ -1,6 +1,19 @@
 import { expect, type Locator, type Page } from '@playwright/test';
 import { readPersistedDomainState } from './persisted-domain-state';
 
+/** Advance the saved report's painted receipt only when this test owns a fake clock. */
+export async function finishPaintedReportReceipt(page: Page) {
+  const report = page.locator('.focus-report-surface');
+  await expect.poll(async () => await report.count() === 0
+    || await report.locator('[data-action-state="success"]').isVisible()).toBe(true);
+  if (await report.count() === 0) return;
+  // Acknowledge is scheduled after two paint opportunities, then lasts 2 s.
+  // This drives that presentation contract, not an arbitrary wall-time sleep.
+  await page.clock.runFor(64);
+  await page.clock.fastForward(2_000);
+  await expect(report).toHaveCount(0);
+}
+
 /** Exercise the shared five-minute slider through its accessible keyboard path. */
 export async function choosePlanEndTime(sheet: Locator, time: string) {
   const slider = sheet.getByRole('slider', { name: '结束时间，上下滑动或按方向键调整' });
@@ -59,7 +72,7 @@ export async function revealFocusControls(page: Page) {
   await expect(controls).not.toHaveClass(/is-leaving/);
 }
 
-/** Ready/rest controls are quiet until blank-panel double-tap; keyboard has an equivalent focus path. */
+/** Rest retains its adjustment sheet; ready deliberately has no plan entry. */
 export async function openRetainedPlan(page: Page) {
   const button = page.getByRole('button', { name: '调整本次计划', exact: true });
   await button.focus();
@@ -67,6 +80,21 @@ export async function openRetainedPlan(page: Page) {
   const sheet = page.getByRole('dialog', { name: /安排下一轮|安排习惯专注/ });
   await expect(sheet).toBeVisible();
   return sheet;
+}
+
+/** Resume a ready plan, then cancel via the active round's end sheet. */
+export async function prepareReadyPlanCancellation(page: Page) {
+  await expect(page.getByRole('button', { name: '调整本次计划', exact: true })).toHaveCount(0);
+  await startNextRound(page);
+  await revealFocusControls(page);
+  await page.getByRole('button', { name: '结束本次专注', exact: true }).click();
+  await page.getByRole('button', { name: /取消整个计划/ }).click();
+  const sheet=page.getByRole('dialog', { name: '取消整个多轮计划？' });
+  const confirm=sheet.getByRole('button', { name: '确认取消整个计划', exact: true });
+  await expect(confirm).toBeDisabled();
+  await sheet.getByRole('button', { name: '优先级变化', exact: true }).click();
+  await expect(confirm).toBeEnabled();
+  return confirm;
 }
 
 /** Marathon and minimal settlement share the same quiet immersive presentation. */

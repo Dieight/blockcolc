@@ -149,13 +149,19 @@ export function createMinimalFocusStarter(dependencies: MinimalFocusStartDepende
         markFocusPerformance('command-queued');
         const started = await dependencies.dispatch(result.command);
         if (!started.ok) {
-          if (roundPlansEqual(dependencies.readPlan(), result.plan)) dependencies.writePlan(null);
+          if (roundPlansEqual(dependencies.readPlan(), prepared.plan)) dependencies.writePlan(null);
           return { ok: false, message: started.message };
         }
         const session = started.state.activeFocusSession;
         if (!session) throw new Error('专注未能开始，请返回完整模式检查当前状态。');
         markFocusPerformance('command-committed');
-        const focusedPlan: RoundPlan = { ...prepared.plan, status: 'focus', currentSessionId: session.id };
+        // Reserving the local plan and committing StartFocus are separate
+        // writes. Anchor the confirmed round count to the actual first start,
+        // so a few milliseconds spent saving cannot disqualify the final round.
+        const confirmedEnd = Date.parse(session.startedAt) + prepared.plan.totalRounds * session.plannedDurationMs
+          + Math.max(0, prepared.plan.totalRounds - 1) * preferences.breakMinutes * 60_000;
+        const focusedPlan: RoundPlan = { ...prepared.plan, status: 'focus', currentSessionId: session.id,
+          endAt: new Date(Math.max(Date.parse(prepared.plan.endAt!), confirmedEnd)).toISOString() };
         try { dependencies.writePlan(focusedPlan); }
         catch { return { ok: true, plan: focusedPlan, warning: '专注已保存；轮次界面保存失败，重新打开时将按真实计时恢复。' }; }
         return { ok: true, plan: focusedPlan };

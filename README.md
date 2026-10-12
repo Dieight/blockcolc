@@ -4,6 +4,8 @@
 
 # 方块钟 / Blockcolc
 
+[简体中文](README.md) · [English](README.en.md)
+
 Blockcolc 是本地优先的专注计时应用。把真实投入转化为方块建筑：
 普通大型任务由小任务自报进度推进，习惯任务由有效专注轮次推进。
 
@@ -15,8 +17,9 @@ Blockcolc 是本地优先的专注计时应用。把真实投入转化为方块�
 - JSON 备份/恢复与原子回滚；中断前已投入的时间如实统计。
 - Litematic 蓝图导入、真实预览及本地保存；Java 26.3 资源包的模型/纹理、
   染色、动画与受限特殊方块静态显示，不支持内容明确回退。
-- 自然山谷、经典空岛、海洋小岛，昼夜光照、天气及环境装饰。
+- 自然山谷、经典空岛、海洋小岛和万象海岸，昼夜光照、天气及环境装饰。
 - 默认本地天气；可选现实天气，失败仍保持离线核心可用。
+- 中文 / English、像素 / 系统字体、可选便签和自然环境录音。
 
 核心不要求账号或服务器。Android 是主要发布平台，Web 共用 React 界面与业务逻辑。
 标准版不含私人同步上传模块；私人集成构筑不属于公开下载内容。
@@ -54,7 +57,7 @@ Minecraft 是 Mojang Studios 的商标。本项目与 Mojang Studios 或 Microso
 | --- | --- | --- |
 | TypeScript、React | 共享业务与 Android/Web 界面 | [TypeScript](https://github.com/microsoft/TypeScript)、[React](https://github.com/facebook/react) |
 | Three.js / WebGL | 方块世界、实例绘制、光照和天气 | [Three.js](https://github.com/mrdoob/three.js) |
-| Capacitor、Kotlin | Android 宿主、通知、生命周期、定位和文件桥接 | [Capacitor](https://github.com/ionic-team/capacitor)、[Kotlin](https://github.com/JetBrains/kotlin) |
+| Capacitor、Java | Android 宿主、通知、生命周期、定位、音频和文件桥接 | [Capacitor](https://github.com/ionic-team/capacitor)、[Android](https://developer.android.com/) |
 | IndexedDB | 本地任务、资源和恢复快照 | [MDN 文档](https://developer.mozilla.org/en-US/docs/Web/API/IndexedDB_API) |
 | SunCalc 2.0.2 | 太阳/月亮位置、月相与亮边角度计算 | [SunCalc](https://github.com/mourner/suncalc)、[BSD-2-Clause 许可](apps/web/public/licenses/suncalc.txt) |
 | lunar-typescript 1.8.6 | 离线农历节日日期换算 | [lunar-typescript](https://github.com/6tail/lunar-typescript)、[MIT 许可](apps/web/public/licenses/lunar-typescript/LICENSE.txt) |
@@ -66,6 +69,7 @@ Minecraft 是 Mojang Studios 的商标。本项目与 Mojang Studios 或 Microso
 世界生成和装饰布局由项目实现，参考 Minecraft 的方块形态与环境构成；
 不是 Minecraft 世界生成器，也不随包分发其原版资源。用户导入的材质包与蓝图按原作者许可使用。
 视觉参考见 [设计来源](docs/assets/design-sources.md)；补充蓝图见[来源与稳定 ID](docs/assets/local-blueprints.md)。
+自然录音的处理方式和雨声许可见[音频来源](docs/assets/ambient-audio.md)。
 SunCalc 的版权声明和完整许可随应用保留，可在关于页单独查看；它不是 Blockcolc 的项目许可。
 
 ## 工程入口

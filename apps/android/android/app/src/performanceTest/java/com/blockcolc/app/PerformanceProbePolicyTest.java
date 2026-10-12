@@ -24,4 +24,20 @@ public class PerformanceProbePolicyTest {
         assertFalse(PerformanceProbePolicy.validNumber(Double.POSITIVE_INFINITY));
         assertFalse(PerformanceProbePolicy.validNumber(1e15));
     }
+    @Test public void cacheDiagnosticsHaveBoundedKeysAndValues() {
+        assertTrue(PerformanceProbePolicy.KEYS.contains("progressive-ui-frame"));
+        for(String key:new String[]{"progressiveStartup","buildingCpuCacheRead","buildingCpuCacheReadMs","buildingCpuCacheHits","buildingCpuCacheMisses","originalGeometryCacheHits","buildingMeshCacheHits"})assertTrue(PerformanceProbePolicy.KEYS.contains(key));
+        assertTrue(PerformanceProbePolicy.validString("buildingCpuCacheRead","restored"));
+        assertFalse(PerformanceProbePolicy.validString("buildingCpuCacheRead","private-blueprint"));
+        for (String key : new String[]{"initialGpuPreparationMs", "openingPreparedFrames", "worldSceneCacheReadMs", "worldSceneCacheRead", "terrainGenerationCacheHit", "sceneryPlanCacheHit"}) {
+            assertTrue(PerformanceProbePolicy.KEYS.contains(key));
+        }
+        for (String status : new String[]{"restored", "miss", "invalid", "unavailable"}) {
+            assertTrue(PerformanceProbePolicy.validString("worldSceneCacheRead", status));
+        }
+        assertFalse(PerformanceProbePolicy.validString("worldSceneCacheRead", "secret-seed"));
+        assertFalse(PerformanceProbePolicy.validString("title", "restored"));
+        assertFalse(PerformanceProbePolicy.KEYS.contains("worldSeed"));
+        assertTrue(PerformanceProbePolicy.validString("qualityTier", "high"));
+    }
 }

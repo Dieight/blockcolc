@@ -33,6 +33,15 @@ import org.json.JSONObject;
 
 @CapacitorPlugin(name = "BreakLiveUpdate")
 public class BreakLiveUpdatePlugin extends Plugin {
+    @PluginMethod
+    public void setLanguage(PluginCall call) {
+        String language="en".equals(call.getString("language"))?"en":"zh-CN";
+        if(!getContext().getSharedPreferences("blockcolc_presentation",Context.MODE_PRIVATE).edit().putString("language",language).commit()){
+            call.reject("Unable to save presentation language");return;
+        }
+        call.resolve();
+    }
+    private static String ui(Context context,String zh,String en){return PresentationLanguage.text(context,zh,en);}
     static final int NOTIFICATION_ID = 42002;
     private static final String TAG = "BreakLiveUpdate";
     private static final String CHANNEL_ID = "blockcolc_break_live_v1";
@@ -52,6 +61,7 @@ public class BreakLiveUpdatePlugin extends Plugin {
     static final String ACTION_BREAK_REMINDER_DISMISSED = "com.blockcolc.app.action.BREAK_REMINDER_DISMISSED";
     static final String ACTION_AUTO_CONTINUATION_DEADLINE = "com.blockcolc.app.action.AUTO_CONTINUATION_DEADLINE";
     static final String ACTION_AUTO_TIMELINE_BOUNDARY = "com.blockcolc.app.action.AUTO_TIMELINE_BOUNDARY";
+    static final String ACTION_FOCUS_DEADLINE = "com.blockcolc.app.action.FOCUS_DEADLINE";
     static final String ACTION_BOOT_COMPLETED = "android.intent.action.BOOT_COMPLETED";
     static final String ACTION_PACKAGE_REPLACED = "android.intent.action.MY_PACKAGE_REPLACED";
     private static final String AUTO_EVENT_ID = "com.blockcolc.app.extra.AUTO_EVENT_ID";
@@ -138,6 +148,7 @@ public class BreakLiveUpdatePlugin extends Plugin {
         AutomaticDeadlineResult result = scheduleAutomaticContinuation(
             getContext(), eventId, authorizationId, scheduledAt, timeline
         );
+        if (result.scheduled && timeline != null) AutomaticTimerService.refresh(getContext());
         JSObject value = new JSObject();
         value.put("scheduled", result.scheduled);
         value.put("exact", result.exact);
@@ -172,6 +183,7 @@ public class BreakLiveUpdatePlugin extends Plugin {
         }
         cancelAutomaticTimelineAlarm(getContext(), authorizationId);
         cancelAutomaticTimelineNotification(getContext(), authorizationId);
+        AutomaticTimerService.refresh(getContext());
         call.resolve();
     }
 
@@ -270,7 +282,7 @@ public class BreakLiveUpdatePlugin extends Plugin {
             call.resolve(capabilityResult(context, manager, null, false, false, false, false));
             return;
         }
-        ensureChannel(manager);
+        ensureChannel(context, manager);
 
         String kind = requestedKind;
         boolean focus = KIND_FOCUS.equals(kind);
@@ -345,22 +357,21 @@ public class BreakLiveUpdatePlugin extends Plugin {
             // Keep the compact chip below the platform's seven-character
             // threshold. Marathon context remains available in the expanded
             // card instead of occupying the camera-side status area.
-            contentTitle = "专注中";
-            summary = !taskTitle.isEmpty() ? taskTitle : !projectTitle.isEmpty() ? projectTitle : "方块建造中";
-            String projectLine = projectTitle.isEmpty() ? "" : "项目 · " + projectTitle + "\n";
-            details = "▣ " + (marathon ? "马拉松建造" : "本轮建造") + "\n"
-                + projectLine + "当前 · " + summary + "\n保持节奏，本轮结束后材料送达。";
-            subText = "▣ 方块钟 · " + (marathon ? "马拉松" : "建造中");
+            contentTitle = ui(context, "专注中", "Focusing");
+            summary = !taskTitle.isEmpty() ? taskTitle : !projectTitle.isEmpty() ? projectTitle : ui(context, "方块建造中", "Building blocks");
+            String projectLine = projectTitle.isEmpty() ? "" : ui(context, "项目 · ", "Project · ") + projectTitle + "\n";
+            details = projectLine + ui(context, "当前 · ", "Now · ") + summary;
+            subText = ui(context, "方块钟 · ", "Blockcolc · ") + (marathon ? ui(context, "连续专注", "Continuous focus") : ui(context, "专注", "Focus"));
         } else {
-            contentTitle = "休息中";
+            contentTitle = ui(context, "休息中", "Taking a break");
             String roundText = completedRounds > 0 && totalRounds >= completedRounds
-                ? String.format(Locale.SIMPLIFIED_CHINESE, "第 %d / %d 轮", completedRounds, totalRounds)
-                : "本轮休息";
-            String nextText = nextTaskTitle.isEmpty() ? roundText : roundText + " · 下一项 " + nextTaskTitle;
-            summary = returnToFocus ? "返回专注 · " + nextText : nextText;
-            details = returnToFocus ? "休息结束后返回专注\n" + nextText
-                : nextTaskTitle.isEmpty() ? roundText : roundText + "\n下一项 · " + nextTaskTitle;
-            subText = returnToFocus ? "▣ 方块钟 · 返回专注" : summary;
+                ? String.format(Locale.SIMPLIFIED_CHINESE, ui(context, "第 %d / %d 轮", "Round %d / %d"), completedRounds, totalRounds)
+                : ui(context, "本轮休息", "Break");
+            String nextText = nextTaskTitle.isEmpty() ? roundText : roundText + ui(context, " · 下一项 ", " · next: ") + nextTaskTitle;
+            summary = returnToFocus ? ui(context, "返回专注 · ", "Return to focus · ") + nextText : nextText;
+            details = returnToFocus ? ui(context, "休息结束后返回专注\n", "Return to focus after the break\n") + nextText
+                : nextTaskTitle.isEmpty() ? roundText : roundText + ui(context, "\n下一项 · ", "\nNext · ") + nextTaskTitle;
+            subText = returnToFocus ? ui(context, "▣ 方块钟 · 返回专注", "▣ Blockcolc · return to focus") : summary;
         }
 
         Intent openIntent = new Intent(context, MainActivity.class)
@@ -382,6 +393,7 @@ public class BreakLiveUpdatePlugin extends Plugin {
         liveUpdateExtras.putString(EXTRA_KIND, kind);
         liveUpdateExtras.putBoolean(EXTRA_RETURN_TO_FOCUS, returnToFocus);
         liveUpdateExtras.putLong(EXTRA_ENDS_AT_EPOCH_MS, endsAtEpochMs);
+        liveUpdateExtras.putAll(OriginOsTimerSurface.extras(context, openPendingIntent, contentTitle, summary, subText));
         NotificationCompat.Builder builder = new NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_tomato_outline)
             .setContentTitle(contentTitle)
@@ -408,9 +420,7 @@ public class BreakLiveUpdatePlugin extends Plugin {
         // Always bound the countdown presentation by its absolute deadline.
         // Return reminders have a durable receipt + alarm to replace this card
         // even if the OS removes it before a delayed/inexact receiver runs.
-        if (!focus) {
-            builder.setTimeoutAfter(Math.max(1L, endsAtEpochMs - System.currentTimeMillis()));
-        }
+        builder.setTimeoutAfter(Math.max(1L, endsAtEpochMs - System.currentTimeMillis()));
         if (!focus) {
             Intent skipIntent = new Intent(context, MainActivity.class)
                 .setAction(MainActivity.ACTION_SKIP_BREAK)
@@ -421,7 +431,7 @@ public class BreakLiveUpdatePlugin extends Plugin {
                 skipIntent,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
             );
-            builder.addAction(0, "跳过休息", skipPendingIntent);
+            builder.addAction(0, ui(context, "跳过休息", "Skip break"), skipPendingIntent);
         }
         if (!focus && returnToFocus) {
             builder.setDeleteIntent(breakCountdownDismissPendingIntent(context, updateKey, endsAtEpochMs));
@@ -441,6 +451,7 @@ public class BreakLiveUpdatePlugin extends Plugin {
                 deadlineReminderPosted = true;
             } else {
                 manager.notify(timerTag(updateKey), NOTIFICATION_ID, notification);
+                if (focus) scheduleFocusDeadline(context, updateKey, endsAtEpochMs);
             }
             if (!focus && !deadlineReminderPosted) {
                 // Post first so a process-independent alarm can always find the
@@ -577,6 +588,8 @@ public class BreakLiveUpdatePlugin extends Plugin {
         result.put("deadlineAlarmScheduled", deadlineAlarmScheduled);
         result.put("deadlineAlarmExact", deadlineAlarmExact);
         result.put("deadlineReminderPosted", deadlineReminderPosted);
+        result.put("originOs", OriginOsTimerSurface.isOriginOs());
+        result.put("originOsSceneAllowed", OriginOsTimerSurface.allowed(context));
         return result;
     }
 
@@ -622,7 +635,7 @@ public class BreakLiveUpdatePlugin extends Plugin {
                 if (active.getId() != NOTIFICATION_ID) continue;
                 if (updateKey == null) return active;
                 if (sameUpdateKey(active.getNotification().extras.getString(EXTRA_UPDATE_KEY), updateKey)
-                    && timerTag(updateKey).equals(active.getTag())) return active;
+                    && OriginOsTimerSurface.ownsTag(active.getTag(), timerTag(updateKey))) return active;
             }
         } catch (RuntimeException error) {
             Log.w(TAG, "Unable to inspect active timer notification", error);
@@ -662,8 +675,12 @@ public class BreakLiveUpdatePlugin extends Plugin {
     }
 
     private static void cancelTimerNotification(NotificationManager manager, StatusBarNotification active) {
+        OriginOsTimerSurface.end(manager, active);
         if (active.getTag() == null) manager.cancel(active.getId());
         else manager.cancel(active.getTag(), active.getId());
+        String updateKey = active.getNotification().extras.getString(EXTRA_UPDATE_KEY);
+        if ("VIVO_SUPERX_TAG".equals(active.getTag()) && updateKey != null)
+            manager.cancel(timerTag(updateKey), active.getId());
     }
 
     static String timerTag(String updateKey) {
@@ -720,7 +737,13 @@ public class BreakLiveUpdatePlugin extends Plugin {
 
     private static void cancelAutomaticTimelineNotification(Context context, String authorizationId) {
         NotificationManager manager = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
-        if (manager != null) manager.cancel(automaticTag(authorizationId), NOTIFICATION_ID);
+        if (manager == null) return;
+        String prefix = automaticTag(authorizationId);
+        for (StatusBarNotification active : activeTimerNotifications(manager)) {
+            String key = active.getNotification().extras.getString(EXTRA_UPDATE_KEY, "");
+            if (prefix.equals(key) || key.startsWith(prefix + ":"))
+                cancelTimerNotification(manager, active);
+        }
     }
 
     static int automaticContinuationRequestCode(String eventId) {
@@ -844,7 +867,7 @@ public class BreakLiveUpdatePlugin extends Plugin {
         if (active != null && active.getNotification().extras.getBoolean(EXTRA_DEADLINE_REMINDER, false)) return;
         Notification reminder = buildBreakDeadlineReminder(context, updateKey, dueProjection.endsAtEpochMs, nowEpochMs);
         try {
-            ensureChannel(manager);
+            ensureChannel(context, manager);
             manager.notify(timerTag(updateKey), NOTIFICATION_ID, reminder);
         } catch (RuntimeException error) {
             Log.w(TAG, "Unable to post durable break deadline reminder", error);
@@ -1088,7 +1111,7 @@ public class BreakLiveUpdatePlugin extends Plugin {
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
         );
-        boolean exactAvailable = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && alarms.canScheduleExactAlarms();
+        boolean exactAvailable = Build.VERSION.SDK_INT < Build.VERSION_CODES.S || alarms.canScheduleExactAlarms();
         boolean exactDenied = false;
         try {
             if (exactAvailable) {
@@ -1150,24 +1173,33 @@ public class BreakLiveUpdatePlugin extends Plugin {
             .putExtra(AUTO_AUTHORIZATION_ID, authorizationId);
     }
 
+    private static PendingIntent automaticTimelinePending(Context context, String authorizationId, boolean idle, int flags) {
+        Intent intent = automaticTimelineIntent(context, authorizationId);
+        if (idle) intent.setData(Uri.parse("blockcolc://automatic-timeline-idle/" + authorizationId));
+        return PendingIntent.getBroadcast(context, automaticTimelineRequestCode(authorizationId) ^ (idle ? 0x10000000 : 0), intent, flags);
+    }
+
     private static AutomaticDeadlineResult scheduleAutomaticTimelineAlarm(Context context, String authorizationId, long atEpochMs) {
         AlarmManager alarms = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
         if (alarms == null || cleanAutomaticId(authorizationId).isEmpty() || atEpochMs <= 0L) {
             return AutomaticDeadlineResult.none();
         }
         cancelAutomaticTimelineAlarm(context, authorizationId);
-        PendingIntent pending = PendingIntent.getBroadcast(
-            context,
-            automaticTimelineRequestCode(authorizationId),
-            automaticTimelineIntent(context, authorizationId),
-            PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
-        );
-        boolean exactAvailable = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && alarms.canScheduleExactAlarms();
+        int flags = PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE;
+        PendingIntent pending = automaticTimelinePending(context, authorizationId, false, flags);
+        PendingIntent idlePending = automaticTimelinePending(context, authorizationId, true, flags);
+        boolean exactAvailable = Build.VERSION.SDK_INT < Build.VERSION_CODES.S || alarms.canScheduleExactAlarms();
         boolean exactDenied = false;
         try {
             if (exactAvailable) {
                 try {
-                    alarms.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, atEpochMs, pending);
+                    // allow-while-idle is rate-limited even with a lit screen.
+                    // Cleanup alarms and short rests must not consume each
+                    // other's dispatch quota. The ordinary exact path handles
+                    // non-Doze; the separate idle path survives real Doze. Both
+                    // converge on one absolute, idempotent timeline boundary.
+                    alarms.setExact(AlarmManager.RTC_WAKEUP, atEpochMs, pending);
+                    alarms.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, atEpochMs, idlePending);
                     return new AutomaticDeadlineResult(true, true, false);
                 } catch (SecurityException deniedExactAlarm) {
                     exactDenied = true;
@@ -1175,7 +1207,7 @@ public class BreakLiveUpdatePlugin extends Plugin {
                 }
             }
             if (!shouldUseInexactAutomaticAlarm(exactAvailable, exactDenied)) return AutomaticDeadlineResult.none();
-            alarms.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, atEpochMs, pending);
+            alarms.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, atEpochMs, idlePending);
             return new AutomaticDeadlineResult(true, false, false);
         } catch (RuntimeException error) {
             Log.w(TAG, "Unable to schedule automatic timeline boundary", error);
@@ -1187,15 +1219,13 @@ public class BreakLiveUpdatePlugin extends Plugin {
     private static void cancelAutomaticTimelineAlarm(Context context, String authorizationId) {
         if (cleanAutomaticId(authorizationId).isEmpty()) return;
         AlarmManager alarms = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
-        PendingIntent pending = PendingIntent.getBroadcast(
-            context,
-            automaticTimelineRequestCode(authorizationId),
-            automaticTimelineIntent(context, authorizationId),
-            PendingIntent.FLAG_NO_CREATE | PendingIntent.FLAG_IMMUTABLE
-        );
-        if (pending == null) return;
-        if (alarms != null) alarms.cancel(pending);
-        pending.cancel();
+        for (boolean idle : new boolean[]{false, true}) {
+            PendingIntent pending = automaticTimelinePending(context, authorizationId, idle,
+                PendingIntent.FLAG_NO_CREATE | PendingIntent.FLAG_IMMUTABLE);
+            if (pending == null) continue;
+            if (alarms != null) alarms.cancel(pending);
+            pending.cancel();
+        }
     }
 
     private static boolean removeAutomaticEvent(Context context, String eventId) {
@@ -1266,6 +1296,7 @@ public class BreakLiveUpdatePlugin extends Plugin {
         if (intent == null || !ACTION_AUTO_TIMELINE_BOUNDARY.equals(intent.getAction())) return;
         String authorizationId = cleanAutomaticId(intent.getStringExtra(AUTO_AUTHORIZATION_ID));
         if (authorizationId.isEmpty()) return;
+        traceAutomaticSurface(context, authorizationId, "received", null);
         java.util.ArrayList<JSONObject> dueEvents = new java.util.ArrayList<>();
         boolean timelineRetired = false;
         synchronized (AUTO_CONTINUATION_LOCK) {
@@ -1279,6 +1310,7 @@ public class BreakLiveUpdatePlugin extends Plugin {
                 return;
             }
             long now = System.currentTimeMillis();
+            traceAutomaticSurface(context, authorizationId, "boundary", timeline.phaseAt(now));
             SharedPreferences.Editor editor = preferences.edit();
             for (AutomaticContinuationTimeline.Phase phase : timeline.dueFocusPhases(now)) {
                 JSONObject queued = readAutomaticEvent(preferences, phase.eventId);
@@ -1331,6 +1363,43 @@ public class BreakLiveUpdatePlugin extends Plugin {
         }
     }
 
+    static boolean hasAutomaticTimeline(Context context) {
+        synchronized (AUTO_CONTINUATION_LOCK) {
+            SharedPreferences preferences = automaticPreferences(context);
+            long now = System.currentTimeMillis();
+            for (String key : preferences.getAll().keySet()) {
+                if (!key.startsWith(AUTO_AUTHORIZATION_PREFIX)) continue;
+                String authorizationId = key.substring(AUTO_AUTHORIZATION_PREFIX.length());
+                if (preferences.getBoolean(automaticRevocationKey(authorizationId), false)) continue;
+                AutomaticContinuationTimeline timeline = readAutomaticTimeline(safeAutomaticTimeline(preferences, authorizationId), authorizationId);
+                if (timeline != null && timeline.nextBoundaryAfter(now) > 0L) return true;
+            }
+            return false;
+        }
+    }
+
+    /** The foreground service and AlarmManager share the same idempotent
+     * projection. Gather under the authorization lock; dispatch outside it to
+     * preserve TIMER_LOCK -> AUTO_CONTINUATION_LOCK ordering. */
+    static long advanceAutomaticTimelines(Context context) {
+        java.util.ArrayList<String> ids = new java.util.ArrayList<>();
+        synchronized (AUTO_CONTINUATION_LOCK) {
+            for (String key : automaticPreferences(context).getAll().keySet()) {
+                if (key.startsWith(AUTO_AUTHORIZATION_PREFIX)) ids.add(key.substring(AUTO_AUTHORIZATION_PREFIX.length()));
+            }
+        }
+        long next = 0L;
+        for (String id : ids) {
+            onAutomaticTimelineBoundary(context, automaticTimelineIntent(context, id));
+            synchronized (AUTO_CONTINUATION_LOCK) {
+                AutomaticContinuationTimeline timeline = readAutomaticTimeline(safeAutomaticTimeline(automaticPreferences(context), id), id);
+                long boundary = timeline == null ? 0L : timeline.nextBoundaryAfter(System.currentTimeMillis());
+                if (boundary > 0L && (next == 0L || boundary < next)) next = boundary;
+            }
+        }
+        return next;
+    }
+
     private static void renderAutomaticTimeline(Context context, String authorizationId) {
         // Lock order is TIMER_LOCK -> AUTO_CONTINUATION_LOCK only. Revocation
         // writes its tombstone under AUTO_CONTINUATION_LOCK, releases it, then
@@ -1349,26 +1418,25 @@ public class BreakLiveUpdatePlugin extends Plugin {
                 AutomaticContinuationTimeline.Phase phase = timeline == null ? null : timeline.phaseAt(System.currentTimeMillis());
                 if (phase == null) {
                     if (timeline != null && timeline.nextBoundaryAfter(System.currentTimeMillis()) > 0L) return;
-                    manager.cancel(automaticTag(authorizationId), NOTIFICATION_ID);
+                    cancelAutomaticTimelineNotification(context, authorizationId);
                     return;
                 }
                 // The native authorization now owns the single ongoing timer
                 // surface until Web/domain recovery reconciles or revokes it.
                 cancelStaleTimerNotifications(context, manager);
-                ensureChannel(manager);
+                ensureChannel(context, manager);
                 boolean focus = "focus".equals(phase.kind);
                 String projectTitle = cleanTitle(record.optString("projectTitle", ""));
                 String taskTitle = cleanTitle(record.optString("taskTitle", ""));
-                String title = focus ? "专注中" : "休息中";
-                String round = "第 " + phase.round + " 轮";
+                String title = focus ? ui(context, "专注中", "Focusing") : ui(context, "休息中", "Taking a break");
+                String round = ui(context, "第 ", "Round ") + phase.round + ui(context, " 轮", "");
                 String summary = focus
                     ? (taskTitle.isEmpty() ? projectTitle : taskTitle)
-                    : "休息中 · " + round + (taskTitle.isEmpty() ? "" : " · 下一项 " + taskTitle);
-                if (summary.isEmpty()) summary = focus ? "方块建造中" : round;
+                    : ui(context, "休息中 · ", "Break · ") + round + (taskTitle.isEmpty() ? "" : ui(context, " · 下一项 ", " · next: ") + taskTitle);
+                if (summary.isEmpty()) summary = focus ? ui(context, "方块建造中", "Building blocks") : round;
                 String detail = focus
-                    ? "▣ 自动连续专注\n" + (projectTitle.isEmpty() ? "" : "项目 · " + projectTitle + "\n")
-                        + "当前 · " + summary + "\n保持节奏，本轮结束后材料送达。"
-                    : "休息中\n" + round + (taskTitle.isEmpty() ? "" : "\n下一项 · " + taskTitle);
+                    ? round + ui(context, " · 自动连续专注\n", " · auto-continue\n") + (projectTitle.isEmpty() ? "" : projectTitle + "\n") + summary
+                    : ui(context, "休息中\n", "Break\n") + round + (taskTitle.isEmpty() ? "" : ui(context, "\n下一项 · ", "\nNext · ") + taskTitle);
                 Intent openIntent = new Intent(context, MainActivity.class)
                     .setAction(focus ? "com.blockcolc.app.action.OPEN_FOCUS" : "com.blockcolc.app.action.OPEN_BREAK")
                     .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
@@ -1378,15 +1446,19 @@ public class BreakLiveUpdatePlugin extends Plugin {
                 Bundle extras = new Bundle();
                 extras.putBoolean(EXTRA_REQUEST_PROMOTED_ONGOING, true);
                 extras.putBoolean(EXTRA_OPLUS_SMALL_ICON_USE_APP_ICON, false);
-                extras.putString(EXTRA_UPDATE_KEY, automaticTag(authorizationId));
+                // ColorOS caches the chip's chronometer by notification identity.
+                // Every absolute stage needs its own identity, not just new text.
+                String phaseTag = automaticTag(authorizationId) + ":" + phase.startsAtEpochMs;
+                extras.putString(EXTRA_UPDATE_KEY, phaseTag);
                 extras.putString(EXTRA_KIND, phase.kind);
                 extras.putLong(EXTRA_ENDS_AT_EPOCH_MS, phase.endsAtEpochMs);
+                extras.putAll(OriginOsTimerSurface.extras(context, openPending, title, summary, round));
                 NotificationCompat.Builder phaseBuilder = new NotificationCompat.Builder(context, CHANNEL_ID)
                     .setSmallIcon(R.drawable.ic_stat_tomato_outline)
                     .setContentTitle(title)
                     .setContentText(summary)
                     .setStyle(new NotificationCompat.BigTextStyle().bigText(detail))
-                    .setSubText("▣ 方块钟 · " + round)
+                    .setSubText(ui(context, "▣ 方块钟 · ", "▣ Blockcolc · ") + round)
                     .setContentIntent(openPending)
                     .setWhen(phase.endsAtEpochMs)
                     .setShowWhen(true)
@@ -1410,11 +1482,55 @@ public class BreakLiveUpdatePlugin extends Plugin {
                 }
                 Notification notification = phaseBuilder.build();
                 try {
-                    manager.notify(automaticTag(authorizationId), NOTIFICATION_ID, notification);
+                    manager.notify(phaseTag, NOTIFICATION_ID, notification);
+                    traceAutomaticSurface(context, authorizationId, "posted", phase);
                 } catch (RuntimeException error) {
+                    traceAutomaticSurface(context, authorizationId, "notify-failed", phase);
                     Log.w(TAG, "Unable to project automatic continuation phase", error);
                 }
             }
+        }
+    }
+
+    private static void traceAutomaticSurface(Context context, String authorizationId, String event, AutomaticContinuationTimeline.Phase phase) {
+        if (BuildConfig.BLOCKCOLC_PERFORMANCE_DIAGNOSTICS && authorizationId.startsWith("diagnostic-")) {
+            try {
+                SharedPreferences p=context.getSharedPreferences("blockcolc_diagnostic_timer",Context.MODE_PRIVATE);
+                org.json.JSONArray entries=new org.json.JSONArray(p.getString("events","[]"));
+                JSONObject item=new JSONObject();item.put("event",event);item.put("at",System.currentTimeMillis());
+                if(phase!=null){item.put("kind",phase.kind);item.put("round",phase.round);item.put("end",phase.endsAtEpochMs);}
+                org.json.JSONArray bounded=new org.json.JSONArray();
+                for(int i=Math.max(0,entries.length()-47);i<entries.length();i++)bounded.put(entries.get(i));
+                bounded.put(item);p.edit().putString("events",bounded.toString()).apply();
+            }catch(JSONException ignored){/* Numeric, synthetic-plan diagnostics only. */}
+        }
+    }
+
+    static void traceAutomaticService(Context context, String event, long next) {
+        if (BuildConfig.BLOCKCOLC_PERFORMANCE_DIAGNOSTICS) {
+            boolean synthetic = false;
+            for (String key : automaticPreferences(context).getAll().keySet()) {
+                if (key.startsWith("authorization:diagnostic-")) { synthetic = true; break; }
+            }
+            if (!synthetic) return;
+            try {
+                SharedPreferences p = context.getSharedPreferences("blockcolc_diagnostic_timer", Context.MODE_PRIVATE);
+                org.json.JSONArray entries = new org.json.JSONArray(p.getString("events", "[]"));
+                JSONObject item = new JSONObject();
+                item.put("event", event); item.put("at", System.currentTimeMillis());
+                item.put("next", next); item.put("uptime", android.os.SystemClock.uptimeMillis());
+                Thread main = Looper.getMainLooper().getThread();
+                item.put("mainState", main.getState().name());
+                org.json.JSONArray stack = new org.json.JSONArray();
+                for (StackTraceElement frame : main.getStackTrace()) {
+                    if (stack.length() >= 10) break;
+                    stack.put(frame.getClassName() + "." + frame.getMethodName());
+                }
+                item.put("mainStack", stack);
+                org.json.JSONArray bounded = new org.json.JSONArray();
+                for (int i = Math.max(0, entries.length() - 47); i < entries.length(); i++) bounded.put(entries.get(i));
+                bounded.put(item); p.edit().putString("events", bounded.toString()).apply();
+            } catch (JSONException ignored) { /* Synthetic numeric/stack diagnostics only. */ }
         }
     }
 
@@ -1553,6 +1669,35 @@ public class BreakLiveUpdatePlugin extends Plugin {
             .putExtra(EXTRA_UPDATE_KEY, updateKey);
     }
 
+    private static void scheduleFocusDeadline(Context context, String updateKey, long endsAt) {
+        AlarmManager alarms = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
+        if (alarms == null || endsAt <= System.currentTimeMillis()) return;
+        Intent intent = deadlineIntent(context, ACTION_FOCUS_DEADLINE, updateKey)
+            .setData(Uri.parse("blockcolc://focus-deadline/" + timerTag(updateKey)))
+            .putExtra(EXTRA_ENDS_AT_EPOCH_MS, endsAt);
+        PendingIntent pending = PendingIntent.getBroadcast(context, deadlineRequestCode(updateKey), intent,
+            PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+        try {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S || alarms.canScheduleExactAlarms())
+                alarms.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, endsAt, pending);
+            else alarms.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, endsAt, pending);
+        } catch (RuntimeException error) { Log.w(TAG, "Focus surface deadline unavailable", error); }
+    }
+
+    /** Retire the OS chronometer even without a live WebView. A newer automatic
+     * phase has a different tag and is never replaced by this stale deadline. */
+    static void onFocusDeadline(Context context, Intent intent) {
+        synchronized (TIMER_LOCK) {
+            String key = cleanUpdateKey(intent.getStringExtra(EXTRA_UPDATE_KEY));
+            long end = intent.getLongExtra(EXTRA_ENDS_AT_EPOCH_MS, 0L);
+            NotificationManager manager = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+            if (manager == null || end <= 0L || end > System.currentTimeMillis()) return;
+            StatusBarNotification active = activeTimerNotification(manager, key);
+            if (active == null || !KIND_FOCUS.equals(active.getNotification().extras.getString(EXTRA_KIND))) return;
+            cancelTimerNotification(manager, active);
+        }
+    }
+
     private static DeadlineAlarmResult scheduleBreakDeadline(
         Context context,
         String updateKey,
@@ -1582,7 +1727,7 @@ public class BreakLiveUpdatePlugin extends Plugin {
         );
         boolean exact = false;
         try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && alarms.canScheduleExactAlarms()) {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S || alarms.canScheduleExactAlarms()) {
                 alarms.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, endsAtEpochMs, pending);
                 exact = true;
             } else {
@@ -1796,10 +1941,10 @@ public class BreakLiveUpdatePlugin extends Plugin {
         extras.putLong(EXTRA_ENDS_AT_EPOCH_MS, endsAtEpochMs);
         NotificationCompat.Builder builder = new NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_tomato_outline)
-            .setContentTitle("返回专注")
-            .setContentText("休息已结束，回来开始下一轮专注。")
-            .setStyle(new NotificationCompat.BigTextStyle().bigText("休息已结束，回来开始下一轮专注。\n点击打开方块钟。"))
-            .setSubText("▣ 方块钟 · 返回专注")
+            .setContentTitle(ui(context, "返回专注", "Return to focus"))
+            .setContentText(ui(context, "休息已结束，回来开始下一轮专注。", "Break finished. Start your next round."))
+            .setStyle(new NotificationCompat.BigTextStyle().bigText(ui(context, "休息已结束，回来开始下一轮专注。\n点击打开方块钟。", "Break finished. Start your next round.\nTap to open Blockcolc.")))
+            .setSubText(ui(context, "▣ 方块钟 · 返回专注", "▣ Blockcolc · return to focus"))
             .setContentIntent(openPendingIntent)
             .setWhen(nowEpochMs)
             .setShowWhen(true)
@@ -1840,10 +1985,10 @@ public class BreakLiveUpdatePlugin extends Plugin {
         return KIND_FOCUS.equals(value) ? KIND_FOCUS : KIND_BREAK;
     }
 
-    private static void ensureChannel(NotificationManager manager) {
+    private static void ensureChannel(Context context, NotificationManager manager) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
-        NotificationChannel channel = new NotificationChannel(CHANNEL_ID, "实时专注与休息", NotificationManager.IMPORTANCE_LOW);
-        channel.setDescription("在流体云、锁屏和通知栏显示专注或休息的实时倒计时");
+        NotificationChannel channel = new NotificationChannel(CHANNEL_ID, ui(context, "实时专注与休息", "Live focus & breaks"), NotificationManager.IMPORTANCE_LOW);
+        channel.setDescription(ui(context, "在流体云、锁屏和通知栏显示专注或休息的实时倒计时", "Live focus & break countdowns"));
         channel.setSound(null, null);
         channel.enableVibration(false);
         channel.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);

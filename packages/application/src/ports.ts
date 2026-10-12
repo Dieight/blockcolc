@@ -144,5 +144,5 @@ export interface FocusLifecyclePort {
 }
 
 export interface IdGenerator {
-  next(kind: "project" | "subtask" | "focus-session" | "progress-report"): string;
+  next(kind: "project" | "subtask" | "focus-session" | "progress-report" | 'quick-note'): string;
 }

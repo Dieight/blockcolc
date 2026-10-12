@@ -1,3 +1,4 @@
+import { t, useI18n } from '../i18n';
 /**
  * V27 MINI-27-01 极简模式展示组件。
  *
@@ -19,9 +20,10 @@ export function MinimalIdlePanel({ busy = false, exitVisible = true, onStartFocu
   onStartFocus: () => void;
   onExitMinimal: () => void;
 }) {
-  return <section className="minimal-idle-actions" aria-label="极简专注模式">
+  useI18n();
+  return <section className="minimal-idle-actions" aria-label={t("极简专注模式")}>
     {/* DF-UI-05: themed liquid-glass start action. */}
-    <button type="button" className="primary minimal-start" disabled={busy} onClick={onStartFocus}>开始专注</button>
-    <button type="button" className={`minimal-exit${exitVisible ? '' : ' is-veiled'}`} disabled={busy} onClick={onExitMinimal}>返回完整模式</button>
+    <button type="button" className="primary minimal-start" disabled={busy} onClick={onStartFocus}>{t("开始专注")}</button>
+    <button type="button" className={`minimal-exit${exitVisible ? '' : ' is-veiled'}`} disabled={busy} onClick={onExitMinimal}>{t("返回完整模式")}</button>
   </section>;
 }

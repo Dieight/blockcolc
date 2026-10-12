@@ -1,9 +1,11 @@
 import { expect, test } from "@playwright/test";
+import { openBlueprintLibrary, openImportedBlueprints } from './blueprint-library-controls';
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { executeAndReloadPersistedCommand, readPersistedDomainState } from "./persisted-domain-state";
-import { choosePlanEndTime, startNextRound, waitForMarathonReport, revealFocusControls } from './focus-plan-controls';
+import { choosePlanEndTime, finishPaintedReportReceipt, startNextRound, waitForMarathonReport, revealFocusControls } from './focus-plan-controls';
 import { fixBusinessDate } from './fixed-business-date';
+import { waitForPreparedWorld } from './world-ready';
 
 async function expectWorldCanvasDoesNotCover(button: import('@playwright/test').Locator) {
   await button.click({ trial: true });
@@ -21,15 +23,14 @@ async function expectWorldCanvasDoesNotCover(button: import('@playwright/test').
 const sample = resolve(process.cwd(), "../../litematic/bd29cade-7000-42b7-adc1-0631ce512c30.litematic");
 
 async function createDefaultProject(page: import("@playwright/test").Page) {
-  // The first-run blueprint catalog shares the large voxel chunk with the
-  // resident world. A parallel software-WebGL release run can legitimately
-  // take longer than the default 30-second test budget to evaluate that chunk.
+  // These multi-stage cases include the first-run catalog and resident world;
+  // retain their existing budget, but operate only after cold preparation.
   test.setTimeout(90_000);
   await page.goto("/");
   const create = page.getByRole("button", { name: "开始建造" });
   await expect(create).toBeEnabled({ timeout: 60_000 });
   await create.click();
-  await expect(page.locator(".world-screen")).toBeVisible();
+  await waitForPreparedWorld(page);
 }
 
 test("opening and closing the plan sheet never moves the panel below the adjust row", async ({ page }) => {
@@ -107,6 +108,7 @@ test("marathon mode schedules from an end time and reports once after every roun
   await firstRow.getByRole("button", { name: /推进至 25%/ }).click();
   await firstRow.getByRole("button", { name: /增加 .*计入轮数/ }).click();
   await page.getByRole("button", { name: "提交本次推进" }).click();
+  await finishPaintedReportReceipt(page);
   await expect(report).toHaveCount(0);
   // Back to the workbench: the combined report advanced the first subtask.
   await expect(page.locator(".workbench-context")).toContainText("确定目标");
@@ -185,7 +187,8 @@ test("habit plans support an isolated end-time schedule without the finite-task 
 test("a locked habit end-time lane keeps its host after another project becomes current", async ({ page }) => {
   // This case does not fast-forward a timer. Keep business time fixed while
   // real rAF and presentation timers finish their visible control animations.
-  await fixBusinessDate(page, new Date("2026-08-03T08:00:00Z"));
+  // The equivalent 17:55 -> 18:00 window avoids 23 unrelated slider steps.
+  await fixBusinessDate(page, new Date("2026-08-03T09:55:00Z"));
   await createDefaultProject(page);
   await page.getByRole("button", { name: "设置" }).click();
   await page.getByLabel("普通任务专注分钟").fill("1");
@@ -194,6 +197,9 @@ test("a locked habit end-time lane keeps its host after another project becomes 
   await page.getByLabel("习惯任务专注分钟").press("Enter");
   await page.getByLabel("每轮休息分钟").fill("0");
   await page.getByLabel("每轮休息分钟").press("Enter");
+  // Host ownership is independent of renderer quality. Keep the real control
+  // usable within its auto-hide window under this machine's software WebGL.
+  await page.getByRole('group', { name: '光影质量' }).getByRole('button', { name: '流畅', exact: true }).click();
   await page.getByRole("button", { name: "任务", exact: true }).click();
   await page.getByRole("button", { name: "新增任务" }).click();
   await page.getByRole("button", { name: "习惯任务" }).click();
@@ -207,7 +213,7 @@ test("a locked habit end-time lane keeps its host after another project becomes 
   await adjustPlan.click();
   const habitSheet = page.getByRole("dialog", { name: "安排习惯专注" });
   await habitSheet.getByRole("button", { name: "按结束时间" }).click();
-  await choosePlanEndTime(habitSheet, '16:05');
+  await choosePlanEndTime(habitSheet, '18:00');
   await habitSheet.getByRole("button", { name: "确认计划" }).click();
 
   const lockedPlan = await page.evaluate(() => JSON.parse(localStorage.getItem("blockcolc-round-plan-v1") ?? "null") as { projectId?: string; totalRounds?: number } | null);
@@ -222,6 +228,7 @@ test("a locked habit end-time lane keeps its host after another project becomes 
     { type: "SwitchActiveProject", projectId: finiteHost.id },
     await page.evaluate(() => Date.now()),
   );
+  await waitForPreparedWorld(page);
 
   expect(switched.revision).toBe(beforeExternalSwitch.revision + 1);
   expect(switched.state.activeProjectId).toBe(finiteHost.id);
@@ -360,12 +367,14 @@ test("habit workbench card speaks the library label, not the compatible-building
   await createDefaultProject(page);
   // Import the fixture into the building library and rename it for determinism.
   await page.getByRole("button", { name: "设置" }).click();
+  await openBlueprintLibrary(page);
   await page.getByLabel("导入 .litematic").setInputFiles(sample);
   await page.getByRole("button", { name: "保存到建筑蓝图库" }).click();
+  const imported = await openImportedBlueprints(page);
   await page.getByRole("button", { name: /重命名“/ }).first().click();
-  await page.getByRole("textbox", { name: /重命名“/ }).fill("V21 阅读大厅");
+  await page.getByRole("textbox", { name: '蓝图名称', exact: true }).fill("V21 阅读大厅");
   await page.getByRole("button", { name: "保存蓝图名称" }).click();
-  await expect(page.locator(".building-blueprint-list strong")).toHaveText("V21 阅读大厅");
+  await expect(imported.locator(".library-tiles strong")).toHaveText("V21 阅读大厅");
 
   // Create a habit project whose current building is that imported blueprint.
   await page.getByRole("button", { name: "任务", exact: true }).click();

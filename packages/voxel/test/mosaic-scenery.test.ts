@@ -6,6 +6,14 @@ import { planWorldScenery, scenerySurfaceAt, sceneryGeometryLayers, surfaceSampl
 import { sceneryPlanningFixture } from './scenery-planning-fixture';
 
 describe('continuous composite environment',()=>{
+ it.each([26,66,120])('keeps western climate junctions free of construction grass at radius %s',core=>{
+   const spacing=mosaicGridPosition(0,0,core).spacing;
+   for(const seed of [1234,45211,89412])for(let u=-3;u<=-.65;u+=.12)for(let v=-1;v<=1;v+=.025){
+     const s=sampleMosaicTerrain((u+v)*spacing/Math.SQRT2,(v-u)*spacing/Math.SQRT2,seed,core);
+     expect(['snow-mountain','glacier','badlands'],`${u},${v}: ${s.biome}`).toContain(s.biome);
+     expect(s.material).not.toBe('grass');
+   }
+ });
  it('keeps the nine camera-space regions in the specified order with real relief',()=>{
    const spacing=mosaicGridPosition(0,0,26).spacing;
    const sample=(u:number,v:number)=>sampleMosaicTerrain((u+v)*spacing/Math.SQRT2,(v-u)*spacing/Math.SQRT2,1234,26);

@@ -1,6 +1,7 @@
 import {expect,test,type Page,type Locator} from '@playwright/test';
 import {selectLastCalendarDays} from './select-calendar-days';
 import {expandGlassSetting} from './expand-glass-setting';
+import {openBlueprintLibrary} from './blueprint-library-controls';
 import {gzipSync} from 'node:zlib';
 import {testNbt as nbt,writeJavaNbt} from '../../../packages/litematic/test/nbt-fixture.js';
 
@@ -60,11 +61,13 @@ test('glass adjustment affects only immersive clocks, not reading surfaces',asyn
   await page.getByRole('button',{name:'调整本次计划'}).click();
   const plan=await material(page.locator('.focus-plan-sheet'));
   await page.getByRole('button',{name:'关闭本次计划'}).click();
-  await page.getByRole('button',{name:'任务',exact:true}).click();
-  await page.locator('.choice-menu-trigger').click();
-  const menu=await material(page.locator('.choice-menu-options'));
-  samples.push({settings,immersive,plan,menu});
   await page.getByRole('button',{name:'设置',exact:true}).click();
+  await page.getByLabel('临时调试世界',{exact:true}).check();
+  await page.locator('#world-debug-weather .choice-menu-trigger').click();
+  const menu=await material(page.locator('.choice-menu-options'));
+  await page.keyboard.press('Escape');
+  await page.getByLabel('临时调试世界',{exact:true}).uncheck();
+  samples.push({settings,immersive,plan,menu});
  }
  expect(samples[0]!.immersive).not.toEqual(samples[1]!.immersive);
  expect(samples[0]!.settings).toEqual(samples[1]!.settings);
@@ -142,18 +145,21 @@ test('imported blueprint preview and controls remain legible in dark mode',async
  await page.getByRole('button',{name:'设置',exact:true}).click();
  await page.getByRole('button',{name:'深色',exact:true}).click();
  await expect(page.locator('html')).toHaveAttribute('data-theme','dark');
+ await openBlueprintLibrary(page);
  await page.getByLabel('导入 .litematic').setInputFiles({
   name:'dark-preview.litematic',mimeType:'application/octet-stream',buffer:tinyLitematic(),
  });
 
- const candidate=page.locator('.imported-blueprint-role');
+ const candidate=page.getByRole('dialog',{name:'蓝图预览',exact:true});
  const preview=candidate.locator('.blueprint-preview');
  const canvas=preview.locator('canvas');
  await expect(candidate).toContainText('Dark preview');
  await expect(preview).toBeVisible();
  await expect.poll(async()=>Number(await canvas.getAttribute('data-render-calls')),{timeout:30_000}).toBeGreaterThan(0);
  await expect(preview).toHaveCSS('background-color','rgb(16, 25, 21)');
- await expect(candidate).toHaveCSS('background-color','rgb(23, 33, 28)');
+ const sheetBackground=await candidate.evaluate(()=>{const probe=document.createElement('div');probe.style.background='var(--sheet-glass-background)';document.body.append(probe);const result=getComputedStyle(probe).backgroundColor;probe.remove();return result;});
+ await expect(candidate).toHaveCSS('background-color',sheetBackground);
+ await expect(candidate).toHaveCSS('backdrop-filter',/blur\(/);
  await expect(candidate).toHaveCSS('color','rgb(230, 239, 233)');
  await candidate.screenshot({path:info.outputPath('dark-blueprint-import-preview.png'),animations:'disabled'});
 });

@@ -271,8 +271,11 @@ export interface WorldSettings {
   environmentStyle: WorldEnvironmentStyle;
 }
 
+export interface QuickNote { id: string; text: string; completed: boolean; createdAt: ISOInstant }
+
 export interface DomainState {
-  schemaVersion: 13;
+  schemaVersion: 14;
+  quickNotes: QuickNote[];
   projects: Project[];
   habitBuildings: HabitBuildingMonument[];
   activeProjectId: string | null;
@@ -293,6 +296,9 @@ export interface DomainState {
 }
 
 export type DomainCommand =
+  | { type: 'AddQuickNote'; noteId: string; text: string }
+  | { type: 'SetQuickNoteCompleted'; noteId: string; completed: boolean }
+  | { type: 'DeleteQuickNote'; noteId: string }
   | { type: "CreateProject"; projectId: string; title: string; blueprintId: string; importedBlueprint?: ImportedBlueprintV1 | null; subtasks: Array<{ id: string; title: string }> }
   | { type: "CreateHabitProject"; projectId: string; title: string; blueprintId: string; importedBlueprint?: ImportedBlueprintV1 | null; targetRounds: number }
   | { type: "SelectNextHabitBuilding"; blueprintId: string; importedBlueprint?: ImportedBlueprintV1 | null; targetRounds: number }
@@ -331,6 +337,7 @@ export type DomainCommand =
   | { type: "DeleteBuildingBlueprint"; blueprintId: string };
 
 export type DomainEvent =
+  | { type: 'QuickNotesChanged' }
   | { type: "ProjectCreated"; projectId: string }
   | { type: "HabitBuildingSelected"; projectId: string; cycleNumber: number; targetRounds: number }
   | { type: "HabitBuildingProgressed"; projectId: string; completedRounds: number; targetRounds: number }

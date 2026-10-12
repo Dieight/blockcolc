@@ -1,3 +1,4 @@
+import { t } from './i18n';
 import { Component, type ReactNode, type ErrorInfo } from 'react';
 import { PixelReset } from './ui/PixelIcon';
 import { renderRecoveryDiagnostic } from './render-recovery-diagnostic';
@@ -17,9 +18,9 @@ export class AppErrorBoundary extends Component<{ children: ReactNode }, { faile
   }
   render() {
     if (!this.state.failed) return this.props.children;
-    return <section className="fatal" role="alert"><h1>页面暂时没能打开</h1>
-      <p>重新打开会读取本机记录，不会重置任务。</p>
-      <button className="primary" type="button" onClick={() => window.location.reload()}><PixelReset/>重新打开</button>
+    return <section className="fatal" role="alert"><h1>{t("页面暂时没能打开")}</h1>
+      <p>{t("重新打开会读取本机记录，不会重置任务。")}</p>
+      <button className="primary" type="button" onClick={() => window.location.reload()}><PixelReset/>{t("重新打开")}</button>
     </section>;
   }
 }

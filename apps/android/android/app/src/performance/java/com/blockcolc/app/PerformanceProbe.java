@@ -23,6 +23,7 @@ final class PerformanceProbe {
     private final Runnable expire = this::stop;
     private WebView webView;
     private volatile boolean active;
+    private volatile boolean progressiveStartup;
     private volatile long deadline;
     private volatile String runId = "none", requestId = "boot";
     private boolean resumed, ownsScreenFlag, fullyDrawn;
@@ -30,7 +31,12 @@ final class PerformanceProbe {
     private long sampleSequence;
 
     PerformanceProbe(Activity activity, long createdAt) { this.activity = activity; this.createdAt = createdAt; }
-    void attach(WebView value) { webView = value; value.addJavascriptInterface(this, "BlockcolcPerformance"); }
+    void attach(WebView value) {
+        // This source set is excluded from normal APKs. Authorized ADB CPU
+        // profiling needs DevTools; no production WebView enables it here.
+        WebView.setWebContentsDebuggingEnabled(true);
+        webView = value; value.addJavascriptInterface(this, "BlockcolcPerformance");
+    }
     void pageLoaded() { pageLoadedMs = SystemClock.elapsedRealtime() - createdAt; }
     void resume() { resumed = true; updateScreenFlag(); }
     void pause() { resumed = false; updateScreenFlag(); }
@@ -45,6 +51,7 @@ final class PerformanceProbe {
             String run = intent.getStringExtra("probeRunId");
             if (!PerformanceProbePolicy.validId(run)) return;
             runId = run; active = true; deadline = SystemClock.elapsedRealtime() + PerformanceProbePolicy.MAX_RUN_MS;
+            progressiveStartup = intent.getBooleanExtra("probeProgressiveStartup", false);
             handler.removeCallbacks(expire); handler.postDelayed(expire, PerformanceProbePolicy.MAX_RUN_MS);
             updateScreenFlag(); requestId = request;
             invoke("start()");
@@ -82,6 +89,29 @@ final class PerformanceProbe {
         }
     }
     @JavascriptInterface public boolean isEnabled() { return active && SystemClock.elapsedRealtime() < deadline; }
+    @JavascriptInterface public boolean startupProgressiveOverride() { return isEnabled() && progressiveStartup; }
+    /** Only fixed phase labels and timestamps from synthetic authorized plans. */
+    @JavascriptInterface public String timerProjection() {
+        if(!isEnabled())return "{}";
+        try {
+            JSONObject result=new JSONObject();long now=System.currentTimeMillis();result.put("now",now);
+            org.json.JSONArray timelines=new org.json.JSONArray();
+            for(java.util.Map.Entry<String,?> entry:activity.getSharedPreferences("blockcolc_automatic_continuation_v1",Activity.MODE_PRIVATE).getAll().entrySet()){
+                if(!entry.getKey().startsWith("authorization:diagnostic-")||!(entry.getValue() instanceof String))continue;
+                JSONObject raw=new JSONObject((String)entry.getValue()),item=new JSONObject();
+                org.json.JSONArray phases=raw.optJSONArray("phases");if(phases==null)continue;
+                item.put("phases",phases.length());
+                for(int i=0;i<phases.length();i++){
+                    JSONObject phase=phases.getJSONObject(i);long start=phase.optLong("startsAtEpochMs"),end=phase.optLong("endsAtEpochMs");
+                    if(start<=now&&now<end){item.put("kind",phase.optString("kind"));item.put("round",phase.optInt("round"));item.put("end",end);}
+                }
+                timelines.put(item);
+            }
+            result.put("timelines",timelines);
+            result.put("events",new org.json.JSONArray(activity.getSharedPreferences("blockcolc_diagnostic_timer",Activity.MODE_PRIVATE).getString("events","[]")));
+            return result.toString();
+        }catch(Exception ignored){return "{}";}
+    }
     @JavascriptInterface public void publish(String payload) {
         if (!isEnabled() || payload == null || payload.length() > PerformanceProbePolicy.MAX_PAYLOAD_CHARS) return;
         final JSONObject sample;
@@ -120,7 +150,7 @@ final class PerformanceProbe {
             if (field instanceof JSONObject) { if (!validObject((JSONObject) field, depth + 1)) return false; }
             else if (field instanceof Number) { if (!PerformanceProbePolicy.validNumber(((Number) field).doubleValue())) return false; }
             else if (field instanceof String) {
-                if (!("windowLabel".equals(key) || "qualityTier".equals(key) || "target".equals(key)) || !PerformanceProbePolicy.STRINGS.contains(field)) return false;
+                if (!PerformanceProbePolicy.validString(key, (String) field)) return false;
             } else if (field != JSONObject.NULL && !(field instanceof Boolean)) return false;
         }
         return true;

@@ -16,6 +16,7 @@ export function NativeImeTextEntry({
   disabled = false,
   required = false,
   autoFocus = false,
+  maxLength,
   onValueChange,
   onNativeKeyDown,
 }: {
@@ -28,6 +29,7 @@ export function NativeImeTextEntry({
   disabled?: boolean;
   required?: boolean;
   autoFocus?: boolean;
+  maxLength?: number;
   onValueChange?: (value: string) => void;
   onNativeKeyDown?: (event: KeyboardEvent) => void;
 }) {
@@ -74,9 +76,11 @@ export function NativeImeTextEntry({
     element.disabled = disabled;
     element.required = required;
     element.placeholder = placeholder ?? '';
+    if (maxLength !== undefined) element.maxLength = maxLength;
+    else element.removeAttribute('maxlength');
     if (ariaLabel) element.setAttribute('aria-label', ariaLabel);
     else element.removeAttribute('aria-label');
-  }, [ariaLabel, disabled, id, name, placeholder, required, targetRef]);
+  }, [ariaLabel, disabled, id, name, placeholder, required, maxLength, targetRef]);
 
   return <span className="native-ime-entry" ref={host}/>;
 }

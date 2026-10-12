@@ -1,5 +1,7 @@
 import { pushBackLayer } from './back-layer';
 import { capturePortalBackdrop } from './portal-backdrop';
+import { revealPortalCover } from './portal-reveal';
+import { attachPortalFlame } from './portal-flame';
 
 export type PortalDirection = 'enter' | 'leave';
 export const PORTAL_FRAME_MS = 1000;
@@ -24,9 +26,9 @@ export function portalFrameLayout(width: number, height: number) {
 const PORTAL_EDGE_SAMPLES = 128;
 const portalPoint = (x: number, y: number) => `${x.toFixed(3)}px ${y.toFixed(3)}px`;
 
-function burningEdge(width: number, height: number, radius: number, progress: number, rim = false): string[] {
-  // Deterministic tongues drift between a handful of precomputed keyframes.
-  // No per-frame JS/filter pass competes with the resident WebGL scene.
+export function portalBurnEdgePoints(width: number, height: number, radius: number, progress: number, rim = false): Array<readonly [number,number]> {
+  // Only the transient 500 ms cover consumes these deterministic edge points.
+  // The world canvas, layout and WebGL render path remain untouched.
   const envelope = Math.sin(Math.PI * Math.max(0, Math.min(1, progress)));
   const amplitude = Math.min(24, radius * .085) * envelope;
   return Array.from({ length: PORTAL_EDGE_SAMPLES + 1 }, (_, index) => {
@@ -36,8 +38,11 @@ function burningEdge(width: number, height: number, radius: number, progress: nu
     const thickness = rim ? envelope * (5 + Math.pow(Math.max(0, Math.sin(angle * 13 + progress * 19)), 3) * 10) : 0;
     const reach = Math.max(0, radius + amplitude * (tongue + flutter - .25) + thickness);
     const snap = (value: number) => Math.round(value / 2) * 2;
-    return portalPoint(width / 2 + snap(Math.cos(angle) * reach), height / 2 + snap(Math.sin(angle) * reach));
+    return [width / 2 + snap(Math.cos(angle) * reach), height / 2 + snap(Math.sin(angle) * reach)] as const;
   });
+}
+function burningEdge(width:number,height:number,radius:number,progress:number,rim=false) {
+  return portalBurnEdgePoints(width,height,radius,progress,rim).map(([x,y])=>portalPoint(x,y));
 }
 
 /** An expanding fire-bitten hole; equal point counts allow native interpolation. */
@@ -78,6 +83,7 @@ export function createModePortal(root: HTMLElement, commit: (minimal: boolean) =
     const radius = Math.hypot(width, height) / 2 + 2;
     const layer = document.createElement('div');
     layer.className = 'mode-portal'; layer.dataset.direction = direction;
+    Object.assign(layer.style,{left:'0px',top:'0px',right:'auto',bottom:'auto',width:`${width}px`,height:`${height}px`});
     layer.style.setProperty('--portal-block', `${geometry.size}px`);
     layer.setAttribute('aria-hidden', 'true');
     const door = document.createElement('div'); door.className = 'mode-portal__door';
@@ -91,12 +97,10 @@ export function createModePortal(root: HTMLElement, commit: (minimal: boolean) =
       frame.append(stone); return stone;
     });
     const flame = document.createElement('div'); flame.className = 'mode-portal__flame';
-    const flameBody = document.createElement('div'); flameBody.className = 'mode-portal__flame-body'; flame.append(flameBody);
-    for (const side of ['left', 'center', 'right']) {
-      const tongue = document.createElement('div'); tongue.className = `mode-portal__flame-tongue mode-portal__flame-tongue--${side}`; flame.append(tongue);
-    }
-    const burnRim = document.createElement('div'); burnRim.className = 'mode-portal__burn-rim'; burnRim.hidden = true;
-    door.append(field, frame); layer.append(door, burnRim, flame);
+    flame.dataset.shape='advected-column';
+    flame.dataset.pixelGrid='3';
+    const disposeFlame = attachPortalFlame(flame);
+    door.append(field, frame); layer.append(door, flame);
     const phase = (name: string) => {
       layer.dataset.phase = name; root.dataset.modePortalPhase = name; document.body.dataset.modePortalPhase = name;
     };
@@ -111,7 +115,7 @@ export function createModePortal(root: HTMLElement, commit: (minimal: boolean) =
       const motion = element.animate(keyframes, { duration, easing, delay, fill: 'both' }); motions.push(motion);
       await motion.finished; check();
     };
-    const frameCount = () => Number(root.querySelector<HTMLCanvasElement>('canvas[aria-label="项目建筑世界"]')?.dataset.renderFrameCount ?? 0);
+    const frameCount = () => Number(root.querySelector<HTMLCanvasElement>('canvas[data-world-canvas]')?.dataset.renderFrameCount ?? 0);
     const untilReady = (minimal: boolean, frames: number) => new Promise<void>((resolve, reject) => {
       let raf = 0, stable = 0, previousSize = '', finished = false;
       const finish = (error?: Error) => {
@@ -123,7 +127,7 @@ export function createModePortal(root: HTMLElement, commit: (minimal: boolean) =
       const timeout = window.setTimeout(() => finish(new Error('World reframe timed out')), 10_000);
       const tick = () => {
         const screen = root.querySelector<HTMLElement>('.world-screen');
-        const canvas = screen?.querySelector<HTMLCanvasElement>('canvas[aria-label="项目建筑世界"]');
+        const canvas = screen?.querySelector<HTMLCanvasElement>('canvas[data-world-canvas]');
         const world = screen?.querySelector<HTMLElement>('.world-stage')?.getBoundingClientRect();
         const size = `${world?.width}:${world?.height}:${innerWidth}:${innerHeight}`;
         const ready = screen?.dataset.worldReady === 'true' && screen.dataset.minimalMode === String(minimal)
@@ -218,17 +222,13 @@ export function createModePortal(root: HTMLElement, commit: (minimal: boolean) =
       }
       else {
         // The boundary burns outward while the real UI stays at its final size.
-        burnRim.hidden = false;
-        const frames = portalBurnRevealFrames(width, height);
-        await Promise.all([
-          animate(door, frames.map(({offset,clipPath})=>({offset,clipPath})), PORTAL_REVEAL_MS, 'cubic-bezier(.55,.03,.7,.4)'),
-          animate(burnRim, frames.map(({offset,rimClipPath,rimOpacity})=>({offset,clipPath:rimClipPath,opacity:rimOpacity})), PORTAL_REVEAL_MS, 'cubic-bezier(.55,.03,.7,.4)'),
-        ]);
+        await revealPortalCover({layer,door,field,stone:stones[0]!,stones:geometry.stones,width,height,block:geometry.size,duration:PORTAL_REVEAL_MS,signal:owner.signal,
+          edge:progress=>portalBurnEdgePoints(width,height,(Math.hypot(width,height)/2+12)*progress,progress)});
       }
     } catch (error) {
       if (!owner.signal.aborted && !disposed) onFailure();
     } finally {
-      motions.forEach(motion => motion.cancel()); backdrop?.dispose(); layer.remove(); removeBack();
+      disposeFlame(); motions.forEach(motion => motion.cancel()); backdrop?.dispose(); layer.remove(); removeBack();
       root.inert = oldInert; root.dataset.modePortalActive = 'false'; phase('idle');
       document.removeEventListener('visibilitychange', onHidden); window.removeEventListener('keydown', onKey);
       window.removeEventListener('resize', cancel);

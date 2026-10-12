@@ -233,7 +233,14 @@ export function createFocusFlow(ports: FocusFlowPorts) {
       markFocusPerformance('command-committed');
       const { breakStartedAt: _breakStartedAt, breakEndsAt: _breakEndsAt, ...withoutBreak } = next;
       const started = result.events.find(event => event.type === 'FocusStarted');
-      ports.writePlan({ ...withoutBreak, status: 'focus', hasStarted: true, currentSessionId: started?.sessionId });
+      const firstSession = result.state.activeFocusSession;
+      if (next.mode === 'marathon' && next.completedRounds === 0 && firstSession && next.endAt) {
+        const confirmedEnd = Date.parse(firstSession.startedAt) + next.totalRounds * focusDurationMs
+          + Math.max(0, next.totalRounds - 1) * (next.automaticContinuation?.breakDurationMs ?? preferences.breakMinutes * 60_000);
+        if (confirmedEnd - Date.parse(next.endAt) <= 60_000)
+          next.endAt = new Date(Math.max(Date.parse(next.endAt), confirmedEnd)).toISOString();
+      }
+      ports.writePlan({ ...withoutBreak, ...(next.endAt ? {endAt:next.endAt} : {}), status: 'focus', hasStarted: true, currentSessionId: started?.sessionId });
       ports.refresh?.();
     }),
     interruptFocus: (interruptionCategory: FocusInterruptionCategory | null) => submit(async () => {
@@ -293,8 +300,10 @@ export function createFocusFlow(ports: FocusFlowPorts) {
       if (!plan) return;
       ports.constructionFeedback();
       if (plan.cancellationRequested === true || plan.cancellationReason !== undefined || plan.cancellationNote !== undefined) { ports.writePlan(null); return; }
-      const completedRounds = plan.completedRounds + 1;
       const reportedSessionIds = plan.reportedSessionIds.includes(sessionId) ? plan.reportedSessionIds : [...plan.reportedSessionIds, sessionId];
+      // The committed-state coordinator can reconcile this report before its
+      // receipt finishes. Session identities, not callback count, own rounds.
+      const completedRounds = Math.max(plan.completedRounds, reportedSessionIds.length);
       if (completedRounds >= plan.totalRounds) { ports.writePlan(null); return; }
       const breakMinutes = ports.preferences().breakMinutes;
       const reportedAt = ports.snapshot().progressReports.find(report => report.focusSessionIds.includes(sessionId))?.reportedAt;

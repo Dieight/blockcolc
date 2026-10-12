@@ -22,12 +22,26 @@ test('three festival slots have original pixel emblems, adjacent intro, keyboard
 });
 test('startup daily history is deduplicated, exports complete state, restores with an independent undo point',async({page},info)=>{
  test.setTimeout(120_000);await seed(page);await page.getByRole('button',{name:'设置',exact:true}).click();const history=page.locator('.daily-backup-history');await history.locator('summary').click();
- await expect(history).toContainText('2026-12-24',{timeout:20_000});await expect(history.locator('li')).toHaveCount(1);await expect(history).toContainText('仅保留一份');await expect(history).toContainText('200 MiB');
+  await expect(history).toContainText('2026-12-24',{timeout:20_000});await expect(history.locator('li')).toHaveCount(1);await expect(history).toContainText('每日合并为一份');await expect(history).toContainText('200 MiB');
  const before=await readPersistedDomainState(page);const [download]=await Promise.all([page.waitForEvent('download'),history.getByRole('button',{name:'导出',exact:true}).click()]);expect(download.suggestedFilename()).toBe('blockcolc-daily-2026-12-24.json');await download.saveAs(info.outputPath('daily-complete.json'));
  await executeAndReloadPersistedCommand(page,before.state,{type:'RenameProject',title:'留档之后的修改'},Date.parse('2026-12-25T08:00:00Z'));await page.getByRole('button',{name:'设置',exact:true}).click();await history.locator('summary').click();await expect(history.locator('li')).toHaveCount(1);
  await history.getByRole('button',{name:'恢复留档',exact:true}).click();const dialog=page.getByRole('alertdialog',{name:'恢复 2026-12-24 留档？'});await expect(dialog).toBeVisible();await page.keyboard.press('Escape');await expect(dialog).toHaveCount(0);expect((await readPersistedDomainState(page)).state.projects[0]!.title).toBe('留档之后的修改');
  await history.getByRole('button',{name:'恢复留档',exact:true}).click();await dialog.getByRole('button',{name:'恢复留档',exact:true}).click();await expect(page.locator('.backup-panel .backup-notice')).toContainText('留档已恢复');expect((await readPersistedDomainState(page)).state.projects[0]!.title).toBe('雪夜工作坊');
  await expect(page.locator('.rollback-list')).toContainText('恢复前备份');await page.locator('.rollback-list').getByRole('button',{name:'恢复',exact:true}).first().click();await page.getByRole('alertdialog').getByRole('button',{name:'恢复备份',exact:true}).click();await expect(page.locator('.backup-panel .backup-notice')).toContainText('已恢复备份');expect((await readPersistedDomainState(page)).state.projects[0]!.title).toBe('留档之后的修改');await page.screenshot({path:info.outputPath('daily-restored-and-undone.png')});
+});
+test('daily backup is not starved when the browser only supplies timeout opportunities',async({page})=>{
+ test.setTimeout(60_000);
+ await page.addInitScript(()=>{
+  window.requestIdleCallback=(callback,options)=>window.setTimeout(()=>{
+   callback({didTimeout:true,timeRemaining:()=>0});
+  },options?.timeout??2_147_483_647);
+  window.cancelIdleCallback=handle=>window.clearTimeout(handle);
+ });
+ await seed(page);await page.getByRole('button',{name:'设置',exact:true}).click();
+ const history=page.locator('.daily-backup-history');await history.locator('summary').click();
+ await expect(history).toContainText('2026-12-24',{timeout:20_000});
+ await expect(history.locator('li')).toHaveCount(1);
+ expect((await readPersistedDomainState(page)).state.projects[0]!.title).toBe('雪夜工作坊');
 });
 test('a real holiday focus saves one construction and reloading never duplicates it',async({page})=>{
  test.setTimeout(90_000);await seed(page);await page.getByRole('button',{name:'开始 1 轮',exact:true}).click();await page.locator('.immersive-hint').dblclick();await page.getByRole('button',{name:'结束本次专注',exact:true}).click();await page.getByRole('button',{name:/^提前完成任务/}).click();

@@ -50,6 +50,8 @@ button[aria-label^='刷新'][aria-busy='true'] .refresh-motion [data-pixel-icon=
 .report.focus-report-surface--minimal .minimal-report-allocation{color:var(--ink)}
 .focus-panel .focus-plan-sheet .plan-mode button[aria-pressed='true']{background:transparent;box-shadow:none}
 .world-screen[data-world-ready='false']>.focus-panel{visibility:hidden;pointer-events:none}
+[data-progressive-startup='true'][data-cold-startup='true'] .world-screen[data-world-ready='false']>.world{isolation:isolate}
+[data-progressive-startup='true'][data-cold-startup='true'] .world-screen[data-world-ready='false']>.focus-panel{visibility:visible;pointer-events:auto;z-index:4}
 .bottom-nav .pixel-icon{width:24px;height:24px}
 .pixel-brand image{image-rendering:pixelated}
 :is(.file-button,.focus-calendar-chart,.calendar-day){-webkit-tap-highlight-color:transparent}

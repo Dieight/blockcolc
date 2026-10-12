@@ -18,6 +18,11 @@ export function mosaicRegionAt(x:number,z:number,coreRadius:number):string {
   const {u,v}=mosaicGridPosition(x,z,coreRadius);
   const col=Math.max(1,Math.min(3,Math.round(u)+2)),row=Math.max(1,Math.min(3,Math.round(v)+2));return`${row}${col}`;
 }
+/** A continuous climate weight, not a rectangular region boundary. */
+export function mosaicWarmSeaWeight(x:number,z:number,coreRadius:number):number {
+  const {u,v}=mosaicGridPosition(x,z,coreRadius);
+  return smooth(.22,.64,u)*(1-smooth(.06,.40,v));
+}
 /** Smooth shallow shelves and deeper gullies; the water/support surface stays at zero. */
 export function mosaicSeabedHeight(x:number,z:number,seed:number,coreRadius:number):number {
   const {u,v}=mosaicGridPosition(x,z,coreRadius);
@@ -63,6 +68,17 @@ export function sampleMosaicTerrain(x:number,z:number,seed:number,coreRadius:num
   // lowland into a second isolated strip in the water.
   if(coast>.66||submerged)return{biome:'ocean',height:0,material:'water'};
   if(coast>.40)return{biome:'beach',height:Math.max(1,Math.round(height)),material:'sand'};
+  // The western climates meet each other, not a residual central-grass mask.
+  // Independent cutoffs used to leave a widening grass ray at ice/mesa and
+  // mountain/ice seams. Select from the neighbouring climates throughout this
+  // outer band; small coherent noise breaks the material edge into an ecotone.
+  if(a<-.50) {
+    const variation=(noise(seed^0x85ab,x,z,19)-.5)*.08;
+    const cold=ice+variation,rocky=bad-variation;
+    if(mountain>=cold&&mountain>=rocky)return{biome:'snow-mountain',height:Math.round(height),material:height>20?'snow':'stone'};
+    if(cold>=rocky)return{biome:'glacier',height:Math.round(height),material:detail>.64?'ice':'snow'};
+    return{biome:'badlands',height:Math.round(height),material:'terracotta'};
+  }
   if(mountain>.2)return{biome:'snow-mountain',height:Math.round(height),material:height>20?'snow':'stone'};
   if(ice>.34)return{biome:'glacier',height:Math.round(height),material:detail>.64?'ice':'snow'};
   if(bad>.32)return{biome:'badlands',height:Math.round(height),material:'terracotta'};

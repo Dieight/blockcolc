@@ -57,7 +57,8 @@ test('temporary weather and time overrides restore normal sources without changi
 
   await page.getByRole('button', { name: '设置', exact: true }).click();
   await page.getByLabel('临时调试世界', { exact: true }).uncheck();
-  await expect(page.getByLabel('世界调试时间')).toHaveCount(0);
+  await expect(page.getByLabel('世界调试时间')).toBeHidden();
+  await expect(page.locator('.world-debug-settings .content-reveal').first()).toHaveAttribute('inert','');
   await page.getByRole('button', { name: '计时', exact: true }).click();
   await expect(canvas).toHaveAttribute('data-weather-kind', originalWeather!);
   await expect(canvas).toHaveAttribute('data-day-phase', 'day');
@@ -183,6 +184,7 @@ for (const [environment, label, expectedMaximum] of [
   await expect(environmentChoice).toHaveAttribute('aria-pressed', 'true');
   await page.getByRole('checkbox', { name: '开启极简模式' }).check();
   await page.getByRole('button', { name: '计时', exact: true }).click();
+  await waitForPreparedWorld(page);
   await expect(page.locator('.minimal-clock-gesture')).toBeVisible();
   await page.reload();
   const canvas = page.getByLabel('项目建筑世界');

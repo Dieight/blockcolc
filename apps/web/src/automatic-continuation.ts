@@ -168,6 +168,7 @@ export function createAutomaticContinuationCoordinator(ports: AutomaticContinuat
   let nativeScheduledKey: string | null = null;
   let observedAuthorizationId: string | null = null;
   let lastResult: AutomaticContinuationRunResult = { startedSessionIds: [], retryable: false };
+  let resumeInFlight: Promise<AutomaticContinuationRunResult> | null = null;
   const timer = ports.setTimer ?? ((callback, delay) => setTimeout(callback, delay));
   const clearTimer = ports.clearTimer ?? (handle => clearTimeout(handle));
   const nowMs = ports.nowMs ?? (() => Date.now());
@@ -256,7 +257,13 @@ export function createAutomaticContinuationCoordinator(ports: AutomaticContinuat
   }
 
   function onResume(): Promise<AutomaticContinuationRunResult> {
-    return serial(() => runCycle({ resume: true }));
+    // Focus, visibility and the processed Android lifecycle receipt describe
+    // one return. Coalesce them rather than reading/rescheduling three times.
+    if (resumeInFlight) return resumeInFlight;
+    const result = serial(() => runCycle({ resume: true }));
+    resumeInFlight = result;
+    void result.finally(() => { if (resumeInFlight === result) resumeInFlight = null; });
+    return result;
   }
 
   function reconcile(): Promise<AutomaticContinuationRunResult> {
@@ -446,10 +453,10 @@ export function createAutomaticContinuationCoordinator(ports: AutomaticContinuat
   }
 
   function enforceAuthorizationPolicy(plan: RoundPlan, _state: DomainState, enabled: boolean): RoundPlan {
-    const remainingAfterCurrent = plan.status === 'focus'
-      ? plan.completedRounds + 1 < plan.totalRounds
-      : plan.completedRounds < plan.totalRounds;
-    const cannotContinue = !remainingAfterCurrent || plan.endAfterBreak || plan.status === 'report';
+    // An already-authorized last focus still owns a native phase/expiry. Retire
+    // it at report, not one round early; no new start is allowed by the deadline
+    // and reservation guards once totalRounds is reached.
+    const cannotContinue = plan.completedRounds >= plan.totalRounds || plan.endAfterBreak || plan.status === 'report';
     if (!enabled || cannotContinue) {
       if (!plan.automaticContinuation) return plan;
       const { automaticContinuation: _automaticContinuation, ...withoutAuthorization } = plan;

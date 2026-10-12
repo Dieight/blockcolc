@@ -13,6 +13,14 @@ describe('minimal idle panel pages', () => {
     expect(pageAfterHorizontalSwipe(0, -80, 100)).toBe(0);
     expect(pageAfterHorizontalSwipe(1, 10, 110)).toBe(1);
   });
+  it('returns from notes and statistics, including a slightly diagonal swipe',()=>{
+    expect(pageAfterHorizontalSwipe(0,90,10,true)).toBe(-1);
+    expect(pageAfterHorizontalSwipe(-1,-90,10,true)).toBe(0);
+    expect(pageAfterHorizontalSwipe(0,-90,10,true)).toBe(1);
+    expect(pageAfterHorizontalSwipe(1,90,10,true)).toBe(0);
+    expect(pageAfterHorizontalSwipe(-1,-40,0,true)).toBe(-1);
+    expect(pageAfterHorizontalSwipe(-1,-80,110,true)).toBe(-1);
+  });
   it('provides the same panel changes from left and right arrow keys', () => {
     expect(pageAfterArrowKey(0, 'ArrowRight')).toBe(1);
     expect(pageAfterArrowKey(1, 'ArrowLeft')).toBe(0);

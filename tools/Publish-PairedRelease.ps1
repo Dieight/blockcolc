@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][switch]$ConfirmPublish,
-    [Parameter(Mandatory)][switch]$ConfirmUserAcceptance,
+    [switch]$ConfirmUserAcceptance,
+    [switch]$ConfirmPublishAfterFullGate,
     [Parameter(Mandatory)][string]$UserApproval,
     [Parameter(Mandatory)][string]$PairedEvidencePath,
     [Parameter(Mandatory)][string]$ReleaseNotesPath,
@@ -10,9 +11,8 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Release-Common.ps1')
-if (-not $ConfirmPublish -or -not $ConfirmUserAcceptance -or [string]::IsNullOrWhiteSpace($UserApproval)) {
-    throw 'Paired publication requires explicit user acceptance and publication authorization.'
-}
+$requestedApproval = Get-PairedPublicationApproval -ConfirmPublish:$ConfirmPublish -ConfirmUserAcceptance:$ConfirmUserAcceptance `
+    -ConfirmPublishAfterFullGate:$ConfirmPublishAfterFullGate -UserApproval $UserApproval
 $context = Get-ReleaseContext
 $tag = "v$($context.VersionName)"
 $evidencePath = Get-ReleaseEvidencePath -Context $context
@@ -31,7 +31,7 @@ try {
     $private = Assert-ApkMetadata -Path $pair.private.apk -Context $context -AllowPrivateRelay
     if ($standard.BuildChannel -ne 'standard' -or $private.BuildChannel -ne 'private-relay') { throw 'Unexpected paired APK channels.' }
     Assert-Sha256Equal -Expected $evidence.candidateSha256 -Actual $standard.Sha256 -Boundary 'immutable standard candidate'
-    Assert-Sha256Equal -Expected $pair.private.sha256 -Actual $private.Sha256 -Boundary 'user-accepted private APK'
+    Assert-Sha256Equal -Expected $pair.private.sha256 -Actual $private.Sha256 -Boundary 'authorized paired private APK'
     Assert-PairedReleaseEvidence -Evidence $evidence -Pair $pair -Context $context -StandardAssets @(Get-ApkPublicAssets $evidence.candidateApk) -PrivateAssets @(Get-ApkPublicAssets $pair.private.apk)
     $isolationTool = Join-Path (Split-Path -Parent $context.Root) 'blockcolc-relay-private\tools\Test-ApkIsolation.ps1'
     & $isolationTool -ApkPath $evidence.candidateApk -Channel standard -RepositoryRoot $context.Root
@@ -48,12 +48,12 @@ try {
     if ($evidence.phase -eq 'prepared') {
         Assert-StagedState
         $tree = (Invoke-External -FilePath git -Arguments @('write-tree') -Capture | Select-Object -First 1).Trim()
-        # After user testing, only publication documents and release tooling may
+        # After the full gate, only publication documents and release tooling may
         # change. App code, dependencies, configuration and assets remain frozen.
         $changed = @(Invoke-External -FilePath git -Arguments @('diff','--name-only',$evidence.stagedTree,$tree) -Capture | Where-Object { $_ })
         $allowed = @('tools/Publish-PairedRelease.ps1','tools/Release-Common.ps1','tools/Test-ReleaseWorkflow.ps1','docs/TESTING.md','docs/TODO.md','docs/versions/README.md',"docs/versions/V$($context.VersionCode).md","docs/versions/$($context.VersionName)-development.md","docs/releases/$tag.md")
         $unexpected = @($changed | Where-Object { $_ -notin $allowed })
-        if ($unexpected.Count -gt 0) { throw "Application inputs changed after user testing: $($unexpected -join ', ')" }
+        if ($unexpected.Count -gt 0) { throw "Application inputs changed after the full gate: $($unexpected -join ', ')" }
         & (Join-Path $PSScriptRoot 'Test-ReleaseWorkflow.ps1')
         $oldInputs = [ordered]@{ stagedTree=$evidence.stagedTree; stagedDiffSha256=$evidence.stagedDiffSha256; testFingerprintSha256=$evidence.testFingerprintSha256 }
         Set-EvidenceProperty -Evidence $evidence -Name publicationPreparation -Value ([pscustomobject][ordered]@{
@@ -63,7 +63,8 @@ try {
         Set-EvidenceProperty -Evidence $evidence -Name stagedDiffSha256 -Value (Get-StagedDiffSha256)
         Set-EvidenceProperty -Evidence $evidence -Name testFingerprintSha256 -Value (Get-StagedTestFingerprintSha256)
         $acceptance = [pscustomobject][ordered]@{
-            kind='same-round-private-package-acceptance-for-public-standard-release'; acceptedAt=[datetime]::UtcNow.ToString('o'); userQuote=$UserApproval.Trim()
+            kind=$requestedApproval.kind; acceptedAt=[datetime]::UtcNow.ToString('o'); userQuote=$requestedApproval.userQuote
+            userExperience=$requestedApproval.userExperience
             deliveryRoundId=$evidence.deliveryRoundId; candidateSha256=$standard.Sha256; privateApkSha256=$private.Sha256
             pairedEvidencePath=$pairPath; pairedEvidenceSha256=(Get-Sha256 -Path $pairPath)
             stagedTree=$tree; stagedDiffSha256=$evidence.stagedDiffSha256; testFingerprintSha256=$evidence.testFingerprintSha256
@@ -74,7 +75,7 @@ try {
         Write-ReleaseEvidence -Evidence $evidence -Path $evidencePath
     }
     $approval = $evidence.acceptance
-    if ($approval.kind -ne 'same-round-private-package-acceptance-for-public-standard-release') { throw 'Not a paired private acceptance record.' }
+    if ($approval.kind -cne $requestedApproval.kind) { throw 'Publication approval kind differs from the recorded authorization.' }
     Assert-Sha256Equal -Expected $approval.candidateSha256 -Actual $standard.Sha256 -Boundary 'user approval to standard candidate'
     Assert-Sha256Equal -Expected $approval.privateApkSha256 -Actual $private.Sha256 -Boundary 'user approval to private APK'
     Assert-Sha256Equal -Expected $approval.pairedEvidenceSha256 -Actual (Get-Sha256 -Path $pairPath) -Boundary 'user approval to pair evidence'

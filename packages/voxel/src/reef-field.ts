@@ -13,14 +13,30 @@ function noise(seed:number,x:number,z:number) {
     +(random(seed,ix,iz+1)*(1-a)+random(seed,ix+1,iz+1)*a)*b;
 }
 
+/** Lobed shoals and a soft coherent fringe, all in world coordinates. */
+export function reefCoverage(seed:number,x:number,z:number,centerX:number,centerZ:number,radius:number):number {
+  const dx=(x-centerX)/radius,dz=(z-centerZ)/radius;
+  const warp=(noise(seed+411,x/38,z/38)-.5)*.18;
+  const main=1-Math.hypot(dx+Math.sin(dz*3)*.12+warp,dz/.86-warp);
+  const lobe=.48-Math.hypot(dx-.66,dz+.28);
+  const edge=Math.max(main,lobe)+(noise(seed+719,x/23,z/23)-.5)*.18;
+  const amount=Math.max(0,Math.min(1,(edge+.12)/.34));
+  return amount*amount*(3-2*amount);
+}
+
 /** A continuous, irregular reef bed with branching colonies and channels.
  * Coordinates, colour patches and heights belong to the bed, not a repeated
  * prefab. The caller clips it to actual warm water and protects other sites. */
 export function createReefField(seed:number,halfX:number,halfZ:number,allowed:(x:number,z:number)=>boolean=()=>true,
-  field?:{originX:number;originZ:number;baseY:(x:number,z:number)=>number}) {
+  field?:{originX:number;originZ:number;baseY:(x:number,z:number)=>number;density?:(x:number,z:number)=>number}) {
   const cells=new Map<string,{voxel:BlueprintVoxel;solid:boolean}>();
   const permitted=new Map<string,boolean>(),elevations=new Map<string,number>();
-  const accepts=(x:number,z:number)=>{const key=`${x}:${z}`;if(!permitted.has(key))permitted.set(key,allowed(x,z));return permitted.get(key)!;};
+  const accepts=(x:number,z:number)=>{const key=`${x}:${z}`;
+    if(!permitted.has(key)){
+      const density=field?.density?.(x,z)??1,wx=x+(field?.originX??0),wz=z+(field?.originZ??0);
+      permitted.set(key,density>.12+noise(seed+882,wx/6,wz/6)*.34&&allowed(x,z));
+    }return permitted.get(key)!;
+  };
   const elevation=(x:number,z:number)=>{const key=`${x}:${z}`;if(!elevations.has(key))elevations.set(key,field?.baseY(x,z)??0);return elevations.get(key)!;};
   const put=(x:number,y:number,z:number,block:string,solid=true,state?:Record<string,string>)=>{
     if(!accepts(x,z))return;
@@ -44,25 +60,31 @@ export function createReefField(seed:number,halfX:number,halfZ:number,allowed:(x
     const family=KINDS[Math.min(4,Math.floor(noise(seed+90,wx/15,wz/15)*5))]!;
     // Broad colonies stay connected, cut only by winding sandy passages.
     const channel=field&&Math.abs(wz-18*Math.sin(wx/31+seed%13))<1.2;
-    if(!channel&&noise(seed+4,wx/8,wz/8)>.17)put(x,1,z,`${family}_coral_block`);
+    const coral=!channel&&noise(seed+4,wx/8,wz/8)>.17;
+    if(coral)put(x,1,z,`${family}_coral_block`);
     if(random(seed+17,wx,wz)>.975)put(x,2,z,`${family}_coral_fan`,false,{waterlogged:'true'});
+    if(!coral&&random(seed+47,wx,wz)>.992)put(x,1,z,'sea_pickle',false,{pickles:String(1+Math.floor(random(seed+48,wx,wz)*4)),waterlogged:'true'});
   }
-  for(let x=-halfX+3;x<halfX;x+=5)for(let z=-halfZ+3;z<halfZ;z+=5) {
+  const originX=field?.originX??0,originZ=field?.originZ??0;
+  // A halo lets a colony cross a culling tile without losing its outer arms.
+  const firstX=field?Math.floor((originX-halfX-7)/5)*5+3-originX:-halfX+3;
+  const firstZ=field?Math.floor((originZ-halfZ-7)/5)*5+3-originZ:-halfZ+3;
+  for(let x=firstX;x<halfX+(field?5:0);x+=5)for(let z=firstZ;z<halfZ+(field?5:0);z+=5) {
     const wx=x+(field?.originX??0),wz=z+(field?.originZ??0);
     const cx=x+Math.floor(random(seed+5,wx,wz)*3)-1,cz=z+Math.floor(random(seed+6,wx,wz)*3)-1;
-    if(!inside(cx,cz)||!accepts(cx,cz)||random(seed+8,wx,wz)<.12)continue;
+    if(!inside(cx,cz)||(!field&&!accepts(cx,cz))||random(seed+8,wx,wz)<.12)continue;
     const family=KINDS[Math.min(4,Math.floor(noise(seed+90,(cx+(field?.originX??0))/15,(cz+(field?.originZ??0))/15)*5))]!;
     const form=Math.floor(random(seed+12,wx,wz)*3),height=1+Math.floor(random(seed+9,wx,wz)*2);
     for(let y=1;y<=height;y++)put(cx,y,cz,`${family}_coral_block`);
     for(let dx=-2;dx<=2;dx++)for(let dz=-2;dz<=2;dz++) {
       if(form===0?Math.abs(dx)+Math.abs(dz)>2:form===1?Math.abs(dx)>1||Math.abs(dz)>1:dz!==0&&Math.abs(dx)!==2)continue;
-      if(random(seed+23,cx+dx,cz+dz)<.18)continue;
+      if(random(seed+23,cx+dx+originX,cz+dz+originZ)<.18)continue;
       put(cx+dx,height+1,cz+dz,`${family}_coral_block`);
-      if(random(seed+24,cx+dx,cz+dz)>.76)put(cx+dx,height+2,cz+dz,`${family}_coral_fan`,false,{waterlogged:'true'});
+      if(random(seed+24,cx+dx+originX,cz+dz+originZ)>.76)put(cx+dx,height+2,cz+dz,`${family}_coral_fan`,false,{waterlogged:'true'});
     }
   }
-  put(0,0,0,'sand');put(0,1,0,'sea_pickle',false,{pickles:String(1+seed%4),waterlogged:'true'});
-  put(1,2,0,`${KINDS[seed%5]}_coral_fan`,false,{waterlogged:'true'});
+  if(!field){put(0,0,0,'sand');put(0,1,0,'sea_pickle',false,{pickles:String(1+seed%4),waterlogged:'true'});
+    put(1,2,0,`${KINDS[seed%5]}_coral_fan`,false,{waterlogged:'true'});}
   const sorted=[...cells.values()].sort((a,b)=>a.voxel.y-b.voxel.y||a.voxel.x-b.voxel.x||a.voxel.z-b.voxel.z);
   return {voxels:sorted.map(c=>c.voxel),distantVoxels:sorted.filter(c=>c.solid).map(c=>c.voxel)};
 }

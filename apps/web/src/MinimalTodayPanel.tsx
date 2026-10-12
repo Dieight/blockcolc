@@ -1,3 +1,4 @@
+import { t, useI18n } from './i18n';
 import { useMemo } from 'react';
 import type { DomainState } from '@blockcolc/domain';
 import { projectTodayFocusTimeline, type TodayFocusSeries } from './today-focus-timeline';
@@ -15,11 +16,12 @@ function seriesColor(row: TodayFocusSeries, index: number): string {
   // hue rotation would make the quiet panel read like a categorical dashboard.
   return row.unallocated ? 'var(--minimal-today-muted)' : `var(--minimal-today-task-${(index % 4) + 1})`;
 }
+const seriesTitle=(row:TodayFocusSeries)=>row.unallocated?t(row.title):row.title;
 
 function duration(ms: number): string {
-  if (ms > 0 && ms < 60_000) return '不足 1 分钟';
+  if (ms > 0 && ms < 60_000) return t("不足 1 分钟");
   const minutes = Math.floor(ms / 60_000);
-  return minutes < 60 ? `${minutes} 分钟` : `${Math.floor(minutes / 60)} 小时 ${minutes % 60} 分钟`;
+  return minutes < 60 ? t("{0} 分钟", minutes) : t("{0} 小时 {1} 分钟", Math.floor(minutes / 60), minutes % 60);
 }
 
 /** F3 Hairline Area, basics-gallery / "Concurrent users, filled with days".
@@ -28,6 +30,7 @@ function duration(ms: number): string {
  * exact millisecond totals from the shared timeline projection.
  */
 export function MinimalTodayPanel({ state, date }: { state: DomainState; date: string }) {
+  useI18n();
   const data = useMemo(() => projectTodayFocusTimeline(state, date), [state, date]);
   const rows = useMemo(() => displaySeries(data.series), [data]);
   const pixels = Array.from({ length: 24 }, (_, hour) => Array.from({ length: 4 }, (_, quarter) => {
@@ -48,13 +51,13 @@ export function MinimalTodayPanel({ state, date }: { state: DomainState; date: s
   const pixelHeight = 17;
   const x = (hour: number) => chartLeft + hour * pixelWidth;
   const outline = occupiedPerHour.map((count, hour) => `${hour === 0 ? 'M' : 'L'}${x(hour)},${chartBase - count * pixelHeight} L${x(hour + 1)},${chartBase - count * pixelHeight}`).join(' ');
-  return <section className="minimal-today" aria-label="今日专注时间轴">
+  return <section className="minimal-today" aria-label={t("今日专注时间轴")}>
     <header className="minimal-today-heading">
-      <div><span><PixelClock size={14}/>今日专注</span><strong>{duration(data.totalMs)}</strong></div>
-      <p><PixelFlag size={14}/><strong>{data.completedRounds}</strong><span>{data.targetRounds === null ? '轮' : ` / ${data.targetRounds} 轮`}</span></p>
+      <div><span><PixelClock size={14}/>{t("今日专注")}</span><strong>{duration(data.totalMs)}</strong></div>
+      <p><PixelFlag size={14}/><strong>{data.completedRounds}</strong><span>{data.targetRounds === null ? t("轮") : t(" / {0} 轮", data.targetRounds)}</span></p>
     </header>
     <svg className="minimal-today-chart" viewBox="0 0 400 120" role="img"
-      aria-label={`今日实际专注 ${duration(data.totalMs)}，横轴零点至二十四点，每小时最多堆叠四格，每格代表该小时内一段实际专注的十五分钟，颜色代表小任务或习惯。`}>
+      aria-label={t("今日实际专注 {0}，横轴零点至二十四点，每小时最多堆叠四格，每格代表该小时内一段实际专注的十五分钟，颜色代表小任务或习惯。", duration(data.totalMs))}>
       {[6, 12, 18].map(hour => <line key={hour} x1={x(hour)} x2={x(hour)} y1="18" y2={chartBase} className="minimal-today-guide" />)}
       {pixels.map((hourPixels, hour) => <g key={hour} className="minimal-today-column" style={{ animationDelay: `${hour * 28}ms` }}>
         {hourPixels.filter(pixel => pixel.milliseconds > 0).map((pixel, level) => {
@@ -62,7 +65,7 @@ export function MinimalTodayPanel({ state, date }: { state: DomainState; date: s
           const row = pixel.owner >= 0 ? rows[pixel.owner] : undefined;
           return <rect key={level} className="minimal-today-cell" x={x(hour) + 0.5} y={y + 0.5} width={pixelWidth - 1} height={pixelHeight - 1}
             fill={row ? seriesColor(row, pixel.owner) : 'var(--muted)'} shapeRendering="crispEdges">
-            <title>{row ? `${row.title} · ${duration(pixel.milliseconds)}` : `未分配 · ${duration(pixel.milliseconds)}`}</title>
+            <title>{row ? `${seriesTitle(row)} · ${duration(pixel.milliseconds)}` : t("未分配 · {0}", duration(pixel.milliseconds))}</title>
           </rect>;
         })}
       </g>)}
@@ -71,12 +74,12 @@ export function MinimalTodayPanel({ state, date }: { state: DomainState; date: s
       {Array.from({length:25},(_,hour)=><path key={hour} d={`M${x(hour)},${chartBase}v${hour%6===0?5:2}`} className="minimal-today-tick"/>)}
       {[0, 6, 12, 18, 24].map(hour => <text key={hour} x={x(hour)} y="115" textAnchor={hour === 0 ? 'start' : hour === 24 ? 'end' : 'middle'}>{String(hour).padStart(2, '0')}</text>)}
     </svg>
-    {rows.length === 0 ? <p className="minimal-today-empty">今天的专注会留在这里</p> : <ul className="minimal-today-legend">
-      {rows.map((row, index) => <li key={row.key} title={`${row.title} · ${duration(row.totalMs)}`}>
+    {rows.length === 0 ? <p className="minimal-today-empty">{t("今天的专注会留在这里")}</p> : <ul className="minimal-today-legend">
+      {rows.map((row, index) => <li key={row.key} title={`${seriesTitle(row)} · ${duration(row.totalMs)}`}>
         <i aria-hidden="true" style={{ background: seriesColor(row, index) }} />
-        <span>{row.title}</span><small>{duration(row.totalMs)}</small>
+        <span>{seriesTitle(row)}</span><small>{duration(row.totalMs)}</small>
       </li>)}
     </ul>}
-    <p className="minimal-today-note">时长按今日实际区间 · 轮次按完成日</p>
+    <p className="minimal-today-note">{t("时长按今日实际区间 · 轮次按完成日")}</p>
   </section>;
 }

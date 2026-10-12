@@ -29,16 +29,29 @@ export class DomainStateValidationError extends Error {
   }
 }
 
+function migrateV13State(raw: unknown): unknown {
+  const candidate = record(raw, '$');
+  if (candidate.schemaVersion !== 13) return raw;
+  if (Object.hasOwn(candidate, 'quickNotes')) invalid('$.quickNotes', 'requires schema 14');
+  return { ...candidate, schemaVersion: 14, quickNotes: [] };
+}
+
 export function parseDomainState(raw: unknown): DomainState {
   const migrated = withoutWithdrawnTodayNextSteps(migrateV9State(migrateV8State(migrateV7State(migrateTerrainV4State(migrateV6State(migrateV5State(migrateV4State(withBuildingBlueprintDefaults(migrateV2State(withDecorationDefaults(migrateV1State(raw))))))))))));
-  const root = object(migrateV12State(migrateV11State(migrateV10State(migrated))), "$", [
+  const root = object(migrateV13State(migrateV12State(migrateV11State(migrateV10State(migrated)))), "$", [
     "schemaVersion", "projects", "habitBuildings", "activeProjectId", "retiredSubtaskIds", "activeFocusSession",
     "focusHistory", "progressReports", "dailyGoals", "calendar", "decayPolicy", "projectConditions", "focusIntegrityPolicy",
-    "decorationBlueprintResources", "decorationRewards", "holidayRewards", "buildingBlueprintResources", "worldSettings",
+    "decorationBlueprintResources", "decorationRewards", "holidayRewards", "buildingBlueprintResources", "worldSettings", "quickNotes",
   ]);
-  if (root.schemaVersion !== 13) invalid("$.schemaVersion", "must equal 13");
+  if (root.schemaVersion !== 14) invalid("$.schemaVersion", "must equal 14");
   const state: DomainState = {
-    schemaVersion: 13,
+    schemaVersion: 14,
+    quickNotes: array(root.quickNotes, '$.quickNotes', (raw, path) => {
+      const note = object(raw, path, ['id','text','completed','createdAt']);
+      const id = nonBlankString(note.id, path+'.id'), text = nonBlankString(note.text, path+'.text');
+      if (id.length > 128 || text.length > 200) invalid(path, 'note is too long');
+      return { id, text, completed: boolean(note.completed,path+'.completed'), createdAt: instant(note.createdAt,path+'.createdAt') };
+    }),
     projects: array(root.projects, "$.projects", parseProject),
     habitBuildings: array(root.habitBuildings, "$.habitBuildings", parseHabitBuilding),
     activeProjectId: nullableString(root.activeProjectId, "$.activeProjectId"),
@@ -57,6 +70,8 @@ export function parseDomainState(raw: unknown): DomainState {
     buildingBlueprintResources: array(root.buildingBlueprintResources, "$.buildingBlueprintResources", parseBuildingResource),
     worldSettings: parseWorldSettings(root.worldSettings, "$.worldSettings"),
   };
+  if (state.quickNotes.length > 100) invalid('$.quickNotes','at most 100 notes');
+  unique(state.quickNotes.map(note => note.id), '$.quickNotes');
   validateReferences(state);
   return state;
 }

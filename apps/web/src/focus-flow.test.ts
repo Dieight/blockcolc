@@ -50,6 +50,13 @@ async function fixture(kind: 'finite' | 'habit' = 'finite', separateEditor = fal
 }
 
 describe('focus flow orchestration', () => {
+  it.each([2,3])('does not consume an extra round when a %s-round report was reconciled before its callback',async rounds=>{
+    const f=await fixture();f.preferences.breakMinutes=0;f.draft.rounds=rounds;
+    await f.flow.startFocus();const sessionId=f.service.snapshot().activeFocusSession!.id;
+    const reconciled={...f.plan()!,completedRounds:1,reportedSessionIds:[sessionId],status:'ready' as const,currentSessionId:undefined};
+    f.flow.afterReport(reconciled,sessionId);expect(f.plan()).toMatchObject({totalRounds:rounds,completedRounds:1,status:'ready'});
+    f.flow.afterReport(f.plan(),sessionId);expect(f.plan()?.completedRounds).toBe(1);
+  });
   it.each(['finite','habit'] as const)('cancels an unstarted %s marathon directly, without recording a reason or a session',async kind=>{
     const f=await fixture(kind,true);f.editingDraft.mode='marathon';await f.flow.confirmPlan();
     const before=f.service.snapshot();f.dispatch.mockClear();f.writePlan.mockClear();

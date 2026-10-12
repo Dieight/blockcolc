@@ -1,15 +1,17 @@
+import { t, useI18n } from './i18n';
 import { useEffect, useRef, useState } from 'react';
 import type { ApplicationCommand } from '@blockcolc/application';
 
 const WEEKDAYS = [
-  { value: 1, label: '一' }, { value: 2, label: '二' }, { value: 3, label: '三' },
-  { value: 4, label: '四' }, { value: 5, label: '五' }, { value: 6, label: '六' }, { value: 0, label: '日' },
+  { value: 1, label: "一" }, { value: 2, label: "二" }, { value: 3, label: "三" },
+  { value: 4, label: "四" }, { value: 5, label: "五" }, { value: 6, label: "六" }, { value: 0, label: "日" },
 ] as const;
 
 export function PlannedFocusDaysSetting({ calendar, run }: {
   calendar: { timeZone: string; restWeekdays: number[] };
   run: (command: ApplicationCommand) => Promise<unknown>;
 }) {
+  useI18n();
   const [selection,setSelection]=useState(calendar.restWeekdays);
   const desired=useRef(calendar.restWeekdays),saved=useRef(calendar.restWeekdays),generation=useRef(0);
   const plannedCount = 7 - selection.length;
@@ -34,19 +36,19 @@ export function PlannedFocusDaysSetting({ calendar, run }: {
           let ok=false;
           try {const result=await run({type:'ConfigureCalendar',timeZone:calendar.timeZone,restWeekdays:next});ok=!(typeof result==='object'&&result!==null&&'ok' in result&&result.ok===false);}catch{}
           if(ok)saved.current=next;
-          else if(adopted===generation.current){desired.current=saved.current;setSelection(saved.current);setError('专注日未保存，请重试。');}
+          else if(adopted===generation.current){desired.current=saved.current;setSelection(saved.current);setError(t("专注日未保存，请重试。"));}
         }
       } finally {saving.current=false;setBusy(false);}
     })();
   };
   return <div className="setting-row planned-days-setting" aria-busy={busy}>
-    <div className="setting-name"><span>计划专注日</span><small>每周 {plannedCount} 天 · 其余为休息日</small></div>
-    <div className="planned-days" role="group" aria-label="计划专注日">
+    <div className="setting-name"><span>{t("计划专注日")}</span><small>{t("每周")}{' '}{plannedCount} {t("天 · 其余为休息日")}</small></div>
+    <div className="planned-days" role="group" aria-label={t("计划专注日")}>
       {WEEKDAYS.map(day => {
         const active = !selection.includes(day.value);
         return <button type="button" key={day.value} aria-pressed={active}
           disabled={active && plannedCount === 1} onClick={() => toggle(day.value)}>
-          <span>{day.label}</span><i aria-hidden="true"/>
+          <span>{t(day.label)}</span><i aria-hidden="true"/>
         </button>;
       })}
     </div>

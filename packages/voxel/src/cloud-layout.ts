@@ -1,7 +1,7 @@
 import type { CloudBudget, WeatherState } from './environment';
 
 export type CloudRegion = 'near' | 'far';
-export type CloudKind = 'cirrus' | 'cumulus' | 'stratus' | 'storm' | 'bank';
+export type CloudKind = 'cirrus' | 'cumulus' | 'altocumulus' | 'stratus' | 'storm' | 'bank';
 export interface CloudGroup {
   region: CloudRegion;
   kind: CloudKind;
@@ -64,8 +64,8 @@ function cloudKindForWeather(weather: Pick<WeatherState, 'kind' | 'thunderstorm'
   if (weather.kind === 'rain') return roll < .68 ? 'storm' : roll < .88 ? 'cumulus' : 'stratus';
   if (weather.kind === 'mist') return roll < .88 ? 'stratus' : 'cirrus';
   if (weather.kind === 'snow') return roll < .7 ? 'stratus' : 'cumulus';
-  if (weather.kind === 'cloudy') return roll < .55 ? 'stratus' : roll < .8 ? 'cumulus' : 'cirrus';
-  return roll < .48 ? 'cirrus' : 'cumulus';
+  if (weather.kind === 'cloudy') return roll < .4 ? 'stratus' : roll < .65 ? 'altocumulus' : roll < .88 ? 'cumulus' : 'cirrus';
+  return roll < .38 ? 'cirrus' : roll < .7 ? 'cumulus' : 'altocumulus';
 }
 
 /** Four disjoint strips cover even the corners of a square/rectangular LOD. */

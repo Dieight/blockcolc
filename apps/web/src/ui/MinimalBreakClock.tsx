@@ -1,13 +1,15 @@
+import { t, useI18n } from '../i18n';
 import { useRef, type ReactNode } from 'react';
 import { markFocusPerformance } from '../focus-performance';
 
 export function MinimalBreakClock({ children, busy, phase = 'break', onContinue }: {
   children: ReactNode; busy: boolean; phase?: 'break' | 'ready'; onContinue: () => void;
 }) {
+  useI18n();
   const down = useRef<{ id:number; x:number; y:number; moved:boolean } | null>(null);
   const tap = useRef<{ time:number; x:number; y:number } | null>(null);
   return <div className={`minimal-break-clock${phase === 'ready' ? ' minimal-ready-clock' : ''}`} role="button" tabIndex={0} aria-disabled={busy}
-    aria-label={phase === 'ready' ? '计划待继续：双击剩余专注总时间或按 Enter 开始下一轮' : '双击休息中计时或按 Enter 跳过休息并继续专注'}
+    aria-label={phase === 'ready' ? t("计划待继续：双击剩余专注总时间或按 Enter 开始下一轮") : t("双击休息中计时或按 Enter 跳过休息并继续专注")}
     onBlur={event => { delete event.currentTarget.dataset.pointerFocus; }}
     onPointerDown={event => {
       event.stopPropagation();

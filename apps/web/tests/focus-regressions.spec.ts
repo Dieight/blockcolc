@@ -1,13 +1,14 @@
 import { expect, test } from "@playwright/test";
 import { readPersistedDomainState } from './persisted-domain-state';
-import { choosePlanEndTime, preparePlanCancellation, startNextRound, openRetainedPlan, waitForMarathonReport } from './focus-plan-controls';
+import { choosePlanEndTime, finishPaintedReportReceipt, prepareReadyPlanCancellation, startNextRound, waitForMarathonReport } from './focus-plan-controls';
+import { waitForPreparedWorld } from './world-ready';
 
 // Retained regressions for settlement ownership, integrity and name layout.
 
 async function createDefaultProject(page: import("@playwright/test").Page) {
   await page.goto("/");
   await page.getByRole("button", { name: "开始建造" }).click();
-  await expect(page.locator(".world-screen")).toBeVisible();
+  await waitForPreparedWorld(page);
 }
 
 async function configureOneMinuteRounds(page: import("@playwright/test").Page) {
@@ -18,13 +19,18 @@ async function configureOneMinuteRounds(page: import("@playwright/test").Page) {
   const breakMinutes = page.getByLabel("每轮休息分钟");
   await breakMinutes.fill("0");
   await breakMinutes.press("Enter");
+  // These cases assert settlement/integrity and text layout, not cinematic
+  // rendering. Use the real low-cost setting instead of blocking every input
+  // on precise software-WebGL frames; renderer quality has its own suite.
+  await page.getByRole('group', { name: '光影质量' }).getByRole('button', { name: '流畅', exact: true }).click();
   await page.getByRole("button", { name: "计时" }).click();
+  await waitForPreparedWorld(page);
 }
 
-async function pickEndTime1605(page: import("@playwright/test").Page) {
+async function pickEndTime1800(page: import("@playwright/test").Page) {
   const sheet = page.getByRole("dialog", { name: "安排下一轮" });
   await sheet.getByRole("button", { name: "按结束时间" }).click();
-  await choosePlanEndTime(sheet, '16:05');
+  await choosePlanEndTime(sheet, '18:00');
   await expect(sheet).toContainText(/轮专注/);
   return sheet;
 }
@@ -52,7 +58,10 @@ test("habit-settled rounds are never re-offered by a later plan cancel", async (
   // This regression intentionally completes and settles two independent
   // end-time plans; keep its budget local to this multi-cycle path.
   test.setTimeout(60_000);
-  await page.clock.install({ time: new Date("2026-08-03T08:00:00Z") });
+  // A five-minute plan ending at the normal 18:00 draft has the same round
+  // ownership as 16:00 -> 16:05, without spending the regression budget on
+  // 23 unrelated five-minute keyboard steps in software WebGL.
+  await page.clock.install({ time: new Date("2026-08-03T09:55:00Z") });
   await createDefaultProject(page);
   await configureOneMinuteRounds(page);
   await createHabit(page, "晚间阅读");
@@ -60,42 +69,46 @@ test("habit-settled rounds are never re-offered by a later plan cancel", async (
 
   // Marathon round 1 → cancel → settle that round into the habit.
   await page.getByRole("button", { name: "调整本次计划" }).click();
-  const sheet = await pickEndTime1605(page);
+  const sheet = await pickEndTime1800(page);
   await sheet.getByRole("button", { name: "确认计划" }).click();
   await page.getByRole("button", { name: /^开始到/ }).click();
   await page.clock.fastForward(61_000);
   await expect(page.getByRole("button", { name: "开始下一轮" })).toBeVisible();
-  await openRetainedPlan(page);
-  await (await preparePlanCancellation(sheet)).click();
+  await (await prepareReadyPlanCancellation(page)).click();
   const report = await waitForMarathonReport(page);
   await page.locator(".marathon-settlement-head").first().click();
   await expect(page.locator(".habit-round-stepper")).toBeVisible();
   await page.getByRole("button", { name: "增加计入轮数" }).click();
   await page.getByRole("button", { name: "提交本次推进" }).click();
+  await expect.poll(async () => (await readPersistedDomainState(page)).state.projects.find(project => project.title === '晚间阅读')?.habit?.completedFocusSessionIds.length).toBe(1);
+  await finishPaintedReportReceipt(page);
   await expect(report).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "我的第一座工坊" })).toBeVisible();
 
   // NEW marathon: confirm, complete round 1, cancel. The report must offer only
   // this current round (the habit-settled one is excluded) and submit cleanly.
   await page.getByRole("button", { name: "调整本次计划" }).click();
-  const sheet2 = await pickEndTime1605(page);
+  const sheet2 = await pickEndTime1800(page);
   await sheet2.getByRole("button", { name: "确认计划" }).click();
   await page.getByRole("button", { name: /^开始到/ }).click();
   await page.clock.fastForward(61_000);
   await expect(page.getByRole("button", { name: "开始下一轮" })).toBeVisible();
-  await openRetainedPlan(page);
-  await (await preparePlanCancellation(sheet2)).click();
+  await (await prepareReadyPlanCancellation(page)).click();
   await waitForMarathonReport(page);
   await expect(page.locator(".marathon-progress-report .eyebrow")).toContainText("1 轮专注已结束");
   await page.getByRole("button", { name: "提交本次推进" }).click();
+  await finishPaintedReportReceipt(page);
   await expect(report).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "我的第一座工坊" })).toBeVisible();
+  const persisted = (await readPersistedDomainState(page)).state;
+  expect(persisted.projects.find(project => project.title === '晚间阅读')?.habit?.completedFocusSessionIds).toHaveLength(1);
+  expect(persisted.focusHistory.filter(session => session.status === 'completed' && session.settledAt)).toHaveLength(2);
 });
 
 // BUG 4: an app-switch-limit exit must behave like a user interrupt — the
 // marathon schedule survives and the next focus resumes at the same round.
 test("an app-switch-limit exit keeps the marathon at the same round", async ({ page }) => {
-  await page.clock.install({ time: new Date("2026-08-03T08:00:00Z") });
+  await page.clock.install({ time: new Date("2026-08-03T09:55:00Z") });
   await createDefaultProject(page);
   await configureOneMinuteRounds(page);
   await page.getByRole('button', { name: '设置', exact: true }).click();
@@ -103,7 +116,7 @@ test("an app-switch-limit exit keeps the marathon at the same round", async ({ p
   await expect.poll(async () => (await readPersistedDomainState(page)).state.focusIntegrityPolicy.enabled).toBe(true);
   await page.getByRole('button', { name: '计时', exact: true }).click();
   await page.getByRole("button", { name: "调整本次计划" }).click();
-  const sheet = await pickEndTime1605(page);
+  const sheet = await pickEndTime1800(page);
   await sheet.getByRole("button", { name: "确认计划" }).click();
 
   // Complete round 1, start round 2.

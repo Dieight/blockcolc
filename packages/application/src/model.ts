@@ -8,9 +8,10 @@ import type {
 } from "@blockcolc/domain";
 import { projectProgressBasisPoints, holidaysForYear } from "@blockcolc/domain";
 
-type GeneratedCommandType = "CreateProject" | "CreateHabitProject" | "AddSubtask" | "StartFocus" | "ReportSubtaskProgress" | "CompleteFocusEarly";
+type GeneratedCommandType = "CreateProject" | "CreateHabitProject" | "AddSubtask" | "StartFocus" | "ReportSubtaskProgress" | "CompleteFocusEarly" | 'AddQuickNote';
 
 export type ApplicationCommand =
+  | { type: 'AddQuickNote'; text: string }
   | { type: "CreateProject"; title: string; blueprintId: string; importedBlueprint?: Project["importedBlueprint"]; subtasks: Array<{ title: string }> }
   | { type: "CreateHabitProject"; title: string; blueprintId: string; importedBlueprint?: Project["importedBlueprint"]; targetRounds: number }
   | { type: "SelectNextHabitBuilding"; blueprintId: string; importedBlueprint?: Project["importedBlueprint"]; targetRounds: number }

@@ -62,7 +62,7 @@ describe('annual keepsake is a saved effective-round fact',()=>{
   f.run({type:'SelectNextHabitBuilding',blueprintId:'cottage',targetRounds:10});expect(f.state().projects[0]!.settlementIndex).not.toBe(f.state().holidayRewards[0]!.settlementIndex);
  });
  it('migrates old data without inventing rewards and rejects forged annual facts',()=>{
-  const f=fixture();const {holidayRewards,...legacy}=f.state();expect(parseDomainState({...legacy,schemaVersion:12}).holidayRewards).toEqual([]);
+  const f=fixture();const {holidayRewards,quickNotes,...legacy}=f.state();expect(parseDomainState({...legacy,schemaVersion:12}).holidayRewards).toEqual([]);
   f.start('one');f.advance(60_000);f.run({type:'CompleteFocus'});const raw=structuredClone(f.state());
   for(const changes of [{date:'2026-11-15'},{sourceSessionId:'missing'},{settlementIndex:99},{awardedAt:'2026-11-01T00:00:00Z'}]){
    const bad=structuredClone(raw);Object.assign(bad.holidayRewards[0]!,changes);expect(()=>parseDomainState(bad)).toThrow();

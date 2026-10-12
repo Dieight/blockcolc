@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useState } from 'react';
 import type { FocusPreferences } from './app-types';
 import { focusGlassMaterialFor } from './focus-glass';
 import { defaultFocusPreferences, loadFocusPreferences, saveFocusPreferences } from './focus-preferences';
+import {setAppLanguage} from './i18n';
 
 /** Owns the local preference lifetime, persistence and document presentation effects. */
 export function useFocusPreferences() {
@@ -15,8 +16,11 @@ export function useFocusPreferences() {
     setPreferences(value);
   }, []);
   useLayoutEffect(() => {
+    setAppLanguage(preferences.language??'zh-CN');
+    document.documentElement.lang=preferences.language==='en'?'en':'zh-CN';
     document.documentElement.dataset.font = preferences.fontStyle ?? 'pixel';
-  }, [preferences.fontStyle]);
+  }, [preferences.fontStyle,preferences.language]);
+  useEffect(()=>{void import('@blockcolc/platform-capacitor').then(platform=>platform.setNativePresentationLanguage(preferences.language??'zh-CN')).catch(()=>{});},[preferences.language]);
 
   useEffect(() => {
     const media = window.matchMedia('(prefers-color-scheme: dark)');

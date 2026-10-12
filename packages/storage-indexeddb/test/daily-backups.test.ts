@@ -17,6 +17,12 @@ async function database(name:string) { return await new Promise<IDBDatabase>((re
 async function readBlocks(name:string) { const db=await database(name); try {return await new Promise<any[]>((resolve,reject)=>{const r=db.transaction('dailyBackupBlocks').objectStore('dailyBackupBlocks').getAll();r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);});} finally{db.close();} }
 afterEach(()=>{repositories.splice(0).forEach(r=>r.close());vi.restoreAllMocks();});
 describe('daily content-addressed history',()=>{
+  it('includes shared notes and their completion state in merged and exported backups',async()=>{
+    const f=fixture();const added=execute(projectState(),{type:'AddQuickNote',noteId:'note-backup',text:'Read'},{now:()=>new Date('2026-07-23T09:00:00Z')});if(!added.ok)throw Error(added.message);
+    added.state.quickNotes[0]!.completed=true;await f.repository.save(added.state,0);await f.repository.createDailyBackup('2026-07-23');
+    const daily=await f.repository.exportDailyBackup('2026-07-23'),full=await f.repository.exportBackup();
+    for(const backup of [daily,full]){const destination=fixture();await destination.repository.replaceFromImport(backup,0);expect((await destination.repository.load()).state?.quickNotes).toEqual(added.state.quickNotes);}
+  });
   it('merges unchanged history records and restores either checkpoint without a delta replay chain',async()=>{
     const started=execute(projectState(),{type:'StartFocus',sessionId:'sample',subtaskId:'subtask-1',plannedDurationMs:60000},{now:()=>new Date('2026-07-23T09:00:00.000Z')});
     if(!started.ok)throw Error(started.message);
@@ -46,7 +52,7 @@ describe('daily content-addressed history',()=>{
     expect(await f.repository.load()).toEqual({state,revision:5});
     await f.repository.createDailyBackup('2026-07-23');
     expect((await f.repository.listRollbackBackups()).map(x=>x.id)).toEqual(['old']);
-    const db=await database(f.name);expect(db.version).toBe(2);db.close();
+    const db=await database(f.name);expect(db.version).toBe(3);db.close();
   });
   it('keeps one merged checkpoint, reuses immutable blocks, and restores exports independently',async()=>{
     const f=fixture();const result=execute(projectState(),{type:'ImportBuildingBlueprint',blueprint:{schemaVersion:1,id:'one-block',title:'One block',bounds:{minX:0,maxX:0,minY:0,maxY:0,minZ:0,maxZ:0},voxels:[{x:0,y:0,z:0,materialId:'stone',stage:'foundation',buildOrder:0}]}},{now:()=>new Date('2026-07-23T09:00:00.000Z')});

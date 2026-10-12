@@ -20,6 +20,16 @@ beforeEach(() => {
 });
 
 describe("IndexedDbStateRepository", () => {
+  it("does not request or clone the app-state value when its revision is unchanged", async () => {
+    await repository.save(projectState(), 0);
+    const get = vi.spyOn(IDBObjectStore.prototype, 'get');
+    try {
+      expect(await repository.loadIfChanged(1)).toBeNull();
+      expect(get).not.toHaveBeenCalled();
+      expect((await repository.loadIfChanged(0))?.revision).toBe(1);
+      expect(get).toHaveBeenCalledTimes(1);
+    } finally { get.mockRestore(); }
+  });
   it("skips schema parsing only for the unchanged committed revision", async () => {
     await repository.save(projectState(), 0);
     const parse = vi.spyOn(codec, "cloneAndParseState");

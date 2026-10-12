@@ -1,4 +1,5 @@
-import { PixelCheck as Check, PixelTrophy } from './PixelIcon';
+import { t, appLocale, useI18n } from '../i18n';
+import { PixelCheck as Check, PixelTrophy, PixelDisclosure } from './PixelIcon';
 import { PixelProgress } from './PixelProgress';
 import { useEffect, useRef } from 'react';
 import { useBackLayer } from '../back-layer';
@@ -24,23 +25,24 @@ export interface AchievementEntry {
  *
  * 材料契约：普通内容实底，徽章不使用实时玻璃滤镜。
  */
-export function AchievementsPanel({ entries, emptyHint = '还没有可展示的成就，继续专注会逐步点亮。' }: {
+export function AchievementsPanel({ entries, emptyHint = t("还没有可展示的成就，继续专注会逐步点亮。") }: {
   entries: ReadonlyArray<AchievementEntry>;
   emptyHint?: string;
 }) {
+  useI18n();
   return <section className="achievements-panel" aria-labelledby="achievements-title">
-    <h2 id="achievements-title">成就</h2>
-    <p className="achievements-intro">从第一天起的专注与建造记录。</p>
+    <h2 id="achievements-title">{t("成就")}</h2>
+    <p className="achievements-intro">{t("从第一天起的专注与建造记录。")}</p>
     {entries.length === 0
       ? <p className="achievements-empty" role="status">{emptyHint}</p>
       : <ul className="achievements-list">
         {entries.map((entry) => <li key={entry.id} className={entry.unlocked ? 'achievement unlocked' : 'achievement'}>
-          <PixelTrophy className="achievement-emblem"/><div className="achievement-copy"><strong>{entry.title}</strong><small>{entry.description}</small></div>
+          <PixelTrophy className="achievement-emblem"/><div className="achievement-copy"><strong>{t(entry.title)}</strong><small>{t(entry.description)}</small></div>
           {entry.unlocked
-            ? <span className="achievement-unlocked"><Check/> {entry.unlockedAt ? new Date(entry.unlockedAt).toLocaleDateString('zh-CN') : '已解锁'}</span>
+            ? <span className="achievement-unlocked"><Check/> {entry.unlockedAt ? new Date(entry.unlockedAt).toLocaleDateString(appLocale()) : t("已解锁")}</span>
             : <span className="achievement-progress">
-              <PixelProgress role="meter" className="achievement-meter" label={`进度 ${entry.progress} / ${entry.target} ${entry.unit}`} value={entry.progress} max={Math.max(1, entry.target)}/>
-              <small aria-hidden="true">{entry.progress} / {entry.target} {entry.unit}</small>
+              <PixelProgress role="meter" className="achievement-meter" label={t("进度 {0} / {1} {2}", entry.progress, entry.target, t(entry.unit))} value={entry.progress} max={Math.max(1, entry.target)}/>
+              <small aria-hidden="true">{entry.progress} / {entry.target} {t(entry.unit)}</small>
             </span>}
         </li>)}
       </ul>}
@@ -53,9 +55,10 @@ export function AchievementsPanel({ entries, emptyHint = '还没有可展示的�
  * 只读投影。
  */
 export function AchievementsSection({ entries }: { entries?: ReadonlyArray<AchievementEntry> }) {
+  useI18n();
   if (entries === undefined) return null;
   return <details className="achievements-disclosure">
-    <summary><PixelTrophy/><span>成就</span><small>{entries.filter(entry => entry.unlocked).length} / {entries.length} 已解锁</small></summary>
+    <summary><PixelTrophy/><span>{t("成就")}</span><small>{entries.filter(entry => entry.unlocked).length} / {entries.length} {t("已解锁")}</small><PixelDisclosure/></summary>
     <AchievementsPanel entries={entries}/>
   </details>;
 }
@@ -66,6 +69,7 @@ export function AchievementUnlockDialog({ entries, error, onDismiss }: {
   error?: string;
   onDismiss: () => void;
 }) {
+  useI18n();
   const closeRef = useRef<HTMLButtonElement>(null);
   const previousFocus = useRef<HTMLElement | null>(null);
   useBackLayer(true, () => { onDismiss(); return true; });
@@ -88,12 +92,12 @@ export function AchievementUnlockDialog({ entries, error, onDismiss }: {
   }, [onDismiss]);
   return <div className="achievement-unlock-layer" data-entry-animation="unlock" role="presentation" onPointerDown={event => { if (event.target === event.currentTarget) onDismiss(); }}>
     <section className="achievement-unlock-dialog" role="dialog" aria-modal="true" aria-labelledby="achievement-unlock-title">
-      <span className="eyebrow">专注与建造的记录</span>
-      <h2 id="achievement-unlock-title">新的成就</h2>
-      <p>这些事实已经满足。关闭后只会在新的成就出现时再次提示。</p>
-      <ul>{entries.map(entry => <li key={entry.id}><Check/><div><strong>{entry.title}</strong><small>{entry.description}</small><span>{entry.unlockedAt ? `获得于 ${new Date(entry.unlockedAt).toLocaleString('zh-CN')}` : '获得时间未知（历史记录无法推导）'}</span></div></li>)}</ul>
+      <span className="eyebrow">{t("专注与建造的记录")}</span>
+      <h2 id="achievement-unlock-title">{t("新的成就")}</h2>
+      <p>{t("这些事实已经满足。关闭后只会在新的成就出现时再次提示。")}</p>
+      <ul>{entries.map(entry => <li key={entry.id}><Check/><div><strong>{t(entry.title)}</strong><small>{t(entry.description)}</small><span>{entry.unlockedAt ? t("获得于 {0}", new Date(entry.unlockedAt).toLocaleString(appLocale())) : t("获得时间未知（历史记录无法推导）")}</span></div></li>)}</ul>
       {error && <p className="achievement-unlock-error" role="alert">{error}</p>}
-      <button ref={closeRef} type="button" className="primary" onClick={onDismiss}>全部关闭</button>
+      <button ref={closeRef} type="button" className="primary" onClick={onDismiss}>{t("全部关闭")}</button>
     </section>
   </div>;
 }

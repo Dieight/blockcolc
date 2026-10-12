@@ -4,13 +4,19 @@ import { attemptQualityProjection, resolveCappedQualityTier, shouldDowngradeQual
 const strongDevice = { devicePixelRatio: 1, hardwareConcurrency: 8, deviceMemoryGb: 8, maxTextureSize: 8192 };
 
 describe("quality projection request semantics", () => {
-  it("does not permanently cap a preset because an occasional depth refresh doubles scene totals", () => {
+  it("uses measured latency rather than geometry counts or an occasional shadow refresh", () => {
     const frame = { calls: 271, triangles: 462130, interactionSamples: 0, interactionP95Ms: null };
     expect(shouldDowngradeQuality({ ...frame, refreshedShadow: true })).toBe(false);
-    expect(shouldDowngradeQuality({ ...frame, refreshedShadow: false })).toBe(true);
-    expect(shouldDowngradeQuality({ ...frame, refreshedShadow: true, interactionSamples: 24, interactionP95Ms: 30 })).toBe(true);
+    expect(shouldDowngradeQuality({ ...frame, refreshedShadow: false })).toBe(false);
+    expect(shouldDowngradeQuality({ ...frame, refreshedShadow: true, interactionSamples: 48, interactionP95Ms: 30 })).toBe(true);
     expect(shouldDowngradeQuality({ calls: 135, triangles: 231065, refreshedShadow: false,
       interactionSamples: 23, interactionP95Ms: 30 })).toBe(false);
+  });
+  it("keeps OnePlus' measured 15 ms scene at the selected tier", () => {
+    expect(shouldDowngradeQuality({ calls: 704, triangles: 619018, refreshedShadow: false,
+      interactionSamples: 48, interactionP95Ms: 15.3 })).toBe(false);
+    expect(shouldDowngradeQuality({ calls: 695, triangles: 602766, refreshedShadow: false,
+      interactionSamples: 24, interactionP95Ms: 30 })).toBe(false);
   });
   it("keeps the selected preference separate from an adaptive ceiling", () => {
     expect(resolveCappedQualityTier(strongDevice, "cinematic", "balanced")).toBe("balanced");

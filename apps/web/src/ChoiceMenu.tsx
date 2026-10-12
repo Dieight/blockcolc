@@ -1,3 +1,4 @@
+import { t, useI18n } from './i18n';
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { PixelCheck as Check, PixelChevron as ChevronDown } from './ui/PixelIcon';
@@ -14,6 +15,7 @@ export function ChoiceMenu({ label, value, options, disabled, floating = false, 
   floating?: boolean;
   onChange: (id: string) => void;
 }) {
+  useI18n();
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState<ReturnType<typeof choiceMenuPosition> | null>(null);
   const root = useRef<HTMLDivElement>(null);
@@ -42,7 +44,7 @@ export function ChoiceMenu({ label, value, options, disabled, floating = false, 
       const viewport = window.visualViewport;
       const top = (viewport?.offsetTop ?? 0) + 8;
       const viewportBottom = (viewport?.offsetTop ?? 0) + (viewport?.height ?? window.innerHeight) - 8;
-      const nav = document.querySelector('[aria-label="主导航"]')?.getBoundingClientRect();
+      const nav = document.querySelector('.bottom-nav')?.getBoundingClientRect();
       const bottom = nav && nav.height > 0 && nav.top > top ? Math.min(viewportBottom, nav.top - 8) : viewportBottom;
       setPosition(choiceMenuPosition(trigger.current.getBoundingClientRect(), {
         left: (viewport?.offsetLeft ?? 0) + 8,
@@ -93,7 +95,7 @@ export function ChoiceMenu({ label, value, options, disabled, floating = false, 
       aria-expanded={open} aria-controls={listId} disabled={disabled || options.length === 0}
       onClick={() => setOpen(value => !value)}
       onKeyDown={event => { if (event.key === 'ArrowDown') { event.preventDefault(); setOpen(true); } }}>
-      <span><strong>{selected?.label ?? '没有可选项'}</strong>{selected?.detail && <small>{selected.detail}</small>}</span>
+      <span><strong>{selected?.label ?? t("没有可选项")}</strong>{selected?.detail && <small>{selected.detail}</small>}</span>
       <ChevronDown aria-hidden="true"/>
     </button>
     {floating ? menu && createPortal(menu, document.body) : menu}

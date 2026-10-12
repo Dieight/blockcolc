@@ -257,7 +257,7 @@ test('v260 navigation animates individual glyph parts and settings selection tra
   await expect(page.locator('.world-hud>span')).toContainText('海岛聚落');
 });
 
-test('v260 fixed multi-round ready face has no marathon-plan entry; end choices share adjustable glass',async({page},info)=>{
+test('v260 fixed multi-round ready face has no marathon-plan entry; end choices use fixed functional glass',async({page},info)=>{
   test.setTimeout(90_000);await setup(page,true);
   await page.getByRole('button',{name:'调整本次计划',exact:true}).click();
   const sheet=page.getByRole('dialog',{name:'安排习惯专注'}),bounds=(await sheet.boundingBox())!;
@@ -269,8 +269,12 @@ test('v260 fixed multi-round ready face has no marathon-plan entry; end choices 
   await page.locator('.focus-panel').dblclick({position:{x:16,y:18}});
   await page.getByRole('button',{name:'结束本次专注',exact:true}).click();
   const ending=page.getByRole('dialog',{name:'如何结束这次专注？'});
-  const material=await ending.evaluate(e=>({bg:getComputedStyle(e).backgroundColor,blur:getComputedStyle(e).backdropFilter,ink:getComputedStyle(e.querySelector('small')!).color,expectedInk:getComputedStyle(document.documentElement).getPropertyValue('--ink').trim(),alpha:getComputedStyle(document.documentElement).getPropertyValue('--focus-glass-light-alpha').trim()}));
-  expect(material.blur).toContain('blur(');expect(Number(material.bg.match(/,\s*([\d.]+)\)$/)![1])).toBeCloseTo(Number(material.alpha),3);expect(material.ink).toBe('rgb(23, 33, 28)');
+  const material=await ending.evaluate(e=>{
+    const probe=document.createElement('div');probe.style.background='var(--sheet-glass-background)';document.body.append(probe);
+    const expectedBg=getComputedStyle(probe).backgroundColor;probe.remove();
+    return {bg:getComputedStyle(e).backgroundColor,expectedBg,blur:getComputedStyle(e).backdropFilter,ink:getComputedStyle(e.querySelector('small')!).color};
+  });
+  expect(material.blur).toContain('blur(');expect(material.bg).toBe(material.expectedBg);expect(material.ink).toBe('rgb(23, 33, 28)');
   await page.screenshot({path:info.outputPath('v260-end-focus-adjustable-glass.png')});
   await ending.getByRole('button',{name:/提前完成本轮/}).click();
   await expect(page.getByRole('button',{name:/计划待继续：/})).toBeVisible();

@@ -5,6 +5,34 @@ interface Stage { atlas: string | null; }
 interface Snapshot { worlds: string[]; pack: string | null; }
 
 describe("initial world/pack configuration", () => {
+  it("awaits progressive construction before retiring the previous resources", async () => {
+    const { ports, log, state } = fixture({ worlds: ["resident"], pack: "old-pack" });
+    let resume!: () => void;
+    const building = new Promise<void>(resolve => { resume = resolve; });
+    const commit = ports.commit;
+    ports.commit = async (worlds, staged) => { await building; await commit(worlds, staged); };
+    const pending = initializeWorldConfiguration(["new-world"], "new-pack", ports);
+    await Promise.resolve();
+    expect(state.current).toEqual({ worlds: ["resident"], pack: "old-pack" });
+    expect(log).not.toContain("dispose-previous");
+    resume();
+    expect(await pending).toBe("committed");
+    expect(log.at(-1)).toBe("dispose-previous");
+  });
+
+  it("rolls back and releases staged resources after an asynchronous construction failure", async () => {
+    const { ports, log, state } = fixture({ worlds: ["resident"], pack: "old-pack" });
+    ports.commit = async (worlds, staged) => {
+      state.current = { worlds: [...worlds], pack: staged.atlas };
+      await Promise.resolve();
+      throw new Error("async construction failure");
+    };
+    await expect(initializeWorldConfiguration(["partial-world"], "new-pack", ports)).rejects.toThrow("async construction failure");
+    expect(state.current).toEqual({ worlds: ["resident"], pack: "old-pack" });
+    expect(log.slice(-2)).toEqual(["rollback:resident:old-pack", "dispose-staged:new-pack"]);
+    expect(log).not.toContain("dispose-previous");
+  });
+
   it("commits no-pack worlds as one rebuild and keeps existing setters out of the transaction", async () => {
     const { ports, log, state } = fixture();
     const result = await initializeWorldConfiguration(["initial-world"], null, ports);

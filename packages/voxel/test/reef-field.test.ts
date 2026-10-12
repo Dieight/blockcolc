@@ -1,5 +1,5 @@
 import { expect,it } from 'vitest';
-import { createReefField } from '../src/reef-field';
+import { createReefField, reefCoverage } from '../src/reef-field';
 
 it('builds large deterministic irregular beds with five coral colours, branches and waterlogged details',()=>{
   const first=createReefField(17,30,24),repeat=createReefField(17,30,24),other=createReefField(18,30,24);
@@ -27,4 +27,17 @@ it('clips all branches and footprint blocks to actual water',()=>{
   const clipped=createReefField(27,30,24,(x,z)=>x<8&&z<9);
   expect(clipped.voxels.length).toBeGreaterThan(500);
   expect(clipped.voxels.every(v=>v.x<8&&v.z<9)).toBe(true);
+});
+it('uses the same block field across culling tiles, including branches that cross their boundary',()=>{
+  const tile=(originX:number,halfX:number)=>createReefField(27,halfX,20,(x,z)=>x>=-halfX&&x<halfX&&z>=-20&&z<20,
+    {originX,originZ:0,baseY:()=>-8,density:()=>1});
+  const world=(entry:ReturnType<typeof tile>,originX:number)=>entry.voxels.map(voxel=>({...voxel,x:voxel.x+originX}));
+  const sort=(cells:ReturnType<typeof world>)=>cells.sort((a,b)=>a.y-b.y||a.x-b.x||a.z-b.z);
+  expect(sort([...world(tile(0,20),0),...world(tile(40,20),40)])).toEqual(sort(world(tile(20,40),20)));
+});
+it('has a soft irregular, seed-stable shoal contour rather than rectangular region clipping',()=>{
+  const edge=[];for(let angle=0;angle<Math.PI*2;angle+=.1)edge.push(reefCoverage(27,Math.cos(angle)*100,Math.sin(angle)*100,0,0,100));
+  expect(new Set(edge.map(value=>Math.round(value*100))).size).toBeGreaterThan(10);
+  expect(edge.some(value=>value>0&&value<1)).toBe(true);
+  expect(reefCoverage(27,0,0,0,0,100)).toBe(1);expect(reefCoverage(27,300,300,0,0,100)).toBe(0);
 });

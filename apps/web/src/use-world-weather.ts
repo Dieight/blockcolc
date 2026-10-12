@@ -10,6 +10,7 @@ export interface WorldWeatherView {
   syncState: 'not_synced' | 'syncing' | 'available' | 'fallback';
   override: ExternalWeatherVisual | null;
   conditionText: string | null;
+  conditionCode?: string | null;
   attributions: string[];
   observedAt: string | null;
   locationSource: QWeatherLocationSource | null;
@@ -285,7 +286,7 @@ export function useWorldWeather(enabled: boolean, visible: boolean): WorldWeathe
       }
       manualRetryRequired.current = false;
       lastSuccess.current = Date.now();
-      setView(previous => mergeWorldWeatherPreservingAstronomy(previous, { syncState: 'available', override, conditionText: result.current.conditionText,
+      setView(previous => mergeWorldWeatherPreservingAstronomy(previous, { syncState: 'available', override, conditionText: result.current.conditionText, conditionCode:result.current.conditionCode,
         attributions: result.attributions, observedAt: result.observedAt ?? null,
         locationSource: result.locationSource ?? 'fresh',
         source: 'real', fallbackReason: null,

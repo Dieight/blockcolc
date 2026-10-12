@@ -1,7 +1,7 @@
 import type { BlueprintVoxel, MaterialId } from './blueprint';
 import type { EnvironmentStyle } from './environment';
-import { mosaicGridPosition, mosaicRegionAt, mosaicSeed, mosaicSeabedHeight, sampleMosaicTerrain } from './mosaic-terrain';
-import { createReefField } from './reef-field';
+import { mosaicGridPosition, mosaicRegionAt, mosaicSeed, mosaicSeabedHeight, mosaicWarmSeaWeight, sampleMosaicTerrain } from './mosaic-terrain';
+import { createReefField, reefCoverage } from './reef-field';
 
 /** Read-only samples of the *rendered* terrain, including its coarse far cells. */
 export interface ScenerySurface {
@@ -375,19 +375,19 @@ export function planWorldScenery(input: {
     // No independently seeded ellipses or regularly spaced prefab gaps.
     const seed=mosaicSeed(input.worldSeed),spacing=mosaicGridPosition(0,0,coreRadius).spacing;
     const centerX=coreX+.25*spacing/Math.SQRT2,centerZ=coreZ-1.55*spacing/Math.SQRT2;
-    const radius=Math.max(88,Math.min(150,spacing*.6)),tile=40,half=tile/2;
+    const radius=Math.max(100,Math.min(180,spacing*.70)),reach=radius*1.3,tile=40,half=tile/2;
     const dryStructures=objects.filter(o=>o.role!=='path');
-    for(let x=Math.floor((centerX-radius)/tile)*tile;x<=centerX+radius;x+=tile)
-      for(let z=Math.floor((centerZ-radius)/tile)*tile;z<=centerZ+radius;z+=tile){
+    for(let x=Math.floor((centerX-reach)/tile)*tile;x<=centerX+reach;x+=tile)
+      for(let z=Math.floor((centerZ-reach)/tile)*tile;z<=centerZ+reach;z+=tile){
         const allowed=(dx:number,dz:number)=>{
           if(dx< -half||dx>=half||dz< -half||dz>=half)return false;
           const wx=x+dx,wz=z+dz,at=surfaceAt(wx,wz);
-          const fringe=radius+(hash(`${input.worldSeed}:reef-edge:${Math.floor(wx/12)}:${Math.floor(wz/12)}`)%9-4);
-          return Boolean(at?.water&&['13','23'].includes(region(wx,wz))&&Math.hypot(wx-centerX,wz-centerZ)<fringe
+          return Boolean(at?.water
             &&!protectedRects.some(r=>overlaps({x:wx,z:wz,width:1,depth:1},r,2))
             &&!dryStructures.some(r=>overlaps({x:wx,z:wz,width:1,depth:1},r,1)));
         };
         const reef=createReefField(seed,half,half,allowed,{originX:x,originZ:z,
+          density:(dx,dz)=>reefCoverage(seed,x+dx,z+dz,centerX,centerZ,radius)*mosaicWarmSeaWeight(x+dx-coreX,z+dz-coreZ,coreRadius),
           baseY:(dx,dz)=>Math.floor(mosaicSeabedHeight(x+dx-coreX,z+dz-coreZ,seed,coreRadius)+.5)});
         if(reef.voxels.length<12)continue;
         objects.push({id:`scenery:${input.worldSeed}:reef:${x}:${z}`,role:'rock',x,z,y:0,width:tile,depth:tile,...reef});

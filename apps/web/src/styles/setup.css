@@ -64,6 +64,11 @@
 .boot-windmill svg{display:block;width:100%;height:100%;fill:currentColor;shape-rendering:crispEdges}
 .boot-windmill>i{position:absolute;left:13px;top:13px;width:6px;height:6px;background:#775740}
 [data-cold-startup='true'] .app-shell .boot-page{visibility:hidden}
+.boot-page.boot-page--world{position:absolute;z-index:3;padding:12px;visibility:visible!important}
+.boot-page--world .boot-page-inner{gap:2px;animation:none}
+.world-screen.is-focusing .boot-page--world{bottom:34%}
+@media(min-width:700px){.world-screen.is-focusing .boot-page--world{bottom:0;right:36%}}
+.boot-page--world .boot-scene{transform:scale(.76);margin:-16px}
 @media(prefers-reduced-motion:reduce){.boot-windmill-rotor,.boot-page-inner{animation:none;will-change:auto}}
 @keyframes world-boot-in{from{opacity:0}to{opacity:1}}
 .daily-goal-workbench{margin-bottom:26px}

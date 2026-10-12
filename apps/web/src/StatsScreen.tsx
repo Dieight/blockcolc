@@ -1,5 +1,6 @@
+import { t, appLocale, useI18n, appLanguage } from './i18n';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { PixelCube, PixelClock, PixelFlag, PixelSprout } from './ui/PixelIcon';
+import { PixelCube, PixelClock, PixelFlag, PixelSprout, PixelDisclosure } from './ui/PixelIcon';
 import { projectFocusAttribution, projectMonumentFocus, type ApplicationService, type MonumentFocusProjection, type UnallocatedFocusProjection } from '@blockcolc/application';
 import { addLocalDays, localDateOf } from '@blockcolc/domain';
 import { dailyGoalTargetForWindow, effectiveFocusMillisecondsByDate, focusSessionCountByDate, focusWindowSummary, projectFocusAllocation, focusRangeDayCount, type FocusDateRange } from './focus-stats';
@@ -59,6 +60,7 @@ export function reconcileAchievementBatch(
 }
 
 export function StatsScreen({ state, achievementEntries, active = false }: { state:AppState; achievementEntries?:ReadonlyArray<AchievementEntry>; active?:boolean }) {
+  useI18n();
   const today = localDateOf(new Date(), state.calendar.timeZone);
   const [selection, setSelection] = useState<FocusDateRange | null>(null);
   const range = selection ?? { start: today, end: today };
@@ -66,7 +68,7 @@ export function StatsScreen({ state, achievementEntries, active = false }: { sta
   const summary = useMemo(() => focusWindowSummary(state,range.end,period),[state,range.end,period]);
   const targetRounds = useMemo(() => dailyGoalTargetForWindow(state,range.end,period),[state,range.end,period]);
   const allocation = useMemo(() => {
-    const all = projectFocusAllocation(state,range.end,period);
+    const all = projectFocusAllocation(state,range.end,period).map(row => row.unallocated ? {...row,title:t('未分配 / 不可追溯')} : row);
     if (all.length <= 6) return all;
     const unallocated = all.find(row => row.unallocated);
     const allocated = all.filter(row => !row.unallocated);
@@ -74,10 +76,10 @@ export function StatsScreen({ state, achievementEntries, active = false }: { sta
     const visible = allocated.slice(0, visibleAllocatedCount);
     const hidden = allocated.slice(visibleAllocatedCount);
     const other = hidden.length > 0
-      ? [{ projectId:'other', title:`其他 ${hidden.length} 项任务`, durationMs:hidden.reduce((sum,row) => sum + row.durationMs,0), minutes:Math.round(hidden.reduce((sum,row) => sum + row.durationMs,0) / 60_000), share:hidden.reduce((sum,row) => sum + row.share,0) }]
+      ? [{ projectId:'other', title:t("其他 {0} 项任务", hidden.length), durationMs:hidden.reduce((sum,row) => sum + row.durationMs,0), minutes:Math.round(hidden.reduce((sum,row) => sum + row.durationMs,0) / 60_000), share:hidden.reduce((sum,row) => sum + row.share,0) }]
       : [];
     return [...visible, ...other, ...(unallocated ? [unallocated] : [])];
-  },[state,range.end,period]);
+  },[state,range.end,period,appLanguage()]);
   const monuments = useMemo(() => projectMonumentFocus(state), [state]);
   const unallocated = useMemo(() => projectFocusAttribution(state).unallocated, [state]);
   const [pendingAchievements, setPendingAchievements] = useState<ReadonlyArray<AchievementEntry>>([]);
@@ -101,7 +103,7 @@ export function StatsScreen({ state, achievementEntries, active = false }: { sta
       // honest notice explains that a later visit may show the same historical
       // batch again because persistence failed.
       setSessionDismissedIds(previous => new Set([...previous, ...pendingAchievements.map(entry => entry.id)]));
-      setReceiptError('展示回执未保存；本次已关闭，之后进入统计时可能再次提示。');
+      setReceiptError(t("展示回执未保存；本次已关闭，之后进入统计时可能再次提示。"));
       setPendingAchievements([]);
     }
   }, [pendingAchievements]);
@@ -115,20 +117,20 @@ export function StatsScreen({ state, achievementEntries, active = false }: { sta
       return {date,minutes:(minutes.get(date) ?? 0) / 60_000,sessions:sessions.get(date) ?? 0,future:date > today};
     });
   },[state.focusHistory,today]);
-  const label = range.start === range.end ? (range.end === today ? '今天' : range.end.replaceAll('-', '.'))
+  const label = range.start === range.end ? (range.end === today ? t("今天") : range.end.replaceAll('-', '.'))
     : `${range.start.replaceAll('-', '.')} — ${range.end.replaceAll('-', '.')}`;
   return <section className="page stats-page">
-    <header className="stats-page-heading"><div><h1>专注轨迹</h1><p className="stats-intro">专注与建造，按时间回看。</p></div></header>
-    <section className="stats-period-section" aria-label="按时间范围统计">
-    <section className="stats-overview" aria-label="有效专注摘要">
-      <div className="stats-duration"><span><PixelClock size={16}/>{label}的投入<HolidayEmblem date={today} slot={2}/></span><strong>{formatFocusMinutes(summary.minutes).split(/(\d+)/).filter(Boolean).map((part,index) => <span key={index} className={/^\d+$/.test(part) ? 'stats-duration-number' : 'stats-duration-unit'}>{part}</span>)}</strong></div>
-      <div className="stats-key-facts"><div className="stats-rounds"><PixelFlag size={16}/><strong>{summary.completed + summary.early}<span className="stats-round-divider"> / </span>{targetRounds}</strong><span>有效完成轮次 / 目标完成轮次</span></div><div><PixelSprout size={16}/><strong>{summary.activeDays}</strong><span>活跃日</span></div></div>
+    <header className="stats-page-heading"><div><h1>{t("专注轨迹")}</h1><p className="stats-intro">{t("专注与建造，按时间回看。")}</p></div></header>
+    <section className="stats-period-section" aria-label={t("按时间范围统计")}>
+    <section className="stats-overview" aria-label={t("有效专注摘要")}>
+      <div className="stats-duration"><span><PixelClock size={16}/>{label}{t("的投入")}<HolidayEmblem date={today} slot={2}/></span><strong>{formatFocusMinutes(summary.minutes).split(/(\d+)/).filter(Boolean).map((part,index) => <span key={index} className={/^\d+$/.test(part) ? 'stats-duration-number' : 'stats-duration-unit'}>{part}</span>)}</strong></div>
+      <div className="stats-key-facts"><div className="stats-rounds"><PixelFlag size={16}/><strong>{summary.completed + summary.early}<span className="stats-round-divider"> / </span>{targetRounds}</strong><span>{t("有效完成轮次 / 目标完成轮次")}</span></div><div><PixelSprout size={16}/><strong>{summary.activeDays}</strong><span>{t("活跃日")}</span></div></div>
     </section>
     <FocusCalendarChart days={days} today={today} selection={range} onSelectionChange={setSelection}/>
     </section>
     <FocusAllocationChart rows={allocation} rangeLabel={label}/>
-    <section className="stats-archive-section" aria-label="建造留下的记录">
-    <div className="stats-archive-heading"><h2>建造留下的记录</h2><span>累计</span></div>
+    <section className="stats-archive-section" aria-label={t("建造留下的记录")}>
+    <div className="stats-archive-heading"><h2>{t("建造留下的记录")}</h2><span>{t("累计")}</span></div>
     <MonumentStatistics monuments={monuments} unallocated={unallocated}/>
     <AchievementsSection entries={achievementEntries}/>
     </section>
@@ -138,25 +140,26 @@ export function StatsScreen({ state, achievementEntries, active = false }: { sta
 }
 
 export function MonumentStatistics({ monuments, unallocated }: { monuments:readonly MonumentFocusProjection[]; unallocated:UnallocatedFocusProjection }) {
+  useI18n();
   return <details className="monument-statistics">
-    <summary><PixelCube/><span>纪念建筑</span><small>{monuments.length} 座已完成</small></summary>
-    <p className="monument-intro">展示可追溯投入；旧记录单列，不估算分配。</p>
+    <summary><PixelCube/><span>{t("纪念建筑")}</span><small>{monuments.length} {t("座已完成")}</small><PixelDisclosure/></summary>
+    <p className="monument-intro">{t("展示可追溯投入；旧记录单列，不估算分配。")}</p>
     {monuments.length === 0
-      ? <p className="monument-empty">完成一项大型任务或习惯建筑后，这里会保留它的投入记忆。</p>
+      ? <p className="monument-empty">{t("完成一项大型任务或习惯建筑后，这里会保留它的投入记忆。")}</p>
         : <div className="monument-list">{monuments.map(monument => {
-          const sourceLabel = monument.source === 'habit' ? '已完成习惯建筑' : '已完成大型任务';
+          const sourceLabel = monument.source === 'habit' ? t("已完成习惯建筑") : t("已完成大型任务");
           // Native details owns the disclosure state. Leaving `open` out keeps
           // every card collapsed on entry and lets the browser close it again
           // without a React state race that could blank the stats route.
           return <details key={monument.id}>
-            <summary><PixelCube/><span><strong>{monument.title}</strong><small>{sourceLabel}{monument.expectedRounds !== null ? ` · ${monument.rounds} / ${monument.expectedRounds} 轮可追溯` : ` · ${monument.rounds} 轮可追溯`}{monument.interruptedRounds > 0 ? ` · ${monument.interruptedRounds} 条中断` : ''}</small></span><b>{formatFocusMinutes(monument.minutes)}</b></summary>
+            <summary><PixelCube/><span><strong>{monument.title}</strong><small>{sourceLabel}{monument.expectedRounds !== null ? t(" · {0} / {1} 轮可追溯", monument.rounds, monument.expectedRounds) : t(" · {0} 轮可追溯", monument.rounds)}{monument.interruptedRounds > 0 ? t(" · {0} 条中断", monument.interruptedRounds) : ''}</small></span><b>{formatFocusMinutes(monument.minutes)}</b></summary>
             <div className="monument-detail">
-              <div className="monument-metrics"><div><span>实际投入</span><strong>{formatFocusMinutes(monument.minutes)}</strong></div><div><span>完成轮次</span><strong>{monument.rounds} 轮</strong></div><div><span>中断投入</span><strong>{monument.interruptedRounds > 0 ? `${monument.interruptedRounds} 条 · ${formatFocusMinutes(monument.interruptedMinutes)}` : '无'}</strong></div><div><span>完成时间</span><strong>{monument.completedAt ? new Date(monument.completedAt).toLocaleDateString('zh-CN') : '未知'}</strong></div></div>
-             {monument.unknownRounds > 0 && <p className="monument-unknown" role="note">另有 {monument.unknownRounds} 条记录无法追溯{monument.unknownMinutes > 0 ? `（${formatFocusMinutes(monument.unknownMinutes)}）` : ''}，未分摊。</p>}
+              <div className="monument-metrics"><div><span>{t("实际投入")}</span><strong>{formatFocusMinutes(monument.minutes)}</strong></div><div><span>{t("完成轮次")}</span><strong>{monument.rounds} {t("轮")}</strong></div><div><span>{t("中断投入")}</span><strong>{monument.interruptedRounds > 0 ? t("{0} 条 · {1}", monument.interruptedRounds, formatFocusMinutes(monument.interruptedMinutes)) : t("无")}</strong></div><div><span>{t("完成时间")}</span><strong>{monument.completedAt ? new Date(monument.completedAt).toLocaleDateString(appLocale()) : t("未知")}</strong></div></div>
+             {monument.unknownRounds > 0 && <p className="monument-unknown" role="note">{t("另有")}{' '}{monument.unknownRounds} {t("条记录无法追溯")}{monument.unknownMinutes > 0 ? `（${formatFocusMinutes(monument.unknownMinutes)}）` : ''}{t("，未分摊。")}</p>}
               <MonumentFocusChart rows={monument.subtasks}/>
             </div>
           </details>;
       })}</div>}
-    {unallocated.rounds > 0 && <div className="achievement monument-unallocated" role="note"><PixelClock className="achievement-emblem"/><div className="achievement-copy"><strong>未分配的投入</strong><small>{[unallocated.completedRounds > 0 ? `${unallocated.completedRounds} 个完成轮次` : '', unallocated.interruptedRounds > 0 ? `${unallocated.interruptedRounds} 条中断记录` : ''].filter(Boolean).join('、')} · 无法追溯，不估算分配</small></div><b className="achievement-unlocked">{formatFocusMinutes(unallocated.minutes)}</b></div>}
+    {unallocated.rounds > 0 && <div className="achievement monument-unallocated" role="note"><PixelClock className="achievement-emblem"/><div className="achievement-copy"><strong>{t("未分配的投入")}</strong><small>{[unallocated.completedRounds > 0 ? t("{0} 个完成轮次", unallocated.completedRounds) : '', unallocated.interruptedRounds > 0 ? t("{0} 条中断记录", unallocated.interruptedRounds) : ''].filter(Boolean).join('、')} {t("· 无法追溯，不估算分配")}</small></div><b className="achievement-unlocked">{formatFocusMinutes(unallocated.minutes)}</b></div>}
   </details>;
 }

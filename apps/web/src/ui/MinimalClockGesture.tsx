@@ -1,3 +1,4 @@
+import { t, useI18n } from '../i18n';
 import { useEffect, useRef, useState } from 'react';
 import { FocusTimer } from '../FocusTimer';
 import { minimalRoundThresholdCrossings } from '../minimal-focus';
@@ -34,6 +35,7 @@ export function MinimalClockGesture({ clockText, busy, focusMinutes = 25, breakM
   value?: number | null; onChange?: (endMs: number | null) => void; confirmation?: 'double-tap' | 'button';
   clockOnly?: boolean; ariaLabel?: string;
 }) {
+  useI18n();
   const [localSelection, setLocalSelection] = useState<number | null>(null);
   const selection = value === undefined ? localSelection : value;
   const setSelection = (next: number | null | ((previous: number | null) => number | null)) => {
@@ -54,7 +56,7 @@ export function MinimalClockGesture({ clockText, busy, focusMinutes = 25, breakM
   const tap = useRef<{ at: number; x: number; y: number } | null>(null);
   const selected = selection === null ? null : new Date(selection);
   const text = selected ? `${String(selected.getHours()).padStart(2, '0')}:${String(selected.getMinutes()).padStart(2, '0')}` : clockText;
-  const day = !selected || selected.toDateString() === new Date().toDateString() ? '今天' : '明天';
+  const day = !selected || selected.toDateString() === new Date().toDateString() ? t("今天") : t("明天");
   const shift = (base:number|null,steps:number,now:number) => {
     if(!clockOnly)return shiftClockSelection(base,steps,now);
     const date=new Date(base??now);const minutes=((date.getHours()*60+date.getMinutes()+steps*5)%1440+1440)%1440;
@@ -63,8 +65,8 @@ export function MinimalClockGesture({ clockText, busy, focusMinutes = 25, breakM
   return <div className="minimal-clock-gesture" data-round-detent={heldRound === null ? undefined : 'holding'} data-detent-round={heldRound ?? undefined} role={confirmation === 'button' ? 'slider' : 'button'} tabIndex={busy ? -1 : 0} aria-disabled={busy}
     aria-valuemin={confirmation === 'button' ? 0 : undefined} aria-valuemax={confirmation === 'button' ? clockOnly ? 1439 : 288 : undefined}
     aria-valuenow={confirmation === 'button' ? clockOnly ? (selected?.getHours()??0)*60+(selected?.getMinutes()??0) : Math.max(0, Math.min(288, Math.round(((selection ?? Date.now()) - Date.now()) / 300_000))) : undefined}
-    aria-valuetext={confirmation === 'button' ? selected ? `${day} ${text}` : '未选择结束时间' : undefined}
-    aria-label={ariaLabel ?? (confirmation === 'button' ? '结束时间，上下滑动或按方向键调整' : selected ? `专注到${day} ${text}，双击或按 Enter 开始专注` : `当前时间 ${text}，上下滑动或按方向键选择结束时间`)}
+    aria-valuetext={confirmation === 'button' ? selected ? `${day} ${text}` : t("未选择结束时间") : undefined}
+    aria-label={ariaLabel ?? (confirmation === 'button' ? t("结束时间，上下滑动或按方向键调整") : selected ? t("专注到{0} {1}，双击或按 Enter 开始专注", day, text) : t("当前时间 {0}，上下滑动或按方向键选择结束时间", text))}
     onBlur={event => { delete event.currentTarget.dataset.pointerFocus; }}
     onPointerDown={event => {
       event.stopPropagation();
@@ -143,7 +145,7 @@ export function MinimalClockGesture({ clockText, busy, focusMinutes = 25, breakM
     }}>
     {confirmation === 'button' ? <strong className="timer-value" aria-hidden="true">{text}</strong>
       : <FocusTimer mode="clock" clockText={text} fallbackMs={0} onElapsed={() => {}}/>}
-    {(selected || confirmation === 'button') && <span className="minimal-clock-selection" aria-hidden="true">{clockOnly ? '上下滑动调整' : confirmation === 'button' ? `${selected ? `${day}结束 · ` : ''}上下滑动调整` : `${day}结束 · 双击确认`}</span>}
+    {(selected || confirmation === 'button') && <span className="minimal-clock-selection" aria-hidden="true">{clockOnly ? t("上下滑动调整") : confirmation === 'button' ? selected ? t("{0}结束 · 上下滑动调整",day) : t("上下滑动调整") : t("{0}结束 · 双击确认", day)}</span>}
   </div>;
 }
 

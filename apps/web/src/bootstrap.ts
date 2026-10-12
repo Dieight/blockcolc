@@ -9,12 +9,12 @@ import { APPLICATION_STATE_CHANGED_EVENT, shouldPublishLifecycleRefresh, type Ap
 import { registerBuiltinDailyRewardBlueprints } from './builtin-daily-rewards';
 import { installResourcePackColdStartProbe } from './resource-pack-cold-start-performance';
 import { holidayBuildingBlueprint } from '@blockcolc/voxel/holiday-buildings';
-import { bindPerformanceApplication, measurePerformanceStage } from './performance-probe';
+import { bindPerformanceApplication, measurePerformanceStage, diagnosticStateDatabase, diagnosticStorageIsolation } from './performance-probe';
 export { APPLICATION_STATE_CHANGED_EVENT, type ApplicationStateChangedDetail } from './application-lifecycle';
 
 export async function bootstrap() {
   await measurePerformanceStage('native-bars', configureNativeSystemBars);
-  const repository = new IndexedDbStateRepository({ databaseName: 'blockcolc-v1' });
+  const repository = new IndexedDbStateRepository({ databaseName: diagnosticStateDatabase() });
   const service = await measurePerformanceStage('storage-load', () => ApplicationService.initialize({ repository, backupRepository: repository, dailyBackupRepository: repository, holidayBlueprint:holidayBuildingBlueprint, notifications: isCapacitorNative() ? new CapacitorNotificationPort() : new BrowserNotificationPort(), clock: new DateClock(), ids: new CryptoIdGenerator(), initialTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone, initialRestWeekdays: [0, 6] }));
   bindPerformanceApplication(service);
   await measurePerformanceStage('resume', () => service.resume());
@@ -29,7 +29,7 @@ export async function bootstrap() {
   } catch {
     // Optional packaged decorations are an enhancement, never a bootstrap gate.
   }
-  if (isCapacitorNative()) attachFocusExport(service);
+  if (isCapacitorNative()&&!diagnosticStorageIsolation()) attachFocusExport(service);
   const lifecycle = isCapacitorNative() ? new CapacitorFocusLifecyclePort() : new BrowserFocusLifecyclePort();
   await measurePerformanceStage('lifecycle', () => lifecycle.subscribe(async event => {
     const beforeRevision = service.stateRevision();

@@ -14,11 +14,12 @@ import type {
   RollbackBackupSummary,
 } from "./model.js";
 
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 const APP_STATE_STORE = "appState";
 const ROLLBACK_STORE = "rollbackBackups";
 const METADATA_STORE = "metadata";
 const CURRENT_KEY = "current";
+const REVISION_INDEX = "revision";
 const MAX_ROLLBACK_BACKUPS = 2;
 const ROLLBACK_SUMMARY_PREFIX = 'rollback-summary:';
 
@@ -60,11 +61,15 @@ export class IndexedDbStateRepository implements StateRepository, DailyBackupRep
     const db = await this.database();
     const tx = db.transaction(APP_STATE_STORE, "readonly");
     const done = transactionDone(tx);
-    const record = await requestResult<CurrentStateRecord | undefined>(tx.objectStore(APP_STATE_STORE).get(CURRENT_KEY));
+    const store = tx.objectStore(APP_STATE_STORE);
+    // An index key lookup does not structured-clone the blueprint payload. The
+    // check and fallback read share one transaction, including cross-tab writes.
+    if (knownRevision !== undefined && await requestResult(store.index(REVISION_INDEX).getKey(knownRevision)) === CURRENT_KEY) {
+      await done;
+      return null;
+    }
+    const record = await requestResult<CurrentStateRecord | undefined>(store.get(CURRENT_KEY));
     await done;
-    // Keep the transaction read (including changes made by another tab), but
-    // avoid repeated schema validation and a second clone of large blueprints.
-    // IndexedDB still performs its own structured clone; this is not a cache.
     if (knownRevision !== undefined && (record?.revision ?? 0) === knownRevision) return null;
     return {
       state: record?.state == null ? null : cloneAndParseState(record.state),
@@ -471,6 +476,8 @@ function openDatabase(name: string, onVersionChange: () => void): Promise<IDBDat
     request.onupgradeneeded = () => {
       const db = request.result;
       if (!db.objectStoreNames.contains(APP_STATE_STORE)) db.createObjectStore(APP_STATE_STORE, { keyPath: "id" });
+      const stateStore = request.transaction!.objectStore(APP_STATE_STORE);
+      if (!stateStore.indexNames.contains(REVISION_INDEX)) stateStore.createIndex(REVISION_INDEX, "revision");
       if (!db.objectStoreNames.contains(ROLLBACK_STORE)) db.createObjectStore(ROLLBACK_STORE, { keyPath: "id" });
       if (!db.objectStoreNames.contains(DAILY_BACKUP_STORE)) db.createObjectStore(DAILY_BACKUP_STORE, { keyPath: 'id' });
       if (!db.objectStoreNames.contains(DAILY_BACKUP_BLOCK_STORE)) db.createObjectStore(DAILY_BACKUP_BLOCK_STORE, { keyPath: 'id' });

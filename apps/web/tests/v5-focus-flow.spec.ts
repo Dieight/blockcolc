@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { readFileSync } from 'node:fs';
-import { startNextRound } from './focus-plan-controls';
+import { finishPaintedReportReceipt, startNextRound } from './focus-plan-controls';
 
 const currentVersion = (JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string }).version;
 
@@ -87,6 +87,7 @@ test('one planned round ends directly after its natural progress report', async 
   await page.clock.fastForward(61_000);
   await expect(page.getByRole('heading', { name: '这次工作推进到哪里？' })).toBeVisible();
   await page.getByRole('button', { name: '推进至 25%' }).click();
+  await finishPaintedReportReceipt(page);
   await expect(page.getByText('休息中')).toBeHidden();
   await expect(page.getByRole('button', { name: '开始 1 轮' })).toBeVisible();
   await page.getByRole('button', { name: '统计' }).click();
@@ -134,6 +135,7 @@ test('keeps each multi-round progress report before its configured break', async
   await page.clock.fastForward(61_000);
   await expect(page.getByRole('heading', { name: '这次工作推进到哪里？' })).toBeVisible();
   await page.getByRole('button', { name: '推进至 25%' }).click();
+  await finishPaintedReportReceipt(page);
   await expect(page.locator('.focus-task-context strong').filter({ hasText: '休息中' })).toBeVisible();
   await page.clock.fastForward(61_000);
   await startNextRound(page);

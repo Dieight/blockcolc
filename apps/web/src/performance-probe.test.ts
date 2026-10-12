@@ -24,7 +24,9 @@ describe('opt-in native performance collector', () => {
     const isEnabled = vi.fn(() => true), publish = vi.fn();
     vi.stubGlobal('BlockcolcPerformance', { isEnabled, publish });
     vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn() });
-    vi.stubGlobal('document', { hidden: false, addEventListener: vi.fn(), removeEventListener: vi.fn(), querySelector: () => null, documentElement: { dataset: {} } });
+    vi.stubGlobal('document', { hidden: false, addEventListener: vi.fn(), removeEventListener: vi.fn(), querySelector: () => ({dataset:{
+      worldSceneCacheRead:'restored',worldSceneCacheReadMs:'23.5',terrainGenerationCacheHit:'true',sceneryPlanCacheHit:'false',worldSeed:'secret-seed',
+    }}), documentElement: { dataset: {} } });
     vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1)); vi.stubGlobal('cancelAnimationFrame', vi.fn());
     vi.stubGlobal('localStorage', { getItem: () => null });
     vi.stubGlobal('innerWidth', 360); vi.stubGlobal('innerHeight', 800); vi.stubGlobal('devicePixelRatio', 3);
@@ -39,7 +41,9 @@ describe('opt-in native performance collector', () => {
     api.snapshot();
     const payload = publish.mock.calls[0]![0];
     expect(payload).not.toContain('secret task'); expect(payload).not.toContain('title');
+    expect(payload).not.toContain('secret-seed');
     expect(JSON.parse(payload)).toMatchObject({ safety: { known: true, idle: true, projectCount: 1 }, rendererCpu: { count: 2, p95Ms: 15 } });
+    expect(JSON.parse(payload)).toMatchObject({stages:{worldSceneCacheReadMs:23.5},renderer:{worldSceneCacheRead:'restored',terrainGenerationCacheHit:true,sceneryPlanCacheHit:false}});
     api.stop();
   });
 });

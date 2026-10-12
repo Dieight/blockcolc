@@ -10,6 +10,23 @@ function deferred<T>() {
 const flush = async () => { for (let i = 0; i < 8; i += 1) await Promise.resolve(); };
 
 describe('renderer bootstrap world ownership', () => {
+  it('retains hidden updates and adopts only the newest snapshot on return',()=>{
+    const renderer={setWorlds:vi.fn()};
+    const owner=createRendererWorldSnapshotCoordinator(renderer,{key:'boot',worlds:['boot']});
+    owner.prepared('boot');owner.setPaused(true);
+    expect(owner.status()).toEqual({paused:true,adoptedKey:'boot'});
+    owner.observe({key:'first',worlds:['first']});owner.observe({key:'latest',worlds:['latest']});
+    expect(renderer.setWorlds).not.toHaveBeenCalled();owner.setPaused(false);
+    expect(owner.status()).toEqual({paused:false,adoptedKey:'latest'});
+    expect(renderer.setWorlds).toHaveBeenCalledExactlyOnceWith(['latest']);owner.setPaused(false);expect(renderer.setWorlds).toHaveBeenCalledOnce();
+  });
+  it('adopts a snapshot arriving with the return without briefly rebuilding the old hidden snapshot',()=>{
+    const renderer={setWorlds:vi.fn()};
+    const owner=createRendererWorldSnapshotCoordinator(renderer,{key:'boot',worlds:['boot']});
+    owner.prepared('boot');owner.observe({key:'hidden',worlds:['hidden']},true);
+    owner.observe({key:'returned',worlds:['returned']},false);
+    expect(renderer.setWorlds).toHaveBeenCalledExactlyOnceWith(['returned']);
+  });
   it.each([null, { id: 'selected-pack' }])('adopts worlds and the selected pack in one initialization (%s)', async pack => {
     const initializeWorlds = vi.fn(async () => {});
     const onWorldsInitializationRequested = vi.fn();

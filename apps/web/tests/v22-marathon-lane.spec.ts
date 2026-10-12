@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { executeAndReloadPersistedCommand, readPersistedDomainState } from "./persisted-domain-state";
-import { choosePlanEndTime, preparePlanCancellation, startNextRound, openRetainedPlan, waitForMarathonReport, revealFocusControls } from './focus-plan-controls';
+import { choosePlanEndTime, finishPaintedReportReceipt, prepareReadyPlanCancellation, startNextRound, waitForMarathonReport, revealFocusControls } from './focus-plan-controls';
 
 // These checks own schedule/settlement recovery, not weather animation.
 test.beforeEach(async ({ page }) => { await page.emulateMedia({ reducedMotion: 'reduce' }); });
@@ -81,11 +81,10 @@ test("confirming locks the plan on the workbench; cancelling after start settles
   await page.getByRole("button", { name: /^开始到/ }).click();
   await expect(page.locator(".focus-task-context strong")).toContainText(/专注中 第1\/\d+轮/);
 
-  // Reopening the sheet now shows the red cancel-plan button.
+  // Ready no longer offers adjustment; resume then use the end-focus sheet.
   await page.clock.fastForward(61_000);
   await expect(page.getByRole("button", { name: "开始下一轮" })).toBeVisible();
-  const reopen = await openRetainedPlan(page);
-  const cancel = await preparePlanCancellation(reopen);
+  const cancel = await prepareReadyPlanCancellation(page);
   await expect(cancel).toBeVisible();
   await expect(cancel).toHaveClass(/destructive/);
   await cancel.click();
@@ -106,6 +105,7 @@ test("confirming locks the plan on the workbench; cancelling after start settles
     return hit === element || (hit !== null && element.contains(hit));
   })).toBe(true);
   await submit.click();
+  await finishPaintedReportReceipt(page);
   await expect(report).toHaveCount(0);
   // Back to the classic lane: project info is visible again.
   await expect(page.getByRole("heading", { name: "我的第一座工坊" })).toBeVisible();
@@ -227,8 +227,7 @@ test("settlement splits rounds between a habit building and subtasks on another 
 
   // Cancel into the settlement: both the habit card and the finite project card
   // sit side by side.
-  await openRetainedPlan(page);
-  await (await preparePlanCancellation(sheet)).click();
+  await (await prepareReadyPlanCancellation(page)).click();
   const report = await waitForMarathonReport(page);
   await expect(page.locator(".marathon-settlement-card")).toHaveCount(2);
 
@@ -252,6 +251,7 @@ test("settlement splits rounds between a habit building and subtasks on another 
   await firstRow.getByRole("button", { name: /推进至 25%/ }).click();
   await firstRow.getByRole("button", { name: /增加 .*计入轮数/ }).click();
   await page.getByRole("button", { name: "提交本次推进" }).click();
+  await finishPaintedReportReceipt(page);
 
   await expect(report).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "我的第一座工坊" })).toBeVisible();

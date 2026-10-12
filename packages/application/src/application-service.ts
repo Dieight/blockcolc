@@ -1,6 +1,8 @@
 import {
   createInitialState,
   execute,
+  copyDomainState,
+  freezeDomainBlueprints,
   type DomainCommand,
   type DomainEvent,
   type DomainState,
@@ -76,6 +78,7 @@ export class ApplicationService {
   }
 
   private constructor(private readonly dependencies: ApplicationDependencies, initialState: DomainState, revision: number) {
+    freezeDomainBlueprints(initialState);
     this.state = initialState;
     this.revision = revision;
   }
@@ -95,7 +98,7 @@ export class ApplicationService {
   snapshot(): DomainState {
     const cached = this.snapshotCache;
     if (cached !== null && cached.epoch === this.stateEpoch) return cached.value;
-    const value = structuredClone(this.state);
+    const value = copyDomainState(this.state);
     this.snapshotCache = { epoch: this.stateEpoch, value };
     return value;
   }
@@ -429,6 +432,7 @@ export class ApplicationService {
   }
 
   private adopt(state: DomainState, revision: number, replacement = false): void {
+    freezeDomainBlueprints(state);
     this.state = state;
     this.revision = revision;
     this.stateEpoch += 1;
@@ -448,14 +452,14 @@ export class ApplicationService {
   private async dispatchInternal(command: DomainCommand, origin: "user" | "recovery", clock: Clock = this.dependencies.clock): Promise<ApplicationResult> {
     const result = execute(this.state, command, clock);
     if (!result.ok) {
-      return { ok: false, state: structuredClone(result.state), code: result.code, message: result.message, warnings: [] };
+      return { ok: false, state: copyDomainState(result.state), code: result.code, message: result.message, warnings: [] };
     }
 
     // Native attention callbacks can report the same physical transition more
     // than once. A lifecycle no-op must not write the cloned aggregate, bump
     // the epoch, or notify renderer consumers; a real foreground reconciliation
     // that merely clears the pending background still differs and is saved.
-    if (origin === "recovery" && result.events.length === 0 && sameRecoveryFacts(this.state, result.state)) {
+    if (origin === "recovery" && result.events.length === 0 && result.state === this.state) {
       return success(this.state, [], []);
     }
 
@@ -569,6 +573,8 @@ function focusCompletionNotification(
 
 function materialize(command: ApplicationCommand, ids: IdGenerator, reservedSessionId?: string): DomainCommand {
   switch (command.type) {
+    case 'AddQuickNote':
+      return { ...command, noteId: ids.next('quick-note') };
     case "CreateProject":
       return {
         ...command,
@@ -601,7 +607,7 @@ async function saveOrThrow(repository: StateRepository, state: DomainState, expe
 }
 
 function success(state: DomainState, events: DomainEvent[], warnings: ApplicationWarning[]): ApplicationResult {
-  return { ok: true, state: structuredClone(state), events: structuredClone(events), warnings };
+  return { ok: true, state: copyDomainState(state), events: structuredClone(events), warnings };
 }
 
 function warning(code: ApplicationWarning["code"], message: string, cause?: unknown): ApplicationWarning {
@@ -622,15 +628,6 @@ function combineSuccessfulResults(first: ApplicationResult, second: ApplicationR
     events: [...first.events, ...second.events],
     warnings: [...priorWarnings, ...first.warnings, ...second.warnings],
   };
-}
-
-function sameRecoveryFacts(left: DomainState, right: DomainState): boolean {
-  // A recovery command may be eventless while the aggregate still changes a
-  // non-active fact (for example a daily/decay value loaded by a newer
-  // revision). Comparing only activeFocusSession silently discarded that
-  // state. The full validated aggregate is the only proof this command is a
-  // no-op; the JSON shape is deterministic because execute() clones it.
-  return JSON.stringify(left) === JSON.stringify(right);
 }
 
 function nowMs(clock: Clock): number {

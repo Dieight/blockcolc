@@ -64,7 +64,7 @@ test('settings page keeps grouped rows, quiet secondary actions, and 44px target
   await expect(page.getByLabel('开启专注完整性')).not.toBeChecked();
   await page.getByLabel('开启专注完整性').check();
 
-  for (const heading of ['计时', '专注保护', '提醒', '世界', '高级', '建筑蓝图库', '方块材质包', '本地备份']) {
+  for (const heading of ['计时', '专注保护', '提醒', '世界', '高级', '蓝图库', '方块材质包', '本地备份']) {
     await expect(page.getByRole('heading', { name: heading })).toBeVisible();
   }
 

@@ -4,7 +4,8 @@ param(
     [Parameter(Mandatory)][string]$Apk,
     [ValidateRange(1, 5)][int]$Iterations = 3,
     [string]$OutputPath,
-    [switch]$Zoom
+    [switch]$Zoom,
+    [switch]$ProgressiveStartup
 )
 
 $ErrorActionPreference = 'Stop'
@@ -15,5 +16,6 @@ if (-not $OutputPath) { $OutputPath = Join-Path $root 'artifacts\performance\and
 $arguments = @((Join-Path $PSScriptRoot 'measure-android-performance.mjs'), '--serial', $Serial,
     '--apk', $Apk, '--output', $OutputPath, '--iterations', [string]$Iterations)
 if ($Zoom) { $arguments += '--zoom' }
+if ($ProgressiveStartup) { $arguments += '--progressive-startup' }
 & node @arguments
 if ($LASTEXITCODE -ne 0) { throw "Android performance measurement failed ($LASTEXITCODE). See $OutputPath." }

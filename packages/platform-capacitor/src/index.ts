@@ -9,3 +9,4 @@ export * from './break-live-update';
 export * from './focus-export';
 export * from './qweather';
 export * from './app-update';
+export * from './ambient-audio';

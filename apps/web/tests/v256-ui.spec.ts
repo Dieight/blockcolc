@@ -2,6 +2,7 @@ import { expect, test, type Page } from '@playwright/test';
 import { execute, type DomainCommand, type DomainState } from '@blockcolc/domain';
 import { choosePlanEndTime } from './focus-plan-controls';
 import { executeAndReloadPersistedCommand, readPersistedDomainState } from './persisted-domain-state';
+import { waitForPreparedWorld } from './world-ready';
 
 test.beforeEach(async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'reduce' });
@@ -15,6 +16,7 @@ async function setup(page: Page, habit = false) {
     await page.getByLabel('习惯名称').fill('每日阅读');
   }
   await page.getByRole('button', { name: '开始建造' }).click();
+  await waitForPreparedWorld(page);
   await expect(page.locator('.world-screen')).toBeVisible();
   await expect(page.locator('.focus-workbench-panel')).toBeVisible();
 }
@@ -167,7 +169,8 @@ test('v256 debug weather is a themed app menu and off releases its overrides', a
   await expect(page.locator('.world canvas')).toHaveAttribute('data-weather-kind', 'snow');
   await page.getByRole('button', { name: '设置', exact: true }).click();
   await page.getByRole('checkbox', { name: '临时调试世界' }).uncheck();
-  await expect(menu).toHaveCount(0);
+  await expect(menu).toBeHidden();
+  await expect(menu.locator('xpath=ancestor::*[contains(@class,"content-reveal")]').first()).toHaveAttribute('inert','');
   await page.getByRole('button', { name: '计时', exact: true }).click();
   await expect(canvas).toHaveAttribute('data-weather-kind', normalWeather!);
 });
@@ -184,9 +187,12 @@ test('v256 all 36 blueprint entries survive a reload and the UI advertises the s
   for (let index = 0; index < 35; index += 1) state = apply(state, command(index));
   await executeAndReloadPersistedCommand(page, state, command(35), Date.parse('2026-10-03T08:00:01Z'));
   await page.getByRole('button', { name: '设置', exact: true }).click();
-  const library = page.locator('.building-blueprint-panel');
-  await expect(library).toContainText('最多 36 份');
-  await expect(library.locator('.building-blueprint-list>li')).toHaveCount(36);
+  const library = page.locator('.blueprint-library');
+  await library.getByRole('button', {name:/所有图纸/}).click();
+  await expect(library.locator('.library-toolbar small')).toHaveText('36/36');
+  const imported = library.locator('details').filter({has:page.locator('summary',{hasText:'自添加图纸'})});
+  await imported.locator('summary').click();
+  await expect(imported.locator('.library-tiles>li')).toHaveCount(36);
   expect((await readPersistedDomainState(page)).state.buildingBlueprintResources).toHaveLength(36);
 });
 

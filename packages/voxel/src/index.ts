@@ -32,3 +32,5 @@ export * from './astronomy';
 export * from './astronomy-visual';
 export * from './scenery';
 export * from './world-color-adjustment';
+export * from './world-scene-cache';
+export * from './building-cpu-cache';

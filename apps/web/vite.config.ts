@@ -9,6 +9,7 @@ export default defineConfig({
     }],
   },
   build: {
+    sourcemap: process.env.VITE_BLOCKCOLC_PERFORMANCE_DIAGNOSTICS === 'true' ? 'hidden' : false,
     rollupOptions: {
       output: {
         manualChunks(id) {

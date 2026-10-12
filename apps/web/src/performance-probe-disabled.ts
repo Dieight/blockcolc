@@ -4,6 +4,10 @@ import type { RendererDiagnostics } from '@blockcolc/voxel';
 // Vite aliases the diagnostic module to this tiny inert facade in normal APKs.
 // There is no collector, global API, observer, rAF loop or diagnostic transport.
 export function installPerformanceProbe() {}
+export function diagnosticProgressiveStartup():false { return false; }
+export function diagnosticStateDatabase():string { return 'blockcolc-v1'; }
+export function diagnosticStorageIsolation():false { return false; }
+export function diagnosticHoldQuality():false { return false; }
 export function markPerformancePhase(_phase: string) {}
 export function bindPerformanceApplication(_service: ApplicationService) {}
 export function bindPerformanceRenderer(_read: () => RendererDiagnostics) { return () => {}; }

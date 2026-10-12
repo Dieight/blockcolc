@@ -1,3 +1,4 @@
+import { t, useI18n } from '../i18n';
 /**
  * UI-SMALL-02：极简模式偏好行（待接线，纯展示）。
  *
@@ -11,11 +12,12 @@ export function MinimalModeSettingRow({ enabled, disabled = false, onChange }: {
   disabled?: boolean;
   onChange: (enabled: boolean) => void;
 }) {
+  useI18n();
   return <div className="setting-row">
-    <div className="setting-name"><span>极简模式</span><small>启动直接进入沉浸计时</small></div>
+    <div className="setting-name"><span>{t("极简模式")}</span><small>{t("启动直接进入沉浸计时")}</small></div>
     <label className="switch-control ios-switch">
       <input
-        aria-label="开启极简模式"
+        aria-label={t("开启极简模式")}
         type="checkbox"
         checked={enabled}
         aria-checked={enabled}

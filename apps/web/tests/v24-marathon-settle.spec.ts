@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { startNextRound, waitForMarathonReport } from './focus-plan-controls';
+import { finishPaintedReportReceipt, startNextRound, waitForMarathonReport } from './focus-plan-controls';
 
 // Retained coverage for phantom rounds and unwanted auto-advance wording.
 
@@ -50,5 +50,6 @@ test("marathon settlement shows exactly the plan rounds with no auto-advance wor
   await firstRow.getByRole("button", { name: /推进至 50%/ }).click();
   await firstRow.getByRole("button", { name: /增加 .*计入轮数/ }).click();
   await page.getByRole("button", { name: "提交本次推进" }).click();
+  await finishPaintedReportReceipt(page);
   await expect(report).toBeHidden();
 });

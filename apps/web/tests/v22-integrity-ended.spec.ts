@@ -1,13 +1,17 @@
 import { expect, test } from "@playwright/test";
 import type { DomainState } from "@blockcolc/domain";
+import { waitForPreparedWorld } from './world-ready';
 
 // V22 follow-up: exhausting the effective-excursion limit ends the session and
 // the notice plays the same bounded fade-out as the other transient controls.
 
 async function createDefaultProject(page: import("@playwright/test").Page) {
+  // Keep real lifecycle/fade timers and a scoped 75 s budget. This case
+  // checks integrity, not cinematic rendering on the software-WebGL runner.
+  await page.addInitScript(() => localStorage.setItem('blockcolc-focus-preferences-v1', JSON.stringify({ lightingQuality: 'performance' })));
   await page.goto("/");
   await page.getByRole("button", { name: "开始建造" }).click();
-  await expect(page.locator(".world-screen")).toBeVisible();
+  await waitForPreparedWorld(page);
 }
 
 async function persistedState(page: import("@playwright/test").Page): Promise<DomainState> {
@@ -28,9 +32,9 @@ async function persistedState(page: import("@playwright/test").Page): Promise<Do
 }
 
 test("the app-switch-limit notice appears once and fades out like other controls", async ({ page }, testInfo) => {
-  // This scenario intentionally spends 16.4 s in real lifecycle/fade timers;
+  // This scenario intentionally spends roughly 15 s in real lifecycle/fade timers;
   // leave enough headroom for software-WebGL startup on a busy release runner.
-  test.setTimeout(45_000);
+  test.setTimeout(75_000);
   await createDefaultProject(page);
   await page.getByRole('button',{name:'设置',exact:true}).click();
   await page.getByRole('checkbox',{name:'开启专注完整性'}).check();
@@ -43,6 +47,14 @@ test("the app-switch-limit notice appears once and fades out like other controls
     const observations: unknown[] = [];
     (window as unknown as { integrityObservations: unknown[] }).integrityObservations = observations;
     window.addEventListener('blockcolc:application-state-changed', event => observations.push({ hidden: document.hidden, detail: (event as CustomEvent).detail }));
+    const lifetime = { shownAt: 0, endedAt: 0 };
+    (window as unknown as { integrityNoticeLifetime: typeof lifetime }).integrityNoticeLifetime = lifetime;
+    const observer = new MutationObserver(() => {
+      const present = document.querySelector('.focus-integrity-ended');
+      if (present && !lifetime.shownAt) lifetime.shownAt = performance.now();
+      if (!present && lifetime.shownAt) { lifetime.endedAt = performance.now(); observer.disconnect(); }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
   });
 
   // Three web-visibility excursions reach the default max of three; each
@@ -71,21 +83,28 @@ test("the app-switch-limit notice appears once and fades out like other controls
       // otherwise the previous foreground reconciliation races the fixture.
       await expect.poll(() => page.evaluate(() => (window as unknown as { integrityObservations: unknown[] }).integrityObservations.length)).toBe(round);
       await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
-      await expect.poll(async () => (await persistedState(page)).activeFocusSession?.integrity.effectiveExcursions).toBe(round);
-      await expect.poll(async () => (await persistedState(page)).activeFocusSession?.integrity.backgroundedAt).toBeNull();
+      await expect.poll(async () => {
+        const integrity = (await persistedState(page)).activeFocusSession?.integrity;
+        return { excursions: integrity?.effectiveExcursions, backgroundedAt: integrity?.backgroundedAt };
+      }).toEqual({ excursions: round, backgroundedAt: null });
     }
   }
 
   await expect(page.locator(".focus-integrity-ended")).toBeVisible();
-  await expect(page.locator(".toast")).toHaveCount(0);
-  await expect(page.locator(".session-kind")).toHaveCount(0);
-  const notice = await page.locator(".focus-integrity-ended").boundingBox();
-  const start = await page.getByRole("button", { name: /^开始 \d+ 轮$/ }).boundingBox();
+  await expect(page.locator(".toast,.session-kind")).toHaveCount(0);
+  const [notice,start] = await Promise.all([
+    page.locator(".focus-integrity-ended").boundingBox(),
+    page.getByRole("button", { name: /^开始 \d+ 轮$/ }).boundingBox(),
+  ]);
   expect(notice).not.toBeNull();
   expect(start).not.toBeNull();
   expect(notice!.y + notice!.height).toBeLessThanOrEqual(start!.y + 0.5);
 
-  // The notice auto-dismisses after the shared 5 s dwell plus its fade-out.
-  await page.waitForTimeout(5_600);
-  await expect(page.locator(".focus-integrity-ended")).toHaveCount(0);
+  // Observe the real dismissal instead of adding another full dwell after
+  // layout checks have already consumed part of it. Still verify the 5 s
+  // minimum from the actual insertion/removal, with no simulated timers.
+  await expect(page.locator(".focus-integrity-ended")).toHaveCount(0, { timeout: 10_000 });
+  const lifetime = await page.evaluate(() => (window as unknown as { integrityNoticeLifetime: { shownAt: number; endedAt: number } }).integrityNoticeLifetime);
+  expect(lifetime.shownAt).toBeGreaterThan(0);
+  expect(lifetime.endedAt - lifetime.shownAt).toBeGreaterThanOrEqual(5_000);
 });

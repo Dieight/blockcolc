@@ -1,7 +1,13 @@
 import type { LoadingStage } from './LoadingPage';
+import { loadFocusPreferences } from './focus-preferences';
+import { diagnosticProgressiveStartup } from './performance-probe';
 
-type StartupPresentation={active:boolean;stage:LoadingStage;status:string};
-let state:StartupPresentation={active:true,stage:'storage',status:'正在读取本地记录…'};
+type StartupPresentation={active:boolean;progressive:boolean;stage:LoadingStage;status:string};
+let progressive=false;
+try { progressive=loadFocusPreferences(window.localStorage).progressiveStartup===true; } catch { /* Default to the complete startup presentation. */ }
+progressive=progressive||diagnosticProgressiveStartup();
+document.documentElement.dataset.progressiveStartup=String(progressive);
+let state:StartupPresentation={active:true,progressive,stage:'storage',status:'读取记录…'};
 const listeners=new Set<()=>void>();
 export const startupPresentationSnapshot=()=>state;
 export const subscribeStartupPresentation=(listener:()=>void)=>{listeners.add(listener);return()=>{listeners.delete(listener);};};

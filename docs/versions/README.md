@@ -4,6 +4,7 @@
 
 每版记录分开发、交付和发布说明，创建时机与格式见 [模板](../templates/README.md)。发布工具读取 `V<versionCode>.md`；立项或创建文档本身不增加构建号。
 
+- v2.7.0：[开发](2.7.0-development.md)、[当前反馈返修](2.7.0-feedback-20261012.md)、[正式交付工作包](V84.md)、[上一私人包](V83.md)、[旋转诊断](V81.md)、[缓存测量](../research/2.7.0-world-cache.md)、[实机对照与火焰图](../research/2.7.0-device-performance.md)、[上一轮反馈](2.7.0-followup.md)。已完成 /84 全量、配对和公开发布；结果以工作包为准。
 - v2.6.0：[开发](2.6.0-development.md)、[交付](V61.md)、[发布说明](../releases/v2.6.0.md)，已发布，下载摘要与私有隔离核对通过。
 - v2.5.6：[开发](2.5.6-development.md)、[收尾](2.5.6-revision-5.md)、[交付](V55.md)、[发布说明](../releases/v2.5.6.md)、[上一轮](V54.md)，已发布并通过下载摘要校验。
 - v2.4.0：[开发](2.4.0-development.md)、[交付](V50.md)、[发布](../releases/v2.4.0.md)，已关闭。

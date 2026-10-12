@@ -411,6 +411,25 @@ function Get-ApkPublicAssets {
     } finally { $archive.Dispose() }
 }
 
+function Get-PairedPublicationApproval {
+    param(
+        [switch]$ConfirmPublish,
+        [switch]$ConfirmUserAcceptance,
+        [switch]$ConfirmPublishAfterFullGate,
+        [string]$UserApproval
+    )
+    if (-not $ConfirmPublish -or [string]::IsNullOrWhiteSpace($UserApproval) -or
+        ([bool]$ConfirmUserAcceptance -eq [bool]$ConfirmPublishAfterFullGate)) {
+        throw 'Choose exactly one explicit approval: user-tested private package, or user-authorized publication after the full gate.'
+    }
+    [pscustomobject]@{
+        kind = if ($ConfirmUserAcceptance) { 'same-round-private-package-acceptance-for-public-standard-release' }
+            else { 'user-authorized-publication-after-full-gate' }
+        userExperience = if ($ConfirmUserAcceptance) { 'user-reviewed-private-package' } else { 'not-performed-for-final-candidate' }
+        userQuote = $UserApproval.Trim()
+    }
+}
+
 function Assert-PairedReleaseEvidence {
     param(
         [Parameter(Mandatory)]$Evidence,

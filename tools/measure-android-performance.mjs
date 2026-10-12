@@ -9,6 +9,7 @@ const option = (name, fallback) => { const index = args.indexOf(name); return in
 const serial = option('--serial', ''), apk = option('--apk', ''), output = option('--output', '');
 const iterations = Number(option('--iterations', '3'));
 const captureZoom = args.includes('--zoom');
+const progressiveStartup=args.includes('--progressive-startup');
 if (!/^[\w-]+$/.test(serial) || !apk || !output || !Number.isInteger(iterations) || iterations < 1 || iterations > 5) throw new Error('Required: --serial, --apk, --output; iterations 1–5.');
 const adb = path.join(process.env.LOCALAPPDATA, 'Android/Sdk/platform-tools/adb.exe');
 const pkg = 'com.blockcolc.app', activity = `${pkg}/.MainActivity`;
@@ -16,6 +17,7 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const started = Date.now(), absoluteOutput = path.resolve(output);
 let run = '', requestIndex = 0;
 const evidence = { schemaVersion: 1, status: 'running', measuredAt: new Date().toISOString(), apkSha256: createHash('sha256').update(await readFile(apk)).digest('hex'),
+  progressiveStartupOverride:progressiveStartup,
   scope: 'OnePlus current real world; no task writes, no settings/pack changes; physical ADB swipes and navigation taps', samples: [], limitations: ['Web rAF is presentation opportunity, not GPU-completed FPS.', 'Renderer CPU includes submission and driver waits; GPU times only when disjoint timer is available.', 'No synthetic task submission or native pinch on real user data.'], device: {} };
 
 async function adbCall(...argv) {
@@ -103,7 +105,7 @@ try {
     await adbCall('shell', 'am', 'force-stop', pkg);
     run = `perf-${Date.now()}-cold${iteration}`;
     const launch = await adbCall('shell', 'am', 'start', '-W', '-n', activity, '-a', `${pkg}.action.PERFORMANCE`,
-      '--es', 'probeOperation', 'arm', '--es', 'probeRunId', run, '--es', 'probeRequestId', 'boot');
+      '--es', 'probeOperation', 'arm', '--es', 'probeRunId', run, '--es', 'probeRequestId', 'boot', '--ez', 'probeProgressiveStartup', String(progressiveStartup));
     const value = await waitWorld(); assertIdle(value);
     evidence.samples.push({ label: `cold-${iteration}`, ...value, launchState: /LaunchState:\s*(\S+)/.exec(launch)?.[1] ?? null,
       androidTotalTimeMs: Number(/TotalTime:\s*(\d+)/.exec(launch)?.[1] ?? NaN) });

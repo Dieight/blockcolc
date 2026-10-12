@@ -1,9 +1,11 @@
+import { t, useI18n } from './i18n';
 import { useEffect, useRef, useState } from 'react';
 import { formatClockDuration } from './focus-format';
 
 type FocusTimerMode = 'plan' | 'focus' | 'break' | 'ready' | 'marathon' | 'clock';
 
 export function FocusTimer({ mode, endsAt, fallbackMs, marathonRemainingMs, clockText, timerClassName, onElapsed }: { mode?: FocusTimerMode; endsAt?: string; fallbackMs: number; marathonRemainingMs?: number; clockText?: string; timerClassName?: string; onElapsed: () => void }) {
+  useI18n();
   const [now, setNow] = useState(Date.now());
   const elapsed = useRef(false);
   useEffect(() => {
@@ -24,7 +26,7 @@ export function FocusTimer({ mode, endsAt, fallbackMs, marathonRemainingMs, cloc
   const remaining = endsAt ? Math.max(0, Date.parse(endsAt) - now) : fallbackMs;
   const timerMode = mode ?? (endsAt ? 'focus' : 'ready');
   const displayMs = timerMode === 'marathon' && marathonRemainingMs !== undefined ? marathonRemainingMs : remaining;
-  const label = timerMode === 'clock' ? '当前时间' : timerMode === 'plan' ? '每轮时长' : timerMode === 'break' ? '休息中' : timerMode === 'ready' ? '剩余专注总时间' : timerMode === 'marathon' ? (marathonRemainingMs !== undefined ? '剩余总时长' : '距结束') : '本轮剩余';
+  const label = timerMode === 'clock' ? t("当前时间") : timerMode === 'plan' ? t("每轮时长") : timerMode === 'break' ? t("休息中") : timerMode === 'ready' ? t("剩余专注总时间") : timerMode === 'marathon' ? (marathonRemainingMs !== undefined ? t("剩余总时长") : t("距结束")) : t("本轮剩余");
   const clock = timerMode === 'clock' && clockText ? clockText : formatClockDuration(displayMs);
   return <div className={`timer timer-${timerMode}${timerClassName ? ` ${timerClassName}` : ''}`} role={endsAt ? 'timer' : undefined} aria-label={`${label} ${clock}`}>
     <span className="timer-label">{label}</span>

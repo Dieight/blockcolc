@@ -30,6 +30,14 @@ $rootPackage = Get-Content -LiteralPath (Join-Path (Split-Path -Parent $PSScript
 Assert-True -Condition ($rootPackage.scripts.'test:web:release' -match '\s--\s*$') -Message 'Nested npm release scripts must forward runner flags after their own -- separator.'
 
 $hashA = ('a' * 64) -join ''
+$manualApproval = Get-PairedPublicationApproval -ConfirmPublish -ConfirmUserAcceptance -UserApproval 'Synthetic private package acceptance'
+Assert-True -Condition ($manualApproval.kind -eq 'same-round-private-package-acceptance-for-public-standard-release' -and $manualApproval.userExperience -eq 'user-reviewed-private-package') -Message 'Manual private package acceptance retains its distinct provenance.'
+$directApproval = Get-PairedPublicationApproval -ConfirmPublish -ConfirmPublishAfterFullGate -UserApproval 'Synthetic authorization to publish after the full gate'
+Assert-True -Condition ($directApproval.kind -eq 'user-authorized-publication-after-full-gate' -and $directApproval.userExperience -eq 'not-performed-for-final-candidate') -Message 'Direct release authorization must not claim user testing of the final APK.'
+Assert-Throws -MessagePattern 'exactly one explicit approval' -Action { Get-PairedPublicationApproval -ConfirmPublish -UserApproval 'Synthetic quote' }
+Assert-Throws -MessagePattern 'exactly one explicit approval' -Action { Get-PairedPublicationApproval -ConfirmPublish -ConfirmUserAcceptance -ConfirmPublishAfterFullGate -UserApproval 'Synthetic quote' }
+Assert-Throws -MessagePattern 'exactly one explicit approval' -Action { Get-PairedPublicationApproval -ConfirmPublishAfterFullGate -UserApproval 'Synthetic quote' }
+Assert-Throws -MessagePattern 'exactly one explicit approval' -Action { Get-PairedPublicationApproval -ConfirmPublish -ConfirmPublishAfterFullGate -UserApproval ' ' }
 Assert-True -Condition ((Get-ApkBuildChannel -ManifestTree 'E: application') -eq 'standard') -Message 'Legacy standard marker'
 $privateManifest = "E: application`n  E: meta-data`n    A: android:name(0x01010003)=`"com.blockcolc.PRIVATE_RELAY`"`n    A: android:value(0x01010024)=(type 0x12)0xffffffff`n  E: activity"
 Assert-True -Condition ((Get-ApkBuildChannel -ManifestTree $privateManifest) -eq 'private-relay') -Message 'Private relay marker'
@@ -119,6 +127,11 @@ Assert-Throws -MessagePattern 'gate did not pass' -Action {
 Assert-Throws -MessagePattern 'Android checks' -Action {
     $invalid = $pairedEvidence | ConvertTo-Json -Depth 8 | ConvertFrom-Json
     $invalid.private.android.tests.skipped = 1
+    Assert-PairedReleaseEvidence -Evidence $pairedCandidate -Pair $invalid -Context $context -StandardAssets $assets -PrivateAssets $assets
+}
+Assert-Throws -MessagePattern 'not complete and passing' -Action {
+    $invalid = $pairedEvidence | ConvertTo-Json -Depth 8 | ConvertFrom-Json
+    $invalid.fullReleaseGate = 'not-run'
     Assert-PairedReleaseEvidence -Evidence $pairedCandidate -Pair $invalid -Context $context -StandardAssets $assets -PrivateAssets $assets
 }
 
@@ -272,7 +285,7 @@ $installSource = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'Install-Rele
 $publishSource = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'Publish-Release.ps1') -Raw
 $pairedPublishSource = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'Publish-PairedRelease.ps1') -Raw
 Assert-True -Condition ($pairedPublishSource -notmatch 'Install-AndVerifyApk|Get-AuthorizedAndroidDevices|Build-AndroidRelease|gradlew|vite\s+build') -Message 'Paired publication must not require devices or rebuild accepted APKs.'
-Assert-True -Condition ($pairedPublishSource -match 'ConfirmUserAcceptance' -and $pairedPublishSource -match 'ConfirmPublish' -and $pairedPublishSource -match 'UserApproval') -Message 'Paired publication must require explicit human acceptance and publication authorization.'
+Assert-True -Condition ($pairedPublishSource -match 'Get-PairedPublicationApproval' -and $pairedPublishSource -match 'ConfirmUserAcceptance' -and $pairedPublishSource -match 'ConfirmPublishAfterFullGate' -and $pairedPublishSource -match 'ConfirmPublish' -and $pairedPublishSource -match 'UserApproval') -Message 'Paired publication requires an explicit, provenance-preserving human authorization; neither path bypasses the full gate.'
 Assert-True -Condition ($pairedPublishSource.IndexOf("'run','watch'", [StringComparison]::Ordinal) -lt $pairedPublishSource.IndexOf("'release','create'", [StringComparison]::Ordinal)) -Message 'Publication commit CI must finish before a public Release is created.'
 $pairedTokens = $null
 $pairedErrors = $null

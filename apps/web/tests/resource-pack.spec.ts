@@ -6,6 +6,7 @@ import { basename, resolve } from 'node:path';
 import { readPersistedDomainState } from './persisted-domain-state';
 import { observeWorldDrawBudget, readWorldDrawBudget } from './world-draw-budget';
 import { showWorldOverview } from './world-overview';
+import { waitForPreparedWorld } from './world-ready';
 
 test('imports, persists, switches and safely deletes a local Java resource pack', async ({page}) => {
   const archive=Buffer.from(makePack());
@@ -135,6 +136,7 @@ test('applies an atlas to a real imported building and restores original renderi
   await page.reload();
   await observeWorldDrawBudget(page, '项目建筑世界');
   const canvas=page.getByLabel('项目建筑世界');
+  await waitForPreparedWorld(page);
   await expect(canvas).toBeVisible();
   const originalView = await prepareMaterialComparison(page, canvas);
   await testInfo.attach('original-view.json', { body: JSON.stringify(originalView), contentType: 'application/json' });
@@ -200,6 +202,7 @@ test('retextures built-in buildings through vanilla stand-in blocks', async ({ p
   await setActiveProjectProgress(page, 9900);
   await page.reload();
   const canvas = page.getByLabel('项目建筑世界');
+  await waitForPreparedWorld(page);
   await expect(canvas).toBeVisible();
   const originalView = await prepareMaterialComparison(page, canvas);
   await testInfo.attach('original-view.json', { body: JSON.stringify(originalView), contentType: 'application/json' });
@@ -276,6 +279,7 @@ test(`renders translucent multipart panes and zero-thickness iron bars from a re
   await page.reload();
   await observeWorldDrawBudget(page, '项目建筑世界');
   const canvas=page.getByLabel('项目建筑世界');
+  await waitForPreparedWorld(page);
   await expect(canvas).toBeVisible();
   await expect(canvas).toHaveAttribute('data-initial-reveal-completed-count', '1', { timeout: 20_000 });
   await expect.poll(async()=>Number(await canvas.getAttribute('data-atlas-page-count')),{timeout:30_000}).toBeGreaterThan(1);
@@ -347,6 +351,7 @@ test('a user-owned 26.3 client JAR supplies models beneath all four provided app
   await setActiveProjectProgress(page, 9900);
   await page.reload();
   const canvas = page.getByLabel('项目建筑世界');
+  await waitForPreparedWorld(page);
   await expect(canvas).toBeVisible();
 
   await page.getByRole('button', {name:'设置'}).click();

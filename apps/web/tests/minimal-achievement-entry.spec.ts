@@ -1,6 +1,7 @@
 import {expect,test,type Locator,type Page} from '@playwright/test';
 import type {DomainState} from '@blockcolc/domain';
 import {waitForPreparedWorld} from './world-ready';
+import {finishPaintedReportReceipt} from './focus-plan-controls';
 
 // This capability test includes setup, two cold loads and a complete focus /
 // settlement loop over software WebGL; keep its budget separate from one-step tests.
@@ -63,11 +64,16 @@ test('settings launches minimal focus, persists it, settles once and shows real 
  await expect(page.locator('.marathon-progress-report')).toBeVisible();
  await expect(page.getByRole('navigation',{name:'主导航'})).toBeHidden();
  await page.locator('.marathon-progress-report').getByRole('button',{name:'提交本次推进'}).click();
+ await finishPaintedReportReceipt(page);
  await expect(page.locator('.minimal-clock-gesture')).toBeVisible();
  expect((await snapshot(page)).focusHistory.every(session=>session.settledAt!==undefined)).toBe(true);
  // DF-UI-05: the idle exit starts veiled but keyboard reachable; focus+Enter 返回完整模式.
  await page.locator(".minimal-exit").focus();
  await page.keyboard.press("Enter"); // DF-UI-05: keyboard path works even while the exit is veiled.
+ // The painted 500 ms portal reveal uses the clock owned by this test.
+ await expect(page.locator('.mode-portal__reveal-cover')).toBeVisible();
+ await page.clock.runFor(550);
+ await expect(page.locator('.app-shell')).toHaveAttribute('data-mode-portal-active','false');
  await page.getByRole('button',{name:'统计',exact:true}).click();
  const unlockDialog=page.getByRole('dialog',{name:'新的成就'});
  await expect(unlockDialog).toBeVisible();
@@ -193,6 +199,7 @@ test('minimal rest restores its deadline, skips on double tap and returns to rem
  const deadline=await page.evaluate(()=>JSON.parse(localStorage.getItem('blockcolc-round-plan-v1')!).breakEndsAt);
  expect(deadline).toBeTruthy();
  await page.reload();
+ await waitForPreparedWorld(page);
  await expect(rest).toBeVisible();
  expect(await page.evaluate(()=>JSON.parse(localStorage.getItem('blockcolc-round-plan-v1')!).breakEndsAt)).toBe(deadline);
  await rest.dblclick();
@@ -214,10 +221,10 @@ test('dragging back to now clears the end-time draft and restores the live clock
  const x=box.x+box.width/2,y=box.y+box.height/2;
  await page.mouse.move(x,y);
  await page.mouse.down();
- await page.mouse.move(x,y-12,{steps:2});
+ await page.mouse.move(x,y-18,{steps:2});
  await expect(clock).toHaveAttribute('data-round-detent','holding');
  await page.clock.runFor(650);
- await page.mouse.move(x,y-24,{steps:2});
+ await page.mouse.move(x,y-30,{steps:2});
  await expect(clock).toHaveAccessibleName(/16:10/);
  await page.mouse.move(x,y,{steps:4});
  await page.mouse.up();
@@ -270,9 +277,12 @@ test('interrupting minimal focus preserves the plan and returns through the lega
   }
   await expect(page.locator('.marathon-progress-report')).toBeVisible();
   await page.getByRole('button',{name:'一次提交本次推进'}).click();
+  await finishPaintedReportReceipt(page);
   await expect(page.locator('.minimal-clock-gesture')).toBeVisible();
   await page.locator('.minimal-exit').focus();
   await page.keyboard.press('Enter');
+  await expect(page.locator('.mode-portal__reveal-cover')).toBeVisible();
+  await page.clock.runFor(550);
   await expect(page.locator('.app-shell')).toHaveAttribute('data-mode-portal-active','false');
   await expect(page.getByRole('button',{name:'进入极简模式'})).toBeVisible();
   const enterMinimal=page.getByRole('button',{name:'进入极简模式'});
@@ -280,6 +290,7 @@ test('interrupting minimal focus preserves the plan and returns through the lega
   await enterMinimal.click();
   await expect(page.locator('.minimal-clock-gesture')).toBeVisible();
   await page.reload();
+  await waitForPreparedWorld(page);
   await expect(page.locator('.minimal-clock-gesture')).toBeVisible();
   expect((await snapshot(page)).activeFocusSession).toBeNull();
 });

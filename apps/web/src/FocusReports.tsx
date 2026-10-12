@@ -1,3 +1,4 @@
+import { t, useI18n } from './i18n';
 import { useMemo, useRef, useState } from 'react';
 import { useReportReceipt } from './use-report-receipt';
 import type { ApplicationCommand, ApplicationResult, ApplicationService } from '@blockcolc/application';
@@ -20,6 +21,7 @@ export async function submitFocusProgressReport({command,run,onSubmitted,acknowl
 }
 
 export function ProgressReportV7({active,run,onSubmitted,variant='embedded',cancellationReason,cancellationNote,onBusyChange}:{active:NonNullable<ReturnType<ApplicationService['activeProjectProjection']>>;run:(c:ApplicationCommand,options?:CommandRunnerOptions)=>Promise<ApplicationResult>;onSubmitted:(sessionId:string)=>void;variant?:FocusReportVariant;cancellationReason?:FocusInterruptionCategory|null;cancellationNote?:string;onBusyChange?:(busy:boolean)=>void}) {
+  useI18n();
   const session=active.unreportedCompletedSessions[0]!;
   const task=active.project.subtasks.find((subtask)=>subtask.id===session.subtaskId)!;
   const options=[task.progressBasisPoints,2500,5000,7500,10000].filter((value,index,all)=>value>=task.progressBasisPoints&&all.indexOf(value)===index);
@@ -37,7 +39,7 @@ export function ProgressReportV7({active,run,onSubmitted,variant='embedded',canc
     } catch { /* The runner reports failure; retain the draft. */ }
     finally { onBusyChange?.(false); if (!saved) { busy.current = false; setSelected(null); } }
   };
-  return <div className={`report progress-report-panel ${focusReportSurfaceClass(variant)}`} data-focus-report-variant={variant}><Check/><span className="eyebrow">本轮已记录</span><h2>这次工作推进到哪里？</h2><p><strong>{task.title}</strong><br/>当前 {Math.round(task.progressBasisPoints/100)}%</p>{cancellationReason && <p className="plan-sheet-note">结束原因：{focusInterruptionCategoryLabel(cancellationReason)}</p>}{cancellationNote && <p className="plan-sheet-note">{cancellationNote}</p>}<div className="report-options">{options.map(value => <button key={value} disabled={selected !== null} aria-busy={selected === value && !delivered} data-action-state={selected === value && delivered ? 'success' : undefined} onClick={() => void submit(value)}><span className="action-label" key={selected === value ? delivered ? 'delivered' : 'saving' : 'idle'}>{selected === value ? delivered ? '材料已送达！' : '正在保存…' : value === task.progressBasisPoints ? `保持 ${value/100}%` : value === 10000 ? '完成小任务' : `推进至 ${value/100}%`}</span></button>)}</div></div>;
+  return <div className={`report progress-report-panel ${focusReportSurfaceClass(variant)}`} data-focus-report-variant={variant}><Check/><span className="eyebrow">{t("本轮已记录")}</span><h2>{t("这次工作推进到哪里？")}</h2><p><strong>{task.title}</strong><br/>{t("当前")}{' '}{Math.round(task.progressBasisPoints/100)}%</p>{cancellationReason && <p className="plan-sheet-note">{t("结束原因：")}{focusInterruptionCategoryLabel(cancellationReason)}</p>}{cancellationNote && <p className="plan-sheet-note">{cancellationNote}</p>}<div className="report-options">{options.map(value => <button key={value} disabled={selected !== null} aria-busy={selected === value && !delivered} data-action-state={selected === value && delivered ? 'success' : undefined} onClick={() => void submit(value)}><span className="action-label" key={selected === value ? delivered ? 'delivered' : 'saving' : 'idle'}>{selected === value ? delivered ? t("材料已送达！") : t("正在保存…") : value === task.progressBasisPoints ? t("保持 {0}%", value/100) : value === 10000 ? t("完成小任务") : t("推进至 {0}%", value/100)}</span></button>)}</div></div>;
 }
 
 type MarathonReportCommand = Extract<ApplicationCommand, { type: 'ReportMarathonFocus' }>;
@@ -151,6 +153,7 @@ export function MarathonProgressReport({ state, hostProjectId, run, onSubmitted,
   cancellationNote?: string;
   onBusyChange?: (busy: boolean) => void;
 }) {
+  useI18n();
   // Every round of this plan that still awaits settlement — completed or
   // early-completed marathon rounds that neither a previous settlement nor an
   // automatic report has consumed. Rounds settled by older versions are not
@@ -289,38 +292,38 @@ export function MarathonProgressReport({ state, hostProjectId, run, onSubmitted,
   const totalTime = formatMinutes(sessions.reduce((sum, session) => sum + session.actualDurationMs, 0));
   return <div className={`report progress-report-panel marathon-progress-report ${focusReportSurfaceClass(variant)}`} data-focus-report-variant={variant}>
     {!minimal && <Check/>}
-    <span className="eyebrow">{totalRounds} 轮专注已结束</span>
-    <h2>{minimal ? totalTime : '把这次推进汇报给哪些任务？'}</h2>
-    {minimal && <p className="minimal-report-caption">把专注留在做过的事上</p>}
-    {reasonLabel && <p className="plan-sheet-note">本次结束原因：{reasonLabel}</p>}
-    {cancellationNote && <p className="plan-sheet-note">补充说明：{cancellationNote}</p>}
-    {minimal ? <details className="minimal-report-help"><summary>轮次如何记录</summary><p>每轮只计入一个目标，按完成顺序记录时长。未选择则记为未分配；保持进度也可计入轮次。</p></details>
-      : <p>选择小任务或习惯并分配轮数，每轮只计入一个目标。按完成顺序记录时长，未选择则记为未分配。</p>}
+    <span className="eyebrow">{totalRounds} {t("轮专注已结束")}</span>
+    <h2>{minimal ? totalTime : t("把这次推进汇报给哪些任务？")}</h2>
+    {minimal && <p className="minimal-report-caption">{t("把专注留在做过的事上")}</p>}
+    {reasonLabel && <p className="plan-sheet-note">{t("本次结束原因：")}{reasonLabel}</p>}
+    {cancellationNote && <p className="plan-sheet-note">{t("补充说明：")}{cancellationNote}</p>}
+    {minimal ? <details className="minimal-report-help"><summary>{t("轮次如何记录")}</summary><p>{t("每轮只计入一个目标，按完成顺序记录时长。未选择则记为未分配；保持进度也可计入轮次。")}</p></details>
+      : <p>{t("选择小任务或习惯并分配轮数，每轮只计入一个目标。按完成顺序记录时长，未选择则记为未分配。")}</p>}
     <fieldset className="report-controls" disabled={busy}>
     {totalRounds === 0
-      ? <p className="plan-sheet-note">这次没有需要汇报的轮次，直接结束计划即可。</p>
+      ? <p className="plan-sheet-note">{t("这次没有需要汇报的轮次，直接结束计划即可。")}</p>
       : !hasTargets
-        ? <p className="plan-sheet-note">暂无可推进的任务，可直接结束计划。</p>
+        ? <p className="plan-sheet-note">{t("暂无可推进的任务，可直接结束计划。")}</p>
         : <div className="marathon-settlement-list">
             {habits.map((project) => {
               const habit = project.habit!;
               const rounds = habitRounds[project.id] ?? 0;
               return <section className="marathon-settlement-card" key={project.id}>
                 <button type="button" className="marathon-settlement-head" aria-expanded={expanded.has(project.id)} onClick={() => expandHabit(project.id)}>
-                  <span className="marathon-settlement-copy"><strong>{project.title}</strong><small>习惯 · 第 {habit.cycleNumber} 座建筑 · {habit.completedFocusSessionIds.length} / {habit.targetRounds} 轮</small></span>
-                  <span className="marathon-settlement-toggle">{expanded.has(project.id) ? '收起' : '计入轮数'}</span>
+                  <span className="marathon-settlement-copy"><strong>{project.title}</strong><small>{t("习惯 · 第")}{' '}{habit.cycleNumber} {t("座建筑 ·")}{' '}{habit.completedFocusSessionIds.length} / {habit.targetRounds} {t("轮")}</small></span>
+                  <span className="marathon-settlement-toggle">{expanded.has(project.id) ? t("收起") : t("计入轮数")}</span>
                 </button>
                 {expanded.has(project.id) && <div className="marathon-settlement-body">
                   <RoundAllocationControl controlClassName="habit-round-stepper" value={rounds} max={Math.min(ownHabitMax(project), totalRounds - (allocatedRounds - rounds))} disabled={busy} onStep={(delta) => stepHabit(project.id, delta)} />
-                  <small>{rounds > 0 ? `预计实际投入 ${formatMinutes(assignedMinutes.get(`habit:${project.id}`) ?? 0)}` : '默认 0 轮；展开不会自动分配'} · {allocatedRounds >= totalRounds ? '全部轮次已分配' : `还剩 ${totalRounds - allocatedRounds} 轮`}</small>
+                  <small>{rounds > 0 ? t("预计实际投入 {0}", formatMinutes(assignedMinutes.get(`habit:${project.id}`) ?? 0)) : t("默认 0 轮；展开不会自动分配")} · {allocatedRounds >= totalRounds ? t("全部轮次已分配") : t("还剩 {0} 轮", totalRounds - allocatedRounds)}</small>
                 </div>}
               </section>;
             })}
             {projects.map((project) => (
               <section className="marathon-settlement-card" key={project.id}>
                 <button type="button" className="marathon-settlement-head" aria-expanded={expanded.has(project.id)} onClick={() => toggleProject(project.id)}>
-                  <span className="marathon-settlement-copy"><strong>{project.title}</strong><small>{Math.round(project.subtasks.reduce((sum, subtask) => sum + subtask.progressBasisPoints, 0) / project.subtasks.length / 100)}% 总进度</small></span>
-                  <span className="marathon-settlement-toggle">{expanded.has(project.id) ? '收起' : '展开'}</span>
+                  <span className="marathon-settlement-copy"><strong>{project.title}</strong><small>{Math.round(project.subtasks.reduce((sum, subtask) => sum + subtask.progressBasisPoints, 0) / project.subtasks.length / 100)}{t("% 总进度")}</small></span>
+                  <span className="marathon-settlement-toggle">{expanded.has(project.id) ? t("收起") : t("展开")}</span>
                 </button>
                 {expanded.has(project.id) && <div className="marathon-settlement-body">
                   {project.subtasks.filter((subtask) => subtask.progressBasisPoints < 10000).map((subtask) => {
@@ -328,9 +331,9 @@ export function MarathonProgressReport({ state, hostProjectId, run, onSubmitted,
                     const selectedProgress = choices[subtask.id];
                     const chosen = selectedProgress ?? current;
                     return <div className="marathon-report-row" key={subtask.id}>
-                      <div className="marathon-report-copy"><strong>{subtask.title}</strong><small>当前 {Math.round(current / 100)}%（{Math.round(current / 100) === 0 ? '尚未推进' : '已有建筑进度'}）</small></div>
+                      <div className="marathon-report-copy"><strong>{subtask.title}</strong><small>{t("当前")}{' '}{Math.round(current / 100)}%（{Math.round(current / 100) === 0 ? t("尚未推进") : t("已有建筑进度")}）</small></div>
                       <div className="marathon-report-options">{optionsFor(current).map((value) => (
-                         <button key={value} type="button" aria-pressed={selectedProgress === value} disabled={busy || (allocatedRounds >= totalRounds && chosen === current)} onClick={() => selectTaskProgress(subtask.id, value)}>{value === current ? `保持 ${value / 100}%` : value === 10000 ? '完成' : `推进至 ${value / 100}%`}</button>
+                         <button key={value} type="button" aria-pressed={selectedProgress === value} disabled={busy || (allocatedRounds >= totalRounds && chosen === current)} onClick={() => selectTaskProgress(subtask.id, value)}>{value === current ? t("保持 {0}%", value / 100) : value === 10000 ? t("完成") : t("推进至 {0}%", value / 100)}</button>
                        ))}</div>
                        {selectedProgress !== undefined && <RoundAllocationControl controlClassName="task-round-stepper" value={taskRounds[subtask.id] ?? 0} max={totalRounds - (allocatedRounds - (taskRounds[subtask.id] ?? 0))} disabled={busy} targetLabel={subtask.title} actualMilliseconds={assignedMinutes.get(`task:${subtask.id}`)} onStep={(delta) => stepTask(subtask.id, delta)} />}
                     </div>;
@@ -339,24 +342,24 @@ export function MarathonProgressReport({ state, hostProjectId, run, onSubmitted,
               </section>
             ))}
           </div>}
-    {missingTaskRounds > 0 && <p className="plan-sheet-note" role="alert">已选任务至少计入 1 轮，或取消推进。</p>}
-    {totalRounds > 0 && allocatedRounds === totalRounds && <p className="plan-sheet-note">全部轮次已明确分配，仍会一次性提交。</p>}
-    {totalRounds > 0 && hasTargets && allocatedRounds < totalRounds && entries.length === 0 && <p className="plan-sheet-note">还有 {totalRounds - allocatedRounds} 轮未分配，可直接提交并明确记为未分配。</p>}
+    {missingTaskRounds > 0 && <p className="plan-sheet-note" role="alert">{t("已选任务至少计入 1 轮，或取消推进。")}</p>}
+    {totalRounds > 0 && allocatedRounds === totalRounds && <p className="plan-sheet-note">{t("全部轮次已明确分配，仍会一次性提交。")}</p>}
+    {totalRounds > 0 && hasTargets && allocatedRounds < totalRounds && entries.length === 0 && <p className="plan-sheet-note">{t("还有")}{' '}{totalRounds - allocatedRounds} {t("轮未分配，可直接提交并明确记为未分配。")}</p>}
     </fieldset>
     <div className="marathon-report-footer">
-      {minimal && totalRounds > 0 && <p className="minimal-report-allocation" aria-live="polite"><span>已分配 {allocatedRounds} / {totalRounds} 轮</span><span>{totalRounds - allocatedRounds} 轮未分配</span></p>}
-      <button type="button" className="primary marathon-report-submit" aria-busy={busy && !delivered} data-action-state={delivered ? 'success' : undefined} disabled={busy || (totalRounds > 0 && hasTargets && !canSubmit)} onClick={() => void submit()}><span className="action-label" key={delivered ? 'delivered' : busy ? 'saving' : 'idle'}>{delivered ? '材料已送达！' : busy ? '正在保存…' : totalRounds > 0 && hasTargets ? '一次提交本次推进' : '直接结束计划'}</span></button>
+      {minimal && totalRounds > 0 && <p className="minimal-report-allocation" aria-live="polite"><span>{t("已分配")}{' '}{allocatedRounds} / {totalRounds} {t("轮")}</span><span>{totalRounds - allocatedRounds} {t("轮未分配")}</span></p>}
+      <button type="button" className="primary marathon-report-submit" aria-busy={busy && !delivered} data-action-state={delivered ? 'success' : undefined} disabled={busy || (totalRounds > 0 && hasTargets && !canSubmit)} onClick={() => void submit()}><span className="action-label" key={delivered ? 'delivered' : busy ? 'saving' : 'idle'}>{delivered ? t("材料已送达！") : busy ? t("正在保存…") : totalRounds > 0 && hasTargets ? t("一次提交本次推进") : t("直接结束计划")}</span></button>
     </div>
   </div>;
 }
 
 function focusInterruptionCategoryLabel(reason: FocusInterruptionCategory): string {
-  return ({ 'external-interruption': '外部打扰', 'task-blocked': '任务受阻', fatigue: '需要休息', 'priority-changed': '优先级变化', 'device-or-app': '设备或应用问题', other: '其他' } as const)[reason];
+  return ({ 'external-interruption': t("外部打扰"), 'task-blocked': t("任务受阻"), fatigue: t("需要休息"), 'priority-changed': t("优先级变化"), 'device-or-app': t("设备或应用问题"), other: t("其他") } as const)[reason];
 }
 
 function formatMinutes(milliseconds:number):string {
   const minutes = Math.round(milliseconds / 60_000);
-  return minutes >= 60 ? `${Math.floor(minutes / 60)} 小时${minutes % 60 ? ` ${minutes % 60} 分钟` : ''}` : `${minutes} 分钟`;
+  return minutes >= 60 ? t("{0} 小时{1}", Math.floor(minutes / 60), minutes % 60 ? ` ${t('{0} 分钟',minutes % 60)}` : '') : t("{0} 分钟", minutes);
 }
 
 function RoundAllocationControl({
@@ -377,12 +380,13 @@ function RoundAllocationControl({
   /** Keep the habit control's short accessible names for existing callers. */
   targetLabel?: string;
 }) {
-  const buttonLabel = (verb: string) => targetLabel ? `${verb} ${targetLabel} 计入轮数` : `${verb}计入轮数`;
-  return <div className={`time-stepper round-allocation-control ${controlClassName}`} role="group" aria-label={targetLabel ? `${targetLabel}轮次分配` : '轮次分配'}>
-    <span className="round-allocation-label">计入轮数</span>
-    <button type="button" aria-label={buttonLabel('减少')} disabled={Boolean(disabled) || value === 0} onClick={() => onStep(-1)}>−</button>
-    <strong aria-label={targetLabel ? `${targetLabel} 计入轮数` : '计入轮数'}>{value}</strong>
-    <button type="button" aria-label={buttonLabel('增加')} disabled={Boolean(disabled) || value >= max} onClick={() => onStep(1)}>+</button>
-    <span className="round-allocation-meta">轮{value > 0 && actualMilliseconds !== undefined ? ` · 实际 ${formatMinutes(actualMilliseconds)}` : ''}</span>
+  useI18n();
+  const buttonLabel = (verb: string) => targetLabel ? t("{0} {1} 计入轮数", verb, targetLabel) : t("{0}计入轮数", verb);
+  return <div className={`time-stepper round-allocation-control ${controlClassName}`} role="group" aria-label={targetLabel ? t("{0}轮次分配", targetLabel) : t("轮次分配")}>
+    <span className="round-allocation-label">{t("计入轮数")}</span>
+    <button type="button" aria-label={buttonLabel(t("减少"))} disabled={Boolean(disabled) || value === 0} onClick={() => onStep(-1)}>−</button>
+    <strong aria-label={targetLabel ? t("{0} 计入轮数", targetLabel) : t("计入轮数")}>{value}</strong>
+    <button type="button" aria-label={buttonLabel(t("增加"))} disabled={Boolean(disabled) || value >= max} onClick={() => onStep(1)}>+</button>
+    <span className="round-allocation-meta">{t("轮")}{value > 0 && actualMilliseconds !== undefined ? t(" · 实际 {0}", formatMinutes(actualMilliseconds)) : ''}</span>
   </div>;
 }

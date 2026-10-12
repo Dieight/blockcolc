@@ -2,7 +2,7 @@
 
 ## 应用图标
 
-现行批准母版是 `apps/android/icon-source/blockcolc-pixel-tomato-approved-20261003.png`，已于 2026-10-03 批准：红色方块果皮包住浅色钟面，表盘凹入一层，绿色叶柄保留番茄语义。[本版生成与批准记录](icon-v2.4.0.md)。通知图标继续使用已验收的 Android 单色镂空番茄。
+现行批准母版是 `apps/android/icon-source/blockcolc-pixel-tomato-approved-20261003.png`，已于 2026-10-03 批准：红色方块果皮包住浅色钟面，表盘凹入一层，绿色叶柄保留番茄语义。[本版生成与批准记录](icon-v2.4.0.md)。v2.7.0 按用户要求将通知图标改为阶梯像素轮廓，保留单色镂空番茄与凹入钟面语义，供系统通知着色；启动图标不变。旧通知图标摘要保留在版本历史中，新摘要在资产清单中登记。
 
 Android 各密度启动图标 PNG，以及 PWA 192/512 图标，都由同一母版和 `tools/build-adaptive-icon-source.py` 生成。现行资源引用链由 `ui-assets-manifest.json` 检查，包括 PWA HTML/manifest、Android manifest 和自适应启动图标 XML。manifest 中旧尺寸和摘要已按当前 tracked 文件更新，全部为完整 SHA-256。
 
@@ -32,7 +32,7 @@ node tools/check-ui-assets.mjs --write
 - `blockcolc-four-periods-approved-20260913.png`：上版批准母版，保留原件和原批准摘要，不再用于现行派生资源。
 - `blockcolc-icon-source.png`：较早的历史源；目前未证明与现行派生产物有关，不是批准母版。
 - `blockcolc-four-periods-no-clock-draft.png`：未批准草案，不进入生成链。
-- `ic_stat_tomato_outline.xml`：保留的单色镂空番茄通知图标，有原生通知代码引用。
+- `ic_stat_tomato_outline.xml`：按原单色镂空番茄钟的椭圆果皮、叶柄与表盘位置做阶梯像素化，不重新设计轮廓，有原生通知代码引用。
 - `ic_stat_blockcolc.xml`：当前全仓代码未发现引用；作为候选清理项记录，未在本轮删除。
 - `res/drawable*` 下的启动画面 PNG：完整摘要已记录，但生成来源仍未确认；不声称它们由应用图标母版派生。
 - 自适应图标 XML/背景色资源：引用与摘要已登记；它们是静态 Android 资源，不是 Python 生成器输出。
@@ -42,3 +42,5 @@ node tools/check-ui-assets.mjs --write
 v2.5.6 字体试版使用可离线分发的缝合像素字体，来源、原件摘要和 OFL-1.1 许可见[字体记录](pixel-font-v2.5.6.md)。字体与完整许可随包提供，未覆盖字形回退到系统字体。
 
 节日挂件由 `HolidayEmblem.tsx` 的整数 SVG 网格原创绘制，二十种小建筑由 `holiday-buildings.ts` 生成，不下载或封装 MC 节日资产。历法使用 lunar-typescript 1.8.6，完整 MIT 声明在 `apps/web/public/licenses/lunar-typescript/LICENSE.txt`；天空星河与极光为本项目方向场 shader，未移植 Voxy 代码。
+
+内置声音改用用户提供的湖畔、鸟鸣录音和公有领域雨声，来源、许可、处理方法与摘要见[环境录音](ambient-audio.md)。两通道使用同一份工作区成品；旧四份合成音频已归档，不再封装。用户导入音频不纳入项目资产或公开发布。

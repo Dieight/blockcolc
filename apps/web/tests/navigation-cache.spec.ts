@@ -12,11 +12,10 @@ async function switchAndPaint(page: Page, label: string): Promise<number> {
   }, label);
 }
 
-test('main pages mount on first visit and remain resident across warm navigation', async ({ page }) => {
+test('main pages stay off the cold path, prepare when quiet and remain resident across navigation', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: '开始建造' }).click();
-  // Only the world is needed during startup. Hidden history/backup screens
-  // must not mount or compute their projections before the first navigation.
+  // Progressive preparation must wait for actual scene/opening completion.
   await expect(page.locator('[data-route-mounted="true"]')).toHaveCount(0);
 
   const canvas = page.getByLabel('项目建筑世界');
@@ -30,12 +29,12 @@ test('main pages mount on first visit and remain resident across warm navigation
   await page.getByRole('button', { name: '任务', exact: true }).click();
   const tasks = page.locator('[data-route="tasks"]');
   await expect(tasks).toBeVisible();
-  await expect(page.locator('[data-route-mounted="true"]')).toHaveCount(1);
+  await expect(tasks).toHaveAttribute('data-route-mounted','true');
   await tasks.evaluate((element) => { element.setAttribute('data-residency-probe', 'preserved'); });
 
   await page.getByRole('button', { name: '统计', exact: true }).click();
   await expect(page.locator('[data-route="stats"]')).toBeVisible();
-  await expect(page.locator('[data-route-mounted="true"]')).toHaveCount(2);
+  await expect(page.locator('[data-route="stats"]')).toHaveAttribute('data-route-mounted','true');
   await page.getByRole('button', { name: '设置', exact: true }).click();
   await expect(page.locator('[data-route="settings"]')).toBeVisible();
   await page.getByRole('button', { name: '计时', exact: true }).click();

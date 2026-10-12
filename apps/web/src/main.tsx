@@ -1,3 +1,4 @@
+import { t, useI18n } from './i18n';
 import { StrictMode, useEffect, useState, useSyncExternalStore } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
@@ -32,6 +33,7 @@ const boot=Promise.all([bootstrap(), loadingPagePainted]).then(([result]) => {
   return result;
 });
 function StartupShell(){
+  useI18n();
   const [configuration,setConfiguration]=useState<Awaited<ReturnType<typeof bootstrap>>|null>(null);
   const [failure,setFailure]=useState<string|null>(null);
   const presentation=useSyncExternalStore(subscribeStartupPresentation,startupPresentationSnapshot);
@@ -50,8 +52,24 @@ function StartupShell(){
   document.documentElement.dataset.bootstrapState = 'failed';
     completeStartupPresentation();setFailure(String(error));
   });return()=>{alive=false;};},[]);
-  return <>{failure?<div className="fatal"><strong>无法打开本地世界</strong><p>{failure}</p></div>:configuration&&<StrictMode><AppErrorBoundary><App {...configuration}/></AppErrorBoundary></StrictMode>}
-    {presentation.active&&<LoadingPage stage={presentation.stage} status={presentation.status}/>}</>;
+  useEffect(()=>{
+    if(import.meta.env.VITE_BLOCKCOLC_PERFORMANCE_DIAGNOSTICS!=='true'||!configuration||!presentation.progressive)return;
+    // setConfiguration schedules React's commit; its first rAF is not proof
+    // that the timer exists. Observe the committed, visible panel separately.
+    let frame=0,attempts=0;
+    const observe=()=>{
+      const panel=document.querySelector<HTMLElement>('.world-screen > .focus-panel');
+      if(panel&&getComputedStyle(panel).visibility==='visible'&&panel.getBoundingClientRect().height>0){
+        markPerformancePhase('progressive-ui-frame');
+      }else if(++attempts<120&&document.documentElement.dataset.coldStartup==='true'){
+        frame=requestAnimationFrame(observe);
+      }
+    };
+    frame=requestAnimationFrame(observe);
+    return()=>cancelAnimationFrame(frame);
+  },[configuration,presentation.progressive]);
+  return <>{failure?<div className="fatal"><strong>{t("无法打开本地世界")}</strong><p>{failure}</p></div>:configuration&&<StrictMode><AppErrorBoundary><App {...configuration}/></AppErrorBoundary></StrictMode>}
+    {presentation.active&&(!configuration||!presentation.progressive)&&<LoadingPage stage={presentation.stage} status={presentation.status}/>}</>;
 }
 root.render(<StartupShell/>);
 

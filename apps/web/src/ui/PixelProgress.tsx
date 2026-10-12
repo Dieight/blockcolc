@@ -1,3 +1,4 @@
+import { t, useI18n } from '../i18n';
 import type { CSSProperties } from 'react';
 
 export interface PixelProgressProps {
@@ -22,6 +23,7 @@ export function pixelProgressCells(value: number, maximum: number, rounds = fals
 }
 
 export function PixelProgress({ value, max = 100, label, rounds = false, className = '', role = 'progressbar' }: PixelProgressProps) {
+  useI18n();
   const cells = pixelProgressCells(value, max, rounds);
   return <div className={`pixel-progress-wrap ${className}`.trim()}>
     <div className={`pixel-progress${rounds ? ' pixel-progress-rounds' : ''}`} role={role}
@@ -29,6 +31,6 @@ export function PixelProgress({ value, max = 100, label, rounds = false, classNa
       style={{ '--pixel-cells': cells.fills.length } as CSSProperties}>
       {cells.fills.map((fill, index) => <i key={index} aria-hidden="true"><b style={{ width: `${fill * 100}%` }}/></i>)}
     </div>
-    {rounds && cells.group > 1 && <small className="pixel-progress-scale">每格最多 {cells.group} 轮</small>}
+    {rounds && cells.group > 1 && <small className="pixel-progress-scale">{t("每格最多")}{' '}{cells.group} {t("轮")}</small>}
   </div>;
 }

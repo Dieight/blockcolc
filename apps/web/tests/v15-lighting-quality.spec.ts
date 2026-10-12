@@ -1,7 +1,7 @@
 import { expect, test, type CDPSession } from "@playwright/test";
 
 test("replaces the old visual experiments with persistent adaptive lighting presets", async ({ page }, testInfo) => {
-  test.setTimeout(120_000); // Five full software-WebGL renderer rebuilds (one per outline/quality change) exceed the default budget on shared GPUs; the V23 refined far-fine terrain added a second rebuild tier.
+  test.setTimeout(120_000); // Multiple quality/outline preparations and screenshots share a software WebGL device.
   const pageErrors: string[] = [];
   // SwiftShader (software WebGL) intermittently fails THREE's shader compile
   // validation under load; it is a documented gate-machine noise, not a render
@@ -26,7 +26,7 @@ test("replaces the old visual experiments with persistent adaptive lighting pres
   await expect(quality.getByRole("button", { name: "精致" })).toHaveAttribute("aria-pressed", "true");
   await quality.getByRole("button", { name: "自动" }).click();
   await expect(quality.getByRole("button", { name: "自动" })).toHaveAttribute("aria-pressed", "true");
-  await expect(page.getByText("更高档位增加耗电")).toBeVisible();
+  await expect(page.getByText("回到计时页应用；高档位更耗电")).toBeVisible();
   const constructionOutline = page.getByRole("group", { name: "施工轮廓" });
   await expect(constructionOutline.getByRole("button", { name: "当前" })).toHaveAttribute("aria-pressed", "true");
   await constructionOutline.getByRole("button", { name: "关闭" }).click();

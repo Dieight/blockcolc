@@ -2,6 +2,7 @@ import {expect,test,type Page} from '@playwright/test';
 import {choosePlanEndTime} from './focus-plan-controls';
 import {expandGlassSetting} from './expand-glass-setting';
 import {readPersistedDomainState} from './persisted-domain-state';
+import {waitForPreparedWorld} from './world-ready';
 
 async function setup(page:Page){
   await page.emulateMedia({reducedMotion:'reduce'});
@@ -58,37 +59,42 @@ test('unstarted marathon confirms and cancels on its stable sheet without reason
   await info.attach('stable-sheet', {body:JSON.stringify({confirmation,cancellation}),contentType:'application/json'});
 });
 
-test('environment busy lifetime covers the new renderer, five warm draws and GPU completion; loader SVG stays static',async({page},info)=>{
+test('environment preparation covers five warm draws and GPU completion; loader SVG geometry stays static',async({page},info)=>{
   test.setTimeout(150000);const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));
   await setup(page);await page.emulateMedia({reducedMotion:'no-preference'});
   await page.getByRole('button',{name:'设置',exact:true}).click();
   await page.evaluate(()=>{
-    const samples:{pending:boolean;loader:boolean;busy:boolean;environment?:string;frames?:string;svgAnimations:number;spinner:string}[]=[];
+    const samples:{ready:boolean;loader:boolean;route?:string;environment?:string;frames?:string;svgAnimations:number}[]=[];
     const sample=()=>{
-      const root=document.querySelector<HTMLElement>('.app-shell')!,loader=root.querySelector('.boot-page'),canvas=root.querySelector<HTMLCanvasElement>('[aria-label="项目建筑世界"]');
-      samples.push({pending:root.dataset.worldPreparing==='true',loader:Boolean(loader),busy:root.querySelector('[aria-label="聚落环境"] [aria-busy="true"]')!==null,environment:canvas?.dataset.environmentStyle,frames:canvas?.dataset.openingPreparedFrames,
-        svgAnimations:loader?[...loader.querySelectorAll('svg *')].filter(element=>getComputedStyle(element).animationName!=='none').length:0,
-        spinner:loader?[...loader.querySelectorAll('.boot-windmill-rotor,.tomato-fall')].map(element=>getComputedStyle(element).animationName).join(','):''});
+      const root=document.querySelector<HTMLElement>('.app-shell')!,loader=[...root.querySelectorAll<HTMLElement>('.boot-page')].find(element=>element.getClientRects().length>0),canvas=root.querySelector<HTMLCanvasElement>('[aria-label="项目建筑世界"]');
+      samples.push({ready:root.querySelector<HTMLElement>('.world-screen')?.dataset.worldReady==='true',loader:Boolean(loader),route:root.querySelector<HTMLElement>('main')?.dataset.activeRoute,environment:canvas?.dataset.environmentStyle,frames:canvas?.dataset.openingPreparedFrames,
+        svgAnimations:loader?[...loader.querySelectorAll('svg *')].filter(element=>element.getAnimations().some(animation=>{
+          const effect=animation.effect;
+          return effect instanceof KeyframeEffect&&effect.getKeyframes().some(frame=>Object.keys(frame).some(property=>!['offset','computedOffset','easing','composite','opacity'].includes(property)));
+        })).length:0,
+      });
     };
     const observer=new MutationObserver(sample);observer.observe(document.body,{subtree:true,attributes:true,childList:true});Object.assign(window,{__environmentWatch:{samples,stop:()=>observer.disconnect()}});
   });
   const environments=page.getByRole('group',{name:'聚落环境',exact:true});
+  const canvas=page.getByLabel('项目建筑世界'),previous=await canvas.getAttribute('data-environment-style');
   await environments.getByRole('button',{name:'山谷',exact:true}).click();
   await expect(environments.getByRole('button',{name:'山谷',exact:true})).toHaveAttribute('aria-busy','false',{timeout:45000});
-  await expect(page.locator('.app-shell')).not.toHaveAttribute('data-world-preparing','true');
-  const canvas=page.getByLabel('项目建筑世界');await expect(canvas).toHaveAttribute('data-environment-style','natural-valley');
+  await expect(environments.getByRole('button',{name:'山谷',exact:true})).toHaveAttribute('aria-pressed','true');
+  await expect(page.locator('.boot-page')).toHaveCount(0);
+  await expect(canvas).toHaveAttribute('data-environment-style',previous!);
+  await page.getByRole('button',{name:'计时',exact:true}).click();await waitForPreparedWorld(page);
+  await expect(canvas).toHaveAttribute('data-environment-style','natural-valley');
   await expect.poll(async()=>Number(await canvas.getAttribute('data-opening-prepared-frames'))).toBeGreaterThanOrEqual(5);
   await expect.poll(async()=>Number(await canvas.getAttribute('data-initial-preparation-render-count'))).toBeGreaterThanOrEqual(5);
   await expect(canvas).toHaveAttribute('data-initial-gpu-preparation','complete');
   expect(Number(await canvas.getAttribute('data-initial-shader-preparation-ms'))).toBeGreaterThanOrEqual(0);
   expect(Number(await canvas.getAttribute('data-initial-presentation-preparation-ms'))).toBeGreaterThanOrEqual(Number(await canvas.getAttribute('data-initial-shader-preparation-ms')));
-  const samples=await page.evaluate(()=>{const w=window as typeof window&{__environmentWatch:{samples:unknown[];stop():void}};w.__environmentWatch.stop();return w.__environmentWatch.samples;}) as {pending:boolean;loader:boolean;busy:boolean;environment:string;frames:string;svgAnimations:number;spinner:string}[];
-  expect(samples.some(sample=>sample.pending&&sample.loader&&sample.busy)).toBe(true);
+  const samples=await page.evaluate(()=>{const w=window as typeof window&{__environmentWatch:{samples:unknown[];stop():void}};w.__environmentWatch.stop();return w.__environmentWatch.samples;}) as {ready:boolean;loader:boolean;route:string;environment:string;frames:string;svgAnimations:number}[];
+  expect(samples.some(sample=>!sample.ready&&sample.loader&&sample.route==='world')).toBe(true);
   expect(samples.some(sample=>sample.loader&&sample.svgAnimations>0)).toBe(false);
-  expect(samples.some(sample=>sample.pending&&/control-spin|tomato-fall/.test(sample.spinner))).toBe(true);
-  const lastPending=samples.reduce((last,sample,index)=>sample.pending?index:last,-1);
-  expect(samples.slice(lastPending+1).filter(sample=>!sample.pending).every(sample=>sample.environment==='natural-valley'&&Number(sample.frames)>=5)).toBe(true);
-  await page.getByRole('button',{name:'计时',exact:true}).click();
+  const lastPending=samples.reduce((last,sample,index)=>sample.loader?index:last,-1);
+  expect(samples.slice(lastPending+1).filter(sample=>sample.ready).every(sample=>sample.environment==='natural-valley'&&Number(sample.frames)>=5)).toBe(true);
   await expect(page.locator('.world-screen')).toHaveAttribute('data-world-ready','true');
   await page.screenshot({path:info.outputPath('prepared-valley-after-switch.png')});
   await info.attach('real-scene-preparation', {body:JSON.stringify(samples),contentType:'application/json'});expect(errors).toEqual([]);

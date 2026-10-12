@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { gzipSync } from 'node:zlib';
 import { testNbt as nbt, writeJavaNbt } from '../../../packages/litematic/test/nbt-fixture';
 import { readPersistedDomainState } from './persisted-domain-state';
+import { waitForPreparedWorld } from './world-ready';
 
 function negativeHeightHouse(): Buffer {
   const point = (x: number, y: number, z: number) => nbt.compound({ x: nbt.int(x), y: nbt.int(y), z: nbt.int(z) });
@@ -46,6 +47,7 @@ test('negative-height import keeps its ground below its roof through preview, sa
   expect(dirt.some(voxel => voxel.y === blueprint!.bounds.maxY)).toBe(false);
   await page.reload();
   await expect(page.locator('html')).toHaveAttribute('data-bootstrap-state', 'ready');
+  await waitForPreparedWorld(page);
   await expect(page.getByLabel('项目建筑世界')).toBeVisible();
   const restored = (await readPersistedDomainState(page)).state;
   expect(restored.projects.find(project => project.id === restored.activeProjectId)?.importedBlueprint).toEqual(blueprint);

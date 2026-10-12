@@ -47,10 +47,9 @@ export function PixelBrand({ size = 28, ...props }: SVGProps<SVGSVGElement> & { 
 
 export type PixelIconName = keyof typeof glyphs;
 type IconProps = Omit<SVGProps<SVGSVGElement>, 'name' | 'children'> & { size?: number };
-export function PixelDisclosure({ expanded, ...props }: IconProps & { expanded: boolean }) {
-  return <svg width="20" height="20" viewBox="0 0 12 12" className="pixel-icon pixel-disclosure" aria-hidden="true" focusable="false" shapeRendering="crispEdges" {...props}>
-    <path fill="currentColor" d="M1 5h10v2H1z"/>
-    <path className="pixel-disclosure-stem" fill="currentColor" d="M5 1h2v10H5z" style={{ transform: expanded ? 'scaleY(0)' : 'scaleY(1)' }}/>
+export function PixelDisclosure({ expanded, ...props }: IconProps & { expanded?: boolean }) {
+  return <svg width="20" height="20" viewBox="0 0 12 12" className="pixel-icon pixel-disclosure" data-pixel-icon="chevron" data-expanded={expanded} aria-hidden="true" focusable="false" shapeRendering="crispEdges" {...props}>
+    <path fill="currentColor" d="M1 3h2v2H1zM3 5h2v2H3zM5 7h2v2H5zM7 5h2v2H7zM9 3h2v2H9z"/>
   </svg>;
 }
 export function PixelPortal({ size = 24, className, ...props }: IconProps) {
@@ -122,4 +121,4 @@ export const PixelFlag = glyph('flag');
 export const PixelStop = glyph('stop');
 export const PixelRepeat = glyph('repeat');
 export const PixelMinimize = glyph('minimize');
-export const PixelCalendar = glyph('calendar');
+export function PixelCalendar(props:IconProps){return <svg width={props.size??24} height={props.size??24} viewBox="0 0 12 12" fill="currentColor" shapeRendering="crispEdges" className="pixel-icon pixel-calendar" data-pixel-icon="calendar" aria-hidden="true" focusable="false" {...props}><g><path d="M1 2h10v2H1zM1 4h1v5h8V4h1v6H1z"/><path d="M2 4h8v5H2z" fill="var(--app-bg)"/><path d="M3 5h2v1H3zM7 5h2v1H7zM3 7h2v1H3zM7 7h2v1H7z"/></g><g data-icon-part="turning-page"><path d="M2 4h8v5H2z" fill="var(--app-bg)"/><path d="M3 5h2v1H3zM7 5h2v1H7zM3 7h2v1H3zM7 7h2v1H7z"/></g><path d="M2 0h1v2H2zM8 0h1v2H8z"/></svg>;}

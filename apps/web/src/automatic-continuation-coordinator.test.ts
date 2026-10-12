@@ -131,6 +131,18 @@ async function harness(initialMarathon = true) {
 }
 
 describe('automatic continuation coordinator', () => {
+  it('keeps the last authorized native phase until the plan reaches report',async()=>{
+    const f=await harness();
+    f.setNow(BASE+6*60_000);
+    await f.coordinator.onResume();
+    expect(f.plan()).toMatchObject({status:'focus',completedRounds:2,totalRounds:3});
+    expect(f.plan()?.automaticContinuation?.authorizationId).toBe(AUTH);
+    expect(f.deadlines.cancelled).not.toContain(`authorization:${AUTH}`);
+    f.setNow(BASE+7*60_000);
+    await f.coordinator.onResume();
+    expect(f.plan()).toMatchObject({status:'report',completedRounds:3});
+    expect(f.deadlines.cancelled).toContain(`authorization:${AUTH}`);
+  });
   it.each(['early','interrupt'] as const)('does not restart a zero-break chain at its commit subscription after manual %s',async outcome=>{
     const f=await harness(),schedule=f.plan()!;
     const started=await f.service.dispatch({type:'StartFocus',projectId:f.project.id,subtaskId:f.subtaskId,plannedDurationMs:60_000,marathon:true});

@@ -6,7 +6,9 @@ import android.app.ActivityManager;
 import android.app.ApplicationExitInfo;
 import android.os.Build;
 import android.os.PowerManager;
+import android.net.Uri;
 import android.provider.Settings;
+import java.util.Locale;
 import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
@@ -49,10 +51,21 @@ public class SettingsPlugin extends Plugin {
 
     @PluginMethod
     public void openBatterySettings(PluginCall call) {
-        Intent intent = new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS);
+        // ColorOS has an additional app-specific policy. The Android exemption
+        // list alone cannot explain whether its background freezer is enabled.
+        Intent intent = new Intent(prefersAppBatteryDetails(Build.MANUFACTURER)
+            ? Settings.ACTION_APPLICATION_DETAILS_SETTINGS : Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS);
+        if (prefersAppBatteryDetails(Build.MANUFACTURER)) {
+            intent.setData(Uri.fromParts("package", getContext().getPackageName(), null));
+        }
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         try { getContext().startActivity(intent); call.resolve(); }
         catch (Exception error) { call.reject("Unable to open system battery settings"); }
+    }
+
+    static boolean prefersAppBatteryDetails(String manufacturer) {
+        String name = manufacturer == null ? "" : manufacturer.trim().toLowerCase(Locale.ROOT);
+        return "oneplus".equals(name) || "oppo".equals(name) || "realme".equals(name);
     }
 
     @PluginMethod

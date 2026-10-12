@@ -172,6 +172,17 @@ describe("merged stepped terrain", () => {
       ...quadsOf(terrain.sideIndices.dirt, "dirt"),
       ...quadsOf(terrain.sideIndices.stone, "stone"),
     ];
+    // The predicate below can only match sides touching either endpoint.
+    // Index those candidates once, preserving the full scan's exact coverage
+    // check without its quadratic cost as the ordinary terrain area grows.
+    const sidesAtPoint = new Map<string, Quad[]>();
+    for (const side of sideQuads) {
+      for (const point of new Set(side.vertices.map(v => `${v.x}|${v.z}`))) {
+        const touching = sidesAtPoint.get(point) ?? [];
+        touching.push(side);
+        sidesAtPoint.set(point, touching);
+      }
+    }
     const waterEdgeUsers = new Map<string, number>();
     for (const quad of waterQuads) {
       for (let corner = 0; corner < 4; corner += 1) {
@@ -187,7 +198,11 @@ describe("merged stepped terrain", () => {
         const b = quad.vertices[(corner + 1) % 4]!;
         const key = edgeKey(a, b);
         if ((waterEdgeUsers.get(key) ?? 0) > 1) continue; // interior water edge: neighboring surface closes it
-        const covered = sideQuads.some((side) => {
+        const candidates = new Set([
+          ...sidesAtPoint.get(`${a.x}|${a.z}`) ?? [],
+          ...sidesAtPoint.get(`${b.x}|${b.z}`) ?? [],
+        ]);
+        const covered = [...candidates].some((side) => {
           const matching = side.vertices.filter((v) => (v.x === a.x && v.z === a.z) || (v.x === b.x && v.z === b.z));
           if (matching.length < 2) return false;
           const topY = Math.max(...side.vertices.map((v) => v.y));

@@ -1,3 +1,4 @@
+import { t, useI18n } from './i18n';
 import { useCallback, useEffect, useRef } from 'react';
 import type { BlueprintV1, VoxelRenderer, WorldSnapshot } from '@blockcolc/voxel';
 import type { ResourcePackRepository } from '@blockcolc/resource-pack-indexeddb';
@@ -30,6 +31,7 @@ export function BlueprintPreview({
   className = '',
   showHud = true,
 }: BlueprintPreviewProps) {
+  useI18n();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rendererRef = useRef<VoxelRenderer | null>(null);
   const sourceRef = useRef(source);
@@ -80,16 +82,16 @@ export function BlueprintPreview({
       <canvas
         ref={canvasRef}
         role="img"
-        aria-label={`${source.displayName}完整建筑预览，可拖动旋转`}
+        aria-label={t("{0}完整建筑预览，可拖动旋转", source.displayName)}
         data-preview-blueprint-id={source.id}
       />
       {showHud && (
         <div className="world-hud preview-hud">
-          <span>{source.displayName}</span>
+          <span>{source.id.startsWith('builtin-') ? t(source.displayName) : source.displayName}</span>
           <button
             type="button"
-            title="重置预览视角"
-            aria-label="重置预览视角"
+            title={t("重置预览视角")}
+            aria-label={t("重置预览视角")}
             onClick={() => rendererRef.current?.resetCamera()}
           >
             <RotateCcw />
