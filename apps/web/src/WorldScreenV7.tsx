@@ -2,11 +2,11 @@ import { t, useI18n } from './i18n';
 import { localBlueprintTitle } from './builtin-blueprint-labels';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ActiveProjectProjection, ApplicationCommand, ApplicationResult, ApplicationService } from '@blockcolc/application';
-import { completedPomodorosOn, dailyGoalForDate, localDateOf, type FocusInterruptionCategory } from '@blockcolc/domain';
+import { localDateOf, type FocusInterruptionCategory } from '@blockcolc/domain';
 import type { ResourcePackRepository } from '@blockcolc/resource-pack-indexeddb';
 import { localDateForDate, weatherForLocalDate, type WeatherState } from '@blockcolc/voxel/environment';
 import { AlertTriangle } from 'lucide-react';
-import { PixelTasks as ListTodo, PixelClock as Clock3, PixelStop as Square, PixelPlay, PixelPortal as Minimize2, PixelChest, PixelClose } from './ui/PixelIcon';
+import { PixelTasks as ListTodo, PixelClock as Clock3, PixelStop as Square, PixelPlay, PixelExpand as Minimize2, PixelChest, PixelClose, PixelEdit } from './ui/PixelIcon';
 import { BuildingMemoryPanel, createBuildingMemory } from './BuildingMemoryPanel';
 import type { FocusPreferences } from './app-types';
 import type { RecordedIntegrityNotice } from './application-lifecycle';
@@ -34,12 +34,14 @@ import { MinimalIdleCarousel } from './MinimalIdleCarousel';
 import { HolidayEmblem } from './ui/HolidayEmblem';
 import { MinimalPanelWeatherOverlay } from './MinimalPanelWeatherOverlay';
 import { FocusTimer } from './FocusTimer';
-import { FocusPlanSheet, HabitFocusPlanSheet } from './FocusPlanSheets';
+import { FocusPlanSheet } from './FocusPlanSheets';
 import { HabitBuildingSelection } from './HabitBuildingSelection';
 import { ProgressReportV7, MarathonProgressReport } from './FocusReports';
 import { EndFocusDialog } from './EndFocusDialog';
+import { FocusTaskPicker } from './ui/FocusTaskPicker';
 import { formatClockDuration, formatDurationSummary, formatClockTime } from './focus-format';
 import { WorkspaceRest } from './WorkspaceRest';
+import { canSelectTaskContext,validTaskContext,type TaskContextRequest } from './task-context';
 
 const SKIP_BREAK_REQUEST_KEY = 'blockcolc-skip-break-request-v1';
 function breakPlanIdentity(plan: RoundPlan | null): string | null {
@@ -48,7 +50,7 @@ function breakPlanIdentity(plan: RoundPlan | null): string | null {
 }
 function immersiveBandTestOverride():{bottom:number;right:number}|undefined{if(!testBuildEnabled())return undefined;const read=(key:string)=>{const raw=new URLSearchParams(location.search).get(key);if(raw===null)return undefined;const value=Number(raw);return Number.isFinite(value)&&value>=0&&value<=0.75?value:undefined;};const bottom=read('__immersiveBand');const right=read('__immersiveRightBand');if(bottom===undefined&&right===undefined)return undefined;return{bottom:bottom??0,right:right??0};}
 
-export function WorldScreenV7({ service, active: committedActive, state: committedState, stateRevision, hasActiveProject: committedHasActiveProject, onCreateProject, resourcePacks, run, refresh, onReconcileFocus, preferences, worldWeather, worldDebug = null, minimalWanted, fullDeferredPresentation, onMinimalPresentationChange, onImmersiveLayoutChange, onExitMinimal, onEnterMinimal, recordedIntegrityNotice, focusedProjectId, memoryProjectId, onFocusWorldProject, onInitialProjectFocus, onClearWorldFocus, onCloseWorldMemory, visible, worldPreparationAllowed=true }: {
+export function WorldScreenV7({ service, active: committedActive, state: committedState, stateRevision, hasActiveProject: committedHasActiveProject, onCreateProject, resourcePacks, run, refresh, onReconcileFocus, preferences, worldWeather, worldDebug = null, minimalWanted, fullDeferredPresentation, onMinimalPresentationChange, onImmersiveLayoutChange, onExitMinimal, onEnterMinimal, recordedIntegrityNotice, focusedProjectId, memoryProjectId, onFocusWorldProject, onInitialProjectFocus, onClearWorldFocus, onCloseWorldMemory, visible, worldPreparationAllowed=true,taskContextRequest=null }: {
   service: ApplicationService;
   /** Display facts from one parent commit; event handlers may read the live service. */
   active: ActiveProjectProjection;
@@ -79,6 +81,7 @@ export function WorldScreenV7({ service, active: committedActive, state: committ
   onCloseWorldMemory: () => void;
   visible: boolean;
   worldPreparationAllowed?:boolean;
+  taskContextRequest?:TaskContextRequest|null;
 }) {
   useI18n();
   const [reportPresentation, setReportPresentation] = useState<{
@@ -124,12 +127,14 @@ export function WorldScreenV7({ service, active: committedActive, state: committ
   const [ending, setEnding] = useState(false);
   const [planOpen, setPlanOpen] = useState(false);
   const sheetPlanRef=useRef<RoundPlan|null>(null);
+  const sheetCurrentProject=useRef(active.project.id);
   // V21 marathon scheduling draft: the user picks only an end time; rounds and
   // breaks are derived from the remaining duration with the normal per-round
   // settings, and progress is reported once after the last round.
   const [planMode, setPlanMode] = useState<'rounds' | 'marathon'>('rounds');
   const [endAtDraft, setEndAtDraft] = useState('18:00');
   const [planDraft, setPlanDraft] = useState<FocusPlanDraft>({ rounds: 1, mode: 'rounds', endAt: '18:00', selectedId: selected });
+  const confirmedProjectDraft=useRef<FocusPlanDraft|null>(null);
   const focusPanelRef = useRef<HTMLElement>(null);
   const [worldReady, setWorldReady] = useState(false);
   const [immersiveBand, setImmersiveBand] = useState({ bottom: 0, right: 0, framingBottom:0, framingRight:0 });
@@ -179,11 +184,12 @@ export function WorldScreenV7({ service, active: committedActive, state: committ
     } finally { reconciling.current = false; }
   }, [service, onReconcileFocus, automaticContinuation.onResume]);
   const flow = useFocusFlow({
+    replacementRevision: () => service.stateReplacementRevision(),
     snapshot: () => service.snapshot(), dispatch: run, refresh, resume: reconcile,
     readPlan, writePlan: setPlan, preferences: () => preferences, nowMs: Date.now,
     draft: () => ({ rounds, mode: planMode, endAt: endAtDraft, selectedId: selected }),
     planDraft: () => planDraft,
-    commitDraft: draft => { setRounds(draft.rounds); setPlanMode(draft.mode); setEndAtDraft(draft.endAt); setSelected(draft.selectedId); },
+    commitDraft: draft => { confirmedProjectDraft.current=draft;setRounds(draft.rounds); setPlanMode(draft.mode); setEndAtDraft(draft.endAt); setSelected(draft.selectedId); },
     closeEnding: () => closeEnding(), closePlan: () => closePlan(),
     resetDraftMode: () => setPlanMode('rounds'), constructionFeedback: () => fireConstructionFeedback(),
   });
@@ -198,10 +204,22 @@ export function WorldScreenV7({ service, active: committedActive, state: committ
   }, [flow, startFocus]);
 
   useEffect(() => {
-    setSelected(active.project.kind === 'habit' ? null : active.project.subtasks.find((subtask) => subtask.progressBasisPoints < 10000)?.id ?? active.project.subtasks[0]!.id);
+    const confirmed=confirmedProjectDraft.current?.projectId===active.project.id?confirmedProjectDraft.current:null;
+    confirmedProjectDraft.current=null;
+    setSelected(confirmed?confirmed.selectedId:active.project.kind === 'habit' ? null : active.project.subtasks.find((subtask) => subtask.progressBasisPoints < 10000)?.id ?? active.project.subtasks[0]!.id);
     setPlanOpen(false);
-    setPlanMode('rounds');
+    setPlanMode(confirmed?.mode??'rounds');
   }, [active.project.id]);
+  const appliedTaskContext=useRef<number|null>(null);
+  useEffect(()=>{
+    if(!visible||!taskContextRequest||appliedTaskContext.current===taskContextRequest.revision)return;
+    const latest=service.snapshot(),projection=service.activeProjectProjection();
+    if(!validTaskContext(latest,taskContextRequest)||!canSelectTaskContext(latest,readPlan(),projection?.unreportedCompletedSessions.length??0))return;
+    appliedTaskContext.current=taskContextRequest.revision;
+    setSelected(taskContextRequest.subtaskId);
+    setPlanDraft(draft=>({...draft,selectedId:taskContextRequest.subtaskId}));
+    setPlanOpen(false);
+  },[taskContextRequest,active.project.id,visible,service,readPlan]);
   // The "materials delivered" beat fires when the user commits progress (which
   // is also when the construction blocks land), not when a session merely ends.
   const fireConstructionFeedback = useCallback(() => {
@@ -397,9 +415,6 @@ export function WorldScreenV7({ service, active: committedActive, state: committ
   const selectedId = reconciledPlan?.subtaskId ?? selected;
   const subtask = active.project.subtasks.find((item) => item.id === selectedId) ?? active.project.subtasks[0]!;
   const today = localDateOf(new Date(), state.calendar.timeZone);
-  const dailyGoal = dailyGoalForDate(state, today);
-  const completedToday = completedPomodorosOn(state, today);
-  const dailySummary = dailyGoal.enabled ? t("今日 {0} / {1} 轮", completedToday, dailyGoal.targetPomodoros) : t("今日已完成 {0} 轮", completedToday);
 
   const naturalReadyReminderPlan = !session
     && reconciledPlan?.status === 'ready'
@@ -467,8 +482,9 @@ export function WorldScreenV7({ service, active: committedActive, state: committ
     // Hold the sheet's face through its exit. A confirmed draft must not flash
     // the newly locked cancellation form before the old sheet has left.
     sheetPlanRef.current=reconciledPlan;
+    sheetCurrentProject.current=active.project.id;
     const end = reconciledPlan?.endAt ? new Date(reconciledPlan.endAt) : null;
-    setPlanDraft({ rounds: reconciledPlan?.totalRounds ?? rounds, mode: reconciledPlan?.mode ?? planMode,
+    setPlanDraft({ projectId:active.project.id,rounds: reconciledPlan?.totalRounds ?? rounds, mode: reconciledPlan?.mode ?? planMode,
       endAt: end ? `${String(end.getHours()).padStart(2, '0')}:${String(end.getMinutes()).padStart(2, '0')}` : endAtDraft,
       selectedId: reconciledPlan?.subtaskId ?? selected });
     setPlanOpen(true);
@@ -575,6 +591,8 @@ export function WorldScreenV7({ service, active: committedActive, state: committ
     if (focusPanelRef.current) focusPanelRef.current.scrollTop = 0;
   }, [memory?.projectId]);
   const sheetPlan=sheetPlanRef.current;
+  const sheetProject=state.projects.find(project=>project.id===(sheetPlan?.projectId??planDraft.projectId??active.project.id))??active.project;
+  const taskPicker=<FocusTaskPicker projects={state.projects} currentId={sheetCurrentProject.current} projectId={sheetProject.id} subtaskId={planDraft.selectedId} disabled={Boolean(sheetPlan)} onSelect={(projectId,selectedId)=>setPlanDraft(draft=>({...draft,projectId,selectedId}))}/>;
   const sheetLocked=Boolean(sheetPlan),sheetMode=sheetPlan?.mode??planDraft.mode;
   const sheetUnstarted=isUnstartedMarathonPlan(sheetPlan,Boolean(session));
 
@@ -618,9 +636,9 @@ export function WorldScreenV7({ service, active: committedActive, state: committ
          {marathonPlan
            ? <div className="workbench-context"><span>{t("本场安排")}</span><strong>{t("按结束时间排程")}</strong><small>{planHostIsHabit ? t("习惯轮次直接推进建筑 · 已完成 {0} / {1} 轮", reconciledPlan?.completedRounds ?? 0, reconciledPlan?.totalRounds ?? 1) : t("本场不指定小任务，结束后统一汇报")}</small><HolidayEmblem date={today} slot={0}/></div>
            : isHabit
-             ? <div className="workbench-context"><span>{t("当前习惯建筑 · 第")}{' '}{habit!.cycleNumber} {t("座")}</span><strong>{currentBuildingLabel}</strong><small>{t("本周期")}{' '}{habit!.completedFocusSessionIds.length} / {habit!.targetRounds} {t("轮 ·")}{' '}{dailySummary}</small><HolidayEmblem date={today} slot={0}/></div>
-             : <div className="workbench-context"><span>{t("当前小任务")}</span><strong>{subtask!.title}</strong><small>{t("已完成")}{' '}{Math.round(subtask!.progressBasisPoints / 100)}% · {dailySummary}</small><HolidayEmblem date={today} slot={0}/></div>}
-         <button type="button" className="plan-summary" aria-label={t("调整本次计划")} aria-expanded={planOpen} onClick={openPlan}><span>{planSummary}</span><span>{t("调整")}</span></button>
+             ? <div className="workbench-context"><span>{t("当前习惯建筑 · 第")}{' '}{habit!.cycleNumber} {t("座")}</span><strong>{currentBuildingLabel}</strong><small>{t("本周期")}{' '}{habit!.completedFocusSessionIds.length} / {habit!.targetRounds} {t("轮")}</small><HolidayEmblem date={today} slot={0}/></div>
+             : <div className="workbench-context"><span>{t("当前小任务")}</span><strong>{subtask!.title}</strong><small>{t("已完成")}{' '}{Math.round(subtask!.progressBasisPoints / 100)}%</small><HolidayEmblem date={today} slot={0}/></div>}
+         <button type="button" className="plan-summary" aria-label={t("调整本次计划")} aria-expanded={planOpen} onClick={openPlan}><span>{planSummary}</span><span><PixelEdit/>{t("调整")}</span></button>
        </>}
          {minimalIdle && <div className="holiday-panel-slot"><HolidayEmblem date={today} slot={0}/></div>}
          {minimalRest ? <FocusFace
@@ -664,8 +682,8 @@ export function WorldScreenV7({ service, active: committedActive, state: committ
         <EndFocusDialog taskTitle={planHostIsHabit ? planHostProject?.title ?? active.project.title : marathonPlan ? t("马拉松 第 {0} / {1} 轮", (reconciledPlan?.completedRounds ?? 0) + 1, reconciledPlan?.totalRounds ?? 1) : subtask!.title} habit={planHostIsHabit} marathon={reconciledPlan?.mode === 'marathon'} isLastMarathonRound={reconciledPlan?.mode === 'marathon' && (reconciledPlan?.completedRounds ?? 0) + 1 >= (reconciledPlan?.totalRounds ?? 1)} multiRound={(reconciledPlan?.totalRounds ?? 1) > 1} cancellationReason={reconciledPlan?.cancellationReason} cancellationNote={reconciledPlan?.cancellationNote} onCancelPlan={cancelPlanWithReminder} onClose={closeEnding} onInterrupt={interruptFocus} onCompleteEarly={completeEarly}/>
       </div>
     )}
-    {(planOpen || planLeaving) && !session && <div className={planLeaving ? 'dialog-leave' : undefined}>{planHostIsHabit
-      ? <HabitFocusPlanSheet rounds={planDraft.rounds} focusMinutes={sheetMode === 'marathon' ? preferences.focusMinutes : preferences.habitFocusMinutes} breakMinutes={preferences.breakMinutes} locked={sheetLocked} unstarted={sheetUnstarted} mode={sheetMode} endAtDraft={planDraft.endAt} cancellationReason={sheetPlan?.cancellationReason} cancellationNote={sheetPlan?.cancellationNote} onModeChange={mode => setPlanDraft(draft => ({ ...draft, mode }))} onEndAtDraftChange={endAt => setPlanDraft(draft => ({ ...draft, endAt }))} onRoundsChange={rounds => setPlanDraft(draft => ({ ...draft, rounds }))} onClose={closePlan} onConfirm={confirmPlan} onCancelPlan={cancelPlanWithReminder}/>
-      : <FocusPlanSheet subtasks={active.project.subtasks} selectedId={sheetPlan?.subtaskId ?? planDraft.selectedId ?? ''} rounds={planDraft.rounds} focusMinutes={preferences.focusMinutes} breakMinutes={preferences.breakMinutes} locked={sheetLocked} unstarted={sheetUnstarted} mode={sheetMode} endAtDraft={planDraft.endAt} cancellationReason={sheetPlan?.cancellationReason} cancellationNote={sheetPlan?.cancellationNote} onModeChange={mode => setPlanDraft(draft => ({ ...draft, mode }))} onEndAtDraftChange={endAt => setPlanDraft(draft => ({ ...draft, endAt }))} onSelect={selectedId => setPlanDraft(draft => ({ ...draft, selectedId }))} onRoundsChange={rounds => setPlanDraft(draft => ({ ...draft, rounds }))} onClose={closePlan} onConfirm={confirmPlan} onCancelPlan={cancelPlanWithReminder}/>}</div>}
+    {(planOpen || planLeaving) && !session && <div className={planLeaving ? 'dialog-leave' : undefined}>
+      <FocusPlanSheet habit={sheetProject.kind==='habit'} deferredSettlement={sheetPlan?.deferredSettlement===true} taskPicker={taskPicker} subtasks={sheetProject.subtasks} selectedId={sheetPlan?.subtaskId ?? planDraft.selectedId ?? ''} rounds={planDraft.rounds} focusMinutes={sheetProject.kind==='habit'&&sheetMode!=='marathon'?preferences.habitFocusMinutes:preferences.focusMinutes} breakMinutes={preferences.breakMinutes} locked={sheetLocked} unstarted={sheetUnstarted} mode={sheetMode} endAtDraft={planDraft.endAt} cancellationReason={sheetPlan?.cancellationReason} cancellationNote={sheetPlan?.cancellationNote} onModeChange={mode => setPlanDraft(draft => ({ ...draft, mode }))} onEndAtDraftChange={endAt => setPlanDraft(draft => ({ ...draft, endAt }))} onSelect={selectedId => setPlanDraft(draft => ({ ...draft, selectedId }))} onRoundsChange={rounds => setPlanDraft(draft => ({ ...draft, rounds }))} onClose={closePlan} onConfirm={confirmPlan} onCancelPlan={cancelPlanWithReminder}/>
+    </div>}
   </div>;
 }

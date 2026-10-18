@@ -64,9 +64,11 @@ test('settings page keeps grouped rows, quiet secondary actions, and 44px target
   await expect(page.getByLabel('开启专注完整性')).not.toBeChecked();
   await page.getByLabel('开启专注完整性').check();
 
-  for (const heading of ['计时', '专注保护', '提醒', '世界', '高级', '蓝图库', '方块材质包', '本地备份']) {
+  for (const heading of ['计时与专注', '外观与世界', '附加功能', '高级与备份']) {
     await expect(page.getByRole('heading', { name: heading })).toBeVisible();
   }
+  await page.getByRole('button',{name:/^习惯任务/}).click();
+  await page.getByRole('button',{name:'保护规则与计划日',exact:true}).click();
 
   // F03: units live at the end of each field label; numeric controls keep a
   // fixed 64px column aligned to the row's right content edge. The draft
@@ -207,15 +209,16 @@ test('settings page keeps grouped rows, quiet secondary actions, and 44px target
   await expect(thresholdInput).toBeEnabled();
   await expect(thresholdInput).toHaveValue('12');
 
-  // V27: rows live inside translucent liquid-glass cards with a blurred
-  // backdrop; rows themselves stay transparent and separate via hairlines.
+  // Rows stay inside the fixed translucent film and separate via hairlines.
   const card = page.locator('.settings-group .settings-list').first();
   const cardMaterial = await card.evaluate((element) => {
     const style = getComputedStyle(element);
     return { background: style.backgroundColor, blur: style.backdropFilter, radius: style.borderRadius };
   });
   expect(cardMaterial.background, JSON.stringify(cardMaterial)).not.toBe('rgba(0, 0, 0, 0)');
-  expect(cardMaterial.blur).toContain('blur');
+  // A static settings page keeps the fixed glass film, not a full-card live
+  // backdrop readback on each disclosure frame. Real-world sheets keep blur.
+  expect(cardMaterial.blur).toBe('none');
   expect(Number.parseFloat(cardMaterial.radius)).toBe(0);
   const row = page.locator('.settings-group .setting-row').first();
   await expect(row).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
@@ -373,7 +376,7 @@ test('reduced transparency falls back to solid settings surfaces', async ({ page
     features: [{ name: 'prefers-reduced-transparency', value: 'reduce' }],
   });
   await openSettings(page);
-  for (const surface of ['.settings-group .settings-list', '.backup-panel']) {
+  for (const surface of ['.settings-group .settings-list']) {
     const material = await page.locator(surface).first().evaluate((element) => {
       const style = getComputedStyle(element);
       return { background: style.backgroundColor, blur: style.backdropFilter };

@@ -12,7 +12,9 @@
     "./astronomy": "./src/astronomy.ts",
     "./glass-material": "./src/glass-material.ts",
     "./world-color-adjustment": "./src/world-color-adjustment.ts",
-    "./holiday-buildings": "./src/holiday-buildings.ts"
+    "./holiday-buildings": "./src/holiday-buildings.ts",
+    "./building-cpu-cache": "./src/building-cpu-cache.ts",
+    "./world-scene-cache": "./src/world-scene-cache.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

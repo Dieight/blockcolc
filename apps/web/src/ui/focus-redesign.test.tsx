@@ -95,7 +95,7 @@ describe('statistics template contracts', () => {
   });
   it('starts achievements collapsed without changing the underlying unlocked projection', () => {
     const html = renderToStaticMarkup(<AchievementsSection entries={[]}/>);
-    expect(html).toContain('<details class="achievements-disclosure">');
+    expect(html).toContain('<details class="achievements-disclosure" data-animated-details="true" data-expanded="false">');
     expect(html).not.toContain(' open');
     expect(html).toContain('0 / 0 已解锁');
   });

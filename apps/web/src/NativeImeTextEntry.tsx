@@ -1,4 +1,5 @@
-import { useEffect, useLayoutEffect, useRef } from 'react';
+import { useLayoutEffect, useRef } from 'react';
+import { bindNativeIme } from './native-ime';
 
 export type NativeImeInputRef = { current: HTMLInputElement | null };
 
@@ -19,6 +20,7 @@ export function NativeImeTextEntry({
   maxLength,
   onValueChange,
   onNativeKeyDown,
+  deferCompositionUpdates=false,
 }: {
   targetRef: NativeImeInputRef;
   name: string;
@@ -32,8 +34,10 @@ export function NativeImeTextEntry({
   maxLength?: number;
   onValueChange?: (value: string) => void;
   onNativeKeyDown?: (event: KeyboardEvent) => void;
+  deferCompositionUpdates?:boolean;
 }) {
   const host = useRef<HTMLSpanElement>(null);
+  const input = useRef<HTMLInputElement | null>(null);
   const initialValue = useRef(defaultValue);
   const valueChangeRef = useRef(onValueChange);
   const keyDownRef = useRef(onNativeKeyDown);
@@ -43,44 +47,45 @@ export function NativeImeTextEntry({
   useLayoutEffect(() => {
     const element = document.createElement('input');
     element.value = initialValue.current;
-    targetRef.current = element;
+    input.current = element;
     host.current?.append(element);
-
-    // Android WebView can update the native editing buffer before React emits
-    // a synthetic change. Retain every native commit boundary, while the DOM
-    // remains the source of truth read by submit handlers.
-    const retain = () => valueChangeRef.current?.(element.value);
-    const keydown = (event: KeyboardEvent) => keyDownRef.current?.(event);
-    for (const type of ['input', 'compositionupdate', 'compositionend', 'change', 'blur']) {
-      element.addEventListener(type, retain);
-    }
-    element.addEventListener('keydown', keydown);
-    if (autoFocus) window.requestAnimationFrame(() => element.focus());
-
+    const unbind = bindNativeIme(element,
+      value => valueChangeRef.current?.(value), event => keyDownRef.current?.(event),deferCompositionUpdates,
+      typeof window!=='undefined'&&'BlockcolcNativeInput' in window);
     return () => {
-      retain();
-      for (const type of ['input', 'compositionupdate', 'compositionend', 'change', 'blur']) {
-        element.removeEventListener(type, retain);
-      }
-      element.removeEventListener('keydown', keydown);
-      if (targetRef.current === element) targetRef.current = null;
+      unbind();
+      input.current = null;
       element.remove();
     };
-  }, [autoFocus, targetRef]);
+  }, []);
 
-  useEffect(() => {
-    const element = targetRef.current;
+  // Updating a ref or autofocus must not recreate an active IME connection.
+  useLayoutEffect(() => {
+    const element = input.current;
+    targetRef.current = element;
+    return () => { if (targetRef.current === element) targetRef.current = null; };
+  }, [targetRef]);
+
+  useLayoutEffect(() => {
+    const element = input.current;
     if (!element) return;
-    element.name = name;
-    element.id = id ?? '';
-    element.disabled = disabled;
-    element.required = required;
-    element.placeholder = placeholder ?? '';
-    if (maxLength !== undefined) element.maxLength = maxLength;
-    else element.removeAttribute('maxlength');
-    if (ariaLabel) element.setAttribute('aria-label', ariaLabel);
-    else element.removeAttribute('aria-label');
-  }, [ariaLabel, disabled, id, name, placeholder, required, maxLength, targetRef]);
+    // Configure editing attributes before autofocus. Leave unchanged attributes
+    // untouched so rerenders do not mutate the focused editing element.
+    if (element.name !== name) element.name = name;
+    if (element.id !== (id ?? '')) element.id = id ?? '';
+    if (element.disabled !== disabled) element.disabled = disabled;
+    if (element.required !== required) element.required = required;
+    if (element.placeholder !== (placeholder ?? '')) element.placeholder = placeholder ?? '';
+    if (maxLength !== undefined && element.maxLength !== maxLength) element.maxLength = maxLength;
+    else if (maxLength === undefined && element.hasAttribute('maxlength')) element.removeAttribute('maxlength');
+    if (ariaLabel && element.getAttribute('aria-label') !== ariaLabel) element.setAttribute('aria-label', ariaLabel);
+    else if (!ariaLabel && element.hasAttribute('aria-label')) element.removeAttribute('aria-label');
+  }, [ariaLabel, disabled, id, name, placeholder, required, maxLength]);
+
+  useLayoutEffect(() => {
+    const element = input.current;
+    if (autoFocus && element && document.activeElement !== element) element.focus();
+  }, [autoFocus]);
 
   return <span className="native-ime-entry" ref={host}/>;
 }

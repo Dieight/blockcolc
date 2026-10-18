@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { PixelIcon, PixelPortal } from './PixelIcon';
+import { PixelIcon, PixelExpand, PixelNote } from './PixelIcon';
 import { PixelProgress, pixelProgressCells } from './PixelProgress';
 
 describe('pixel UI primitives', () => {
@@ -14,19 +14,20 @@ describe('pixel UI primitives', () => {
     expect(html).toContain('data-icon-part="task-line-2"');
     expect(html).not.toContain('canvas');
   });
-  it('keeps ordinary glyphs static and splits only the four navigation motifs',()=>{
+  it('keeps ordinary glyphs static and splits the animated navigation/action motifs',()=>{
     expect(renderToStaticMarkup(<PixelIcon name="plus"/>).match(/<path/g)).toHaveLength(1);
     for(const [name,part] of [['clock','minute'],['chart','bar-2'],['gear','outer']] as const)
       expect(renderToStaticMarkup(<PixelIcon name={name}/>)).toContain(`data-icon-part="${part}"`);
   });
 
-  it('keeps the minimal entry green-framed with an unpainted center', () => {
-    const html = renderToStaticMarkup(<PixelPortal/>);
-    expect(html).toContain('fill-rule="evenodd"');
-    expect(html).toContain('--portal-icon-frame');
-    expect(html).not.toContain('--portal-field');
-    expect(html).not.toContain('--portal-energy');
-    expect(html.match(/<path/g)).toHaveLength(3);
+  it('gives world expansion and notes distinct crisp square-grid glyphs', () => {
+    const html = renderToStaticMarkup(<PixelExpand/>),note=renderToStaticMarkup(<PixelNote/>);
+    expect(html).toContain('data-pixel-icon="expand"');
+    expect(note).toContain('data-pixel-icon="note"');
+    expect(html).toContain('shape-rendering="crispEdges"');
+    expect(note).toContain('shape-rendering="crispEdges"');
+    expect(html).not.toContain('portal');
+    expect(note).not.toBe(renderToStaticMarkup(<PixelIcon name="tasks"/>));
   });
 
   it('retains continuous values rather than rounding to complete cells', () => {

@@ -3,6 +3,7 @@ import { PixelCheck as Check, PixelTrophy, PixelDisclosure } from './PixelIcon';
 import { PixelProgress } from './PixelProgress';
 import { useEffect, useRef } from 'react';
 import { useBackLayer } from '../back-layer';
+import { AnimatedDetails } from './AnimatedDetails';
 
 export interface AchievementEntry {
   id: string;
@@ -57,10 +58,9 @@ export function AchievementsPanel({ entries, emptyHint = t("还没有可展示�
 export function AchievementsSection({ entries }: { entries?: ReadonlyArray<AchievementEntry> }) {
   useI18n();
   if (entries === undefined) return null;
-  return <details className="achievements-disclosure">
-    <summary><PixelTrophy/><span>{t("成就")}</span><small>{entries.filter(entry => entry.unlocked).length} / {entries.length} {t("已解锁")}</small><PixelDisclosure/></summary>
+  return <AnimatedDetails className="achievements-disclosure" summary={<><PixelTrophy/><span>{t("成就")}</span><small>{entries.filter(entry => entry.unlocked).length} / {entries.length} {t("已解锁")}</small><PixelDisclosure/></>}>
     <AchievementsPanel entries={entries}/>
-  </details>;
+  </AnimatedDetails>;
 }
 
 /** One non-blocking batch dialog for historical and newly unlocked entries. */

@@ -1,5 +1,6 @@
 import { parseDomainState, type DomainState, type ISOInstant } from "@blockcolc/domain";
-import type { BackupEnvelopeV1, ImportPreview, StateSummary } from "./model.js";
+import type { BackupEnvelope, ParsedBackupEnvelope, ImportPreview, StateSummary } from "./model.js";
+import { MAX_EXPANDED_BACKUP_BYTES, packBackupPayload, unpackBackupPayload } from './compact-backup.js';
 
 export class BackupValidationError extends Error {
   readonly code = "INVALID_BACKUP";
@@ -28,7 +29,7 @@ export function cloneAndParseState(value: unknown): DomainState {
   return parseDomainState(structuredClone(value));
 }
 
-export async function createBackupEnvelope(state: unknown, exportedAt: Date): Promise<BackupEnvelopeV1> {
+export async function createBackupEnvelope(state: unknown, exportedAt: Date): Promise<BackupEnvelope> {
   const payload = cloneAndParseState(state);
   const unsigned = {
     format: "tomato-clock-backup" as const,
@@ -36,10 +37,18 @@ export async function createBackupEnvelope(state: unknown, exportedAt: Date): Pr
     exportedAt: validInstant(exportedAt.toISOString(), "exportedAt"),
     payload,
   };
-  return { ...unsigned, checksum: await sha256(unsigned) };
+  const legacyBytes = new TextEncoder().encode(JSON.stringify({ ...unsigned, checksum: '0'.repeat(64) })).byteLength;
+  if (legacyBytes <= MAX_BACKUP_BYTES) return { ...unsigned, checksum: await sha256(unsigned) };
+  if (legacyBytes > MAX_EXPANDED_BACKUP_BYTES) throw new BackupValidationError('Backup exceeds the 512 MiB expanded limit');
+  const compact = { ...unsigned, schemaVersion: 2 as const, payload: packBackupPayload(payload) };
+  // Apply the same reference-expansion budget on both sides of the boundary.
+  try { unpackBackupPayload(compact.payload); }
+  catch (cause) { throw new BackupValidationError('Backup cannot be safely restored', { cause }); }
+  assertBackupSize(JSON.stringify({ ...compact, checksum: '0'.repeat(64) }));
+  return { ...compact, checksum: await sha256(compact) };
 }
 
-export async function parseBackup(input: string): Promise<BackupEnvelopeV1> {
+export async function parseBackup(input: string): Promise<ParsedBackupEnvelope> {
   assertBackupSize(input);
   let raw: unknown;
   try {
@@ -49,20 +58,21 @@ export async function parseBackup(input: string): Promise<BackupEnvelopeV1> {
   }
   const envelope = exactObject(raw, ["format", "schemaVersion", "exportedAt", "payload", "checksum"]);
   if (envelope.format !== "tomato-clock-backup") throw new BackupValidationError("Unknown backup format");
-  if (envelope.schemaVersion !== 1) throw new BackupValidationError("Unsupported backup schema version");
+  if (envelope.schemaVersion !== 1 && envelope.schemaVersion !== 2) throw new BackupValidationError("Unsupported backup schema version");
+  const schemaVersion: 1 | 2 = envelope.schemaVersion;
   const exportedAt = validInstant(envelope.exportedAt, "exportedAt");
   if (typeof envelope.checksum !== "string" || !/^[a-f0-9]{64}$/.test(envelope.checksum)) {
     throw new BackupValidationError("Invalid backup checksum");
   }
-  const rawUnsigned = { format: "tomato-clock-backup" as const, schemaVersion: 1 as const, exportedAt, payload: envelope.payload };
+  const rawUnsigned = { format: "tomato-clock-backup" as const, schemaVersion, exportedAt, payload: envelope.payload };
   if (await sha256(rawUnsigned) !== envelope.checksum) throw new BackupValidationError("Backup checksum mismatch");
   let payload: DomainState;
   try {
-    payload = cloneAndParseState(envelope.payload);
+    payload = cloneAndParseState(schemaVersion === 2 ? unpackBackupPayload(envelope.payload) : envelope.payload);
   } catch (cause) {
     throw new BackupValidationError("Invalid domain state", { cause });
   }
-  const normalized = { format: "tomato-clock-backup" as const, schemaVersion: 1 as const, exportedAt, payload };
+  const normalized = { format: "tomato-clock-backup" as const, schemaVersion, exportedAt, payload };
   return { ...normalized, checksum: envelope.checksum };
 }
 
@@ -72,9 +82,9 @@ function assertBackupSize(input: string): void {
   }
 }
 
-export function previewOf(envelope: BackupEnvelopeV1): ImportPreview {
+export function previewOf(envelope: ParsedBackupEnvelope): ImportPreview {
   return {
-    schemaVersion: 1,
+    schemaVersion: envelope.schemaVersion,
     exportedAt: envelope.exportedAt,
     checksum: envelope.checksum,
     summary: stateSummary(envelope.payload),

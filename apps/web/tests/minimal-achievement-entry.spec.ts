@@ -39,6 +39,12 @@ async function minimal(page:Page){
  await expect(page.locator('.minimal-clock-gesture')).toBeVisible();
 }
 
+async function freezeDragClock(page:Page){
+ await waitForPreparedWorld(page);
+ await page.clock.setSystemTime(new Date('2026-09-06T08:00:00Z'));
+ await page.clock.pauseAt(new Date('2026-09-06T08:00:01Z'));
+}
+
 test('settings launches minimal focus, persists it, settles once and shows real achievements',async({page})=>{
  await page.clock.install({time:new Date('2026-09-06T08:00:00Z')});
  await minimal(page);
@@ -70,9 +76,9 @@ test('settings launches minimal focus, persists it, settles once and shows real 
  // DF-UI-05: the idle exit starts veiled but keyboard reachable; focus+Enter 返回完整模式.
  await page.locator(".minimal-exit").focus();
  await page.keyboard.press("Enter"); // DF-UI-05: keyboard path works even while the exit is veiled.
- // The painted 500 ms portal reveal uses the clock owned by this test.
- await expect(page.locator('.mode-portal__reveal-cover')).toBeVisible();
- await page.clock.runFor(550);
+ // The 720 ms viewport transition uses the clock owned by this test.
+ await expect(page.locator('.mode-transition')).toBeVisible();
+ await page.clock.runFor(900);
  await expect(page.locator('.app-shell')).toHaveAttribute('data-mode-portal-active','false');
  await page.getByRole('button',{name:'统计',exact:true}).click();
  const unlockDialog=page.getByRole('dialog',{name:'新的成就'});
@@ -110,6 +116,9 @@ test('a failed schedule write preserves the selected clock and never starts doma
 test('clock drag and double tap stay isolated from the blank-panel exit gesture',async({page})=>{
  await page.clock.install({time:new Date('2026-09-06T08:00:00Z')});
  await minimal(page);
+ // Measure the 250ms hold with a paused clock, not a real-time assertion
+ // after a software-WebGL input round trip. Avoid the exact 12px axis edge.
+ await freezeDragClock(page);
  const clock=page.locator('.minimal-clock-gesture');
  await clock.dblclick();
  expect((await snapshot(page)).activeFocusSession).toBeNull();
@@ -117,11 +126,13 @@ test('clock drag and double tap stay isolated from the blank-panel exit gesture'
  const box=(await clock.boundingBox())!;
  await page.mouse.move(box.x+box.width/2,box.y+box.height/2);
  await page.mouse.down();
- await page.mouse.move(box.x+box.width/2,box.y+box.height/2-12,{steps:2});
+ await page.mouse.move(box.x+box.width/2,box.y+box.height/2-16,{steps:2});
  await expect(clock).toHaveAttribute('data-round-detent','holding');
- await page.clock.runFor(650);
- await page.mouse.move(box.x+box.width/2,box.y+box.height/2-24,{steps:2});
+ await page.clock.runFor(250);
+ await expect(clock).not.toHaveAttribute('data-round-detent','holding');
+ await page.mouse.move(box.x+box.width/2,box.y+box.height/2-32,{steps:2});
  await page.mouse.up();
+ await page.clock.resume();
  await expect(clock).toHaveAccessibleName(/专注到今天 16:10/);
  expect((await snapshot(page)).activeFocusSession).toBeNull();
  const blank=page.locator('.focus-face-context');
@@ -216,6 +227,7 @@ test('minimal rest restores its deadline, skips on double tap and returns to rem
 test('dragging back to now clears the end-time draft and restores the live clock',async({page})=>{
  await page.clock.install({time:new Date('2026-09-06T08:00:00Z')});
  await minimal(page);
+ await freezeDragClock(page);
  const clock=page.locator('.minimal-clock-gesture');
  const box=(await clock.boundingBox())!;
  const x=box.x+box.width/2,y=box.y+box.height/2;
@@ -223,11 +235,13 @@ test('dragging back to now clears the end-time draft and restores the live clock
  await page.mouse.down();
  await page.mouse.move(x,y-18,{steps:2});
  await expect(clock).toHaveAttribute('data-round-detent','holding');
- await page.clock.runFor(650);
+ await page.clock.runFor(250);
+ await expect(clock).not.toHaveAttribute('data-round-detent','holding');
  await page.mouse.move(x,y-30,{steps:2});
  await expect(clock).toHaveAccessibleName(/16:10/);
  await page.mouse.move(x,y,{steps:4});
  await page.mouse.up();
+ await page.clock.resume();
  await expect(clock).toHaveAccessibleName(/当前时间 16:00/);
  await expect(page.locator('.minimal-clock-selection')).toHaveCount(0);
  await clock.press('ArrowUp');
@@ -281,8 +295,8 @@ test('interrupting minimal focus preserves the plan and returns through the lega
   await expect(page.locator('.minimal-clock-gesture')).toBeVisible();
   await page.locator('.minimal-exit').focus();
   await page.keyboard.press('Enter');
-  await expect(page.locator('.mode-portal__reveal-cover')).toBeVisible();
-  await page.clock.runFor(550);
+  await expect(page.locator('.mode-transition')).toBeVisible();
+  await page.clock.runFor(900);
   await expect(page.locator('.app-shell')).toHaveAttribute('data-mode-portal-active','false');
   await expect(page.getByRole('button',{name:'进入极简模式'})).toBeVisible();
   const enterMinimal=page.getByRole('button',{name:'进入极简模式'});

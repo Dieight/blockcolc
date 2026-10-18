@@ -5,7 +5,7 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Release-Common.ps1')
 & (Join-Path $PSScriptRoot 'Test-FullGatePolicy.ps1')
 
-Invoke-External -FilePath 'node' -Arguments @('--test', (Join-Path $PSScriptRoot 'check-ui-assets.test.mjs'), (Join-Path $PSScriptRoot 'web-release-report.test.mjs'), (Join-Path $PSScriptRoot 'full-run-policy.test.mjs'))
+Invoke-External -FilePath 'node' -Arguments @('--test', (Join-Path $PSScriptRoot 'check-ui-assets.test.mjs'), (Join-Path $PSScriptRoot 'web-release-report.test.mjs'), (Join-Path $PSScriptRoot 'web-release-suites.test.mjs'), (Join-Path $PSScriptRoot 'full-run-policy.test.mjs'))
 
 function Assert-True {
     param([Parameter(Mandatory)][bool]$Condition, [Parameter(Mandatory)][string]$Message)

@@ -1,3 +1,4 @@
+import { openSecondarySetting } from './settings-controls';
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -505,9 +506,9 @@ test('compares fixed 26.3 blockstate rotation on the production renderer with re
     await page.evaluate(() => (window as typeof window & { __blockstateRotationRenderer: VoxelRenderer })
       .__blockstateRotationRenderer.setVisible(false));
 
-    await page.getByRole('button', { name: '设置', exact: true }).click();
+    await page.getByRole('button', { name: '设置', exact: true }).click(); await openSecondarySetting(page,'方块材质包');
     await page.getByLabel('导入 Java 资源包 ZIP').setInputFiles(PINNED_CLIENT_JAR);
-    await expect(page.locator('.resource-pack-panel .backup-notice'))
+    await expect(page.locator('.resource-pack-setting .backup-notice'))
       .toContainText('已导入并启用', { timeout: 150_000 });
     const selectedPack = await page.evaluate(async (databaseName) => {
       const database = await new Promise<IDBDatabase>((resolveDatabase, rejectDatabase) => {

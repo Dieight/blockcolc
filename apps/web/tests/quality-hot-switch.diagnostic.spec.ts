@@ -1,3 +1,4 @@
+import { openSecondarySetting } from './settings-controls';
 import { expect, test, type Page } from '@playwright/test';
 import { strToU8, zipSync } from 'fflate';
 import { deflateSync } from 'node:zlib';
@@ -37,7 +38,7 @@ test('keeps the resident world while quality projections reverse across day and 
   const dayBalanced = await readQualityProjection(canvas);
   expect(dayBalanced.qualityTier).toBe('balanced');
   await captureProjectionScreenshot(canvas, testInfo, 'day-balanced.png');
-  await page.getByRole('button', { name: '设置', exact: true }).click();
+  await page.getByRole('button', { name: '设置', exact: true }).click(); await openSecondarySetting(page,'方块材质包');
   await armOneShotQualityDatasetFailure(page);
   await page.getByRole('group', { name: '光影质量' }).getByRole('button', { name: '精致', exact: true }).click();
   await expect.poll(async () => page.evaluate(() => (window as typeof window & { __qualityDatasetFaultTriggered?: boolean }).__qualityDatasetFaultTriggered)).toBe(true);
@@ -178,7 +179,7 @@ test('reports a lost WebGL context as a failed quality request without publishin
       extension.loseContext();
     });
   });
-  await page.getByRole('button', { name: '设置', exact: true }).click();
+  await page.getByRole('button', { name: '设置', exact: true }).click(); await openSecondarySetting(page,'方块材质包');
   await page.getByRole('group', { name: '光影质量' }).getByRole('button', { name: '流畅', exact: true }).click();
   await expect.poll(async () => {
     const phases = (await qualitySnapshot(page))?.operations[operation]?.phases ?? [];
@@ -232,21 +233,21 @@ test('host refresh cancellation clears only its own loading state and explicit r
   const canvas = page.getByLabel('项目建筑世界');
   await waitForStableWorld(canvas);
   await expect(canvas).toHaveAttribute('data-active-resource-pack-id', '');
-  await page.getByRole('button', { name: '设置', exact: true }).click();
+  await page.getByRole('button', { name: '设置', exact: true }).click(); await openSecondarySetting(page,'方块材质包');
   await page.getByLabel('导入 Java 资源包 ZIP').setInputFiles({
     name: 'quality-refresh.zip', mimeType: 'application/zip', buffer: Buffer.from(makeQualityRefreshPack()),
   });
-  await expect(page.locator('.resource-pack-panel .backup-notice')).toContainText('已导入并启用');
+  await expect(page.locator('.resource-pack-setting .backup-notice')).toContainText('已导入并启用');
 
   await page.evaluate(() => {
     (window as typeof window & { __qualityRefreshFault?: { holdNextRaf: boolean } }).__qualityRefreshFault!.holdNextRaf = true;
   });
   await page.getByRole('button', { name: '计时', exact: true }).click();
   await expect(page.getByText('正在更新世界材质…')).toBeVisible();
-  await page.getByRole('button', { name: '设置', exact: true }).click();
+  await page.getByRole('button', { name: '设置', exact: true }).click(); await openSecondarySetting(page,'方块材质包');
   await expect(page.getByText('正在更新世界材质…')).toHaveCount(0);
-  await page.locator('.resource-pack-original').getByRole('button', { name: '使用' }).click();
-  const importedPack = page.locator('.resource-pack-list li').filter({ hasText: 'quality-refresh' });
+  await page.locator('.resource-pack-current').getByRole('button', { name: '使用' }).click();
+  const importedPack = page.locator('.resource-pack-setting-list li').filter({ hasText: 'quality-refresh' });
   await importedPack.getByRole('button', { name: '设为基础' }).click();
   await page.evaluate(() => {
     const fault = (window as typeof window & { __qualityRefreshFault?: { heldRaf: Array<() => void> } }).__qualityRefreshFault!;
@@ -337,7 +338,7 @@ async function waitForInitialReveal(page: Page, canvas: import('@playwright/test
 }
 
 async function switchQuality(page: Page, canvas: import('@playwright/test').Locator, preference: Preference, label: string): Promise<void> {
-  await page.getByRole('button', { name: '设置', exact: true }).click();
+  await page.getByRole('button', { name: '设置', exact: true }).click(); await openSecondarySetting(page,'方块材质包');
   const group = page.getByRole('group', { name: '光影质量' });
   await group.getByRole('button', { name: label, exact: true }).click();
   await expect(group.getByRole('button', { name: label, exact: true })).toHaveAttribute('aria-pressed', 'true');
@@ -362,7 +363,7 @@ async function qualityReadCounts(page: Page): Promise<{ metadata: number; full: 
 }
 
 async function setDebugScene(page: Page, time: string): Promise<void> {
-  await page.getByRole('button', { name: '设置', exact: true }).click();
+  await page.getByRole('button', { name: '设置', exact: true }).click(); await openSecondarySetting(page,'方块材质包');
   const enabled = page.getByLabel('临时调试世界');
   if (!(await enabled.isChecked())) await enabled.check();
   await page.locator('#world-debug-weather .choice-menu-trigger').click();

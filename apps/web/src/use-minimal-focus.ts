@@ -17,6 +17,7 @@ export function useMinimalFocus({service, preferences, idleVisible, readPlan, wr
   latest.current = {readPlan, writePlan, dispatch};
   const starter = useMemo(() => createMinimalFocusStarter({
     snapshot: () => service.snapshot(),
+    replacementRevision: () => service.stateReplacementRevision(),
     readPlan: () => latest.current.readPlan(),
     writePlan: plan => latest.current.writePlan(plan),
     dispatch: command => latest.current.dispatch(command) as Promise<ApplicationResult>,

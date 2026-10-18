@@ -1,4 +1,5 @@
 import {expect,test,type Page} from '@playwright/test';
+import {openSecondarySetting,openRollbackBackups} from './settings-controls';
 import {readPersistedDomainState} from './persisted-domain-state';
 import {expandGlassSetting} from './expand-glass-setting';
 import {execute, type DomainCommand} from '@blockcolc/domain';
@@ -112,11 +113,11 @@ test('physical sliders support ordinary drag, predicted slingshot and precise la
 
 test('refresh preserves the previous contents and geometry; weekday taps paint before saving',async({page})=>{
  test.setTimeout(60_000);await setup(page);await page.getByRole('button',{name:'设置',exact:true}).click();
- const refresh=page.getByRole('button',{name:'刷新可恢复备份',exact:true}),panel=page.locator('.rollback-list');
+ await openRollbackBackups(page);const refresh=page.getByRole('button',{name:'刷新可恢复备份',exact:true}),panel=page.locator('.rollback-list');
  await refresh.scrollIntoViewIfNeeded();const oldText=await panel.innerText(),oldBox=(await panel.boundingBox())!;
  await refresh.click();await expect(refresh).toHaveAttribute('aria-busy','true');expect(await panel.innerText()).toBe(oldText);
  const after=(await panel.boundingBox())!;expect(after.height).toBeCloseTo(oldBox.height,0);await expect(refresh).toHaveAttribute('aria-busy','false');
- const monday=page.getByRole('group',{name:'计划专注日'}).getByRole('button',{name:'一',exact:true});
+ await openSecondarySetting(page,'保护规则与计划日');const monday=page.getByRole('group',{name:'计划专注日'}).getByRole('button',{name:'一',exact:true});
  await monday.click();await expect(monday).toHaveAttribute('aria-pressed','false');
  await expect.poll(async()=>(await readPersistedDomainState(page)).state.calendar.restWeekdays.includes(1)).toBe(true);
 });

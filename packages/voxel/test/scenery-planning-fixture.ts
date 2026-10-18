@@ -8,7 +8,6 @@ export const SCENERY_PLANNING_CASES = [
   { style: 'ocean-island', count: 1, version: 4 },
   { style: 'natural-valley', count: 7, version: 4 },
   { style: 'ocean-island', count: 12, version: 4 },
-  { style: 'natural-valley', count: 1, version: 3 },
 ] as const;
 
 export function sceneryPlanningFixture(style: TerrainEnvironmentStyle, count: number, version: TerrainGenerationVersion, worldSeed = 'world-default') {

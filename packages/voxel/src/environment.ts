@@ -328,7 +328,10 @@ export function fogRangeForView(kind: WeatherKind, cameraDistance: number, conte
   const distance = Math.max(1, Number.isFinite(cameraDistance) ? cameraDistance : 1);
   const radius = Math.max(6, Number.isFinite(contentRadius) ? contentRadius : 6);
   if (kind === "mist") {
-    return { near: Math.max(18, distance - radius * 0.22), far: distance + radius * 2.0 };
+    // A camera-depth near plane just before the focus point leaves the entire
+    // foreground clear. Start the volume at the camera instead, keeping its
+    // thickness proportional to framing so mist also covers the lower view.
+    return { near: 0, far: Math.max(32,distance*2.65,Math.min(radius*6.4,distance*3.15)) };
   }
   if (kind === "rain") {
     return { near: Math.max(22, distance + radius * 0.05), far: distance + radius * 4.1 };

@@ -121,7 +121,8 @@ export interface AutomaticContinuationDeadlinePort {
 }
 
 export interface AutomaticContinuationCoordinatorPorts {
-  service: Pick<ApplicationService, 'snapshot' | 'resume' | 'startScheduledFocus' | 'subscribeCommitted'>;
+  service: Pick<ApplicationService, 'snapshot' | 'resume' | 'startScheduledFocus' | 'subscribeCommitted'>
+    & Partial<Pick<ApplicationService, 'stateReplacementRevision'>>;
   deadlines: AutomaticContinuationDeadlinePort;
   readPlan: () => RoundPlan | null;
   /** Must throw if the local round-plan write did not commit. */
@@ -157,6 +158,8 @@ export function createAutomaticContinuationCoordinator(ports: AutomaticContinuat
   let tail: Promise<void> = Promise.resolve();
   let disposed = false;
   let lifecycleGeneration = 0;
+  let baselineGeneration = 0;
+  const retiredAuthorizations = new Set<string>();
   let startPromise: Promise<void> | null = null;
   let removeDeadlineListener: (() => Promise<void> | void) | null = null;
   let removeSavedPlanListener: (() => void) | null = null;
@@ -199,7 +202,17 @@ export function createAutomaticContinuationCoordinator(ports: AutomaticContinuat
       removeDeadlineListener = removeListener ?? null;
       observedAuthorizationId ??= ports.readPlan()?.automaticContinuation?.authorizationId ?? null;
       removeSavedPlanListener = subscribeSavedPlan(() => { void reconcile(); });
-      removeServiceListener = ports.service.subscribeCommitted(() => { void reconcile(); });
+      removeServiceListener = ports.service.subscribeCommitted(event => {
+        if (event.replacement) {
+          baselineGeneration += 1;
+          const authorization = ports.readPlan()?.automaticContinuation?.authorizationId ?? observedAuthorizationId;
+          if (authorization) retiredAuthorizations.add(authorization);
+          try { persist(null); }
+          catch (error) { lastResult = { startedSessionIds: [], retryable: true, error }; }
+          if (authorization) void cancelAuthorization(authorization);
+        }
+        void reconcile();
+      });
       const target = getEventTarget();
       if (target) {
         const resume = () => {
@@ -290,6 +303,7 @@ export function createAutomaticContinuationCoordinator(ports: AutomaticContinuat
 
   async function runCycle(options: { resume: boolean; trigger?: AutomaticContinuationDeadlineEvent }): Promise<AutomaticContinuationRunResult> {
     const startedSessionIds: string[] = [];
+    const baseline = baselineGeneration;
     try {
       if (disposed) return remember({ startedSessionIds, retryable: false });
       observedAuthorizationId ??= ports.readPlan()?.automaticContinuation?.authorizationId ?? null;
@@ -298,6 +312,7 @@ export function createAutomaticContinuationCoordinator(ports: AutomaticContinuat
         if (!resumed.ok) return remember({ startedSessionIds, retryable: true });
       }
 
+      if (baseline !== baselineGeneration) return remember({ startedSessionIds, retryable: false });
       let state = ports.service.snapshot();
       let plan = reconcileAndPersist(state);
       const currentAuthorizationId = plan?.automaticContinuation?.authorizationId ?? null;
@@ -312,7 +327,7 @@ export function createAutomaticContinuationCoordinator(ports: AutomaticContinuat
       }
 
       for (let iteration = 0; iteration < MAX_CATCH_UP_ROUNDS; iteration += 1) {
-        if (disposed) break;
+        if (disposed || baseline !== baselineGeneration) return remember({ startedSessionIds, retryable: false });
         const preferences = ports.preferences();
         state = ports.service.snapshot();
         plan = reconcileAndPersist(state);
@@ -331,6 +346,7 @@ export function createAutomaticContinuationCoordinator(ports: AutomaticContinuat
           return remember({ startedSessionIds, retryable: false });
         }
 
+        if (baseline !== baselineGeneration) return remember({ startedSessionIds, retryable: false });
         plan = enforceAuthorizationPolicy(plan, state, preferences.autoContinueFocus);
         if (plan !== ports.readPlan()) persist(plan);
         const authorization = plan.automaticContinuation;
@@ -416,7 +432,10 @@ export function createAutomaticContinuationCoordinator(ports: AutomaticContinuat
         const started = await ports.service.startScheduledFocus(command, {
           sessionId: reservation.sessionId,
           scheduledAt: reservation.scheduledAt,
+          previousSessionIds: plan.reportedSessionIds,
+          ...(authorization.replacementRevision ? { replacementRevision: authorization.replacementRevision } : {}),
         });
+        if (baseline !== baselineGeneration) return remember({ startedSessionIds, retryable: false });
         if (!started.ok) {
           return remember({ startedSessionIds, retryable: true, error: started });
         }
@@ -439,7 +458,13 @@ export function createAutomaticContinuationCoordinator(ports: AutomaticContinuat
   }
 
   function reconcileAndPersist(state: DomainState): RoundPlan | null {
-    const current = ports.readPlan();
+    let current = ports.readPlan();
+    if (current?.automaticContinuation && (retiredAuthorizations.has(current.automaticContinuation.authorizationId)
+      || (current.automaticContinuation.replacementRevision ?? 0) !== (ports.service.stateReplacementRevision?.() ?? 0))) {
+      retiredAuthorizations.add(current.automaticContinuation.authorizationId);
+      void cancelAuthorization(current.automaticContinuation.authorizationId);
+      persist(null); current = null;
+    }
     const activeProjectId = state.activeProjectId ?? current?.projectId ?? '';
     const next = reconcileRoundPlan(current, state, activeProjectId, nowMs(),
       ports.preferences().breakMinutes * 60_000, ports.preferences().breakMinutes * 60_000);
@@ -526,6 +551,7 @@ export function createAutomaticContinuationCoordinator(ports: AutomaticContinuat
   }
 
   async function scheduleDeadline(event: AutomaticContinuationDeadlineEvent): Promise<void> {
+    const baseline = baselineGeneration;
     const plan = ports.readPlan();
     if (plan) event = { ...event, timeline: projectAutomaticContinuationTimeline(plan, ports.service.snapshot(), event) };
     const key = `${event.eventId}\u0000${event.scheduledAtEpochMs}`;
@@ -538,6 +564,7 @@ export function createAutomaticContinuationCoordinator(ports: AutomaticContinuat
         nativeEventKey = null;
         nativeScheduledKey = null;
       }
+      if (baseline !== baselineGeneration) return;
       localTimerKey = key;
       const delay = Math.max(0, Math.min(MAX_TIMER_DELAY_MS, event.scheduledAtEpochMs - nowMs()));
       localTimer = timer(() => {
@@ -552,9 +579,14 @@ export function createAutomaticContinuationCoordinator(ports: AutomaticContinuat
     if (nativeScheduledKey === key) return;
     try {
       const result = await ports.deadlines.schedule(event);
+      if (baseline !== baselineGeneration) {
+        try { await ports.deadlines.cancelAuthorization(event.authorizationId); } catch { /* Retired in the shared coordinator. */ }
+        return;
+      }
       nativeEventKey = key;
       nativeScheduledKey = result.scheduled ? key : null;
     } catch {
+      if (baseline !== baselineGeneration) return;
       nativeEventKey = key;
       nativeScheduledKey = null;
     }

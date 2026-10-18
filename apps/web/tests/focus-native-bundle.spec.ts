@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import {openSecondarySetting} from './settings-controls';
 import { waitForPreparedWorld } from './world-ready';
 import { readPersistedDomainState } from './persisted-domain-state';
 import { finishPaintedReportReceipt } from './focus-plan-controls';
@@ -90,6 +91,7 @@ test.describe('focus/native bundle F02/F14/F16/F17', () => {
   test('F16 exposes an enabled legacy-compatible return-to-focus preference and persists disable', async ({ page }) => {
     await createFirstProject(page);
     await page.getByRole('button', { name: '设置', exact: true }).click();
+    await openSecondarySetting(page,'提醒');
     const reminder = page.getByLabel('开启返回专注提醒');
     await expect(reminder).toBeChecked();
     await reminder.uncheck();

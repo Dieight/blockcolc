@@ -126,6 +126,18 @@ async function pixelDelta(page: Page, left: Buffer, right: Buffer, buildingsOff?
 }
 
 async function expectVisibleCachedShadows(page: Page, info: TestInfo, name: string): Promise<void> {
+  const canvas = page.getByLabel(canvasName);
+  await expect(canvas).toHaveAttribute('data-reduced-motion', 'true');
+  // The first terrain frame deliberately precedes incremental animal births.
+  // A pig appearing in a building's shadow between these three captures is a
+  // changed receiver, not a repaired cached depth projection. Keep the animals
+  // in this integration scene, but wait for their ready, reduced-motion pose.
+  await expect.poll(() => page.evaluate(() =>
+    (window as ProbeWindow).__shadowCacheProbe.app.getDiagnostics().animals?.ready)).toBe(true);
+  const readActors = () => page.evaluate(() => {
+    const actors = (window as ProbeWindow).__shadowCacheProbe.app.getDiagnostics().animals!;
+    return { ready: actors.ready, count: actors.count, updates: actors.updates, reactions: actors.reactions };
+  });
   // Hide only moving atmosphere before the natural cached frame. Do NOT request
   // a depth update here: doing that hid this bug in the older shadow probes.
   await page.evaluate(() => {
@@ -134,13 +146,14 @@ async function expectVisibleCachedShadows(page: Page, info: TestInfo, name: stri
     probe.app.resize();
   });
   await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
-  const canvas = page.getByLabel(canvasName);
+  const naturalActors = await readActors();
   const natural = await canvas.screenshot({ path: info.outputPath(`${name}-natural.png`) });
   await page.evaluate(() => {
     const probe = (window as ProbeWindow).__shadowCacheProbe;
     probe.renderer!.shadowMap.needsUpdate = true; probe.app.resize();
   });
   const refreshed = await canvas.screenshot({ path: info.outputPath(`${name}-refreshed.png`) });
+  const refreshedActors = await readActors();
   await page.evaluate(() => {
     const probe = (window as ProbeWindow).__shadowCacheProbe;
     const casters: THREE.Mesh[] = [];
@@ -152,9 +165,16 @@ async function expectVisibleCachedShadows(page: Page, info: TestInfo, name: stri
     probe.renderer!.shadowMap.needsUpdate = true; probe.app.resize();
   });
   const off = await canvas.screenshot({ path: info.outputPath(`${name}-buildings-off.png`) });
+  const offActors = await readActors();
   const refreshDelta = await pixelDelta(page, natural, refreshed, off);
+  const visibleDelta = await pixelDelta(page, natural, off);
+  await info.attach(`${name}-shadow-comparison`, {
+    body: JSON.stringify({ naturalActors, refreshedActors, offActors, refreshDelta, visibleDelta }), contentType: 'application/json',
+  });
+  expect(refreshedActors, 'The shadow comparison must not span an animal birth or pose change').toEqual(naturalActors);
+  expect(offActors, 'All three captures must use the same animal receivers').toEqual(naturalActors);
   expect(refreshDelta.differentPixels, 'A forced redraw must not repair an incoherent cached building projection').toBeLessThan(50);
-  expect((await pixelDelta(page, natural, off)).darkerPixels, 'Buildings must visibly darken receiving surfaces').toBeGreaterThan(500);
+  expect(visibleDelta.darkerPixels, 'Buildings must visibly darken receiving surfaces').toBeGreaterThan(500);
   await page.evaluate(() => {
     const probe = (window as ProbeWindow).__shadowCacheProbe;
     probe.casters!.forEach(mesh => { mesh.castShadow = true; });

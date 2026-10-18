@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { readPersistedDomainState } from './persisted-domain-state';
+import {openSecondarySetting} from './settings-controls';
 
 test('opted-in habit rounds automatically resume after rest without a duplicate on reload', async ({ page }) => {
   await page.clock.install({ time: new Date('2026-09-23T08:00:00Z') });
@@ -8,6 +9,7 @@ test('opted-in habit rounds automatically resume after rest without a duplicate 
   await page.getByRole('button', { name: '开始建造' }).click();
 
   await page.getByRole('button', { name: '设置', exact: true }).click();
+  await openSecondarySetting(page,'习惯任务');
   await page.getByLabel('习惯任务专注分钟').fill('1');
   await page.getByLabel('习惯任务专注分钟').press('Enter');
   await page.getByLabel('每轮休息分钟').fill('1');

@@ -1,4 +1,5 @@
 import type { BlueprintVoxel } from './blueprint';
+import { reefChannel } from './scenery-ecotones';
 
 const KINDS=['tube','brain','bubble','fire','horn'] as const;
 function random(seed:number,x:number,z:number) {
@@ -59,7 +60,7 @@ export function createReefField(seed:number,halfX:number,halfZ:number,allowed:(x
     const wx=x+(field?.originX??0),wz=z+(field?.originZ??0);
     const family=KINDS[Math.min(4,Math.floor(noise(seed+90,wx/15,wz/15)*5))]!;
     // Broad colonies stay connected, cut only by winding sandy passages.
-    const channel=field&&Math.abs(wz-18*Math.sin(wx/31+seed%13))<1.2;
+    const channel=field&&reefChannel(seed,wx,wz);
     const coral=!channel&&noise(seed+4,wx/8,wz/8)>.17;
     if(coral)put(x,1,z,`${family}_coral_block`);
     if(random(seed+17,wx,wz)>.975)put(x,2,z,`${family}_coral_fan`,false,{waterlogged:'true'});

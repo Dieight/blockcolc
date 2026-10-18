@@ -333,6 +333,7 @@ export function planTexturedVoxel(
 }
 
 export interface PackTileRect {
+  tintIndex?: number;
   page: number;
   u0: number;
   v0: number;
@@ -395,7 +396,8 @@ export function resolvePackTileRect(
   if (mapped.status !== "resolved") return undefined;
   const reference = mapped.faces[face];
   if (!atlas.pages[reference.page]) return undefined;
-  return { page: reference.page, u0: reference.uv.u0, v0: reference.uv.v0, u1: reference.uv.u1, v1: reference.uv.v1 };
+  return { page: reference.page, u0: reference.uv.u0, v0: reference.uv.v0, u1: reference.uv.u1, v1: reference.uv.v1,
+    ...(reference.tintIndex === undefined ? {} : { tintIndex: reference.tintIndex }) };
 }
 
 export function planTexturedVoxelPages(

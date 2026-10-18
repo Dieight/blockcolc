@@ -27,6 +27,14 @@ export interface LocalOcclusionField {
   readonly has?: (x: number, y: number, z: number) => boolean;
 }
 
+/** A prepared CPU recipe may never sample neighbours. Avoid constructing a
+ * forest-wide occupancy map until a cache miss really needs it. */
+export function lazyLocalOcclusionField(create:()=>LocalOcclusionField):LocalOcclusionField{
+  let field:LocalOcclusionField|null=null;const current=()=>field??=create();
+  return {get minimumY(){return current().minimumY;},get occupied(){return current().occupied;},
+    has(x,y,z){const value=current();return value.has?value.has(x,y,z):value.occupied.has(`${x}:${y}:${z}`);}};
+}
+
 export function createLocalOcclusionField(voxels: readonly BlueprintVoxel[]): LocalOcclusionField {
   let minimumY = 0;
   let minX = Infinity, minY = Infinity, minZ = Infinity, maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;

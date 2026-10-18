@@ -6,6 +6,17 @@ export function registerPortalFrame(canvas: HTMLCanvasElement, capture: (target:
   return () => { if (captures.get(canvas) === capture) captures.delete(canvas); };
 }
 
+/** One CSS-resolution frame, shared with the viewport transition. No renderer is created. */
+export function captureWorldFrame(root: HTMLElement) {
+  const source=root.querySelector<HTMLCanvasElement>('canvas[data-world-canvas]');
+  const capture=source&&captures.get(source);
+  if(!source||!capture)throw new Error('World presentation is unavailable');
+  const bounds=source.getBoundingClientRect(),bitmap=document.createElement('canvas');
+  bitmap.width=Math.max(1,Math.ceil(bounds.width));bitmap.height=Math.max(1,Math.ceil(bounds.height));
+  if(!capture(bitmap)){bitmap.width=bitmap.height=0;throw new Error('World frame capture failed');}
+  return {bitmap,bounds};
+}
+
 /** Freeze the actual minimal view before changing the resident canvas layout. */
 export function capturePortalBackdrop(root: HTMLElement) {
   const source = root.querySelector<HTMLCanvasElement>('canvas[data-world-canvas]');

@@ -88,12 +88,12 @@ test('a failed first list is distinct from empty and can be retried successfully
   await page.evaluate(() => (window as unknown as ColdRepositoryProbeWindow).__armColdListFailure?.());
   await page.getByRole('button', { name: '设置', exact: true }).click();
   await expect(page.getByRole('alert')).toContainText('synthetic resource list failure');
-  await expect(page.locator('.resource-pack-original')).toHaveCount(0);
+  await expect(page.locator('.resource-pack-current')).toHaveCount(0);
   expect(await listCallCount(page)).toBe(1);
 
   await page.getByRole('button', { name: '重试', exact: true }).click();
   await expect(page.locator('.resource-pack-list-status')).toContainText('本机尚无导入的资源包。');
-  await expect(page.locator('.resource-pack-original')).toContainText('正在使用');
+  await expect(page.locator('.resource-pack-current')).toContainText('正在使用');
   expect(await listCallCount(page)).toBe(2);
   await page.evaluate(() => (window as unknown as ColdRepositoryProbeWindow).__blockcolcResourcePackColdStartProbe?.dispose());
 });

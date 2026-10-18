@@ -33,7 +33,7 @@ async function fixture(kind: 'finite' | 'habit' = 'finite', separateEditor = fal
   const project = service.activeProjectProjection()!.project;
   let plan: RoundPlan | null = null;
   const preferences = { ...defaultFocusPreferences(), focusMinutes: 1, habitFocusMinutes: 2, breakMinutes: 5 };
-  const draft = { rounds: 2, mode: 'rounds' as 'rounds' | 'marathon', endAt: '12:00', selectedId: project.subtasks[0]?.id ?? null };
+  const draft:FocusPlanDraft = { rounds: 2, mode: 'rounds', endAt: '12:00', selectedId: project.subtasks[0]?.id ?? null };
   const editingDraft = separateEditor ? { ...draft } : draft;
   const commitDraft = vi.fn((next: FocusPlanDraft) => Object.assign(draft, next));
   const dispatch = vi.fn((command: ApplicationCommand) => service.dispatch(command));
@@ -50,6 +50,24 @@ async function fixture(kind: 'finite' | 'habit' = 'finite', separateEditor = fal
 }
 
 describe('focus flow orchestration', () => {
+  it.each(['finite','habit'] as const)('confirms a different %s project without starting, then uses its exact task and duration',async kind=>{
+    const f=await fixture('finite',true);
+    await f.service.dispatch(kind==='habit'?{type:'CreateHabitProject',title:'每日阅读',blueprintId:'cottage',targetRounds:10}:{type:'CreateProject',title:'第二工程',blueprintId:'cottage',subtasks:[{title:'第一项'},{title:'第二项'}]});
+    const target=f.service.activeProjectProjection()!.project;await f.service.dispatch({type:'SwitchActiveProject',projectId:f.project.id});
+    Object.assign(f.editingDraft,{projectId:target.id,selectedId:target.subtasks[1]?.id??null,rounds:3});
+    expect(f.service.snapshot().activeProjectId).toBe(f.project.id);
+    await f.flow.confirmPlan();expect(f.service.snapshot().activeProjectId).toBe(target.id);expect(f.service.snapshot().activeFocusSession).toBeNull();
+    expect(f.draft.rounds).toBe(3);await f.flow.startFocus();
+    expect(f.service.snapshot().activeFocusSession).toMatchObject({projectId:target.id,subtaskId:kind==='habit'?null:target.subtasks[1]!.id,plannedDurationMs:(kind==='habit'?2:1)*60_000});
+    expect(f.plan()?.totalRounds).toBe(3);
+  });
+  it('leaves the previous task and draft recoverable if confirming another project fails to save',async()=>{
+    const f=await fixture('finite',true);await f.service.dispatch({type:'CreateHabitProject',title:'Habit 2',blueprintId:'cottage',targetRounds:10});
+    const target=f.service.snapshot().activeProjectId!;await f.service.dispatch({type:'SwitchActiveProject',projectId:f.project.id});
+    f.editingDraft.projectId=target;f.failSave();
+    await expect(f.flow.confirmPlan()).rejects.toThrow();expect(f.service.snapshot().activeProjectId).toBe(f.project.id);
+    expect(f.commitDraft).not.toHaveBeenCalled();expect(f.closePlan).not.toHaveBeenCalled();expect(f.plan()).toBeNull();
+  });
   it.each([2,3])('does not consume an extra round when a %s-round report was reconciled before its callback',async rounds=>{
     const f=await fixture();f.preferences.breakMinutes=0;f.draft.rounds=rounds;
     await f.flow.startFocus();const sessionId=f.service.snapshot().activeFocusSession!.id;

@@ -3,6 +3,8 @@ import { alignWorldsToEnvironment, layoutWorlds } from '../src/renderer';
 import { createSteppedTerrainData } from '../src/terrain';
 import { roadCellsForVillage } from '../src/village';
 import { terrainGeometryBytes, TERRAIN_CACHE_BYTES } from '../src/terrain-cache';
+import { terrainSurfaceTable } from '../src/terrain-surface-table';
+import { surfaceSampler } from '../src/surface-index';
 
 it('retains the current 24-building regional layout within a bounded geometry budget', () => {
   const worlds = alignWorldsToEnvironment(layoutWorlds(Array.from({ length: 24 }, (_, i) => ({
@@ -14,7 +16,9 @@ it('retains the current 24-building regional layout within a bounded geometry bu
   const terrain = createSteppedTerrainData(worlds, roads, pads, undefined, {
     environmentStyle: 'mosaic-coast', worldSeed: 'mosaic-coast-regression', terrainGenerationVersion: 4, refinedFar: false,
   });
+  const table=terrainSurfaceTable(terrain);
+  surfaceSampler(table)(0,0);
   const bytes = terrainGeometryBytes(terrain);
-  expect(bytes, `24-building geometry: ${bytes} bytes`).toBeLessThanOrEqual(TERRAIN_CACHE_BYTES);
+  expect(bytes, `24-building geometry, surface table and index: ${bytes} bytes`).toBeLessThanOrEqual(TERRAIN_CACHE_BYTES);
   expect(TERRAIN_CACHE_BYTES).toBeLessThanOrEqual(32 * 1024 * 1024);
 }, 30_000);

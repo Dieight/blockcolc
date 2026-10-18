@@ -5,6 +5,8 @@ const glyphs = {
   cube: ['000111100000','011000011000','100000000100','101000010100','100110100100','100001000100','100001000100','010001001000','001001010000','000111100000','000000000000','000000000000'],
   clock: ['000011110000','001100001100','010000000010','010001000010','100001000001','100001110001','100000000001','100000000001','010000000010','010000000010','001100001100','000011110000'],
   tasks: ['011101111100','010100000000','011100000000','000000000000','011101111100','010100000000','011100000000','000000000000','011101111100','010100000000','011100000000','000000000000'],
+  note: ['011111110000','010000011000','010000010100','010000011100','010000000100','010110110100','010000000100','010111110100','010000000100','011111111100','000000000000','000000000000'],
+  expand: ['111100001111','111100001111','110000000011','110000000011','000000000000','000001100000','000001100000','000000000000','110000000011','110000000011','111100001111','111100001111'],
   chart: ['000000000000','000000011000','000000011000','011000011000','011000011000','011011011000','011011011000','011011011000','011011011000','000000000000','111111111110','000000000000'],
   gear: ['000011110000','000110011000','011100001110','010000000010','110001100011','100010010001','100010010001','110001100011','010000000010','011100001110','000110011000','000011110000'],
   play: ['000000000000','001100000000','001111000000','001111110000','001111111100','001111111100','001111110000','001111000000','001100000000','000000000000','000000000000','000000000000'],
@@ -65,7 +67,7 @@ const paths = Object.fromEntries(Object.entries(glyphs).map(([name, rows]) => [n
 function partPath(name: PixelIconName, accepts: (x: number, y: number) => boolean): string {
   return glyphs[name].flatMap((row, y) => [...row].flatMap((value, x) => value === '1' && accepts(x, y) ? [`M${x} ${y}h1v1h-1z`] : [])).join('');
 }
-const navParts = {
+const animatedParts = {
   clock: [
     ['face', partPath('clock', (x, y) => !(x >= 5 && x <= 7 && y >= 3 && y <= 5))],
     ['hour', partPath('clock', (x, y) => x >= 6 && x <= 7 && y === 5)],
@@ -83,6 +85,10 @@ const navParts = {
     ['outer', partPath('gear', (x, y) => !(x >= 4 && x <= 7 && y >= 4 && y <= 7))],
     ['center', partPath('gear', (x, y) => x >= 4 && x <= 7 && y >= 4 && y <= 7)],
   ],
+  expand: [
+    ...['tl','tr','bl','br'].map(corner=>[`corner-${corner}`,partPath('expand',(x,y)=>(corner[0]==='t'?y<4:y>=8)&&(corner[1]==='l'?x<4:x>=8))]),
+    ['core',partPath('expand',(x,y)=>x>=5&&x<=6&&y>=5&&y<=6)],
+  ],
 };
 const navViewBoxes=Object.fromEntries(['clock','tasks','chart','gear'].map(name=>{
   const cells=glyphs[name as PixelIconName].flatMap((row,y)=>[...row].flatMap((value,x)=>value==='1'?[{x,y}]:[]));
@@ -94,7 +100,7 @@ const navViewBoxes=Object.fromEntries(['clock','tasks','chart','gear'].map(name=
 export function PixelIcon({ name, size = 24, className, ...props }: IconProps & { name: PixelIconName }) {
   return <svg width={size} height={size} viewBox={navViewBoxes[name]??'0 0 12 12'} fill="currentColor" shapeRendering="crispEdges"
     className={`pixel-icon${className ? ` ${className}` : ''}`} data-pixel-icon={name} aria-hidden="true" focusable="false" {...props}>
-    {name in navParts ? navParts[name as keyof typeof navParts].map(([part, d]) => <path key={part} data-icon-part={part} d={d}/>) : <path d={paths[name]}/>}
+    {name in animatedParts ? animatedParts[name as keyof typeof animatedParts].map(([part, d]) => <path key={part} data-icon-part={part} d={d}/>) : <path d={paths[name]}/>}
   </svg>;
 }
 
@@ -102,6 +108,8 @@ const glyph = (name: PixelIconName) => function Icon(props: IconProps) { return 
 export const PixelCube = glyph('cube');
 export const PixelClock = glyph('clock');
 export const PixelTasks = glyph('tasks');
+export const PixelNote = glyph('note');
+export const PixelExpand = glyph('expand');
 export const PixelChart = glyph('chart');
 export const PixelSettings = glyph('gear');
 export const PixelPlay = glyph('play');

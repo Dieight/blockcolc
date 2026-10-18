@@ -272,6 +272,7 @@ describe('automatic continuation coordinator', () => {
     expect(start.mock.calls[0]?.[1]).toEqual({
       sessionId: automaticContinuationSessionId(AUTH, 2),
       scheduledAt: new Date(BASE + 3 * 60_000).toISOString(),
+      previousSessionIds: [f.firstSession.id],
     });
     expect(f.deadlines.acknowledgements).toContain(dueEvent.eventId);
   });

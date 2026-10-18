@@ -1,3 +1,4 @@
+import { openSecondarySetting } from './settings-controls';
 import { expect, test } from '@playwright/test';
 import { strToU8, zipSync } from 'fflate';
 import { existsSync } from 'node:fs';
@@ -15,15 +16,15 @@ test('imports, persists, switches and safely deletes a local Java resource pack'
   // not accidentally exercise the first-project navigation gate here.
   await page.addInitScript(() => localStorage.setItem('blockcolc-first-project-setup-v1', '1'));
   await page.goto('/');
-  await page.getByRole('button',{name:'设置'}).click();
+  await page.getByRole('button',{name:'设置'}).click(); await openSecondarySetting(page,'方块材质包');
   await page.getByLabel('导入 Java 资源包 ZIP').setInputFiles({
     name:'local-stone.zip',
     mimeType:'application/zip',
     buffer:archive,
   });
 
-  await expect(page.locator('.resource-pack-panel .backup-notice')).toContainText('已导入并启用');
-  const pack=page.locator('.resource-pack-list li').filter({hasText:'local-stone'});
+  await expect(page.locator('.resource-pack-setting .backup-notice')).toContainText('已导入并启用');
+  const pack=page.locator('.resource-pack-setting-list li').filter({hasText:'local-stone'});
   await expect(pack).toContainText('1 张纹理');
   await expect(pack.getByRole('button',{name:'使用中'})).toBeDisabled();
 
@@ -32,16 +33,16 @@ test('imports, persists, switches and safely deletes a local Java resource pack'
     mimeType:'application/zip',
     buffer:archive,
   });
-  await expect(page.locator('.resource-pack-panel .backup-notice')).toContainText('已导入并启用');
-  await expect(page.locator('.resource-pack-list li')).toHaveCount(1);
+  await expect(page.locator('.resource-pack-setting .backup-notice')).toContainText('已导入并启用');
+  await expect(page.locator('.resource-pack-setting-list li')).toHaveCount(1);
 
   await page.reload();
-  await page.getByRole('button',{name:'设置'}).click();
-  const reloaded=page.locator('.resource-pack-list li').filter({hasText:'local-stone'});
+  await page.getByRole('button',{name:'设置'}).click(); await openSecondarySetting(page,'方块材质包');
+  const reloaded=page.locator('.resource-pack-setting-list li').filter({hasText:'local-stone'});
   await expect(reloaded.getByRole('button',{name:'使用中'})).toBeDisabled();
 
-  await page.locator('.resource-pack-original').getByRole('button',{name:'使用'}).click();
-  await expect(page.locator('.resource-pack-original')).toContainText('正在使用');
+  await page.locator('.resource-pack-current').getByRole('button',{name:'使用'}).click();
+  await expect(page.locator('.resource-pack-current')).toContainText('正在使用');
   await reloaded.getByRole('button',{name:'使用'}).click();
   await expect(reloaded.getByRole('button',{name:'使用中'})).toBeDisabled();
 
@@ -49,13 +50,13 @@ test('imports, persists, switches and safely deletes a local Java resource pack'
   const dialog=page.getByRole('alertdialog',{name:'删除这个资源包？'});
   await expect(dialog).toContainText('回退到方块钟原创材质');
   await dialog.getByRole('button',{name:'删除资源包'}).click();
-  await expect(page.locator('.resource-pack-original')).toContainText('正在使用');
-  await expect(page.locator('.resource-pack-list li')).toHaveCount(0);
+  await expect(page.locator('.resource-pack-current')).toContainText('正在使用');
+  await expect(page.locator('.resource-pack-setting-list li')).toHaveCount(0);
 
   await page.reload();
-  await page.getByRole('button',{name:'设置'}).click();
-  await expect(page.locator('.resource-pack-original')).toContainText('正在使用');
-  await expect(page.locator('.resource-pack-list li')).toHaveCount(0);
+  await page.getByRole('button',{name:'设置'}).click(); await openSecondarySetting(page,'方块材质包');
+  await expect(page.locator('.resource-pack-current')).toContainText('正在使用');
+  await expect(page.locator('.resource-pack-setting-list li')).toHaveCount(0);
 });
 
 test('a selected base completes a separate active appearance pack across the renderer boundary', async ({page}) => {
@@ -71,25 +72,25 @@ test('a selected base completes a separate active appearance pack across the ren
   const canvas = page.getByLabel('项目建筑世界');
   await expect(canvas).toBeVisible();
 
-  await page.getByRole('button', {name:'设置'}).click();
+  await page.getByRole('button', {name:'设置'}).click(); await openSecondarySetting(page,'方块材质包');
   await page.getByLabel('导入 Java 资源包 ZIP').setInputFiles({
     name:'base.zip', mimeType:'application/zip', buffer:Buffer.from(makePack()),
   });
-  await expect(page.locator('.resource-pack-panel .backup-notice')).toContainText('已导入并启用');
-  await page.locator('.resource-pack-original').getByRole('button', {name:'使用'}).click();
-  const base = page.locator('.resource-pack-list li').filter({hasText:'base'});
+  await expect(page.locator('.resource-pack-setting .backup-notice')).toContainText('已导入并启用');
+  await page.locator('.resource-pack-current').getByRole('button', {name:'使用'}).click();
+  const base = page.locator('.resource-pack-setting-list li').filter({hasText:'base'});
   await base.getByRole('button', {name:'设为基础'}).click();
   await expect(base).toContainText('基础层');
   await page.getByRole('button', {name:'计时'}).click();
   await expect(canvas).toHaveAttribute('data-active-resource-pack-id', /^sha256:/);
 
-  await page.getByRole('button', {name:'设置'}).click();
+  await page.getByRole('button', {name:'设置'}).click(); await openSecondarySetting(page,'方块材质包');
   await page.getByLabel('导入 Java 资源包 ZIP').setInputFiles({
     name:'overlay.zip', mimeType:'application/zip', buffer:Buffer.from(makeVisualPack()),
   });
-  await expect(page.locator('.resource-pack-panel .backup-notice')).toContainText('已导入并启用');
+  await expect(page.locator('.resource-pack-setting .backup-notice')).toContainText('已导入并启用');
   await expect(base).toContainText('基础层');
-  await expect(page.locator('.resource-pack-list li').filter({hasText:'overlay'})).toContainText('外观层');
+  await expect(page.locator('.resource-pack-setting-list li').filter({hasText:'overlay'})).toContainText('外观层');
   await page.getByRole('button', {name:'计时'}).click();
   await expect(canvas).toHaveAttribute('data-active-resource-pack-id', /^layer:sha256:[a-f0-9]{64}:sha256:[a-f0-9]{64}$/);
   const layeredId = await canvas.getAttribute('data-active-resource-pack-id');
@@ -99,7 +100,7 @@ test('a selected base completes a separate active appearance pack across the ren
   const layeredTexturedCount = Number(await canvas.getAttribute('data-textured-voxel-count'));
   const layeredFallbackCount = Number(await canvas.getAttribute('data-fallback-voxel-count'));
 
-  await page.getByRole('button', {name:'设置'}).click();
+  await page.getByRole('button', {name:'设置'}).click(); await openSecondarySetting(page,'方块材质包');
   await base.getByRole('button', {name:'取消基础'}).click();
   await page.getByRole('button', {name:'计时'}).click();
   await expect(canvas).toHaveAttribute('data-active-resource-pack-id', appearancePackId!);
@@ -145,9 +146,9 @@ test('applies an atlas to a real imported building and restores original renderi
   // the before/after material comparison is stationary.
   await page.emulateMedia({ reducedMotion: 'no-preference' });
 
-  await page.getByRole('button',{name:'设置'}).click();
+  await page.getByRole('button',{name:'设置'}).click(); await openSecondarySetting(page,'方块材质包');
   await page.getByLabel('导入 Java 资源包 ZIP').setInputFiles({name:'visual-test.zip',mimeType:'application/zip',buffer:Buffer.from(makeVisualPack())});
-  await expect(page.locator('.resource-pack-panel .backup-notice')).toContainText('已导入并启用');
+  await expect(page.locator('.resource-pack-setting .backup-notice')).toContainText('已导入并启用');
   await page.getByRole('button',{name:'计时'}).click();
   await expect(canvas).toHaveAttribute('data-active-resource-pack-id',/sha256:/);
   await expect.poll(async()=>Number(await canvas.getAttribute('data-atlas-page-count')),{timeout:30_000}).toBeGreaterThan(1);
@@ -178,8 +179,8 @@ test('applies an atlas to a real imported building and restores original renderi
   await expect.poll(async()=>Number(await canvas.getAttribute('data-animation-frame-update-count'))).toBeGreaterThan(0);
   await page.emulateMedia({ reducedMotion: 'reduce' });
 
-  await page.getByRole('button',{name:'设置'}).click();
-  await page.locator('.resource-pack-original').getByRole('button',{name:'使用'}).click();
+  await page.getByRole('button',{name:'设置'}).click(); await openSecondarySetting(page,'方块材质包');
+  await page.locator('.resource-pack-current').getByRole('button',{name:'使用'}).click();
   await page.getByRole('button',{name:'计时'}).click();
   await expect(canvas).toHaveAttribute('data-active-resource-pack-id','');
   const restoredView = await prepareMaterialComparison(page, canvas);
@@ -208,11 +209,11 @@ test('retextures built-in buildings through vanilla stand-in blocks', async ({ p
   await testInfo.attach('original-view.json', { body: JSON.stringify(originalView), contentType: 'application/json' });
   const original = await canvas.screenshot({ path: testInfo.outputPath('builtin-original.png') });
 
-  await page.getByRole('button', { name: '设置' }).click();
+  await page.getByRole('button', { name: '设置' }).click(); await openSecondarySetting(page,'方块材质包');
   await page.getByLabel('导入 Java 资源包 ZIP').setInputFiles({
     name: 'builtin-visual.zip', mimeType: 'application/zip', buffer: Buffer.from(makeBuiltinVisualPack()),
   });
-  await expect(page.locator('.resource-pack-panel .backup-notice')).toContainText('已导入并启用');
+  await expect(page.locator('.resource-pack-setting .backup-notice')).toContainText('已导入并启用');
   await expect(page.locator('.boot-page-hint')).toHaveCount(0);
   await page.evaluate(() => {
     (window as typeof window & { __resourcePackLoadingSeen?: boolean }).__resourcePackLoadingSeen = false;
@@ -235,8 +236,8 @@ test('retextures built-in buildings through vanilla stand-in blocks', async ({ p
   // rebuilt frame, so a screenshot delta would flake. The mesh-level diagnostics
   // above prove the stand-in blocks actually resolved into pack textures.
 
-  await page.getByRole('button', { name: '设置' }).click();
-  await page.locator('.resource-pack-original').getByRole('button', { name: '使用' }).click();
+  await page.getByRole('button', { name: '设置' }).click(); await openSecondarySetting(page,'方块材质包');
+  await page.locator('.resource-pack-current').getByRole('button', { name: '使用' }).click();
   await page.getByRole('button', { name: '计时' }).click();
   await expect(canvas).toHaveAttribute('data-active-resource-pack-id', '');
   await expect.poll(async () => canvas.getAttribute('data-terrain-pack-textured'), { timeout: 20_000 }).toBe('false');
@@ -256,10 +257,8 @@ test(`renders translucent multipart panes and zero-thickness iron bars from a re
   test.skip(!existsSync(sample), 'The real Litematic compatibility fixture stays local.');
   if (projectSeed) await page.addInitScript(seed => {
     let counter = 0;
-    // Five task/blueprint IDs precede the project in this import fixture.
-    // The active-project assertion below guards against a changed call order.
-    Object.defineProperty(crypto, 'randomUUID', { configurable: true, value: () => ++counter === 6 ? seed
-      : `00000000-0000-4000-8000-${counter.toString(16).padStart(12, '0')}` });
+    Object.defineProperty(crypto, 'randomUUID', { configurable: true, value: () =>
+      `00000000-0000-4000-8000-${(++counter).toString(16).padStart(12, '0')}` });
   }, projectSeed);
   await page.clock.install({time:new Date('2026-07-26T05:00:00.000Z')});
   await page.goto('/?__atlasPageSize=256');
@@ -270,11 +269,17 @@ test(`renders translucent multipart panes and zero-thickness iron bars from a re
   await page.getByLabel('新增小任务').press('Enter');
   await page.getByLabel('新增小任务').fill('验证玻璃板与铁栏杆');
   await page.getByLabel('新增小任务').press('Enter');
+  // Project materialization asks for its ID first. Arm at this action boundary,
+  // not the sixth UUID since bootstrap (setup/blueprint UI may add draft IDs).
+  if(projectSeed)await page.evaluate(seed=>{
+    const original=crypto.randomUUID;let next=true;
+    Object.defineProperty(crypto,'randomUUID',{configurable:true,value:()=>{if(next){next=false;return seed;}return original.call(crypto);}});
+  },projectSeed);
   await page.getByRole('button',{name:'开始建造'}).click();
   if (projectSeed) expect((await readPersistedDomainState(page)).state.activeProjectId).toBe(`project-${projectSeed}`);
-  await page.getByRole('button',{name:'设置'}).click();
+  await page.getByRole('button',{name:'设置'}).click(); await openSecondarySetting(page,'方块材质包');
   await page.getByLabel('导入 Java 资源包 ZIP').setInputFiles({name:'p2-visual-test.zip',mimeType:'application/zip',buffer:Buffer.from(makeVisualPack())});
-  await expect(page.locator('.resource-pack-panel .backup-notice')).toContainText('已导入并启用');
+  await expect(page.locator('.resource-pack-setting .backup-notice')).toContainText('已导入并启用');
   await setActiveProjectProgress(page,9900);
   await page.reload();
   await observeWorldDrawBudget(page, '项目建筑世界');
@@ -354,10 +359,10 @@ test('a user-owned 26.3 client JAR supplies models beneath all four provided app
   await waitForPreparedWorld(page);
   await expect(canvas).toBeVisible();
 
-  await page.getByRole('button', {name:'设置'}).click();
+  await page.getByRole('button', {name:'设置'}).click(); await openSecondarySetting(page,'方块材质包');
   await page.getByLabel('导入 Java 资源包 ZIP').setInputFiles(clientJar!);
-  await expect(page.locator('.resource-pack-panel .backup-notice')).toContainText('已导入并启用', {timeout:120_000});
-  const base = page.locator('.resource-pack-list li').filter({hasText:basename(clientJar!, '.jar')});
+  await expect(page.locator('.resource-pack-setting .backup-notice')).toContainText('已导入并启用', {timeout:120_000});
+  const base = page.locator('.resource-pack-setting-list li').filter({hasText:basename(clientJar!, '.jar')});
   await base.getByRole('button', {name:'设为基础'}).click();
   await expect(base).toContainText('基础层');
 
@@ -365,7 +370,7 @@ test('a user-owned 26.3 client JAR supplies models beneath all four provided app
   for (const [index, samplePack] of samplePacks.entries()) {
     const previousId = await canvas.getAttribute('data-active-resource-pack-id');
     await page.getByLabel('导入 Java 资源包 ZIP').setInputFiles(samplePack);
-  await expect(page.locator('.resource-pack-panel .backup-notice')).toContainText('已导入并启用', {timeout:90_000});
+  await expect(page.locator('.resource-pack-setting .backup-notice')).toContainText('已导入并启用', {timeout:90_000});
     await page.getByRole('button', {name:'计时'}).click();
     await expect(canvas).toHaveAttribute('data-active-resource-pack-id', /^layer:sha256:/, {timeout:90_000});
     await expect.poll(async () => canvas.getAttribute('data-active-resource-pack-id'), {timeout:90_000}).not.toBe(previousId);
@@ -376,7 +381,7 @@ test('a user-owned 26.3 client JAR supplies models beneath all four provided app
     await expect.poll(async () => Number(await canvas.getAttribute('data-resource-fluid-animated-texture-count')), {timeout:90_000}).toBeGreaterThan(0);
     await expect.poll(async () => Number(await canvas.getAttribute('data-resource-special-voxel-count')), {timeout:90_000}).toBeGreaterThan(0);
     selectedIds.add((await canvas.getAttribute('data-active-resource-pack-id'))!);
-    if (index < samplePacks.length - 1) await page.getByRole('button', {name:'设置'}).click();
+    if (index < samplePacks.length - 1) { await page.getByRole('button', {name:'设置'}).click(); await openSecondarySetting(page,'方块材质包'); }
   }
   expect(selectedIds.size).toBe(samplePacks.length);
   expect(shaderErrors).toEqual([]);
@@ -394,11 +399,11 @@ test('cold bootstrap applies the selected pack with one world rebuild and preser
   await expect(canvas).toHaveAttribute('data-initial-reveal-started-count', '1', { timeout: 15_000 });
   await expect(canvas).toHaveAttribute('data-initial-reveal-completed-count', '1', { timeout: 15_000 });
   await expect(canvas).toHaveAttribute('data-world-rebuild-count', '1');
-  await page.getByRole('button', { name: '设置', exact: true }).click();
+  await page.getByRole('button', { name: '设置', exact: true }).click(); await openSecondarySetting(page,'方块材质包');
   await page.getByLabel('导入 Java 资源包 ZIP').setInputFiles({
     name: 'startup-stone.zip', mimeType: 'application/zip', buffer: Buffer.from(makePack()),
   });
-  await expect(page.locator('.resource-pack-panel .backup-notice')).toContainText('已导入并启用');
+  await expect(page.locator('.resource-pack-setting .backup-notice')).toContainText('已导入并启用');
   await page.getByRole('button', { name: '计时', exact: true }).click();
   await expect(canvas).toHaveAttribute('data-active-resource-pack-id', /^sha256:/);
   const selectedId = (await canvas.getAttribute('data-active-resource-pack-id'))!;
@@ -410,14 +415,14 @@ test('cold bootstrap applies the selected pack with one world rebuild and preser
   await expect.poll(async () => Number(await canvas.getAttribute('data-textured-voxel-count'))).toBeGreaterThan(0);
   await canvas.screenshot({ path: testInfo.outputPath('selected-pack-single-bootstrap.png') });
   const generation = (await canvas.getAttribute('data-renderer-generation'))!;
-  await page.getByRole('button', { name: '设置', exact: true }).click();
-  await page.locator('.resource-pack-original').getByRole('button', { name: '使用', exact: true }).click();
+  await page.getByRole('button', { name: '设置', exact: true }).click(); await openSecondarySetting(page,'方块材质包');
+  await page.locator('.resource-pack-current').getByRole('button', { name: '使用', exact: true }).click();
   await page.getByRole('button', { name: '计时', exact: true }).click();
   await expect.poll(async () => canvas.getAttribute('data-active-resource-pack-id')).not.toBe(selectedId);
   await expect(canvas).toHaveAttribute('data-world-rebuild-count', '2');
   await expect(canvas).toHaveAttribute('data-renderer-generation', generation);
-  await page.getByRole('button', { name: '设置', exact: true }).click();
-  await page.locator('.resource-pack-list li').filter({ hasText: 'startup-stone' })
+  await page.getByRole('button', { name: '设置', exact: true }).click(); await openSecondarySetting(page,'方块材质包');
+  await page.locator('.resource-pack-setting-list li').filter({ hasText: 'startup-stone' })
     .getByRole('button', { name: '使用', exact: true }).click();
   await page.getByRole('button', { name: '计时', exact: true }).click();
   await expect(canvas).toHaveAttribute('data-active-resource-pack-id', selectedId);

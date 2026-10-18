@@ -1,18 +1,20 @@
 import { t, useI18n } from './i18n';
-import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { PixelCheck as Check, PixelChevron as ChevronDown } from './ui/PixelIcon';
 import { choiceMenuPosition } from './choice-menu-position';
+import { useBackLayer } from './back-layer';
 
 export interface ChoiceOption { id: string; label: string; detail?: string }
 
-export function ChoiceMenu({ label, value, options, disabled, floating = false, onChange }: {
+export function ChoiceMenu({ label, value, options, disabled, floating = false, triggerContent, onChange }: {
   label: string;
   value: string;
   options: readonly ChoiceOption[];
   disabled?: boolean;
   /** Escape card backdrop stacking and flip above a low trigger when needed. */
   floating?: boolean;
+  triggerContent?:ReactNode;
   onChange: (id: string) => void;
 }) {
   useI18n();
@@ -22,6 +24,7 @@ export function ChoiceMenu({ label, value, options, disabled, floating = false, 
   const trigger = useRef<HTMLButtonElement>(null);
   const list = useRef<HTMLDivElement>(null);
   const listId = useId();
+  useBackLayer(open, () => { setOpen(false); trigger.current?.focus(); return true; });
   const selected = options.find(option => option.id === value) ?? options[0];
 
   useEffect(() => {
@@ -92,10 +95,11 @@ export function ChoiceMenu({ label, value, options, disabled, floating = false, 
   return <div className="choice-menu" ref={root}>
     <span className="choice-menu-label">{label}</span>
     <button ref={trigger} type="button" className="choice-menu-trigger" aria-haspopup="listbox"
+      aria-label={triggerContent?label:undefined}
       aria-expanded={open} aria-controls={listId} disabled={disabled || options.length === 0}
       onClick={() => setOpen(value => !value)}
       onKeyDown={event => { if (event.key === 'ArrowDown') { event.preventDefault(); setOpen(true); } }}>
-      <span><strong>{selected?.label ?? t("没有可选项")}</strong>{selected?.detail && <small>{selected.detail}</small>}</span>
+      {triggerContent??<span><strong>{selected?.label ?? t("没有可选项")}</strong>{selected?.detail && <small>{selected.detail}</small>}</span>}
       <ChevronDown aria-hidden="true"/>
     </button>
     {floating ? menu && createPortal(menu, document.body) : menu}

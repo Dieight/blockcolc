@@ -1,4 +1,5 @@
 import type { DomainState, ISOInstant } from "@blockcolc/domain";
+import type { CompactBackupPayload } from './compact-backup.js';
 
 export interface BackupEnvelopeV1 {
   format: "tomato-clock-backup";
@@ -7,6 +8,13 @@ export interface BackupEnvelopeV1 {
   payload: DomainState;
   checksum: string;
 }
+
+export interface BackupEnvelopeV2 extends Omit<BackupEnvelopeV1, 'schemaVersion' | 'payload'> {
+  schemaVersion: 2;
+  payload: CompactBackupPayload;
+}
+export type BackupEnvelope = BackupEnvelopeV1 | BackupEnvelopeV2;
+export interface ParsedBackupEnvelope extends Omit<BackupEnvelopeV1, 'schemaVersion'> { schemaVersion: 1 | 2 }
 
 export interface StateSummary {
   isEmpty: boolean;
@@ -23,7 +31,7 @@ export interface StateSummary {
 }
 
 export interface ImportPreview {
-  schemaVersion: 1;
+  schemaVersion: 1 | 2;
   exportedAt: ISOInstant;
   checksum: string;
   summary: StateSummary;

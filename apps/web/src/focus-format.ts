@@ -1,4 +1,4 @@
-
+import { t } from './i18n';
 export function formatClockDuration(milliseconds: number): string {
   const totalSeconds = Math.max(0, Math.ceil(milliseconds / 1000));
   const hours = Math.floor(totalSeconds / 3600);
@@ -11,8 +11,8 @@ export function formatDurationSummary(milliseconds: number): string {
   const totalMinutes = Math.round(milliseconds / 60_000);
   const hours = Math.floor(totalMinutes / 60);
   const minutes = totalMinutes % 60;
-  if (hours === 0) return `${minutes} 分钟`;
-  return minutes === 0 ? `${hours} 小时` : `${hours} 小时 ${minutes} 分钟`;
+  if (hours === 0) return t('{0} 分钟', minutes);
+  return minutes === 0 ? t('{0} 小时', hours) : t('{0} 小时 {1} 分钟', hours, minutes);
 }
 
 export function formatClockTime(value: string | number): string {

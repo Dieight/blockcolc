@@ -36,6 +36,20 @@ describe('quiet preparation queue',()=>{
     f.queue.enqueue('later',later);f.tick();await flush();
     expect(cancelled).not.toHaveBeenCalled();expect(later).toHaveBeenCalledOnce();
   });
+  it('permits a worker dispatch in a short slot but still honors the busy guard',async()=>{
+    let allowed=false,tick=()=>{};const hints:boolean[]=[],job=vi.fn();
+    const queue=createIdleWorkQueue({allowed:()=>allowed,schedule:(callback,short)=>{hints.push(short===true);tick=callback;return()=>{};}});
+    queue.enqueue('worker',job,true);tick();await flush();expect(job).not.toHaveBeenCalled();
+    allowed=true;tick();await flush();expect(job).toHaveBeenCalledOnce();expect(hints).toEqual([true,true]);queue.stop();
+  });
+  it('lets a worker pass a short-slot-blocked UI mount without forcing the UI mount',async()=>{
+    let allowed=true,tick:(short?:boolean)=>void=()=>{};const page=vi.fn(),worker=vi.fn();
+    const queue=createIdleWorkQueue({allowed:()=>allowed,schedule:callback=>{tick=callback;return()=>{};}});
+    queue.enqueue('page',page);tick(true);await flush();expect(page).not.toHaveBeenCalled();
+    queue.enqueue('worker',worker,true);allowed=false;tick(true);await flush();expect(worker).not.toHaveBeenCalled();
+    allowed=true;tick(true);await flush();expect(worker).toHaveBeenCalledOnce();expect(page).not.toHaveBeenCalled();
+    tick(true);await flush();expect(page).not.toHaveBeenCalled();tick(false);await flush();expect(page).toHaveBeenCalledOnce();queue.stop();
+  });
 });
 
 describe('bounded browser idle opportunities',()=>{
@@ -59,6 +73,10 @@ describe('bounded browser idle opportunities',()=>{
     const f=fixture(),callback=vi.fn(),postpone=vi.fn();scheduleIdleOpportunity(callback,postpone);f.tick();
     f.idle(false,4);expect(postpone).toHaveBeenCalledOnce();expect(callback).toHaveBeenCalledOnce();
     f.idle(false,20);expect(postpone).toHaveBeenCalledOnce();expect(callback).toHaveBeenCalledTimes(2);
+  });
+  it('does not starve a worker handoff under continuous small animation slots',()=>{
+    const f=fixture(),callback=vi.fn(),postpone=vi.fn();scheduleIdleOpportunity(callback,postpone,true);f.tick();
+    f.idle(false,3);expect(postpone).not.toHaveBeenCalled();expect(callback).toHaveBeenCalledOnce();
   });
   it('cancels both the delay and a registered native callback, including handle zero',()=>{
     const f=fixture(),callback=vi.fn(),postpone=vi.fn();const cancel=scheduleIdleOpportunity(callback,postpone);

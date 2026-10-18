@@ -1,3 +1,4 @@
+import {mosaicFields,mosaicNoise as noise,mosaicShoreDistance} from './mosaic-fields';
 export type MosaicBiome = 'ocean'|'beach'|'plains'|'valley'|'forest'|'badlands'|'snow-mountain'|'glacier';
 export interface MosaicSample { biome:MosaicBiome; height:number; material:'grass'|'sand'|'stone'|'water'|'snow'|'ice'|'terracotta'; }
 const smooth=(a:number,b:number,x:number)=>{const t=Math.max(0,Math.min(1,(x-a)/(b-a)));return t*t*(3-2*t);};
@@ -5,9 +6,6 @@ const smooth=(a:number,b:number,x:number)=>{const t=Math.max(0,Math.min(1,(x-a)/
 export function mosaicColdDirection(_worldSeed:string):readonly [number,number,number]{
  return[-1,0,0];
 }
-function hash(seed:number,x:number,z:number){let n=Math.imul(x,374761393)^Math.imul(z,668265263)^seed;n=Math.imul(n^(n>>>13),1274126177);return((n^(n>>>16))>>>0)/4294967295;}
-function noise(seed:number,x:number,z:number,scale:number){const u=x/scale,v=z/scale,ix=Math.floor(u),iz=Math.floor(v),a=smooth(0,1,u-ix),b=smooth(0,1,v-iz);return(hash(seed,ix,iz)*(1-a)+hash(seed,ix+1,iz)*a)*(1-b)+(hash(seed,ix,iz+1)*(1-a)+hash(seed,ix+1,iz+1)*a)*b;}
-
 export function mosaicSeed(worldSeed:string):number {let seed=0x811c9dc5;for(let i=0;i<worldSeed.length;i++)seed=Math.imul(seed^worldSeed.charCodeAt(i),0x01000193);return seed>>>0;}
 export function mosaicGridPosition(x:number,z:number,coreRadius:number) {
   // Default camera: +X/+Z. u points screen-right, v points screen-down.
@@ -29,61 +27,37 @@ export function mosaicSeabedHeight(x:number,z:number,seed:number,coreRadius:numb
   const offshore=smooth(.32,1.25,u)*smooth(-.15,.8,-v);
   const broad=noise(seed^0x62b9,x,z,70),detail=noise(seed^0x19b7,x,z,24);
   const gully=Math.pow(1-Math.abs(noise(seed^0x29ac,x,z,42)*2-1),3);
-  return -5.4-offshore*5-broad*1.6+detail*.7-gully*1.4;
+  const depth=-5.4-offshore*5-broad*1.6+detail*.7-gully*1.4;
+  const distance=Math.max(0,-mosaicShoreDistance(x,z,seed,coreRadius));
+  const t=Math.max(0,Math.min(1,distance/44)),shore=t*t*t*(t*(t*6-15)+10);
+  return -1.1+(depth+1.1)*shore;
 }
 /** Fixed nine-region composition; ridged relief and erosion are continuous
  * fields underneath climate surfaces, not nine coloured flat rectangles. */
 export function sampleMosaicTerrain(x:number,z:number,seed:number,coreRadius:number):MosaicSample {
-  const {u,v}=mosaicGridPosition(x,z,coreRadius);
-  const warp=(noise(seed^0x1891,x,z,110)-.5)*.12;
-  const a=u+warp,b=v+warp*.6,detail=noise(seed^0x621,x,z,33),broad=noise(seed^0x2891,x,z,94);
-  const ridge=1-Math.abs(noise(seed^0x482,x,z,52)*2-1);
-  const mountain=smooth(.08,.78,-a)*smooth(.2,.86,-b);
-  const ice=smooth(.3,.86,-a)*(1-smooth(.13,.72,Math.abs(b)));
-  // 31 is mesa; the lower half of 32 continues it. Never leak this into 23.
-  const bad=smooth(.32,.84,-a)*smooth(.42,.95,b)
-    +smooth(.77,1.22,b)*(1-smooth(.04,.42,a));
-  const ocean=smooth(.18,.7,a)*smooth(.16,.72,-b);
-  const inlet=smooth(-.08,.2,a)*smooth(.28,.75,-b)*(1-smooth(.35,.7,Math.abs(a)));
-  const rightSea=smooth(.38,.82,a)*(1-smooth(-.15,.18,b));
-  // The inlet and warm/open sea are overlapping water, not competing climate
-  // labels. max() left a low-weight seam between two wet masks: a long sandbar.
-  const coast=1-(1-ocean)*(1-inlet)*(1-rightSea);
-  // Lower 23 splits between construction transition and dappled woodland, with
-  // the upper half opening to warm sea. 33 remains a continuous forest.
-  const forest=smooth(.65,1.02,a)*smooth(.04,.36,b);
-  const rolling=4+(detail-.5)*5+(broad-.5)*7;
-  // Jagged crests: multiple ridged octaves, exposed stone below the snowline.
-  const peak=25+ridge*25+Math.pow(1-Math.abs(noise(seed^0x741,x,z,30)*2-1),3)*20;
-  const mesa=Math.floor((6+broad*25+detail*9)/4)*4;
-  const landHeight=rolling+mountain*peak+ice*(5+detail*6)+Math.min(1,bad)*mesa+forest*(3+ridge*9);
-  let height=landHeight;
-  height=height*(1-coast)+(-4+detail*2)*coast;
-  const submerged=height<.4;
-  // A continuous littoral shelf, not the residual height of a mountain
-  // abruptly cut off at the water mask. Sand stays one to three blocks high.
-  const shelf=1+2*(1-smooth(.40,.66,coast)),shelfBlend=smooth(.28,.40,coast);
-  height=height*(1-shelfBlend)+shelf*shelfBlend;
-  // The shelf flattens real dry coasts; it must not lift already submerged
-  // lowland into a second isolated strip in the water.
-  if(coast>.66||submerged)return{biome:'ocean',height:0,material:'water'};
-  if(coast>.40)return{biome:'beach',height:Math.max(1,Math.round(height)),material:'sand'};
-  // The western climates meet each other, not a residual central-grass mask.
-  // Independent cutoffs used to leave a widening grass ray at ice/mesa and
-  // mountain/ice seams. Select from the neighbouring climates throughout this
-  // outer band; small coherent noise breaks the material edge into an ecotone.
-  if(a<-.50) {
-    const variation=(noise(seed^0x85ab,x,z,19)-.5)*.08;
-    const cold=ice+variation,rocky=bad-variation;
-    if(mountain>=cold&&mountain>=rocky)return{biome:'snow-mountain',height:Math.round(height),material:height>20?'snow':'stone'};
-    if(cold>=rocky)return{biome:'glacier',height:Math.round(height),material:detail>.64?'ice':'snow'};
-    return{biome:'badlands',height:Math.round(height),material:'terracotta'};
+  const f=mosaicFields(x,z,seed,coreRadius);
+  // Wet masks and low beach datums stay independent of the relief union.
+  if(f.shoreField<0)return{biome:'ocean',height:0,material:'water'};
+  if(f.coast>.40){
+    const shelf=1+2*(1-smooth(.40,.66,f.coast)),blend=smooth(.28,.40,f.coast);
+    return{biome:'beach',height:Math.max(1,Math.round(f.legacyPremix*(1-blend)+shelf*blend)),material:'sand'};
   }
-  if(mountain>.2)return{biome:'snow-mountain',height:Math.round(height),material:height>20?'snow':'stone'};
-  if(ice>.34)return{biome:'glacier',height:Math.round(height),material:detail>.64?'ice':'snow'};
-  if(bad>.32)return{biome:'badlands',height:Math.round(height),material:'terracotta'};
-  if(forest>.25)return{biome:'forest',height:Math.round(height),material:'grass'};
-  // Coastal transition forests occupy 23 without displacing the central bench.
-  if(b>.6&&a>.35&&coast<.40&&bad<.15)return{biome:'forest',height:Math.round(height),material:'grass'};
-  return{biome:Math.hypot(a,b)>.5?'valley':'plains',height:Math.max(2,Math.round(height)),material:'grass'};
+  const dominant=f.bad/(f.bad+f.mountain+f.ice+.0001);
+  const t=Math.max(0,Math.min(1,(dominant-.65)/.30)),mesaBlend=t*t*t*(t*(t*6-15)+10);
+  const mesa=f.mesaRaw*(1-mesaBlend)+Math.floor(f.mesaRaw/4)*4*mesaBlend;
+  const relief=((f.mountain*f.peak)**4+(f.ice*(5+f.detail*6))**4+(f.bad*mesa)**4+(f.forest*(3+f.ridge*9))**4)**.25;
+  const shoreT=Math.max(0,Math.min(1,(f.coast-.08)/.32)),shore=shoreT**3*(shoreT*(shoreT*6-15)+10);
+  const height=Math.max(2,Math.round((f.rolling+relief)*(1-shore)+3*shore));
+  const rough=(noise(seed^0x55f1,x,z,11)-.5)*.12;
+  const scores:[MosaicBiome,number][]=[['snow-mountain',f.mountain],['glacier',f.ice],['badlands',f.bad],['forest',f.forestHabitat]];
+  if(f.a>=-.50)scores.push([Math.hypot(f.a,f.b)>.5?'valley':'plains',.20]);
+  let biome:MosaicBiome='plains',best=-Infinity;
+  for(const [index,[kind,value]]of scores.entries()){
+    const score=value+rough*Math.sin(index*2.7+1);if(score>best){best=score;biome=kind;}
+  }
+  if(biome==='snow-mountain')return{biome,height,material:height>=19+(noise(seed^0x712a,x,z,31)-.5)*8?'snow':'stone'};
+  const rock=f.coldHotBorder>.3&&noise(seed^0x219e,x,z,14)>.3;
+  if(biome==='glacier')return{biome,height,material:rock?'stone':f.detail>.64?'ice':'snow'};
+  if(biome==='badlands')return{biome,height,material:rock?'stone':'terracotta'};
+  return{biome,height,material:'grass'};
 }

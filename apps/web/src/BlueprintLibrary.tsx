@@ -9,6 +9,7 @@ import { loadVoxelModule } from './voxel-runtime';
 import { BlueprintPreview, type BlueprintPreviewSource } from './BlueprintPreview';
 import { PixelChevron, PixelClose, PixelCube, PixelEdit, PixelCheck, PixelPlus } from './ui/PixelIcon';
 import { Reveal } from './ui/Reveal';
+import { AnimatedDetails } from './ui/AnimatedDetails';
 import { useBackLayer } from './back-layer';
 import { LITEMATIC_MAX_COMPRESSED_BYTES, readBrowserFileBytes } from './browser-adapters';
 import { LOCAL_BUILTIN_SOURCES } from '@blockcolc/voxel/local-blueprint-sources';
@@ -22,7 +23,7 @@ type Run = (command: ApplicationCommand) => Promise<unknown>;
 const saved = (result: unknown) => Boolean(result && typeof result === 'object' && 'ok' in result && result.ok === true);
 
 /** Import, preview and management share one catalogue and one modal owner. */
-export function BlueprintLibrary({ state, resourcePacks, run }: { state: DomainState; resourcePacks: ResourcePackRepository; run: Run }) {
+export function BlueprintLibrary({ state, resourcePacks, run, embedded=false }: { state: DomainState; resourcePacks: ResourcePackRepository; run: Run; embedded?:boolean }) {
   const language = useI18n();
   const [open, setOpen] = useState(false), [catalog, setCatalog] = useState<readonly BlueprintCatalogEntry[]>([]);
   const [preview, setPreview] = useState<Entry | null>(null), [candidate, setCandidate] = useState<BlueprintV1 | null>(null);
@@ -95,16 +96,16 @@ export function BlueprintLibrary({ state, resourcePacks, run }: { state: DomainS
     return perform(async () => { if (!renaming || !displayName) throw new Error(t('蓝图名称不能为空。')); if (!saved(await run({ type: 'RenameBuildingBlueprint', blueprintId: renaming, displayName }))) throw new Error(t('无法修改蓝图名称。')); setRenaming(null); });
   };
   const modal = preview || candidate || remove;
-  return <section className="settings-group blueprint-library" aria-label={t('蓝图库')}>
-    <h2>{t('蓝图库')}</h2><div className="settings-list">
-      <button type="button" className="setting-row library-heading" aria-expanded={open} onClick={() => setOpen(value => !value)}><span className="setting-name"><span>{t('所有图纸')}</span><small>{t('原生、导入与建造奖励')}</small></span><PixelChevron/></button>
+  return <section className={embedded?'settings-library blueprint-library':'settings-group blueprint-library'} aria-label={t('蓝图库')}>
+    {!embedded&&<h2>{t('蓝图库')}</h2>}<div className={embedded?'settings-library-list':'settings-list'}>
+      <button type="button" className="setting-row library-heading" aria-expanded={open} onClick={() => setOpen(value => !value)}><span className="setting-name"><span>{embedded?t('蓝图库'):t('所有图纸')}</span><small>{t('原生、导入与建造奖励')}</small></span><PixelChevron/></button>
       <Reveal open={open}><div className="library-groups">
         <div className="library-toolbar"><button type="button" className="settings-text-action" disabled={busy} aria-busy={busy} onClick={() => { opener.current = document.activeElement as HTMLElement; void importFile(); }}><PixelPlus/>{t('导入 .litematic')}</button><small>{state.buildingBlueprintResources.length}/{MAX_BUILDING_BLUEPRINTS}</small></div>
         <input ref={input} aria-label={t('导入 .litematic')} className="sr-only" type="file" accept=".litematic,application/octet-stream" disabled={busy} onChange={event => { const file = event.target.files?.[0]; event.currentTarget.value = ''; if (file) void perform(async () => parse(await readBrowserFileBytes(file))); }}/>
-        {groups.map(group => <details key={group.name}><summary>{group.name}<span>{group.entries.length}</span><PixelChevron/></summary><ul className="library-tiles">{group.entries.map(entry => <li key={entry.id}>
+        {groups.map(group => <AnimatedDetails key={group.name} summary={<>{group.name}<span>{group.entries.length}</span><PixelChevron/></>}><ul className="library-tiles">{group.entries.map(entry => <li key={entry.id}>
           {renaming === entry.id ? <form className="library-rename" onSubmit={event => { event.preventDefault(); void rename(); }}><NativeImeTextEntry targetRef={renameInput} name="blueprintName" ariaLabel={t('蓝图名称')} maxLength={80} defaultValue={name} autoFocus disabled={busy}/><button type="submit" aria-label={t('保存蓝图名称')} disabled={busy}><PixelCheck/></button><button type="button" aria-label={t('取消重命名')} onClick={() => setRenaming(null)}><PixelClose/></button></form>
           : <><button type="button" className="library-preview-action" disabled={busy} onClick={event => void show(entry, event.currentTarget)}><span className="library-miniature">{entry.locked ? '?' : <PixelCube/>}</span><span><strong>{entry.displayName}</strong><small>{entry.locked ? t('待发现') : entry.description}</small></span></button>{entry.imported && <div className="blueprint-library-actions"><button type="button" className="settings-text-action blueprint-rename" aria-label={t('重命名“{0}”', entry.displayName)} disabled={busy} onClick={() => { setName(entry.displayName); setRenaming(entry.id); }}><PixelEdit/></button><button type="button" className="settings-text-action blueprint-delete" aria-label={t('删除“{0}”',entry.displayName)} disabled={busy} onClick={event => { opener.current = event.currentTarget; setRemove(entry.id); }}>{t('删除')}</button></div>}</>}
-        </li>)}</ul></details>)}
+        </li>)}</ul></AnimatedDetails>)}
       </div></Reveal>
       {error && !modal && <p className="import-error" role="alert">{t(error)}</p>}
     </div>

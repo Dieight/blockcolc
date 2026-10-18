@@ -17,7 +17,7 @@ export function bigSettlement(count: number): WorldSnapshot[] {
   }));
 }
 
-export function scanSlits(snapshots: WorldSnapshot[], seed: string, version: 1 | 4): string[] {
+export function scanSlits(snapshots: WorldSnapshot[], seed: string, version: 4): string[] {
   const placements = layoutWorlds(snapshots);
   const roads = roadCellsForVillage(placements);
   const terrain = createSteppedTerrainData(placements, roads, [], undefined, {

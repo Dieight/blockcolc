@@ -21,6 +21,7 @@
     "resource-pack-cold-list-deferral.diagnostic.spec.ts",
     "shader-route.diagnostic.spec.ts",
     "submission-performance.diagnostic.spec.ts",
+    "terrain-mesh-benchmark.diagnostic.spec.ts",
     "v21-right-band-probe.spec.ts",
     "v24-voidscan.spec.ts",
     "v256-world.diagnostic.spec.ts",
@@ -32,25 +33,46 @@
   ],
   "suites": [
     {
-      "name": "core",
+      "name": "critical",
       "workers": 1,
       "specs": [
         "automatic-continuation.spec.ts",
-        "local-blueprint-builtins.spec.ts",
-        "blueprint-orientation.spec.ts",
-        "focus-native-bundle.spec.ts",
         "focus-regressions.spec.ts",
         "minimal-achievement-entry.spec.ts",
         "switch-contracts.spec.ts",
-        "navigation-cache.spec.ts",
         "task-ime.spec.ts",
+        "v280-ui-and-ime.spec.ts",
+        "v256-settlement-recovery.spec.ts"
+      ]
+    },
+    {
+      "name": "render-contracts",
+      "workers": 1,
+      "specs": [
+        "minimal-focus-continuity.spec.ts",
+        "v16-terrain-clip.spec.ts",
+        "v2-world-interaction.spec.ts",
+        "world-render-retention.spec.ts",
+        "world-animals.spec.ts",
+        "world-cache-worker.spec.ts",
+        "world-shadow-cache.spec.ts",
+        "world-weather-lifecycle.spec.ts"
+      ]
+    },
+    {
+      "name": "core",
+      "workers": 1,
+      "specs": [
+        "local-blueprint-builtins.spec.ts",
+        "blueprint-orientation.spec.ts",
+        "focus-native-bundle.spec.ts",
+        "navigation-cache.spec.ts",
         "v10-habit-flow.spec.ts",
         "v17-continuity.spec.ts",
         "v21-marathon.spec.ts",
         "v22-integrity-ended.spec.ts",
         "v22-marathon-lane.spec.ts",
         "v24-marathon-settle.spec.ts",
-        "v256-settlement-recovery.spec.ts",
         "v256-revision2.spec.ts",
         "v256-revision3.spec.ts",
         "v256-revision4.spec.ts",
@@ -83,34 +105,42 @@
       ]
     },
     {
-      "name": "renderer",
+      "name": "terrain",
       "workers": 1,
       "specs": [
-        "minimal-focus-continuity.spec.ts",
         "litematic-csp.spec.ts",
         "resource-pack.spec.ts",
         "world-scenery.spec.ts",
+        "terrain-appearance.spec.ts",
         "v11-world-environment.spec.ts",
         "v15-lighting-quality.spec.ts",
-        "v16-terrain-clip.spec.ts",
-        "v2-world-interaction.spec.ts",
+        "world-coordinate-setting.spec.ts",
+        "world-followup-f05-f07.spec.ts"
+      ]
+    },
+    {
+      "name": "atmosphere",
+      "workers": 1,
+      "specs": [
         "v20-ambient-motion.spec.ts",
         "v24-cloud-drift.spec.ts",
         "v24-ocean.spec.ts",
         "v3-lightweight-shading.spec.ts",
-        "visual-flow.spec.ts",
-        "world-coordinate-setting.spec.ts",
-        "world-followup-f05-f07.spec.ts",
         "world-presentation.spec.ts",
-        "v270-performance-and-ui.spec.ts",
-        "v270-followup.spec.ts",
-        "v270-feedback.spec.ts",
-        "v270-feedback75.spec.ts",
-        "world-shadow-cache.spec.ts",
-        "world-weather-lifecycle.spec.ts",
         "world-weather-coverage.spec.ts",
         "world-precipitation-motion.spec.ts",
         "world-precipitation-density.spec.ts"
+      ]
+    },
+    {
+      "name": "world-ui",
+      "workers": 1,
+      "specs": [
+        "visual-flow.spec.ts",
+        "v270-performance-and-ui.spec.ts",
+        "v270-followup.spec.ts",
+        "v270-feedback.spec.ts",
+        "v270-feedback75.spec.ts"
       ]
     }
   ]

@@ -5,13 +5,12 @@ async function checkEditAlignment(page: Page, locked: boolean, output: (name: st
   await page.getByRole('button', { name: '任务', exact: true }).click();
   for (const width of [320, 412, 780]) {
     await page.setViewportSize({ width, height: 900 });
-    const projectEdit = await page.getByRole('button', { name: '修改任务名称', exact: true }).boundingBox();
-    const checklist = page.locator('.task-section-heading');
+    const title = page.locator('.task-project-title');
     const checklistEdit = page.getByRole('button', { name: '编辑施工清单', exact: true });
-    const headingBox = await checklist.boundingBox();
+    const headingBox = await title.boundingBox();
     const editBox = await checklistEdit.boundingBox();
-    expect(projectEdit).not.toBeNull();
-    expect(Math.abs(projectEdit!.x + projectEdit!.width - editBox!.x - editBox!.width)).toBeLessThan(1);
+    expect(headingBox).not.toBeNull();
+    expect(Math.abs(headingBox!.x+headingBox!.width-editBox!.x-editBox!.width)).toBeLessThan(1);
     expect(editBox!.y).toBeGreaterThanOrEqual(headingBox!.y);
     expect(editBox!.y + editBox!.height).toBeLessThanOrEqual(headingBox!.y + headingBox!.height + 1);
     expect(editBox!.height).toBeGreaterThanOrEqual(44);
@@ -34,7 +33,7 @@ async function checkEditAlignment(page: Page, locked: boolean, output: (name: st
   await page.getByRole('button', { name: '结束编辑施工清单', exact: true }).click();
 }
 
-test('checklist edit stays aligned with project edit before and after progress locks the structure', async ({ page }, testInfo) => {
+test('one management action stays beside the title before and after progress locks the structure', async ({ page }, testInfo) => {
   test.setTimeout(90_000);
   await page.goto('/');
   await page.getByRole('button', { name: '开始建造', exact: true }).click();

@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import {switchTaskProject} from './task-management-controls';
 import { readPersistedDomainState } from './persisted-domain-state';
 import { choosePlanEndTime, finishPaintedReportReceipt, prepareReadyPlanCancellation, startNextRound, waitForMarathonReport } from './focus-plan-controls';
 import { waitForPreparedWorld } from './world-ready';
@@ -46,8 +47,7 @@ async function createHabit(page: import("@playwright/test").Page, name: string) 
 
 async function switchToFiniteProject(page: import("@playwright/test").Page) {
   await page.getByRole("button", { name: "任务", exact: true }).click();
-  await page.locator(".choice-menu-trigger").click();
-  await page.getByRole("option", { name: /我的第一座工坊/ }).click();
+  await switchTaskProject(page,/我的第一座工坊/);
   await page.getByRole("button", { name: "计时" }).click();
 }
 

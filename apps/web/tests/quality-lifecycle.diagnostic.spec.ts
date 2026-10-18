@@ -1,3 +1,4 @@
+import { openSecondarySetting } from './settings-controls';
 import { createHash } from 'node:crypto';
 import { createReadStream, existsSync } from 'node:fs';
 import { readFile, stat } from 'node:fs/promises';
@@ -851,20 +852,20 @@ test('measures real-UI boot and warmed paired lighting-quality changes with boun
     await expect(canvas).toHaveAttribute('data-first-nonempty-frame-ms', /\d/, { timeout: 60_000 });
     await expect(canvas).toHaveAttribute('data-initial-reveal-completed-count', '1', { timeout: 60_000 });
 
-    await page.getByRole('button', { name: '设置', exact: true }).click();
+    await page.getByRole('button', { name: '设置', exact: true }).click(); await openSecondarySetting(page,'方块材质包');
     const quality = page.getByRole('group', { name: '光影质量' });
     await quality.getByRole('button', { name: '均衡', exact: true }).click();
     await page.getByRole('button', { name: '计时', exact: true }).click();
     await expect(canvas).toHaveAttribute('data-requested-lighting-quality', 'balanced', { timeout: 60_000 });
 
-    await page.getByRole('button', { name: '设置', exact: true }).click();
+    await page.getByRole('button', { name: '设置', exact: true }).click(); await openSecondarySetting(page,'方块材质包');
     await page.getByLabel('导入 Java 资源包 ZIP').setInputFiles(clientJar!);
-    await expect(page.locator('.resource-pack-panel .backup-notice')).toContainText('已导入并启用', { timeout: 180_000 });
-    const base = page.locator('.resource-pack-list li').first();
-    await expect(page.locator('.resource-pack-list li')).toHaveCount(1);
+    await expect(page.locator('.resource-pack-setting .backup-notice')).toContainText('已导入并启用', { timeout: 180_000 });
+    const base = page.locator('.resource-pack-setting-list li').first();
+    await expect(page.locator('.resource-pack-setting-list li')).toHaveCount(1);
     await expect(base).toContainText('外观层');
-    await page.locator('.resource-pack-original').getByRole('button', { name: '使用', exact: true }).click();
-    await expect(page.locator('.resource-pack-original')).toContainText('正在使用');
+    await page.locator('.resource-pack-current').getByRole('button', { name: '使用', exact: true }).click();
+    await expect(page.locator('.resource-pack-current')).toContainText('正在使用');
     await expect(base).not.toContainText('基础层');
     await page.getByRole('button', { name: '计时', exact: true }).click();
     await expect.poll(async () => {
@@ -877,8 +878,8 @@ test('measures real-UI boot and warmed paired lighting-quality changes with boun
         && worldRebuildCount > 0 && renderedWorldRebuildCount === worldRebuildCount && renderedTriangles > 0;
     }, { timeout: 120_000 }).toBe(true);
 
-    await page.getByRole('button', { name: '设置', exact: true }).click();
-    await expect(page.locator('.resource-pack-list li')).toHaveCount(1);
+    await page.getByRole('button', { name: '设置', exact: true }).click(); await openSecondarySetting(page,'方块材质包');
+    await expect(page.locator('.resource-pack-setting-list li')).toHaveCount(1);
     const generationBeforeBaseSelection = Number(await canvas.getAttribute('data-renderer-generation'));
     await base.getByRole('button', { name: '设为基础', exact: true }).click();
     await expect(base).toContainText('基础层');
@@ -937,7 +938,7 @@ test('measures real-UI boot and warmed paired lighting-quality changes with boun
         (window as unknown as ProbeWindow).__blockcolcQualityLifecycle?.beginOperation('quality-pair') ?? null);
       expect(operationIndex).not.toBeNull();
       for (const preference of ['performance', 'balanced'] as const) {
-        await page.getByRole('button', { name: '设置', exact: true }).click();
+        await page.getByRole('button', { name: '设置', exact: true }).click(); await openSecondarySetting(page,'方块材质包');
         const measuredQuality = page.getByRole('group', { name: '光影质量' });
         const oldSnapshot = await readProbe(page);
         const actionIndex = await page.evaluate(value =>

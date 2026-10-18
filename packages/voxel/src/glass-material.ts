@@ -23,6 +23,11 @@ export function glassMaterialFor(clarity: number) {
 }
 
 export interface GlassRegion { x: number; y: number; width: number; height: number }
+/** Preserve clear glass/colour while keeping bright night sand below light ink. */
+export function glassNightCeiling(clarity:number,night:boolean):number{
+  if(!night||!Number.isFinite(clarity)||clarity<75)return 1;
+  return .2+.1*Math.min(1,(clarity-75)/25);
+}
 export function glassRegionFor(width: number, height: number, bottom: number, right: number): GlassRegion | null {
   if (!Number.isFinite(width) || !Number.isFinite(height) || width < 1 || height < 1) return null;
   const fraction = (v: number) => Number.isFinite(v) ? Math.max(0, Math.min(.75, v)) : 0;

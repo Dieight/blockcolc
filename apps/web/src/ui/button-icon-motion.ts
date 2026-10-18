@@ -21,6 +21,13 @@ export function iconPartMotion(name: string, part = ''): IconPartMotion | null {
     {transform:'perspective(32px) rotateX(180deg) translateY(-.7px)',opacity:0,offset:.88},
     {transform:'perspective(32px) rotateX(180deg) translateY(-.7px)',opacity:0},
   ],'6px 4px');
+  if(name==='expand'){
+    if(part==='core')return motion([{transform:'scale(1)'},{transform:'scale(.5)',offset:.3},{transform:'scale(1.25)',offset:.65},{transform:'scale(1)'}]);
+    if(part.startsWith('corner-')){
+      const x=part.endsWith('l')?-1:1,y=part.includes('-t')?-1:1;
+      return motion([{transform:'translate(0,0)'},{transform:`translate(${x}px,${y}px)`,offset:.35},{transform:'translate(0,0)'}]);
+    }
+  }
   if (part) return null;
   if (name === 'plus') return motion([{ transform: 'scale(.65) rotate(-90deg)' }, { transform: 'scale(1.12) rotate(0deg)', offset: .65 }, { transform: 'scale(1)' }]);
   if (name === 'edit') return motion([{ transform: 'rotate(0deg)' }, { transform: 'translate(1px,-1px) rotate(-12deg)', offset: .35 }, { transform: 'translate(-.5px,.5px) rotate(5deg)', offset: .7 }, { transform: 'none' }], '50% 50%');

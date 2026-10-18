@@ -2,10 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { terrainGenerationProfile } from '../src/terrain-profile';
 
 describe('terrain generation profiles', () => {
-  it('expands v4 valley detail without changing legacy shape budgets or the ocean', () => {
+  it('keeps current valley and ocean detail budgets', () => {
     const current = terrainGenerationProfile('natural-valley', 40, 4);
-    const legacy = terrainGenerationProfile('natural-valley', 40, 3);
-    if (current.kind !== 'natural-valley' || legacy.kind !== 'natural-valley') throw new Error('wrong profile');
+    if (current.kind !== 'natural-valley') throw new Error('wrong profile');
     expect(current.nearExtent).toBe(128);
     expect(current.middleExtent).toBe(256);
     expect(current.farFineExtent).toBe(368);
@@ -14,12 +13,9 @@ describe('terrain generation profiles', () => {
     if(fallback.kind!=='natural-valley')throw new Error('wrong profile');
     expect(fallback.farCellSize).toBe(8);
     expect(fallback.refinedFar).toBe(false);
-    expect(legacy.farCellSize).toBe(16);
-    expect(current.nearExtent).toBeGreaterThan(legacy.nearExtent);
-    expect(current.middleExtent).toBeGreaterThan(legacy.middleExtent);
-    expect(legacy.nearExtent).toBe(80);
-    expect(legacy.middleExtent).toBe(160);
-    expect(current.farExtent).toBe(legacy.farExtent);
+    expect(current.farExtent).toBe(720);
+    for (const generation of [1, 2, 3]) expect(() =>
+      terrainGenerationProfile('natural-valley', 40, generation as 4)).toThrow(/version 4/);
   });
   it('keeps natural-valley LOD boundaries aligned and enables the v4 fine band', () => {
     const profile = terrainGenerationProfile('natural-valley', 60, 4);

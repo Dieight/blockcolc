@@ -1,5 +1,5 @@
 import { t, useI18n } from './i18n';
-import { useRef, useState } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
 import type { FocusInterruptionCategory } from '@blockcolc/domain';
 import { PixelClose as X, PixelClock, PixelFlag, PixelPlay } from './ui/PixelIcon';
 import { MinimalClockGesture } from './ui/MinimalClockGesture';
@@ -74,7 +74,10 @@ function ConfirmPlanAction({ disabled, onConfirm, label=t("确认计划"), destr
   </>;
 }
 
-export function FocusPlanSheet({ subtasks, selectedId, rounds, focusMinutes, breakMinutes, locked, mode, endAtDraft, onModeChange, onEndAtDraftChange, onSelect, onRoundsChange, onClose, onConfirm, onCancelPlan, cancellationNote, cancellationReason, unstarted=false }: {
+export function FocusPlanSheet({ habit=false,deferredSettlement=false,taskPicker, subtasks, selectedId, rounds, focusMinutes, breakMinutes, locked, mode, endAtDraft, onModeChange, onEndAtDraftChange, onSelect, onRoundsChange, onClose, onConfirm, onCancelPlan, cancellationNote, cancellationReason, unstarted=false }: {
+  habit?:boolean;
+  deferredSettlement?:boolean;
+  taskPicker?:ReactNode;
   subtasks: Array<{ id: string; title: string; progressBasisPoints: number }>;
   selectedId: string;
   rounds: number;
@@ -104,65 +107,28 @@ export function FocusPlanSheet({ subtasks, selectedId, rounds, focusMinutes, bre
   const available = subtasks.filter(subtask => subtask.progressBasisPoints < 10000);
   return <div className="dialog-backdrop plan-sheet-backdrop edge-sheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
     <section className="focus-plan-sheet" role="dialog" aria-modal="true" aria-labelledby="focus-plan-title">
-      <div className="sheet-heading"><div><span className="eyebrow">{t("本次计划")}</span><h2 id="focus-plan-title"><PixelClock/>{t("安排下一轮")}</h2></div><button type="button" className="dialog-close" aria-label={t("关闭本次计划")} onClick={onClose}><X/></button></div>
+      <div className="sheet-heading"><div><span className="eyebrow">{t("本次计划")}</span><h2 id="focus-plan-title"><PixelClock/>{habit?t("安排习惯专注"):t("安排下一轮")}</h2></div><button type="button" className="dialog-close" aria-label={t("关闭本次计划")} onClick={onClose}><X/></button></div>
       <PlanMode mode={mode} locked={locked} onChange={onModeChange}/>
       {mode === 'rounds' ? <>
-        <ChoiceMenu label={t("本次专注")} value={available.some(subtask => subtask.id === selectedId) ? selectedId : available[0]?.id ?? ''} disabled={locked} onChange={onSelect} options={available.map((subtask) => ({ id: subtask.id, label: subtask.title, detail: t("进度 {0}%", Math.round(subtask.progressBasisPoints / 100)) }))}/>
-        <RoundChoices rounds={rounds} locked={locked} onChange={onRoundsChange}/>
-        <p className="plan-sheet-note">{t("每轮")}{' '}{focusMinutes} {t("分钟专注")}{breakMinutes > 0 ? t("；多轮之间休息 {0} 分钟。", breakMinutes) : t("；休息已关闭。")}{note}</p>
+        {taskPicker??(!habit&&<ChoiceMenu label={t("本次专注")} value={available.some(subtask => subtask.id === selectedId) ? selectedId : available[0]?.id ?? ''} disabled={locked} onChange={onSelect} options={available.map((subtask) => ({ id: subtask.id, label: subtask.title, detail: t("进度 {0}%", Math.round(subtask.progressBasisPoints / 100)) }))}/>)}
+        <RoundChoices rounds={rounds} locked={locked} habit={habit} onChange={onRoundsChange}/>
+        <p className="plan-sheet-note">{t("每轮")}{' '}{focusMinutes} {t("分钟专注")}{breakMinutes > 0 ? t("；多轮之间休息 {0} 分钟。", breakMinutes) : t("；休息已关闭。")}{habit?t("完成即推进建筑。"):''}{note}</p>
       </> : <>
         <EndTimeChoice draft={endAtDraft} endMs={endMs} focusMinutes={focusMinutes} breakMinutes={breakMinutes} locked={locked} onChange={onEndAtDraftChange}/>
         {endMs === null
           ? <p className="plan-sheet-error">{t("请先选择结束时间。")}</p>
           : schedule === null
             ? <p className="plan-sheet-error">{t("从现在到")}{' '}{formatClockTime(endMs)} {t("不足一轮专注（")}{focusMinutes} {t("分钟），请选择更晚的时间。")}</p>
-            : <p className="plan-sheet-note">{schedule.rounds} {t("轮专注")}{schedule.breaks > 0 ? t(" · {0} 次休息", schedule.breaks) : ''} {t("· 结束后统一汇报。")}{capped ? t("最多 {0} 轮，约 {1}。", MAX_MARATHON_ROUNDS, formatDurationSummary(schedule.usableMs)) : ''}{note}</p>}
+            : habit&&!deferredSettlement
+              ? <p className="plan-sheet-note">{schedule.rounds} {t("轮习惯专注，每轮")}{' '}{focusMinutes} {t("分钟")}{t("。完成即推进建筑。")}{schedule.breaks>0?t(" · {0} 次休息",schedule.breaks):''}{note}</p>
+              : <p className="plan-sheet-note">{schedule.rounds} {t("轮专注")}{schedule.breaks > 0 ? t(" · {0} 次休息", schedule.breaks) : ''} {t("· 结束后统一汇报。")}{capped ? t("最多 {0} 轮，约 {1}。", MAX_MARATHON_ROUNDS, formatDurationSummary(schedule.usableMs)) : ''}{note}</p>}
       </>}
-      {locked ? unstarted ? <ConfirmPlanAction label={t("取消计划")} destructive disabled={false} onConfirm={async()=>{if(!await onCancelPlan(null,''))throw new Error(t("取消未完成"));}}/> : <CancelPlanReason onCancelPlan={onCancelPlan} initialNote={cancellationNote} initialReason={cancellationReason}/> : <ConfirmPlanAction disabled={mode === 'marathon' ? !marathonValid : available.length === 0} onConfirm={onConfirm}/>}
+      {locked ? unstarted ? <ConfirmPlanAction label={t("取消计划")} destructive disabled={false} onConfirm={async()=>{if(!await onCancelPlan(null,''))throw new Error(t("取消未完成"));}}/> : <CancelPlanReason onCancelPlan={onCancelPlan} initialNote={cancellationNote} initialReason={cancellationReason}/> : <ConfirmPlanAction disabled={mode === 'marathon' ? !marathonValid : !habit&&available.length === 0} onConfirm={onConfirm}/>}
     </section>
   </div>;
 }
 
-export function HabitFocusPlanSheet({ rounds, focusMinutes, breakMinutes, locked, mode, endAtDraft, onModeChange, onEndAtDraftChange, onRoundsChange, onClose, onConfirm, onCancelPlan, cancellationNote, cancellationReason, unstarted=false }: {
-  rounds: number;
-  focusMinutes: number;
-  breakMinutes: number;
-  locked: boolean;
-  unstarted?:boolean;
-  mode: 'rounds' | 'marathon';
-  endAtDraft: string;
-  onModeChange: (mode: 'rounds' | 'marathon') => void;
-  onEndAtDraftChange: (draft: string) => void;
-  onRoundsChange: (rounds: number) => void;
-  onClose: () => void;
-  onConfirm: () => void | Promise<void>;
-  onCancelPlan: (reason: FocusInterruptionCategory | null, note: string) => Promise<boolean>;
-  cancellationNote?: string;
-  cancellationReason?: FocusInterruptionCategory | null;
-}) {
-  useI18n();
-  const endMs = mode === 'marathon' ? marathonEndInstant(endAtDraft) : null;
-  const schedule = endMs === null ? null : planRoundsForDuration(endMs - Date.now(), focusMinutes, breakMinutes);
-  const rawSchedule = endMs === null ? null : planRoundsForDuration(endMs - Date.now(), focusMinutes, breakMinutes, 1_000_000);
-  const capped = schedule !== null && rawSchedule !== null && rawSchedule.rounds > schedule.rounds;
-  const marathonValid = endMs !== null && schedule !== null;
-  const note = locked ? t(" 已锁定，可取消后重新安排。") : '';
-  return <div className="dialog-backdrop plan-sheet-backdrop edge-sheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-    <section className="focus-plan-sheet" role="dialog" aria-modal="true" aria-labelledby="habit-focus-plan-title">
-      <div className="sheet-heading"><div><span className="eyebrow">{t("本次计划")}</span><h2 id="habit-focus-plan-title"><PixelClock/>{t("安排习惯专注")}</h2></div><button type="button" className="dialog-close" aria-label={t("关闭本次计划")} onClick={onClose}><X/></button></div>
-      <PlanMode mode={mode} locked={locked} onChange={onModeChange}/>
-      {mode === 'rounds' ? <>
-        <RoundChoices rounds={rounds} locked={locked} habit onChange={onRoundsChange}/>
-        <p className="plan-sheet-note">{t("每轮")}{' '}{focusMinutes} {t("分钟")}{breakMinutes > 0 ? t(" · 休息 {0} 分钟", breakMinutes) : t(" · 不休息")}{t("。完成即推进建筑。")}{note}</p>
-      </> : <>
-        <EndTimeChoice draft={endAtDraft} endMs={endMs} focusMinutes={focusMinutes} breakMinutes={breakMinutes} locked={locked} onChange={onEndAtDraftChange}/>
-        {endMs === null
-          ? <p className="plan-sheet-error">{t("请先选择结束时间。")}</p>
-          : schedule === null
-            ? <p className="plan-sheet-error">{t("从现在到")}{' '}{formatClockTime(endMs)} {t("不足一轮习惯专注（")}{focusMinutes} {t("分钟），请选择更晚的时间。")}</p>
-            : <p className="plan-sheet-note">{schedule.rounds} {t("轮习惯专注，每轮")}{' '}{focusMinutes} {t("分钟")}{schedule.breaks > 0 ? t(" · {0} 次休息", schedule.breaks) : ''}{t("。完成即推进建筑。")}{capped ? t("最多 {0} 轮，约 {1}。", MAX_MARATHON_ROUNDS, formatDurationSummary(schedule.usableMs)) : ''}{note}</p>}
-      </>}
-      {locked ? unstarted ? <ConfirmPlanAction label={t("取消计划")} destructive disabled={false} onConfirm={async()=>{if(!await onCancelPlan(null,''))throw new Error(t("取消未完成"));}}/> : <CancelPlanReason onCancelPlan={onCancelPlan} initialNote={cancellationNote} initialReason={cancellationReason}/> : <ConfirmPlanAction disabled={mode === 'marathon' && !marathonValid} onConfirm={onConfirm}/>}
-    </section>
-  </div>;
+/** Compatibility entry; both project kinds use one plan sheet. */
+export function HabitFocusPlanSheet(props:Omit<Parameters<typeof FocusPlanSheet>[0],'habit'|'subtasks'|'selectedId'|'onSelect'>){
+  return <FocusPlanSheet {...props} habit subtasks={[]} selectedId="" onSelect={()=>{}}/>;
 }

@@ -1,5 +1,5 @@
 export type TerrainProfileStyle = 'natural-valley' | 'classic-island' | 'ocean-island';
-export type TerrainProfileGeneration = 1 | 2 | 3 | 4;
+export type TerrainProfileGeneration = 4;
 
 export interface ClassicIslandTerrainProfile {
   kind: 'classic-island';
@@ -38,10 +38,11 @@ export function terrainGenerationProfile(
   generation: TerrainProfileGeneration,
   refinedFarOverride?: boolean,
 ): TerrainGenerationProfile {
+  if (generation !== 4) throw new RangeError('Terrain profiles require generation version 4.');
   if (style === 'classic-island') {
     return { kind: style, cellSize: coreRadius > 70 ? 2 : 1 };
   }
-  const expandedValley = style === 'natural-valley' && generation === 4;
+  const expandedValley = style === 'natural-valley';
   const nearExtent = alignTo(Math.max(expandedValley ? 128 : 80, coreRadius + (expandedValley ? 56 : 28)), 8);
   if (style === 'ocean-island') {
     const mainRadius = coreRadius * 1.55 + 20;
@@ -59,16 +60,16 @@ export function terrainGenerationProfile(
       strait: 60,
     };
   }
-  const middleExtent = alignTo(Math.max(expandedValley ? 256 : 160, nearExtent + (expandedValley ? 112 : 64)), 16);
+  const middleExtent = alignTo(Math.max(256, nearExtent + 112), 16);
   const farExtent = alignTo(Math.max(720, middleExtent + 80, coreRadius * 4.5), 16);
-  const refinedFar = refinedFarOverride ?? (generation === 4 && farExtent <= 1_024);
+  const refinedFar = refinedFarOverride ?? (farExtent <= 1_024);
   return {
     kind: style,
     nearExtent,
     middleExtent,
     farExtent,
-    farFineExtent: refinedFar ? alignTo(Math.max(middleExtent + (expandedValley ? 112 : 96), middleExtent * 1.4), 16) : middleExtent,
+    farFineExtent: refinedFar ? alignTo(Math.max(middleExtent + 112, middleExtent * 1.4), 16) : middleExtent,
     refinedFar,
-    farCellSize: expandedValley && farExtent <= 1_024 ? 8 : 16,
+    farCellSize: farExtent <= 1_024 ? 8 : 16,
   };
 }

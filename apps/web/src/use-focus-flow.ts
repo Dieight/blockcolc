@@ -6,6 +6,7 @@ export function useFocusFlow(ports: FocusFlowPorts) {
   const latest = useRef(ports);
   latest.current = ports;
   return useMemo(() => createFocusFlow({
+    replacementRevision: () => latest.current.replacementRevision?.() ?? 0,
     snapshot: () => latest.current.snapshot(), dispatch: (command, options) => latest.current.dispatch(command, options), refresh: () => latest.current.refresh?.(),
     resume: () => latest.current.resume(), readPlan: () => latest.current.readPlan(),
     writePlan: plan => latest.current.writePlan(plan), preferences: () => latest.current.preferences(),

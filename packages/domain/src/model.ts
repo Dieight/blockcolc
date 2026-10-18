@@ -298,6 +298,7 @@ export interface DomainState {
 export type DomainCommand =
   | { type: 'AddQuickNote'; noteId: string; text: string }
   | { type: 'SetQuickNoteCompleted'; noteId: string; completed: boolean }
+  | { type: 'RenameQuickNote'; noteId: string; text: string }
   | { type: 'DeleteQuickNote'; noteId: string }
   | { type: "CreateProject"; projectId: string; title: string; blueprintId: string; importedBlueprint?: ImportedBlueprintV1 | null; subtasks: Array<{ id: string; title: string }> }
   | { type: "CreateHabitProject"; projectId: string; title: string; blueprintId: string; importedBlueprint?: ImportedBlueprintV1 | null; targetRounds: number }

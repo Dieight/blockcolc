@@ -1,3 +1,4 @@
+import { openSecondarySetting } from './settings-controls';
 import { expect, test } from '@playwright/test';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -9,14 +10,14 @@ test('measures resource-pack panel button positions for device scaling', async (
   test.skip(!existsSync(sample), 'Real pack fixture stays local.');
   await page.goto('/');
   await page.getByRole('button', { name: '开始建造', exact: true }).click();
-  await page.getByRole('button', { name: '设置', exact: true }).click();
+  await page.getByRole('button', { name: '设置', exact: true }).click(); await openSecondarySetting(page,'方块材质包');
   await page.getByLabel('导入 Java 资源包 ZIP').setInputFiles(sample);
-  await expect(page.locator('.resource-pack-panel .backup-notice')).toContainText('已导入并启用');
+  await expect(page.locator('.resource-pack-setting .backup-notice')).toContainText('已导入并启用');
   await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
   await page.waitForTimeout(300);
-  const original = page.locator('.resource-pack-original');
+  const original = page.locator('.resource-pack-current');
   const importButton = page.getByLabel('导入 Java 资源包 ZIP');
-  const packRow = page.locator('.resource-pack-list li').first();
+  const packRow = page.locator('.resource-pack-setting-list li').first();
   await expect(packRow).toBeVisible();
   const useButton = packRow.getByRole('button', { name: /使用(?:中)?/ });
   const deleteButton = packRow.getByRole('button', { name: /删除/ });

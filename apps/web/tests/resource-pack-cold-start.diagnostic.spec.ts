@@ -1,3 +1,4 @@
+import { openSecondarySetting } from './settings-controls';
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { stat, writeFile } from 'node:fs/promises';
@@ -312,13 +313,13 @@ test('measures five default-atlas new-document boots with bounded repository ove
   const canvas = page.getByLabel('项目建筑世界');
   await expect(canvas).toBeVisible();
   await expect.poll(async () => Number(await canvas.getAttribute('data-rendered-world-rebuild-count'))).toBeGreaterThan(0);
-  await page.getByRole('button', { name: '设置', exact: true }).click();
+  await page.getByRole('button', { name: '设置', exact: true }).click(); await openSecondarySetting(page,'方块材质包');
   await page.getByLabel('导入 Java 资源包 ZIP').setInputFiles(jarPath!);
-  await expect(page.locator('.resource-pack-panel .backup-notice')).toContainText('已导入并启用', { timeout: 180_000 });
-  const basePack = page.locator('.resource-pack-list li').first();
+  await expect(page.locator('.resource-pack-setting .backup-notice')).toContainText('已导入并启用', { timeout: 180_000 });
+  const basePack = page.locator('.resource-pack-setting-list li').first();
   await expect(basePack).toContainText('外观层');
-  await page.locator('.resource-pack-original').getByRole('button', { name: '使用', exact: true }).click();
-  await expect(page.locator('.resource-pack-original')).toContainText('正在使用');
+  await page.locator('.resource-pack-current').getByRole('button', { name: '使用', exact: true }).click();
+  await expect(page.locator('.resource-pack-current')).toContainText('正在使用');
   await basePack.getByRole('button', { name: '设为基础', exact: true }).click();
   await expect(basePack).toContainText('基础层');
   await page.getByRole('button', { name: '计时', exact: true }).click();

@@ -108,7 +108,8 @@ test("renders distinct day phases with a bounded optional post-process and no co
     await expect(canvas).toHaveAttribute("data-sky-layer-count", "3");
     await expect(canvas).toHaveAttribute("data-glow-texture-size", "32");
     await expect(canvas).toHaveAttribute("data-glow-texture-shape", "soft-square");
-    await expect(canvas).toHaveAttribute("data-terrain-water-opaque", "true");
+    // Wildlife keeps nearby water translucent; distant sheets remain opaque.
+    await expect(canvas).toHaveAttribute("data-terrain-water-opaque", "false");
     expect(Number(await canvas.getAttribute("data-glow-sprite-count"))).toBeLessThanOrEqual(2);
     await expect.poll(async () => Number(await canvas.getAttribute("data-cloud-block-count"))).toBeGreaterThan(0);
     await expect.poll(async () => Number(await canvas.getAttribute("data-render-triangles"))).toBeGreaterThan(1_000);
@@ -168,16 +169,15 @@ test("keeps a deterministic mist day readable and rotates clouds with the world"
   await expect(canvas).toHaveAttribute("data-weather-kind", "mist");
   await expect(canvas).toHaveAttribute("data-requested-lighting-quality", "auto");
   await expect(canvas).toHaveAttribute("data-atmosphere-follows-world", "true");
-  // Both diagnostics must describe the current view, not a previous lighting
-  // period. Keep the readability threshold and verify their formula together.
-  await expect.poll(async () => Number(await canvas.getAttribute("data-fog-near"))).toBeGreaterThan(40);
+  // Adopted full-view mist starts at the camera, not only beyond the centre.
+  await expect(canvas).toHaveAttribute('data-fog-near','0.00');
   const { fogNear, fogFar, distance } = await canvas.evaluate(element => {
     const d = (element as HTMLCanvasElement).dataset;
     return { fogNear: Number(d.fogNear), fogFar: Number(d.fogFar), distance: Number(d.cameraDistance) };
   });
-  expect(fogNear).toBeGreaterThan(40);
-  expect(fogFar - fogNear).toBeGreaterThan(60);
-  expect(fogNear).toBeCloseTo(distance - (fogFar - distance) * .11, 1);
+  expect(fogNear).toBe(0);
+  expect(fogFar).toBeGreaterThanOrEqual(Math.max(32,distance*2.65)-.01);
+  expect(fogFar).toBeLessThanOrEqual(Math.max(32,distance*3.15)+.01);
   const before = await canvas.screenshot({ path: testInfo.outputPath("mist-readable-before.png") });
   expect(before.byteLength).toBeGreaterThan(2_000);
 

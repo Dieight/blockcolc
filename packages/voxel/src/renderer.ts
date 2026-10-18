@@ -1,4 +1,7 @@
 import * as THREE from "three";
+import {WorldAnimals,type AnimalDiagnostics} from './world-animals';
+import type {AnimalObstacle} from './animal-habitat';
+import {createAnimalWaterBed,patchAnimalWaterVisibility} from './animal-water-bed';
 import { GlassWorldCompositor, type GlassSurfacePreference } from "./glass-surface";
 import { releaseOwnedMaterials } from './owned-mesh-materials';
 import { WorldColorCompositor } from './world-color-compositor';
@@ -7,6 +10,9 @@ import { mosaicColdDirection, mosaicSeed } from './mosaic-terrain';
 import { createMosaicSeabed } from './mosaic-seabed';
 import { detachTerrainWaterSurface } from './terrain-water-surface';
 import { terrainGeometryBytes, TERRAIN_CACHE_BYTES } from './terrain-cache';
+import { configureTerrainTile, terrainTileColor, TERRAIN_SIDE_SHADE } from './terrain-material';
+import { TerrainSurfaceTable, peekTerrainSurfaceTable, terrainSurfaceTable, terrainSurfaceTableBytes } from './terrain-surface-table';
+import { surfaceIndexBytes } from './surface-index';
 import { restoreWorldSceneCache, sceneryGenerationInputKey, WORLD_SCENE_CACHE_REVISION, type WorldSceneCachePort } from './world-scene-cache';
 import type { WorldColorAdjustment } from './world-color-adjustment';
 import { cloudDisplacement, patchCloudMotion } from './cloud-motion';
@@ -124,9 +130,10 @@ import {
   type ShadowRefreshReason,
   type ShadowRefreshSample,
 } from "./lightweight-shading";
-import { blockOcclusionFor, createLocalOcclusionField, type LocalOcclusionField } from "./local-occlusion";
+import { blockOcclusionFor, createLocalOcclusionField, lazyLocalOcclusionField, type LocalOcclusionField } from "./local-occlusion";
 import { chunkSceneryTrees } from './scenery-chunks';
 import { SceneryInstanceCulling } from './scenery-instance-culling';
+import { createRenderReferenceCollector,hasRebuildOwnedDisplay,type RenderTextureReferences } from './retained-render-references';
 import { isReefSolid, staticVoxelSurface } from './static-voxel-surface';
 import { compactTerrainRenderMesh } from './terrain-render-mesh';
 import { materialResponse, materialResponseForMaterialId } from "./material-response";
@@ -160,7 +167,7 @@ import {
   planOriginalStaticShapeBatches,
 } from "./original-static-shapes";
 import { initializeWorldConfiguration } from "./initial-world-configuration";
-import { buildingCpuKey, prepareBuildingCpuRecipe, createBuildingCpuCache, captureCpuGeometry, restoreCpuGeometry,
+import { buildingCpuKey, blueprintGeometryFingerprint, renderInputFingerprint, STATIC_RENDER_CPU_CACHE_REVISION, prepareBuildingCpuRecipe, createBuildingCpuCache, captureCpuGeometry, restoreCpuGeometry,
   type BuildingCpuCachePort, type BuildingCpuRecipe, type OriginalCpuPlan } from './building-cpu-cache';
 import { ambientEnvironmentDecorations, naturalDecorationParts, naturalTreeMushroomCandidates, NATURAL_SHELF_MUSHROOM_RENDER_SCALE, visibleNaturalTreeCount, type NaturalDecorationKind, type NaturalDecorationLod, type NaturalDecorationPart } from "./natural-decorations";
 import { planWorldScenery, sceneryLod, sceneryTreeBlocks, sceneryGeometryLayers, surfaceSampler, type SceneryObject } from './scenery';
@@ -263,6 +270,7 @@ export interface RendererFramePerformance {
 }
 
 export interface RendererDiagnostics {
+  animals:AnimalDiagnostics|null;
   qualityTier: QualityTier;
   pixelRatio: number;
   render: { calls: number; triangles: number; points: number; lines: number };
@@ -655,29 +663,9 @@ function ambientNearRoad(x: number, z: number, roads: ReadonlySet<string>): bool
 }
 
 export function terrainSurfaceRectangles(terrain: MergedGeometryData): Array<{ minX: number; maxX: number; minZ: number; maxZ: number; supportY: number; water: boolean; material:string }> {
-  const rectangles: Array<{ minX: number; maxX: number; minZ: number; maxZ: number; supportY: number; water: boolean; material:string }> = [];
-  for (const material of TERRAIN_MATERIALS) {
-    const indices = terrain.indicesByMaterial[material];
-    for (let index = 0; index + 5 < indices.length; index += 6) {
-      const points = [indices[index]!, indices[index + 1]!, indices[index + 2]!, indices[index + 5]!].map((vertex) => ({
-        x: terrain.positions[vertex * 3]!,
-        y: terrain.positions[vertex * 3 + 1]!,
-        z: terrain.positions[vertex * 3 + 2]!,
-      }));
-      rectangles.push({
-        minX: Math.min(...points.map((point) => point.x)),
-        maxX: Math.max(...points.map((point) => point.x)),
-        minZ: Math.min(...points.map((point) => point.z)),
-        maxZ: Math.max(...points.map((point) => point.z)),
-        // Terrain top vertices are half a block below the support datum used
-        // by buildings/roads, so restore that shared datum for props.
-        supportY: Math.max(...points.map((point) => point.y)) + 0.5,
-        water: material === "water",
-        material,
-      });
-    }
-  }
-  return rectangles;
+  // Public diagnostic callers historically receive an editable fresh snapshot.
+  // Do not let that contract expose or invalidate the renderer's shared table.
+  return Array.from(new TerrainSurfaceTable(terrain));
 }
 
 
@@ -733,6 +721,8 @@ export function createVoxelRenderer(
     debugVoidScan?: boolean;
     /** Background biome scenery. Small blueprint previews do not generate it. */
     scenery?: boolean;
+    /** Isolated render experiments may omit wildlife; previews always omit it. */
+    animals?: boolean;
     initialEnvironment?: { weather: ExternalWeatherVisualOverride | null; astronomy: AstronomyContext | null;
       debug: WorldEnvironmentDebugOverride | null };
     readNativeInput?: () => NativeInputSample | null;
@@ -740,6 +730,7 @@ export function createVoxelRenderer(
   } = {},
 ): VoxelRenderer {
   const sceneryEnabled = options.previewMode !== true && options.scenery !== false;
+  const animalsEnabled=sceneryEnabled&&options.animals!==false&&!options.debugFlatColors&&!options.debugVoidScan;
   const previewBlueprint = options.blueprint ? validateBlueprint(options.blueprint) : null;
   const resolveBlueprint = options.resolveBlueprint ?? ((id: string) => (
     previewBlueprint && previewBlueprint.id === id ? previewBlueprint : resolveBuiltinBlueprint(id)
@@ -944,6 +935,7 @@ export function createVoxelRenderer(
   let visibilityBounds = defaultContentBounds();
   let cloudDetailBounds = defaultContentBounds();
   let precipitationGround = precipitationGroundForSurfaces([]);
+  let precipitationGroundKey: string | null = null;
   let precipitationGroundTexture = new THREE.DataTexture(precipitationGround.data,1,1,THREE.RedFormat,THREE.FloatType);
   precipitationGroundTexture.needsUpdate=true;
   const precipitationGroundUniforms={texture:{value:precipitationGroundTexture},bounds:{value:[-1,-1,2,2] as [number,number,number,number]}};
@@ -986,7 +978,7 @@ export function createVoxelRenderer(
   let qualityProfile = QUALITY_PROFILES[qualityTier];
   let adaptiveQualityCap: QualityTier = "high";
   const fallbackOcclusionMeshes = new Map<THREE.InstancedMesh, { voxels: BlueprintV1["voxels"]; field: LocalOcclusionField; occlusions: Float64Array }>();
-  const staticSurfaceOcclusionMeshes = new Map<THREE.Mesh, { data: ReturnType<typeof staticVoxelSurface>; occlusions: Float64Array }>();
+  const staticSurfaceOcclusionMeshes = new Map<THREE.Mesh, { data:{voxelIndices:readonly number[]|Uint32Array}; occlusions: Float64Array }>();
   const sceneryInstanceCulling = new SceneryInstanceCulling();
   let interactionFrameDurations: number[] = [];
   let interactionTotalDurations: number[] = [];
@@ -1074,13 +1066,25 @@ export function createVoxelRenderer(
   let currentBuildingIndices:Map<BlueprintVoxel,number>|null=null;
   let buildingCpuDirty=false;
   let buildingCpuHits=0,buildingCpuMisses=0,originalCpuHits=0;
-  type LiveBuilding={key:string;root:THREE.Group;points:{point:EmissivePoint;color:number}[];
+  let staticCpuHits=0,staticCpuMisses=0,staticRecipeDirty=false;
+  let staticCpuScope:{key:string;sequence:number}|null=null;
+  type RenderRootBindings={root:THREE.Group;pack:VoxelResourcePack|null;references:RenderTextureReferences;
+    points:{point:EmissivePoint;color:number}[];
     emissives:TrackedEmissiveMaterial[];outlines:typeof constructionOutlines;
     occlusion:[THREE.InstancedMesh,{voxels:BlueprintV1['voxels'];field:LocalOcclusionField;occlusions:Float64Array}][];
+    surfaces:[THREE.Mesh,NonNullable<ReturnType<typeof staticSurfaceOcclusionMeshes.get>>][];
+    cutouts:THREE.Mesh[];
     stats:ReturnType<typeof buildingCounters>};
+  type LiveBuilding={key:string;bindings:RenderRootBindings};
   const liveBuildings=new Map<string,LiveBuilding>();let buildingMeshHits=0;
+  const liveRewards=new Map<string,LiveBuilding>();let rewardMeshHits=0;
+  const textureReferenceCollector=createRenderReferenceCollector();
+  let liveScenery:{key:string;bindings:RenderRootBindings;plan:ReturnType<typeof planWorldScenery>;
+    allocatedBatches:number;shadowCasters:number}|null=null;
   let persistedSceneSignature: string | null = null;
   let firstNonemptyFrameMs: number | null = null;
+  const animals=animalsEnabled?new WorldAnimals(rotatableWorldRoot,options.environmentStyle??'classic-island',mosaicSeed(options.worldSeed??'world-default')):null;
+  let animalsSceneReady=false,lastAnimalDiagnosticsAt=0;
   let qualityFramePendingSinceMs: number | null = null;
   let pointerMoveCount = 0;
   let resizeCount = 0;
@@ -1367,7 +1371,8 @@ export function createVoxelRenderer(
       // depth-writing surface prevents camera-facing sky stars from bleeding
       // through the terrain and reads more like a night reflection.
       const warmSea=terrainWater&&options.environmentStyle==='mosaic-coast';
-      const transparent = fallbackVisual?.transparent === true || id === "glass" || warmSea;
+      const livingWater=terrainWater&&animalsEnabled&&(options.environmentStyle??'classic-island')!=='classic-island';
+      const transparent = fallbackVisual?.transparent === true || id === "glass" || warmSea || livingWater;
       const pattern = fallbackVisual?.pattern ?? originalPatternForMaterialId(id);
       const texture = originalMaterialTexture(pattern);
       if (terrainWater) { texture.magFilter=THREE.LinearFilter; texture.anisotropy=Math.min(4,renderer.capabilities.getMaxAnisotropy()); }
@@ -1377,13 +1382,19 @@ export function createVoxelRenderer(
         roughness: id === "glass" ? 0.1 : terrainWater ? 0.34 : response.roughness,
         metalness: id === "glass" ? 0.08 : terrainWater ? 0.05 : response.metalness,
         transparent,
-        opacity: fallbackVisual?.opacity ?? (id === "glass" ? 0.44 : warmSea ? .58 : 1),
-        depthWrite: !transparent,
+        opacity: fallbackVisual?.opacity ?? (id === "glass" ? 0.44 : warmSea ? .58 : livingWater ? .7 : 1),
+        // Island/river water can contain coplanar overlapping near/far quads.
+        // Opaque bodies/beds draw first; strict depth makes each water pixel
+        // blend only once instead of outlining LOD tiles through accumulated
+        // alpha. Coast keeps its existing ordering for translucent reef plants.
+        depthWrite: !transparent || livingWater && !warmSea,
+        depthFunc: livingWater && !warmSea ? THREE.LessDepth : THREE.LessEqualDepth,
         emissive: terrainLava ? 0x8f1f08 : id === "glass" ? 0x315c72 : 0x000000,
         emissiveIntensity: terrainLava ? 0.68 : id === "glass" ? 0.13 : 0,
       });
       const voxelEdgeStrength = terrainWater ? 0 : transparent ? 0.22 : fallbackVisual ? 0.12 : ["stone", "wood", "plank", "roof", "accent"].includes(id) ? 0.12 : 0;
       if (terrainWater) skySpectacle.patchReflection(found, 2.2);
+      if(livingWater&&!warmSea)patchAnimalWaterVisibility(found);
       trackMaterialEffects(found, voxelEdgeStrength);
       materials.set(id, found);
     }
@@ -1516,7 +1527,7 @@ export function createVoxelRenderer(
         renderer.render(scene, camera);
       }
       canvas.dataset.worldColorPass = worldColorCompositor.render() ? 'active' : 'neutral';
-      glassCompositor.render(immersiveBottomBand, immersiveRightBand);
+      glassCompositor.render(immersiveBottomBand, immersiveRightBand, currentLighting.phase === 'night');
       const glass = glassCompositor.getDiagnostics();
       canvas.dataset.glassMaterial = glass.mode;
       canvas.dataset.glassGpuCopyCount = String(glass.copies);
@@ -1700,12 +1711,14 @@ export function createVoxelRenderer(
   }
 
   function referenceAnimatedTexture(page: number, textureIndex: number): void {
+    textureReferenceCollector.animated(page,textureIndex);
     const indices = referencedAnimatedTextureIndices.get(page) ?? new Set<number>();
     indices.add(textureIndex);
     referencedAnimatedTextureIndices.set(page, indices);
   }
 
   function referenceFluidAnimatedTexture(page: number, textureIndex: number): void {
+    textureReferenceCollector.fluid(page,textureIndex);
     referenceAnimatedTexture(page, textureIndex);
     let available = fluidAvailableAnimationIndices.get(page);
     if (!available) {
@@ -1719,7 +1732,8 @@ export function createVoxelRenderer(
     for (const _ of rebuildSteps(worlds,previousWorlds)) { /* Ordinary updates remain atomic. */ }
   }
   function* rebuildSteps(worlds: readonly WorldSnapshot[], previousWorlds: readonly WorldSnapshot[]): Generator<void> {
-    buildingCpuHits=0;buildingCpuMisses=0;originalCpuHits=0;buildingMeshHits=0;
+    animalsSceneReady=false;animals?.suspend();
+    buildingCpuHits=0;buildingCpuMisses=0;originalCpuHits=0;buildingMeshHits=0;rewardMeshHits=0;staticCpuHits=0;staticCpuMisses=0;
     canvas.dataset.sceneryWreckProjection = 'null';
     if (openingReveal) finishOpeningReveal("cancelled");
     if (environmentReveal) finishEnvironmentReveal(true);
@@ -1735,10 +1749,14 @@ export function createVoxelRenderer(
     sceneRevision += 1;
     // Retain eligible completed mesh subtrees before retiring scenery/rewards.
     // Changed progress/condition/placement still replaces that building only.
-    for(const entry of liveBuildings.values())buildingGroup.remove(entry.root);
+    for(const entry of liveBuildings.values())buildingGroup.remove(entry.bindings.root);
+    for(const entry of liveRewards.values())buildingGroup.remove(entry.bindings.root);
+    if(liveScenery)buildingGroup.remove(liveScenery.bindings.root);
     constructionOutlines.length=0;
     clearGroup(buildingGroup);
-    sceneryInstanceCulling.clear();
+    // The retained scenery keeps its original instance buffers and visibility
+    // bins. A changed scenery identity clears them before retiring that root.
+    if(!liveScenery)sceneryInstanceCulling.clear();
     fallbackOcclusionMeshes.clear();
     staticSurfaceOcclusionMeshes.clear();
     cutoutShadowMeshes.clear();
@@ -1857,6 +1875,9 @@ export function createVoxelRenderer(
     const terrainData = terrainCacheHit
       ? terrainGenerationCache!.data
       : createSteppedTerrainData(positioned, roads, terrainPads, terrainMinimumRadius, terrainOptions);
+    canvas.dataset.terrainSurfaceTableCacheHit = String(peekTerrainSurfaceTable(terrainData) !== undefined);
+    const terrainSurfaces = terrainSurfaceTable(terrainData);
+    canvas.dataset.terrainSurfaceTableRows = String(terrainSurfaces.length);
     if (!terrainCacheHit) {
       // A regional 24-building world is ~21 MiB. Bound one current layout,
       // including any compact mesh below, instead of repeatedly rebuilding it.
@@ -1869,8 +1890,10 @@ export function createVoxelRenderer(
     canvas.dataset.terrainGenerationCacheHit = String(terrainCacheHit);
     // Progress changes buildings, not ground. Retain the sampling grid/texture
     // when the actual terrain input is unchanged; new rewards/layouts invalidate it.
-    if (!terrainCacheHit) {
-      precipitationGround=precipitationGroundForSurfaces(terrainSurfaceRectangles(terrainData));
+    const precipitationGroundCacheHit = precipitationGroundKey === terrainKey;
+    if (!precipitationGroundCacheHit) {
+      precipitationGround=precipitationGroundForSurfaces(terrainSurfaces);
+      precipitationGroundKey = terrainKey;
       const previousGroundTexture=precipitationGroundTexture;
       precipitationGroundTexture=new THREE.DataTexture(precipitationGround.data,precipitationGround.width,precipitationGround.height,THREE.RedFormat,THREE.FloatType);
       precipitationGroundTexture.minFilter=THREE.NearestFilter;
@@ -1880,8 +1903,10 @@ export function createVoxelRenderer(
       precipitationGroundUniforms.bounds.value=[precipitationGround.minX,precipitationGround.minZ,precipitationGround.spanX,precipitationGround.spanZ];
       previousGroundTexture.dispose();
     }
-    canvas.dataset.precipitationGroundCacheHit = String(terrainCacheHit);
-    const rewardSupport=surfaceSampler(importedDecorations.length?terrainSurfaceRectangles(terrainData):[]);
+    canvas.dataset.precipitationGroundCacheHit = String(precipitationGroundCacheHit);
+    canvas.dataset.precipitationGroundSize = `${precipitationGround.width}:${precipitationGround.height}`;
+    canvas.dataset.precipitationGroundBounds = JSON.stringify([precipitationGround.minX,precipitationGround.minZ,precipitationGround.spanX,precipitationGround.spanZ,precipitationGround.minY,precipitationGround.maxY]);
+    const rewardSupport=surfaceSampler(importedDecorations.length?terrainSurfaces:[]);
     importedDecorations=supportImportedDecorations(importedDecorations,rewardSupport);
     positionedDecorations=importedDecorations;
     canvas.dataset.rewardGroundSupport=JSON.stringify(importedDecorations.map(d=>({id:d.rewardId,x:d.worldPosition.x,y:d.worldPosition.y,z:d.worldPosition.z})));
@@ -1937,16 +1962,42 @@ export function createVoxelRenderer(
     finishRebuildStage("roadsAndLamps");
     for (const world of positioned) { addBuilding(world, emissivePoints, revealPlans.get(world.projectId) ?? null); yield; }
     const currentProjects=new Set(positioned.map(world=>world.projectId));
-    for(const [id,entry] of liveBuildings)if(!currentProjects.has(id)){retireBuildingRoot(entry.root);liveBuildings.delete(id);}
+    for(const [id,entry] of liveBuildings)if(!currentProjects.has(id)){retireBuildingRoot(entry.bindings.root);liveBuildings.delete(id);}
     for (const decoration of importedDecorations) { addImportedDecoration(decoration, emissivePoints,decorationFoundationVoxels(decoration,rewardSupport)); yield; }
+    const currentRewards=new Set(importedDecorations.map(decoration=>decoration.rewardId));
+    for(const [id,entry] of liveRewards)if(!currentRewards.has(id)){retireBuildingRoot(entry.bindings.root);liveRewards.delete(id);}
     finishRebuildStage("buildings");
     if (sceneryEnabled) addWorldScenery(positioned, roads, importedDecorations, environmentStyle, terrainData, terrainKey);
+    else if(liveScenery){retireBuildingRoot(liveScenery.bindings.root);liveScenery=null;sceneryInstanceCulling.clear();}
     yield;
     finishRebuildStage("naturalDecorations");
+    if(animals&&positioned.length>0){
+      const obstacles:AnimalObstacle[]=[];
+      buildingGroup.traverse(object=>{const source=object.userData.animalObstacle as AnimalObstacle|undefined;if(source)obstacles.push(source);});
+      for(const object of sceneryPlanCache?.plan.objects??[])if(object.role!=='path'&&object.role!=='garden')
+        obstacles.push({id:`wildlife:${object.id}`,voxels:object.voxels,origin:{x:object.x,y:object.y,z:object.z},rotation:0});
+      const center=positioned[0]?.worldPosition??{x:0,y:0,z:0};
+      animals.sync(terrainData,terrainKey,obstacles,center);animalsSceneReady=true;
+    }else animals?.clear();
+    // Planning may have lazily added the shared support index. Include it in
+    // the same one-layout budget; no independent unbounded sidecar cache.
+    if (terrainGenerationCache) {
+      if (terrainGeometryBytes(terrainData) + (terrainGenerationCache.renderMesh ? terrainGeometryBytes(terrainGenerationCache.renderMesh) : 0) > TERRAIN_CACHE_BYTES) {
+        delete terrainGenerationCache.renderMesh;
+      }
+      if (terrainGeometryBytes(terrainData) > TERRAIN_CACHE_BYTES) terrainGenerationCache = null;
+    }
+    canvas.dataset.terrainGenerationBytes=String(terrainGeometryBytes(terrainData));
+    canvas.dataset.terrainGenerationCacheRetained=String(terrainGenerationCache!==null);
+    canvas.dataset.terrainSurfaceTableBytes=String(terrainSurfaceTableBytes(terrainData));
+    canvas.dataset.terrainSurfaceIndexBytes=String(surfaceIndexBytes(terrainSurfaces));
     canvas.dataset.buildingCpuCacheHits=String(buildingCpuHits);
     canvas.dataset.buildingCpuCacheMisses=String(buildingCpuMisses);
     canvas.dataset.originalGeometryCacheHits=String(originalCpuHits);
     canvas.dataset.buildingMeshCacheHits=String(buildingMeshHits);
+    canvas.dataset.rewardMeshCacheHits=String(rewardMeshHits);
+    canvas.dataset.staticCpuCacheHits=String(staticCpuHits);canvas.dataset.staticCpuCacheMisses=String(staticCpuMisses);
+    const cpuStats=buildingCpuCache.stats();canvas.dataset.buildingCpuCacheBytes=String(cpuStats.bytes);canvas.dataset.buildingCpuCacheRecipes=String(cpuStats.recipes);
     if(buildingCpuDirty&&options.buildingCpuCache&&!previewMode){
       try{options.buildingCpuCache.write(buildingCpuCache.snapshot());buildingCpuDirty=false;}catch{/* Optional cache only. */}
     }
@@ -2077,11 +2128,9 @@ export function createVoxelRenderer(
       const clone = base.clone();
       ownedTerrainMaterials.push(clone);
       if (clone instanceof THREE.MeshStandardMaterial || clone instanceof THREE.MeshLambertMaterial) {
-        // Side textures are near-white (229 base) procedural grays. A gentle
-        // multiplier still clips to pure white under the low-sun directional
-        // light, which is exactly the reported "white step faces"; 0.4 keeps
-        // the same faces in the mid-gray range under any sun angle.
-        clone.color = clone.color.clone().multiplyScalar(0.4);
+        // Keep the relief readable without the old almost-black step lines.
+        // This is extra face shading, not a replacement for cast shadows.
+        clone.color = clone.color.clone().multiplyScalar(TERRAIN_SIDE_SHADE);
       }
       return clone;
     };
@@ -2108,17 +2157,18 @@ export function createVoxelRenderer(
     mesh.userData.ownedMaterials = ownedTerrainMaterials;
     terrainGroup.add(mesh);
     terrainMeshForPicking = mesh;
-    if(options.environmentStyle==='mosaic-coast'&&!options.debugFlatColors){
+    if((options.environmentStyle==='mosaic-coast'||animalsEnabled&&(options.environmentStyle??'classic-island')!=='classic-island')&&!options.debugFlatColors){
       const waterSurface = detachTerrainWaterSurface(geometry, materialIds.indexOf('water'), material('terrainWater'));
       if (waterSurface) terrainGroup.add(waterSurface);
-      const field=createMosaicSeabed(terrainSurfaceRectangles(data),mosaicSeed(options.worldSeed??'world-default'),Math.abs(data.framingBounds.maxX));
+      const field=options.environmentStyle==='mosaic-coast'
+        ?createMosaicSeabed(terrainSurfaceTable(data),mosaicSeed(options.worldSeed??'world-default'),Math.abs(data.framingBounds.maxX))
+        :createAnimalWaterBed(terrainSurfaceTable(data));
       const bedTexture=originalMaterialTexture('sand').clone();bedTexture.magFilter=THREE.LinearFilter;bedTexture.anisotropy=Math.min(4,renderer.capabilities.getMaxAnisotropy());terrainPackTextures.push(bedTexture);
       const bedMaterial=new THREE.MeshStandardMaterial({color:0xdad2ad,map:bedTexture,roughness:1});
       const bedGeometry=new THREE.BufferGeometry();bedGeometry.setAttribute('position',new THREE.Float32BufferAttribute(field.positions,3));bedGeometry.setAttribute('normal',new THREE.Float32BufferAttribute(field.normals,3));bedGeometry.setAttribute('uv',new THREE.Float32BufferAttribute(field.uvs,2));bedGeometry.setIndex(field.indices);
       const bed=new THREE.Mesh(bedGeometry,bedMaterial);bed.receiveShadow=true;
       bed.userData.ownedMaterials=[bedMaterial];bed.name='warm-sea-bed';terrainGroup.add(bed);
     }
-    addNaturalBackdrop(data);
   }
 
   /**
@@ -2141,15 +2191,11 @@ export function createVoxelRenderer(
     texture.wrapT = THREE.RepeatWrapping;
     texture.repeat.set(1, 1);
     texture.offset.set(0, 0);
-    // Sample only the tile rect at full resolution: mipmaps blend across the
-    // atlas gutter (white padding) and bleach distant terrain sides white.
-    texture.generateMipmaps = false;
-    texture.minFilter = THREE.LinearFilter;
-    texture.magFilter = THREE.LinearFilter;
-    texture.anisotropy = 1;
-    texture.needsUpdate = true;
+    // The crop owns its pixels, so its mip levels cannot sample atlas gutters.
+    configureTerrainTile(texture, renderer.capabilities.getMaxAnisotropy());
     terrainPackTextures.push(texture);
-    return new THREE.MeshStandardMaterial({ color: 0xffffff, map: texture, roughness: 0.94, metalness: 0 });
+    return new THREE.MeshStandardMaterial({ color: terrainTileColor(blockId, rect.tintIndex, page.visualBiomePalette),
+      map: texture, roughness: 0.94, metalness: 0 });
   }
 
   function cropAtlasTileTexture(page: ResourcePackAtlasPage, rect: { u0: number; v0: number; u1: number; v1: number }): THREE.DataTexture {
@@ -2170,19 +2216,6 @@ export function createVoxelRenderer(
     return texture;
   }
 
-  function addNaturalBackdrop(data: MergedGeometryData): void {
-    if (data.terrainGenerationVersion >= 2) return;
-    if (data.bounds.maxX <= data.framingBounds.maxX) return;
-    const size = Math.max(1_000, (data.bounds.maxX - data.bounds.minX) * 6);
-    const backdrop = new THREE.Mesh(new THREE.PlaneGeometry(size, size), material("grass"));
-    backdrop.name = "lowDetailNaturalBackdrop";
-    backdrop.rotation.x = -Math.PI / 2;
-    backdrop.position.y = -4;
-    backdrop.receiveShadow = false;
-    backdrop.castShadow = false;
-    backdrop.renderOrder = -2;
-    terrainGroup.add(backdrop);
-  }
 
   type TerrainMaterialKey = "grass" | "dirt" | "stone" | "water";
 
@@ -2232,30 +2265,23 @@ export function createVoxelRenderer(
     const key=buildingCpuKey(world.blueprint,world.projectId,completion,world.buildingConditionBasisPoints);
     const meshKey=JSON.stringify([key,world.worldPosition,world.blueprintOffset,world.rotationY,world.isActive,world.decorationDates,constructionOutlineVisibility]);
     const previous=liveBuildings.get(world.projectId);
-    const retainable=!activeResourcePack&&!reveal&&!world.blueprint.voxels.some(v=>v.sign||v.campfire||v.sourceBlockId?.endsWith('_sign')||v.sourceBlockId?.endsWith('campfire'));
-    if(retainable&&previous?.key===meshKey){
-      buildingGroup.add(previous.root);buildingMeshHits++;
-      for(const {point,color} of previous.points)registerEmissivePoint(emissivePoints,emissivePointColors,point,color);
-      emissiveMaterials.push(...previous.emissives);constructionOutlines.push(...previous.outlines);
-      restoreBuildingCounters(previous.stats);
-      for(const [mesh,data] of previous.occlusion){fallbackOcclusionMeshes.set(mesh,data);applyFallbackOcclusion(mesh,data.voxels,data.field);}
+    const retainable=!reveal&&!hasRebuildOwnedDisplay(world.blueprint.voxels);
+    if(retainable&&previous?.key===meshKey&&previous.bindings.pack===activeResourcePack){
+      restoreRenderRoot(previous.bindings,emissivePoints);buildingMeshHits++;
       return;
     }
-    if(previous){retireBuildingRoot(previous.root);liveBuildings.delete(world.projectId);}
+    if(previous){retireBuildingRoot(previous.bindings.root);liveBuildings.delete(world.projectId);}
     const cached=buildingCpuCache.get(key);
     const recipe=cached??prepareBuildingCpuRecipe(key,world.blueprint,world.projectId,completion,world.buildingConditionBasisPoints);
     if(cached)buildingCpuHits++;else{buildingCpuMisses++;buildingCpuDirty=true;}
     currentBuildingRecipe=recipe;
     currentBuildingIndices=new Map(recipe.visual.intactVoxels.map((voxel,index)=>[voxel,index]));
-    const before=buildingCounters(),pointStart=emissivePoints.length,emissiveStart=emissiveMaterials.length,outlineStart=constructionOutlines.length;
     try{
-      const root=addPreparedBuilding(world,emissivePoints,reveal);buildingCpuCache.put(recipe);
       if(retainable){
-        const after=buildingCounters(),stats=Object.fromEntries(Object.entries(after).map(([name,value])=>[name,value-before[name as keyof typeof before]])) as typeof after;
-        const occlusion:LiveBuilding['occlusion']=[];root.traverse(child=>{if(child instanceof THREE.InstancedMesh){const data=fallbackOcclusionMeshes.get(child);if(data)occlusion.push([child,data]);}});
-        liveBuildings.set(world.projectId,{key:meshKey,root,stats,occlusion,outlines:constructionOutlines.slice(outlineStart),emissives:emissiveMaterials.slice(emissiveStart),
-          points:emissivePoints.slice(pointStart).map(point=>({point,color:emissiveColorForPoint(point,emissivePointColors)}))});
-      }
+        const bindings=captureRenderRoot(()=>addPreparedBuilding(world,emissivePoints,reveal),emissivePoints);
+        liveBuildings.set(world.projectId,{key:meshKey,bindings});
+      }else addPreparedBuilding(world,emissivePoints,reveal);
+      buildingCpuCache.put(recipe);
     }
     finally{currentBuildingRecipe=null;currentBuildingIndices=null;}
   }
@@ -2264,6 +2290,10 @@ export function createVoxelRenderer(
     root.position.set(world.worldPosition.x, world.worldPosition.y, world.worldPosition.z);
     root.rotation.y = world.rotationY;
     root.userData.projectId = world.projectId;
+    if(animals)root.userData.animalObstacle={id:`building:${world.projectId}`,voxels:currentBuildingRecipe!.visual.intactVoxels,
+      origin:world.worldPosition,rotation:world.rotationY,offset:world.blueprintOffset,
+      birthExclusion:{minX:world.worldPosition.x-world.footprint.width/2-1,maxX:world.worldPosition.x+world.footprint.width/2+1,
+        minZ:world.worldPosition.z-world.footprint.depth/2-1,maxZ:world.worldPosition.z+world.footprint.depth/2+1}} satisfies AnimalObstacle;
     buildingGroup.add(root);
     const structure = new THREE.Group();
     structure.position.set(world.blueprintOffset.x, 0, world.blueprintOffset.z);
@@ -2389,7 +2419,7 @@ export function createVoxelRenderer(
         matrix.makeTranslation(voxel.x, voxel.y, voxel.z);
         mesh.setMatrixAt(index, matrix);
       });
-      if(!revealing&&!cachedMatrices){currentBuildingRecipe!.cubeMatrices.set(matrixKey,Float32Array.from(mesh.instanceMatrix.array));buildingCpuDirty=true;}
+      if(!revealing&&!cachedMatrices){currentBuildingRecipe!.cubeMatrices.set(matrixKey,Float32Array.from(mesh.instanceMatrix.array));markCpuRecipeDirty();}
       mesh.instanceMatrix.needsUpdate = true;
       applyFallbackOcclusion(mesh, voxels, occlusionField);
       mesh.castShadow = !translucent;
@@ -2410,6 +2440,35 @@ export function createVoxelRenderer(
   }
 
   function retireBuildingRoot(root:THREE.Group){const retired=new THREE.Group();retired.add(root);clearGroup(retired);}
+  function captureRenderRoot(build:()=>THREE.Group,emissivePoints:EmissivePoint[]):RenderRootBindings{
+    const before=buildingCounters(),pointStart=emissivePoints.length,emissiveStart=emissiveMaterials.length,outlineStart=constructionOutlines.length;
+    const {value:root,references}=textureReferenceCollector.capture(build);
+    const after=buildingCounters(),stats=Object.fromEntries(Object.entries(after).map(([name,value])=>[name,value-before[name as keyof typeof before]])) as typeof after;
+    const occlusion:RenderRootBindings['occlusion']=[],surfaces:RenderRootBindings['surfaces']=[],cutouts:THREE.Mesh[]=[];
+    root.traverse(child=>{
+      if(child instanceof THREE.InstancedMesh){const data=fallbackOcclusionMeshes.get(child);if(data)occlusion.push([child,data]);}
+      if(child instanceof THREE.Mesh){
+        const surface=staticSurfaceOcclusionMeshes.get(child);if(surface)surfaces.push([child,surface]);
+        if(cutoutShadowMeshes.has(child))cutouts.push(child);
+      }
+    });
+    return {root,pack:activeResourcePack,references,stats,occlusion,surfaces,cutouts,
+      outlines:constructionOutlines.slice(outlineStart),emissives:emissiveMaterials.slice(emissiveStart),
+      points:emissivePoints.slice(pointStart).map(point=>({point,color:emissiveColorForPoint(point,emissivePointColors)}))};
+  }
+  function restoreRenderRoot(bindings:RenderRootBindings,emissivePoints:EmissivePoint[]):void{
+    buildingGroup.add(bindings.root);
+    for(const {point,color} of bindings.points)registerEmissivePoint(emissivePoints,emissivePointColors,point,color);
+    emissiveMaterials.push(...bindings.emissives);constructionOutlines.push(...bindings.outlines);restoreBuildingCounters(bindings.stats);
+    for(const [mesh,data] of bindings.occlusion){
+      fallbackOcclusionMeshes.set(mesh,data);
+      if(mesh.userData.occlusionTier!==qualityTier)applyFallbackOcclusion(mesh,data.voxels,data.field);
+    }
+    for(const [mesh,data] of bindings.surfaces){staticSurfaceOcclusionMeshes.set(mesh,data);if(mesh.userData.occlusionTier!==qualityTier)applyStaticSurfaceOcclusion(mesh);}
+    for(const mesh of bindings.cutouts){cutoutShadowMeshes.add(mesh);mesh.castShadow=LIGHTWEIGHT_SHADING_PROFILES[qualityTier].features.cutoutShadows;}
+    for(const [page,indices] of bindings.references.animated)for(const index of indices)referenceAnimatedTexture(page,index);
+    for(const [page,indices] of bindings.references.fluids)for(const index of indices)referenceFluidAnimatedTexture(page,index);
+  }
   function buildingCounters(){return {texturedBatchCount,texturedVoxelCount,originalStaticShapeVoxelCount,originalStaticShapeBatchCount,originalStaticShapeTopologyCount,
     originalStaticShapeMaterialGroupCount,originalStaticShapeEmissiveMaterialGroupCount,originalStaticShapeTopologyOverflow,originalStaticShapeMaterialGroupOverflow,
     originalStaticShapeBudgetFallbackVoxelCount,sourceLanternPointLightCount,resourceFluidVoxelCount,resourceSpecialVoxelCount,fallbackVoxelCount,transformedUvVoxelCount,
@@ -2425,10 +2484,21 @@ export function createVoxelRenderer(
   }
 
   function addImportedDecoration(decoration: ImportedDecorationPlacement, emissivePoints: EmissivePoint[],foundation:readonly BlueprintVoxel[]=[]): void {
+    const key=JSON.stringify([blueprintGeometryFingerprint(decoration.blueprint),decoration.worldPosition,decoration.blueprintOffset,decoration.rotationY,foundation]);
+    const previous=liveRewards.get(decoration.rewardId),retainable=!hasRebuildOwnedDisplay(decoration.blueprint.voxels);
+    if(retainable&&previous?.key===key&&previous.bindings.pack===activeResourcePack){restoreRenderRoot(previous.bindings,emissivePoints);rewardMeshHits++;return;}
+    if(previous){retireBuildingRoot(previous.bindings.root);liveRewards.delete(decoration.rewardId);}
+    const build=()=>withStaticCpuScope(`reward:${key}`,()=>buildImportedDecoration(decoration,emissivePoints,foundation));
+    if(retainable){const bindings=captureRenderRoot(build,emissivePoints);liveRewards.set(decoration.rewardId,{key,bindings});}
+    else build();
+  }
+  function buildImportedDecoration(decoration:ImportedDecorationPlacement,emissivePoints:EmissivePoint[],foundation:readonly BlueprintVoxel[]):THREE.Group{
     const root = new THREE.Group();
     root.position.set(decoration.worldPosition.x, decoration.worldPosition.y, decoration.worldPosition.z);
     root.rotation.y = decoration.rotationY;
     root.userData.rewardId = decoration.rewardId;
+    if(animals)root.userData.animalObstacle={id:`reward:${decoration.rewardId}`,voxels:[...foundation,...decoration.blueprint.voxels],
+      origin:decoration.worldPosition,rotation:decoration.rotationY,offset:decoration.blueprintOffset} satisfies AnimalObstacle;
     root.userData.resourceId = decoration.resourceId;
     root.name=`reward:${decoration.rewardId}`;
     const structure = new THREE.Group();
@@ -2453,12 +2523,51 @@ export function createVoxelRenderer(
       }
     }
     addStaticVoxelStructure(structure, [...renderVoxels,...foundation]);
+    return root;
   }
 
   /** Shared with read-only scenery: no reward/project identity or construction state. */
   function addStaticVoxelStructure(structure: THREE.Group, renderVoxels: readonly BlueprintVoxel[], sharedOcclusion?: LocalOcclusionField, reefSurfaces=false): { packed: number; fallback: number } {
+    const scope=staticCpuScope;
+    if(activeResourcePack||!scope||hasRebuildOwnedDisplay(renderVoxels))return renderStaticVoxelStructure(structure,renderVoxels,sharedOcclusion,reefSurfaces);
+    const key=`static-render-${STATIC_RENDER_CPU_CACHE_REVISION}:${scope.key}:${scope.sequence++}:${reefSurfaces}`;
+    const field=sharedOcclusion??lazyLocalOcclusionField(()=>createLocalOcclusionField(renderVoxels));
+    const cached=buildingCpuCache.get(key),usable=cached?.staticVoxelCount===renderVoxels.length?cached:null;
+    const recipe:BuildingCpuRecipe=usable??{key,staticVoxelCount:renderVoxels.length,visual:{intactVoxels:[],missingVoxels:[],vines:[],weathering:0},
+      occlusion:new Float32Array(renderVoxels.length).fill(-1),originals:new Map(),cubeMatrices:new Map(),staticSurfaces:new Map()};
+    if(usable)staticCpuHits++;else staticCpuMisses++;
+    const previous=currentBuildingRecipe,previousIndices=currentBuildingIndices,previousDirty=staticRecipeDirty;
+    // Indices in the persisted buffers belong to this deterministic input, not
+    // to a second deserialized voxel graph. Maps/buffers remain shared by the
+    // working view and the compact stored recipe.
+    currentBuildingRecipe={...recipe,visual:{...recipe.visual,intactVoxels:[...renderVoxels]}};
+    currentBuildingIndices=new Map(renderVoxels.map((voxel,index)=>[voxel,index]));staticRecipeDirty=!usable;
+    try{
+      const result=renderStaticVoxelStructure(structure,renderVoxels,field,reefSurfaces);
+      if(staticRecipeDirty){
+        // Hidden/non-rendered cells never requested AO. They need no field
+        // construction merely to fill a disposable cache record.
+        for(let i=0;i<recipe.occlusion.length;i++)if(recipe.occlusion[i]!<0)recipe.occlusion[i]=0;
+        if(buildingCpuCache.put(recipe))buildingCpuDirty=true;
+      }
+      return result;
+    }finally{currentBuildingRecipe=previous;currentBuildingIndices=previousIndices;staticRecipeDirty=previousDirty;}
+  }
+  function withStaticCpuScope<T>(key:string,build:()=>T):T{
+    const previous=staticCpuScope;staticCpuScope={key:renderInputFingerprint(key),sequence:0};
+    try{return build();}finally{staticCpuScope=previous;}
+  }
+  function markCpuRecipeDirty():void{if(staticCpuScope)staticRecipeDirty=true;else buildingCpuDirty=true;}
+  function currentVoxelOcclusion(voxel:BlueprintVoxel,field:LocalOcclusionField):number{
+    const index=currentBuildingIndices?.get(voxel);
+    if(index===undefined||!currentBuildingRecipe)return blockOcclusionFor(voxel,field);
+    let value=currentBuildingRecipe.occlusion[index]!;
+    if(value<0){value=blockOcclusionFor(voxel,field);currentBuildingRecipe.occlusion[index]=value;markCpuRecipeDirty();}
+    return value;
+  }
+  function renderStaticVoxelStructure(structure: THREE.Group, renderVoxels: readonly BlueprintVoxel[], sharedOcclusion?: LocalOcclusionField, reefSurfaces=false): { packed: number; fallback: number } {
     const occlusionField = sharedOcclusion ?? createLocalOcclusionField(renderVoxels);
-    const reefField=reefSurfaces&&!activeResourcePack?createLocalOcclusionField(renderVoxels.filter(isReefSolid)):null;
+    const reefField=reefSurfaces&&!activeResourcePack?lazyLocalOcclusionField(()=>createLocalOcclusionField(renderVoxels.filter(isReefSolid))):null;
     const staticShapeCandidates = renderVoxels.filter((voxel) => isOriginalStaticShapeBlockId(voxel.sourceBlockId));
     const genericTextureCandidates = renderVoxels.filter((voxel) => !isOriginalStaticShapeBlockId(voxel.sourceBlockId));
     const texturePlan = activeResourcePack
@@ -2501,14 +2610,23 @@ export function createVoxelRenderer(
       trackMaterialEffects(meshMaterial, translucent ? 0.22 : 0.12);
       if (emissiveActive) emissiveMaterials.push({ material: meshMaterial, level: level > 0 ? level : 15, kind: emissiveKind || "light" });
       if (reefSurfaces && !activeResourcePack && !translucent && !emissiveActive && voxels.every(isReefSolid)) {
-        const data=staticVoxelSurface(voxels,reefField!);
-        if(!data.indices.length)continue;
-        const geometry=new THREE.BufferGeometry();
-        geometry.setAttribute('position',new THREE.Float32BufferAttribute(data.positions,3));
-        geometry.setAttribute('normal',new THREE.Float32BufferAttribute(data.normals,3));
-        geometry.setAttribute('uv',new THREE.Float32BufferAttribute(data.uvs,2));
-        geometry.setAttribute('color',new THREE.Float32BufferAttribute(new Float32Array(data.voxelIndices.length*3),3));
-        geometry.setIndex(data.indices);
+        const stored=currentBuildingRecipe?.staticSurfaces?.get(key);
+        if(stored===null)continue;
+        let geometry:THREE.BufferGeometry,data:{voxelIndices:readonly number[]|Uint32Array},occlusions:Float64Array;
+        if(stored){geometry=restoreCpuGeometry(stored.geometry);data=stored;occlusions=stored.occlusions;}
+        else{
+          const surface=staticVoxelSurface(voxels,reefField!);
+          const surfaces=currentBuildingRecipe?(currentBuildingRecipe.staticSurfaces??=new Map()):null;
+          if(!surface.indices.length){surfaces?.set(key,null);if(surfaces)markCpuRecipeDirty();continue;}
+          geometry=new THREE.BufferGeometry();
+          geometry.setAttribute('position',new THREE.Float32BufferAttribute(surface.positions,3));
+          geometry.setAttribute('normal',new THREE.Float32BufferAttribute(surface.normals,3));
+          geometry.setAttribute('uv',new THREE.Float32BufferAttribute(surface.uvs,2));
+          geometry.setAttribute('color',new THREE.Float32BufferAttribute(new Float32Array(surface.voxelIndices.length*3),3));
+          geometry.setIndex(surface.indices);data=surface;
+          occlusions=Float64Array.from(voxels,voxel=>currentVoxelOcclusion(voxel,occlusionField));
+          if(surfaces){surfaces.set(key,{geometry:captureCpuGeometry(geometry),voxelIndices:Uint32Array.from(surface.voxelIndices),occlusions});markCpuRecipeDirty();}
+        }
         const surfaceMaterial=meshMaterial.clone();surfaceMaterial.vertexColors=true;
         // This merged geometry uses world positions, not a unit cube's local
         // axes. Keep the face lighting/AO; a cube-local edge shader would darken
@@ -2516,13 +2634,18 @@ export function createVoxelRenderer(
         trackMaterialEffects(surfaceMaterial,0);
         const mesh=new THREE.Mesh(geometry,surfaceMaterial);mesh.name='scenery-reef-surface';
         mesh.castShadow=true;mesh.receiveShadow=true;mesh.userData.ownedMaterial=surfaceMaterial;
-        staticSurfaceOcclusionMeshes.set(mesh,{data,occlusions:Float64Array.from(voxels,voxel=>blockOcclusionFor(voxel,occlusionField))});
+        staticSurfaceOcclusionMeshes.set(mesh,{data,occlusions});
         applyStaticSurfaceOcclusion(mesh);
         structure.add(mesh);continue;
       }
       const mesh = new THREE.InstancedMesh(new THREE.BoxGeometry(0.97, 0.97, 0.97), meshMaterial, voxels.length);
       const matrix = new THREE.Matrix4();
-      voxels.forEach((voxel, index) => { matrix.makeTranslation(voxel.x, voxel.y, voxel.z); mesh.setMatrixAt(index, matrix); });
+      const matrixKey=`static-cubes:${key}`,cachedMatrices=currentBuildingRecipe?.cubeMatrices.get(matrixKey);
+      if(cachedMatrices&&cachedMatrices.length===mesh.instanceMatrix.array.length)mesh.instanceMatrix.array.set(cachedMatrices);
+      else{
+        voxels.forEach((voxel, index) => { matrix.makeTranslation(voxel.x, voxel.y, voxel.z); mesh.setMatrixAt(index, matrix); });
+        if(currentBuildingRecipe){currentBuildingRecipe.cubeMatrices.set(matrixKey,Float32Array.from(mesh.instanceMatrix.array));markCpuRecipeDirty();}
+      }
       mesh.instanceMatrix.needsUpdate = true;
       applyFallbackOcclusion(mesh, voxels, occlusionField);
       mesh.castShadow = !translucent;
@@ -2596,8 +2719,7 @@ export function createVoxelRenderer(
     const previous = fallbackOcclusionMeshes.get(mesh);
     const occlusions = previous?.voxels === voxels && previous.field === field ? previous.occlusions
       : Float64Array.from(voxels, voxel => {
-        const index=currentBuildingIndices?.get(voxel);
-        return index===undefined?blockOcclusionFor(voxel,field):currentBuildingRecipe!.occlusion[index]!;
+        return currentVoxelOcclusion(voxel,field);
       });
     fallbackOcclusionMeshes.set(mesh, { voxels, field, occlusions });
     const strength = LIGHTWEIGHT_SHADING_PROFILES[tier].ambientOcclusionStrength * 0.7;
@@ -2608,6 +2730,7 @@ export function createVoxelRenderer(
       mesh.setColorAt(index, color);
     });
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    mesh.userData.occlusionTier=tier;
     sceneryInstanceCulling.refreshColors(mesh);
   }
 
@@ -2617,6 +2740,7 @@ export function createVoxelRenderer(
     const strength=LIGHTWEIGHT_SHADING_PROFILES[tier].ambientOcclusionStrength*.7;
     entry.data.voxelIndices.forEach((voxel,index)=>{const brightness=1-entry.occlusions[voxel]!*strength;color.setXYZ(index,brightness,brightness,brightness);});
     color.needsUpdate=true;
+    mesh.userData.occlusionTier=tier;
   }
 
   function addGeometryBatches(
@@ -2952,7 +3076,7 @@ export function createVoxelRenderer(
     const sceneryKey=sceneryGenerationInputKey(terrainKey,importedDecorations);
     const planCacheHit=sceneryPlanCache?.key===sceneryKey;
     const plan = planCacheHit ? sceneryPlanCache!.plan : planWorldScenery({ environmentStyle, worldSeed: options.worldSeed ?? 'world-default',
-      surfaces: terrainSurfaceRectangles(terrain), trees: terrain.naturalTrees, roads, normalBounds: terrain.nearDetailBounds,
+      surfaces: terrainSurfaceTable(terrain), trees: terrain.naturalTrees, roads, normalBounds: terrain.nearDetailBounds,
       mosaicCoreRadius:Math.max(Math.abs(terrain.framingBounds.minX),Math.abs(terrain.framingBounds.maxX)),
       protectedRects: [...worlds, ...importedDecorations].map(item => ({ x: item.worldPosition.x, z: item.worldPosition.z,
         width: item.footprint.width + 5, depth: item.footprint.depth + 5 })) });
@@ -2960,6 +3084,32 @@ export function createVoxelRenderer(
     sceneryPlanCache={key:sceneryKey,plan};
     canvas.dataset.sceneryPlanCacheHit=String(planCacheHit);
     const planningCompletedMs = measureScenery ? performance.now() : 0;
+    const retained=liveScenery;
+    if(retained?.key===sceneryKey&&retained.bindings.pack===activeResourcePack){
+      restoreRenderRoot(retained.bindings,[]);
+      sceneryTreeCount=plan.objects.filter(object=>object.role==='tree').length;
+      ambientDecorationCount=plan.objects.length;ambientDecorationKindCount=new Set(plan.objects.map(object=>object.role)).size;
+      ambientDecorationAllocatedBatchCount=retained.allocatedBatches;ambientDecorationShadowCasters=retained.shadowCasters;
+      canvas.dataset.sceneryMeshCacheHit='true';
+    }else{
+      if(retained)retireBuildingRoot(retained.bindings.root);
+      liveScenery=null;sceneryInstanceCulling.clear();
+      const bindings=captureRenderRoot(()=>withStaticCpuScope(`scenery:${WORLD_SCENE_CACHE_REVISION}:${sceneryKey}`,()=>buildWorldScenery(plan)),[]);
+      if(!plan.objects.some(object=>hasRebuildOwnedDisplay(object.voxels)||hasRebuildOwnedDisplay(object.distantVoxels))){
+        liveScenery={key:sceneryKey,bindings,plan,allocatedBatches:ambientDecorationAllocatedBatchCount,shadowCasters:ambientDecorationShadowCasters};
+      }
+      canvas.dataset.sceneryMeshCacheHit='false';
+    }
+    canvas.dataset.sceneryVillage=JSON.stringify(plan.village);
+    canvas.dataset.sceneryObjectCount=String(plan.objects.length);
+    canvas.dataset.sceneryTreeCount=String(sceneryTreeCount);canvas.dataset.naturalTreeCount=String(sceneryTreeCount);
+    canvas.dataset.naturalDecorationCount=String(plan.objects.length);
+    if(measureScenery)canvas.dataset.sceneryBuildStagesMs=JSON.stringify({
+      planning:Number((planningCompletedMs-planningStartedMs).toFixed(2)),geometry:Number((performance.now()-planningCompletedMs).toFixed(2)),
+    });
+  }
+
+  function buildWorldScenery(plan:ReturnType<typeof planWorldScenery>):THREE.Group{
     const root = new THREE.Group(); root.name = 'world-scenery';
     root.userData.sceneryVillage = plan.village;
     buildingGroup.add(root);
@@ -2973,7 +3123,7 @@ export function createVoxelRenderer(
       // visibility belongs to the instance clusters below, not hundreds of
       // independently submitted groves. Every block and shadow is retained.
       const chunks = chunkSceneryTrees(trees, 64, 4);
-      const occlusion = createLocalOcclusionField([...chunks.values()].flat());
+      const occlusion = lazyLocalOcclusionField(()=>createLocalOcclusionField([...chunks.values()].flat()));
       for (const [key, voxels] of chunks) {
         const grove = new THREE.Group(); grove.name = `scenery-block-grove-${key}`; root.add(grove);
         addStaticVoxelStructure(grove, voxels, occlusion);
@@ -3030,21 +3180,13 @@ export function createVoxelRenderer(
       if (object.role === 'garden') { naturalFlowerPackPlacementCount += route.packed; naturalFlowerOriginalFallbackCount += route.fallback; }
       if (!layers) addStaticVoxelStructure(distant, object.distantVoxels);
     }
-    canvas.dataset.sceneryVillage = JSON.stringify(plan.village);
-    canvas.dataset.sceneryObjectCount = String(plan.objects.length);
-    canvas.dataset.sceneryTreeCount = String(trees.length);
-    canvas.dataset.naturalTreeCount = String(trees.length);
     ambientDecorationCount = plan.objects.length;
     ambientDecorationKindCount = new Set(plan.objects.map(o => o.role)).size;
     root.traverse(o => { if (o instanceof THREE.Mesh) {
       ambientDecorationAllocatedBatchCount++;
       if (o.castShadow) ambientDecorationShadowCasters++;
     } });
-    canvas.dataset.naturalDecorationCount = String(plan.objects.length);
-    if (measureScenery) canvas.dataset.sceneryBuildStagesMs = JSON.stringify({
-      planning: Number((planningCompletedMs - planningStartedMs).toFixed(2)),
-      geometry: Number((performance.now() - planningCompletedMs).toFixed(2)),
-    });
+    return root;
   }
 
   function updateSceneryLod(): void {
@@ -4111,7 +4253,7 @@ export function createVoxelRenderer(
       if(compiled)originalCpuHits++;
       else{
         compiled=compileOriginalBuildingShapes(voxels,currentBuildingIndices);
-        currentBuildingRecipe.originals.set(key,compiled);buildingCpuDirty=true;
+        currentBuildingRecipe.originals.set(key,compiled);markCpuRecipeDirty();
       }
       originalStaticShapeTopologyCount+=compiled.topologies;
       originalStaticShapeTopologyOverflow+=compiled.topologyOverflow;
@@ -4252,6 +4394,13 @@ export function createVoxelRenderer(
 
   function updateAmbientMotion(nowMs: number): void {
     if (disposed || initialPresentationPreparing) return;
+    if(animals){
+      const visible=animalsSceneReady&&paneVisible&&!document.hidden&&!renderer.getContext().isContextLost();
+      const activityScale=currentLighting.nightFactor>.55?.45:currentWeather.kind==='clear'?1:.7;
+      if(animals.tick(nowMs,camera,visible,!reducedMotion,activityScale))requestRender();
+      if(nowMs-lastAnimalDiagnosticsAt>1000){const summary=animals.diagnostics();canvas.dataset.animalCount=String(summary.count);
+        canvas.dataset.animalReady=String(summary.ready);canvas.dataset.animalReactions=String(summary.reactions);lastAnimalDiagnosticsAt=nowMs;}
+    }
     releaseStaleInteraction(nowMs);
     if (paneVisible && !document.hidden && !reducedMotion && (rainAnimation !== null || snowAnimation !== null)
       && nowMs - lastWeatherFrameStartedMs >= weatherFrameIntervalMs) requestRender();
@@ -4405,7 +4554,7 @@ export function createVoxelRenderer(
     const scenery = buildingGroup.getObjectByName('world-scenery');
     const shadowBounds = contentBounds.clone();
     if(options.environmentStyle==='ocean-island'){
-      for(const surface of terrainSurfaceRectangles(terrain)){
+      for(const surface of terrainSurfaceTable(terrain)){
         if(surface.material==='water'||surface.supportY<14)continue;
         const x=(surface.minX+surface.maxX)/2,z=(surface.minZ+surface.maxZ)/2;
         if(x<terrain.nearDetailBounds.minX||x>terrain.nearDetailBounds.maxX||z<terrain.nearDetailBounds.minZ||z>terrain.nearDetailBounds.maxZ)continue;
@@ -4656,6 +4805,7 @@ export function createVoxelRenderer(
   const pointerUp = (event: PointerEvent): void => {
     const released = releasePointer(event.pointerId);
     if (released?.wasOnlyPointer && Math.hypot(event.clientX - released.start.x, event.clientY - released.start.y) <= 8) {
+      if(animalsSceneReady&&animals?.tap(event.clientX,event.clientY,canvas,camera,[terrainGroup,roadGroup,buildingGroup])){requestRender();return;}
       pickTerrainAt(event.clientX, event.clientY);
       selectProjectAt(event.clientX, event.clientY);
     }
@@ -5081,6 +5231,7 @@ export function createVoxelRenderer(
       visibilityNearClipSafe: camera.near <= Math.max(0.5, visibilityNearestDistance * 0.72) + 0.001,
       visibilityFarClipSafe: camera.far >= visibilityFarthestDistance + 23.999,
       atmosphereFollowsWorld: atmosphereGroup.parent === rotatableWorldRoot,
+      animals:animals?.diagnostics()??null,
       terrainWaterOpaque: materials.get("terrainWater")?.transparent === false
         && materials.get("terrainWater")?.depthWrite === true
         && materials.get("terrainWater")?.opacity === 1,
@@ -5453,6 +5604,7 @@ export function createVoxelRenderer(
     resize();
   };
   const visibilityChange = (): void => {
+    animals?.suspend();
     if (document.hidden) {precipitationViewCache = invalidatePrecipitationViewCache(precipitationViewCache);cancelPreparedFrames();}
     for (const controller of atlasAnimationControllers) controller?.setVisible(!document.hidden && paneVisible);
     syncPrecipitationMotionGate(performance.now());
@@ -5519,9 +5671,11 @@ export function createVoxelRenderer(
       const buildingRestore=!buildingCacheRead&&options.buildingCpuCache&&!previewMode?(async()=>{
         buildingCacheRead=true;const started=performance.now();
         try{
-          const entry=await options.buildingCpuCache!.read();
+          const port=options.buildingCpuCache!;
+          const prepared=port.readPrepared?await port.readPrepared():undefined;
+          const entry=prepared===undefined?await port.read():prepared;
           if(disposed||generation!==resourcePackGeneration)return;
-          canvas.dataset.buildingCpuCacheRead=buildingCpuCache.restore(entry)?'restored':entry==null?'miss':'invalid';
+          canvas.dataset.buildingCpuCacheRead=(prepared?buildingCpuCache.restorePrepared(prepared):buildingCpuCache.restore(entry))?'restored':entry==null?'miss':'invalid';
         }catch{canvas.dataset.buildingCpuCacheRead='unavailable';}
         canvas.dataset.buildingCpuCacheReadMs=(performance.now()-started).toFixed(2);
       })():Promise.resolve();
@@ -5529,7 +5683,8 @@ export function createVoxelRenderer(
         sceneCacheRead = true;
         const started = performance.now();
         try {
-          const stored = await options.worldSceneCache.read();
+          const port=options.worldSceneCache;
+          const stored = await port.read();
           if (disposed || generation !== resourcePackGeneration) return;
           const restored = restoreWorldSceneCache(stored);
           canvas.dataset.worldSceneCacheRead = restored ? 'restored' : stored == null ? 'miss' : 'invalid';
@@ -5806,6 +5961,7 @@ export function createVoxelRenderer(
       return attempt.succeeded;
     },
     setReducedMotion(value) {
+      animals?.suspend();
       if (reducedMotion !== value) precipitationViewCache = invalidatePrecipitationViewCache(precipitationViewCache);
       reducedMotion = value;
       syncPrecipitationMotionGate(performance.now());
@@ -5822,6 +5978,7 @@ export function createVoxelRenderer(
     setVisible(value) {
       if (paneVisible === value || disposed) return;
       paneVisible = value;
+      animals?.suspend();
       if (!value) precipitationViewCache = invalidatePrecipitationViewCache(precipitationViewCache);
       syncPrecipitationMotionGate(performance.now());
       if (!value) {
@@ -5884,8 +6041,12 @@ export function createVoxelRenderer(
       disposed = true;
       // Kept roots normally belong to buildingGroup; disposal below owns their
       // GPU resources. Do not leave a second strong registry behind.
-      for(const entry of liveBuildings.values())if(entry.root.parent!==buildingGroup)buildingGroup.add(entry.root);
+      for(const entry of liveBuildings.values())if(entry.bindings.root.parent!==buildingGroup)buildingGroup.add(entry.bindings.root);
       liveBuildings.clear();
+      for(const entry of liveRewards.values())if(entry.bindings.root.parent!==buildingGroup)buildingGroup.add(entry.bindings.root);
+      liveRewards.clear();
+      if(liveScenery){buildingGroup.add(liveScenery.bindings.root);liveScenery=null;}
+      animals?.dispose();
       terrainGenerationCache = null;
       if (lightingTransition) {
         lightingTransition = null;

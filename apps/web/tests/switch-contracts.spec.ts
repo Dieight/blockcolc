@@ -22,15 +22,14 @@ test('integrity switch settles on the last intent through rapid toggles and pers
   await expect(integrity).toBeChecked();
 });
 
-test('daily goal switch toggles both ways inside its sheet', async ({ page }) => {
+test('daily goal slider toggles off at zero and on at a positive value', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: '开始建造' }).click();
   await page.getByRole('button', { name: '任务', exact: true }).click();
   await page.getByRole('button', { name: '调整今日目标' }).click();
-  const daily = page.locator('.daily-goal-sheet input[type="checkbox"]');
-  const initial = await daily.isChecked();
-  await daily.click();
-  await expect(daily).toBeChecked({ checked: !initial });
-  await daily.click();
-  await expect(daily).toBeChecked({ checked: initial });
+  const daily = page.getByRole('dialog',{name:'调整今日目标'}).getByLabel('今日目标次数');
+  await daily.press('Home');await expect(daily).toHaveValue('0');await expect(daily).toBeEnabled();
+  await daily.press('ArrowRight');await expect(daily).toHaveValue('1');await expect(daily).toBeEnabled();
+  await daily.press('Home');await expect(daily).toHaveValue('0');
+  await expect(page.locator('.daily-goal-sheet input[type="checkbox"]')).toHaveCount(0);
 });

@@ -11,14 +11,6 @@ export interface MonumentTaskRow { subtaskId:string; title:string; minutes:numbe
 const ALLOCATION_BAR_WIDTH = 400;
 const ALLOCATION_BAR_HEIGHT = 16;
 
-function allocationBarPath(width:number):string {
-  const boundedWidth = Math.min(ALLOCATION_BAR_WIDTH, Math.max(0, width));
-  const radius = Math.min(ALLOCATION_BAR_HEIGHT / 2, boundedWidth / 2);
-  return 'M0 0H' + (boundedWidth - radius) + 'Q' + boundedWidth + ' 0 ' + boundedWidth + ' ' + radius
-    + 'V' + (ALLOCATION_BAR_HEIGHT - radius) + 'Q' + boundedWidth + ' ' + ALLOCATION_BAR_HEIGHT + ' ' + (boundedWidth - radius)
-    + ' ' + ALLOCATION_BAR_HEIGHT + 'H0Z';
-}
-
 const delay = (seconds:number): CSSProperties => ({ animationDelay:`${seconds}s` });
 
 /** React version of MONO.obsReveal: once on entry, explicit replay, cleanup on unmount. */
@@ -201,7 +193,8 @@ export function FocusAllocationChart({ rows, rangeLabel }: { rows:AllocationRow[
  * G3 Chunky Bars / glance-gallery.html / “Revenue by plan”.
  *
  * Monument subtasks are a direct duration comparison, so the product keeps
- * the gallery's solid zero-origin bar instead of exposing a ruler/tick scale.
+ * the gallery's zero-origin bar instead of exposing a ruler/tick scale. Pixel
+ * seams are visual only; the exact duration still owns the continuous extent.
  * L2 Dot Cascade and F5 Tick Rows were considered but would imply countable
  * units that historical shared records cannot honestly provide.
  */
@@ -218,8 +211,9 @@ export function MonumentFocusChart({ rows }: { rows:MonumentTaskRow[] }) {
         return <li key={row.subtaskId}>
           <div className="monument-task-heading"><strong title={row.title}>{row.title}</strong><span>{formatFocusMinutes(row.minutes)}{row.share === null ? '' : ` · ${row.share}%`}</span></div>
           <svg viewBox={`0 0 ${ALLOCATION_BAR_WIDTH} ${ALLOCATION_BAR_HEIGHT}`} preserveAspectRatio="none" role="img" aria-label={`${row.title} · ${formatFocusMinutes(row.minutes)}${row.share === null ? '' : ` · ${row.share}%`}`}>
-            <rect className="monument-bar-track" width={ALLOCATION_BAR_WIDTH} height={ALLOCATION_BAR_HEIGHT} rx={ALLOCATION_BAR_HEIGHT / 2}/>
-            <path className="monument-bar-fill chart-mark" data-minutes={row.minutes} data-extent={extent} style={delay(index * .08)} d={allocationBarPath(extent)}/>
+            <rect className="monument-bar-track" width={ALLOCATION_BAR_WIDTH} height={ALLOCATION_BAR_HEIGHT}/>
+            <rect className="monument-bar-fill chart-mark" data-minutes={row.minutes} data-extent={extent} style={delay(index * .08)} width={extent} height={ALLOCATION_BAR_HEIGHT}/>
+            <path className="monument-bar-steps" d={Array.from({length:19},(_,i)=>`M${(i+1)*ALLOCATION_BAR_WIDTH/20} 0v${ALLOCATION_BAR_HEIGHT}`).join('')}/>
           </svg>
         </li>;
       })}

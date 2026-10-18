@@ -6,5 +6,6 @@ export async function expandGlassSetting(page: Page) {
   const range = page.getByLabel('液态玻璃通透程度', { exact: true });
   if (!await range.isVisible()) await setting.locator('summary').click();
   await expect(range).toBeVisible();
+  await expect(setting.locator(':scope>.content-reveal')).toHaveAttribute('data-overflow','visible');
   return range;
 }

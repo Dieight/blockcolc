@@ -2,7 +2,7 @@ import 'fake-indexeddb/auto';
 import { execute, addLocalDays, createInitialState } from '@blockcolc/domain';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { IndexedDbStateRepository, StorageConflictError } from '../src/index.js';
-import { parseDailyManifest, prepareDailyBackup, retainedDailyBackups, dailyBackupStoredBytes, expandDailyBackup } from '../src/daily-backups.js';
+import { parseDailyManifest, prepareDailyBackup, retainedDailyBackups, dailyBackupStoredBytes, expandDailyBackup, expandDailyBackupFromReader } from '../src/daily-backups.js';
 import { projectState } from './fixture.js';
 
 let sequence=0;
@@ -17,6 +17,15 @@ async function database(name:string) { return await new Promise<IDBDatabase>((re
 async function readBlocks(name:string) { const db=await database(name); try {return await new Promise<any[]>((resolve,reject)=>{const r=db.transaction('dailyBackupBlocks').objectStore('dailyBackupBlocks').getAll();r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);});} finally{db.close();} }
 afterEach(()=>{repositories.splice(0).forEach(r=>r.close());vi.restoreAllMocks();});
 describe('daily content-addressed history',()=>{
+  it('validates lazily loaded blocks with only one encoded read in flight',async()=>{
+    const state=projectState(),prepared=await prepareDailyBackup(state,'2026-07-23','2026-07-24T00:00:00.000Z',1);
+    const byId=new Map(prepared.blocks.map(block=>[block.id,block]));let inFlight=0,peak=0,reads=0;
+    const restored=await expandDailyBackupFromReader(prepared.manifest,async id=>{
+      inFlight+=1;peak=Math.max(peak,inFlight);reads+=1;
+      await new Promise(resolve=>setTimeout(resolve,0));inFlight-=1;return byId.get(id);
+    });
+    expect(restored).toEqual(state);expect(reads).toBe(prepared.blocks.length);expect(peak).toBe(1);
+  });
   it('includes shared notes and their completion state in merged and exported backups',async()=>{
     const f=fixture();const added=execute(projectState(),{type:'AddQuickNote',noteId:'note-backup',text:'Read'},{now:()=>new Date('2026-07-23T09:00:00Z')});if(!added.ok)throw Error(added.message);
     added.state.quickNotes[0]!.completed=true;await f.repository.save(added.state,0);await f.repository.createDailyBackup('2026-07-23');
@@ -82,8 +91,12 @@ describe('daily content-addressed history',()=>{
     const [a,b]=await Promise.all([f.repository.createDailyBackup('2026-07-23'),f.repository.createDailyBackup('2026-07-23')]);expect(a).toEqual(b);
     expect((await f.repository.listDailyBackups()).backups).toHaveLength(1);expect((await f.repository.load()).revision).toBe(1);
   });
-  it.each([false,true])('upgrades old multi-date archives only after validating the newest root (corrupt=%s)',async corrupt=>{
+  it.each([
+    [false, '2026-07-24'], [true, '2026-07-24'],
+    [false, '2026-07-25'], [true, '2026-07-25'],
+  ] as const)('upgrades old multi-date archives only after validating the newest root (corrupt=%s, date=%s)',async (corrupt,date)=>{
     const f=fixture();await f.repository.save(projectState(),0);
+    f.setNow('2026-07-26T00:00:00.000Z');
     const a=await prepareDailyBackup(projectState(),'2026-07-23','2026-07-24T00:00:00.000Z',1);
     const b=await prepareDailyBackup(projectState('Latest archived'),'2026-07-24','2026-07-25T00:00:00.000Z',1);
     const db=await database(f.name);
@@ -93,13 +106,28 @@ describe('daily content-addressed history',()=>{
       if(corrupt){const root=b.blocks.find(block=>block.id===b.manifest.stateBlock)!;root.data[0]=(root.data[0]??0)^1;tx.objectStore('dailyBackupBlocks').put(root);}
       tx.oncomplete=()=>resolve();tx.onabort=()=>reject(tx.error);
     });db.close();
-    if(corrupt){await expect(f.repository.createDailyBackup('2026-07-24')).rejects.toThrow('校验失败');expect((await f.repository.listDailyBackups()).backups).toHaveLength(2);}
+    if(corrupt){await expect(f.repository.createDailyBackup(date)).rejects.toThrow('校验失败');expect((await f.repository.listDailyBackups()).backups).toHaveLength(2);}
     else {
-      expect((await f.repository.createDailyBackup('2026-07-24'))!.date).toBe('2026-07-24');
+      expect((await f.repository.createDailyBackup(date))!.date).toBe(date);
       expect((await f.repository.listDailyBackups()).backups).toHaveLength(1);
-      expect((await readBlocks(f.name)).length).toBe(b.blocks.length);
+      await expect(f.repository.exportDailyBackup(date)).resolves.toContain('tomato-clock-backup');
     }
     expect((await f.repository.load()).state).toEqual(projectState());expect((await f.repository.load()).revision).toBe(1);
+  });
+  it.each(['2026-07-23', '2026-07-24'])('does not report success or prune a corrupt single checkpoint on %s', async date => {
+    const f = fixture(); await f.repository.save(projectState(), 0);
+    await f.repository.createDailyBackup('2026-07-23');
+    const before = await f.repository.listDailyBackups();
+    const db = await database(f.name);
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction('dailyBackupBlocks', 'readwrite'), store = tx.objectStore('dailyBackupBlocks');
+      const request = store.getAll();
+      request.onsuccess = () => { const block = request.result[0]; block.data[0] ^= 1; store.put(block); };
+      tx.oncomplete = () => resolve(); tx.onabort = () => reject(tx.error);
+    }); db.close(); f.setNow('2026-07-25T00:00:00.000Z');
+    await expect(f.repository.createDailyBackup(date)).rejects.toThrow('校验失败');
+    expect(await f.repository.listDailyBackups()).toEqual(before);
+    expect((await f.repository.load()).state).toEqual(projectState());
   });
   it('does not invent yesterday for a first-day installation, or archive current/future dates',async()=>{
     const f=fixture();expect(await f.repository.createDailyBackup('2026-07-23')).toBeNull();

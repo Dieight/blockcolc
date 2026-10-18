@@ -23,7 +23,7 @@ describe('compact calendar and world debug controls', () => {
     expect(disabled).toContain('class="content-reveal" inert="" aria-hidden="true"');
     const enabled = renderToStaticMarkup(<WorldDebugSettingsPanel value={{ ...NORMAL_WORLD_DEBUG, enabled: true, weather: 'snow' }} onChange={vi.fn()}/>);
     expect(enabled).toContain('id="world-debug-weather"');
-    expect(enabled).toContain('class="content-reveal is-open" aria-hidden="false"');
+    expect(enabled).toMatch(/class="content-reveal is-open"[^>]*aria-hidden="false"/);
     expect(enabled).toContain('aria-haspopup="listbox"');
     expect(enabled).toContain('<strong>雪</strong>');
     expect(enabled).not.toContain('<select');

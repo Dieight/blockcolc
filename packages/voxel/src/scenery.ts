@@ -1,14 +1,13 @@
 import type { BlueprintVoxel, MaterialId } from './blueprint';
 import type { EnvironmentStyle } from './environment';
 import { mosaicGridPosition, mosaicRegionAt, mosaicSeed, mosaicSeabedHeight, mosaicWarmSeaWeight, sampleMosaicTerrain } from './mosaic-terrain';
-import { createReefField, reefCoverage } from './reef-field';
+import { createReefField } from './reef-field';
+import {planEcotoneTrees,reefDensity,type Species as EcotoneSpecies} from './scenery-ecotones';
+import { surfaceSampler } from './surface-index';
+import { TerrainSurfaceTable, type SurfaceSource } from './terrain-surface-table';
+export { scenerySurfaceAt, surfaceSampler } from './surface-index';
+export type { ScenerySurface } from './terrain-surface-table';
 
-/** Read-only samples of the *rendered* terrain, including its coarse far cells. */
-export interface ScenerySurface {
-  minX: number; maxX: number; minZ: number; maxZ: number;
-  supportY: number; water: boolean;
-  material?: string;
-}
 export interface SceneryProtectedRect {
   x: number; z: number; width: number; depth: number;
 }
@@ -175,58 +174,28 @@ function overlaps(a: SceneryProtectedRect, b: SceneryProtectedRect, gap = 0): bo
     && Math.abs(a.z - b.z) < (a.depth + b.depth) / 2 + gap;
 }
 
-export function scenerySurfaceAt(surfaces: readonly ScenerySurface[], x: number, z: number): ScenerySurface | undefined {
-  // Highest dry ground wins only when it is genuinely above the water surface.
-  // Each bucket is visited many times. Keep first-in-input ties, as the former
-  // stable sort did, without allocating and sorting three arrays per sample.
-  let ground: ScenerySurface | undefined, water: ScenerySurface | undefined;
-  for (const s of surfaces) {
-    if (!(s.minX < s.maxX && s.minZ < s.maxZ && x >= s.minX && x <= s.maxX && z >= s.minZ && z <= s.maxZ)) continue;
-    if (s.water) { if (!water || s.supportY > water.supportY) water = s; }
-    else if (!ground || s.supportY > ground.supportY) ground = s;
-  }
-  return ground && (!water || ground.supportY > water.supportY + .01) ? ground : water;
-}
-
 /** Compute deterministic expensive scores once, preserving stable ties. */
 function orderedBy<T>(values: readonly T[], score: (value: T) => number): T[] {
   return values.map(value => ({ value, score: score(value) }))
     .sort((a, b) => a.score - b.score).map(entry => entry.value);
 }
 
-/** Terrain is sampled many times while fitting a locality. Index it once. */
-export function surfaceSampler(surfaces: readonly ScenerySurface[]): (x: number, z: number) => ScenerySurface | undefined {
-  const bins = new Map<string, ScenerySurface[]>();
-  for (const s of surfaces) {
-    if (s.minX >= s.maxX || s.minZ >= s.maxZ) continue;
-    for (let x = Math.floor(s.minX / 8); x <= Math.floor(s.maxX / 8); x++) {
-      for (let z = Math.floor(s.minZ / 8); z <= Math.floor(s.maxZ / 8); z++) {
-        const key = `${x}:${z}`, list = bins.get(key) ?? [];
-        list.push(s); bins.set(key, list);
-      }
-    }
-  }
-  const cache = new Map<string, ScenerySurface | undefined>();
-  return (x, z) => {
-    const key = `${x}:${z}`;
-    if (!cache.has(key)) cache.set(key, scenerySurfaceAt(bins.get(`${Math.floor(x / 8)}:${Math.floor(z / 8)}`) ?? [], x, z));
-    return cache.get(key);
-  };
-}
-
-/** Presentation only: old terrain versions and task/reward foundations remain byte-for-byte unchanged. */
+/** Presentation only; the current terrain and task/reward foundations are read-only. */
 export function planWorldScenery(input: {
   environmentStyle: EnvironmentStyle;
   worldSeed: string;
-  surfaces: readonly ScenerySurface[];
+  surfaces: SurfaceSource;
   protectedRects: readonly SceneryProtectedRect[];
   roads: readonly { x: number; z: number }[];
   trees: readonly { x: number; y: number; z: number; scale: number }[];
   normalBounds?: { minX:number; maxX:number; minZ:number; maxZ:number };
   mosaicCoreRadius?:number;
 }): WorldScenery {
-  const { surfaces, protectedRects } = input;
-  const surfaceAt = surfaceSampler(surfaces);
+  // Only planning's sorting/filtering needs object rows. Other consumers and
+  // repeated support queries keep using the shared numeric table/index.
+  const { protectedRects } = input;
+  const surfaces = input.surfaces instanceof TerrainSurfaceTable ? Array.from(input.surfaces) : input.surfaces;
+  const surfaceAt = surfaceSampler(input.surfaces);
   const objects: SceneryObject[] = [];
   const outsideNormal = (x:number,z:number) => input.normalBounds !== undefined &&
     (x < input.normalBounds.minX || x > input.normalBounds.maxX || z < input.normalBounds.minZ || z > input.normalBounds.maxZ);
@@ -383,11 +352,12 @@ export function planWorldScenery(input: {
           if(dx< -half||dx>=half||dz< -half||dz>=half)return false;
           const wx=x+dx,wz=z+dz,at=surfaceAt(wx,wz);
           return Boolean(at?.water
+            &&mosaicSeabedHeight(wx-coreX,wz-coreZ,seed,coreRadius)<=-6
             &&!protectedRects.some(r=>overlaps({x:wx,z:wz,width:1,depth:1},r,2))
             &&!dryStructures.some(r=>overlaps({x:wx,z:wz,width:1,depth:1},r,1)));
         };
         const reef=createReefField(seed,half,half,allowed,{originX:x,originZ:z,
-          density:(dx,dz)=>reefCoverage(seed,x+dx,z+dz,centerX,centerZ,radius)*mosaicWarmSeaWeight(x+dx-coreX,z+dz-coreZ,coreRadius),
+          density:(dx,dz)=>reefDensity(seed,x+dx,z+dz,centerX,centerZ,radius,-mosaicSeabedHeight(x+dx-coreX,z+dz-coreZ,seed,coreRadius))*mosaicWarmSeaWeight(x+dx-coreX,z+dz-coreZ,coreRadius),
           baseY:(dx,dz)=>Math.floor(mosaicSeabedHeight(x+dx-coreX,z+dz-coreZ,seed,coreRadius)+.5)});
         if(reef.voxels.length<12)continue;
         objects.push({id:`scenery:${input.worldSeed}:reef:${x}:${z}`,role:'rock',x,z,y:0,width:tile,depth:tile,...reef});
@@ -453,7 +423,16 @@ export function planWorldScenery(input: {
   };
   // The snow grove owns all cold-region trees. Don't retain old generic tree
   // sites alongside the new tall spruce placement pass.
-  const treeSites = input.trees.filter(tree => !coldTreeRegion(tree.x,tree.z));
+  const treeSites: Array<(typeof input.trees)[number]&{ecotoneSpecies?:EcotoneSpecies}>=[];
+  if(input.environmentStyle==='mosaic-coast'){
+    const bounds={minX:Infinity,maxX:-Infinity,minZ:Infinity,maxZ:-Infinity};
+    for(const surface of surfaces){
+      bounds.minX=Math.min(bounds.minX,surface.minX);bounds.maxX=Math.max(bounds.maxX,surface.maxX);
+      bounds.minZ=Math.min(bounds.minZ,surface.minZ);bounds.maxZ=Math.max(bounds.maxZ,surface.maxZ);
+    }
+    treeSites.push(...planEcotoneTrees({seed:sceneryClimateSeed,coreX,coreZ,coreRadius,bounds,at:surfaceAt,supports,occupied}));
+  }else{
+  treeSites.push(...input.trees);
   if (!compact && input.normalBounds) {
     const farTreeBudget = Math.min(320, Math.floor(Math.sqrt(distantArea) / 8));
     const farSites = orderedBy(distantLand.map(s=>({x:Math.round((s.minX+s.maxX)/2),z:Math.round((s.minZ+s.maxZ)/2)})),
@@ -472,29 +451,11 @@ export function planWorldScenery(input: {
       && treeSites.every(t => Math.hypot(t.x - site.x, t.z - site.z) > 8)) treeSites.push({ ...site, y: surfaceAt(site.x, site.z)!.supportY, scale: 1 });
     if (treeSites.length >= 3) break;
   }
-  if(input.environmentStyle==='mosaic-coast'){
-    let grove=0;
-    for(const site of [...landSites].sort((a,b)=>Math.hypot(a.x-coreX,a.z-coreZ)-Math.hypot(b.x-coreX,b.z-coreZ)||a.x-b.x||a.z-b.z)){
-      if(grove>=120)break;
-      if(sampleMosaicTerrain(site.x-coreX,site.z-coreZ,mosaicSeed(input.worldSeed),coreRadius).biome!=='forest')continue;
-      const s=surfaceAt(site.x,site.z);
-      if(!s||s.water||s.material!=='grass'||occupied({...site,width:11,depth:11},2)
-        ||!supports(site.x,site.z,3,3)||treeSites.some(t=>Math.hypot(t.x-site.x,t.z-site.z)<11))continue;
-      treeSites.push({...site,y:s.supportY,scale:1});grove++;
-    }
-    let taiga=0;
-    for(const site of landSites){
-      if(taiga>=65)break;
-      const s=surfaceAt(site.x,site.z);
-      if(!coldTreeRegion(site.x,site.z)||!s||s.water||s.material!=='snow'||occupied({...site,width:9,depth:9},3)
-        ||!supports(site.x,site.z,5,5)||treeSites.some(t=>Math.hypot(t.x-site.x,t.z-site.z)<11))continue;
-      treeSites.push({...site,y:s.supportY,scale:1});taiga++;
-    }
   }
   for (const [index, tree] of treeSites.entries()) {
     const x = Math.round(tree.x), z = Math.round(tree.z);
     const mosaicBiome=input.environmentStyle==='mosaic-coast'?sampleMosaicTerrain(x-coreX,z-coreZ,mosaicSeed(input.worldSeed),coreRadius).biome:null;
-    const poplar=mosaicBiome==='forest',taiga=coldTreeRegion(x,z);
+    const poplar=tree.ecotoneSpecies?tree.ecotoneSpecies==='poplar':mosaicBiome==='forest',taiga=tree.ecotoneSpecies?tree.ecotoneSpecies==='spruce':coldTreeRegion(x,z);
     const footprint=poplar?9:taiga?7:5;
     if (objects.filter(o => o.role !== 'path').some(o => overlaps({ x, z, width: footprint+2, depth: footprint+2 }, o, 2))
       || protectedRects.some(r => overlaps({ x, z, width: footprint+2, depth: footprint+2 }, r, 2))
@@ -502,9 +463,9 @@ export function planWorldScenery(input: {
     const support = surfaceAt(x, z);
     if (!support || support.water || (support.material && !['grass','snow'].includes(support.material)) || !supports(x,z,3,3)) continue;
     const biome = sceneryBiome(input.worldSeed, x, z, input.environmentStyle, support.supportY);
-    if (!poplar && !taiga && biome === 'meadow' && hash(`${input.worldSeed}:open:${x}:${z}`) % 4 !== 0) continue;
-    const species = poplar ? 'poplar'
-      : taiga || biome === 'highland' ? 'spruce' : biome === 'birch-grove' ? 'birch' : 'oak';
+    if (!tree.ecotoneSpecies && !poplar && !taiga && biome === 'meadow' && hash(`${input.worldSeed}:open:${x}:${z}`) % 4 !== 0) continue;
+    const species = tree.ecotoneSpecies ?? (poplar ? 'poplar'
+      : taiga || biome === 'highland' ? 'spruce' : biome === 'birch-grove' ? 'birch' : 'oak');
     const variant=poplar?hash(`${input.worldSeed}:poplar:${Math.floor(x/24)}:${Math.floor(z/24)}`):index;
     objects.push({ id: `scenery:${input.worldSeed}:tree:${index}`, role: 'tree', x, y: support.supportY, z,
       width: footprint, depth: footprint, ...sceneryTreeBlocks(species, variant, taiga) });

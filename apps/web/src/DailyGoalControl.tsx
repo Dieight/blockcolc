@@ -2,7 +2,7 @@ import { t, useI18n } from './i18n';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ApplicationCommand, ApplicationService } from '@blockcolc/application';
 import { completedPomodorosOn, dailyGoalForDate, localDateOf } from '@blockcolc/domain';
-import { PixelCheck, PixelEdit, PixelClose, PixelFlag, PixelSprout } from './ui/PixelIcon';
+import { PixelCheck, PixelEdit, PixelClose, PixelFlag } from './ui/PixelIcon';
 import { PixelProgress } from './ui/PixelProgress';
 import { PhysicalSlider } from './ui/PhysicalSlider';
 import { HolidayEmblem } from './ui/HolidayEmblem';
@@ -66,11 +66,10 @@ export function DailyGoalControl({ state, run, onViewReward }: {
   };
   return <>
     <section className="daily-goal daily-goal-workbench task-surface" aria-labelledby="daily-goal-title">
-      <div className="daily-goal-summary"><div><h2 id="daily-goal-title">{t("今日目标")}</h2><p>{t("所有任务合计")}</p></div>
-        <button ref={opener} type="button" className="daily-goal-adjust" aria-label={t("调整今日目标")} onClick={() => { setError(''); setOpen(true); }}><PixelEdit/><span>{t("调整")}</span></button></div>
-      <div className="daily-goal-tally"><strong>{completed}{goal.enabled && <span> / {goal.targetPomodoros}</span>}</strong><span>{goal.enabled ? t("轮已完成") : t("轮 · 目标未开启")}</span></div>
+      <div className="daily-goal-summary"><div><h2 id="daily-goal-title">{t("今日目标")}</h2></div>
+        <button ref={opener} type="button" className="daily-goal-adjust" aria-label={t("调整今日目标")} onClick={() => { setError(''); setOpen(true); }}><PixelEdit/><span className="sr-only">{t("调整")}</span></button></div>
+      <div className="daily-goal-tally"><strong>{completed}{goal.enabled && <span> / {goal.targetPomodoros}</span>} <span>{t("轮")}</span></strong>{!goal.enabled&&<span>{t("目标未开启")}</span>}</div>
       <div className="daily-goal-festival-line">{goal.enabled && <PixelProgress rounds className="daily-goal-progress" label={t("今日 {0} / {1} 轮", completed, goal.targetPomodoros)} max={goal.targetPomodoros} value={completed}/>}<HolidayEmblem date={date} slot={1}/></div>
-      {goal.enabled && completed < goal.targetPomodoros && <p className="daily-goal-hint"><PixelSprout/>{t("再完成")}{' '}{goal.targetPomodoros - completed} {t("轮，达成今日目标")}</p>}
       {rewardName && <span className="daily-goal-reward"><PixelCheck/>{t("今日装饰已入库 ·")}{rewardName}</span>}
       {goal.reachedAt && <span className="goal-reached"><PixelCheck/>{t("今日已达成")}</span>}
     </section>
@@ -81,8 +80,6 @@ export function DailyGoalControl({ state, run, onViewReward }: {
         <p id="daily-goal-sheet-summary" className="daily-goal-sheet-summary">{goal.enabled ? t("今日已完成 {0} / {1} 轮", completed, goal.targetPomodoros) : t("今日已完成 {0} 轮", completed)}</p>
         <PixelProgress className="daily-goal-progress" value={completed} max={goal.targetPomodoros} rounds label={t("今日目标完成进度")}/>
         <div className="daily-goal-controls">
-          <div className="daily-goal-setting-row"><div className="daily-goal-setting-copy"><span id="daily-goal-enabled-label">{t("开启今日目标")}</span><small>{t("达成后获得今日装饰")}</small></div>
-            <label className="switch-control ios-switch daily-goal-switch"><input type="checkbox" role="switch" aria-labelledby="daily-goal-enabled-label" checked={pending ? target > 0 : goal.enabled} disabled={pending} onChange={() => void save(goal.enabled ? 0 : goal.targetPomodoros)}/><span aria-hidden="true">{goal.enabled ? t("已开启") : t("已关闭")}</span></label></div>
           <div className="daily-goal-target-row"><div className="daily-goal-target-heading"><label htmlFor="daily-goal-target">{t("目标轮数")}</label><output aria-live="polite">{preview === null ? '' : t("预计 ")}{preview ?? target} {t("轮")}</output></div>
             <PhysicalSlider id="daily-goal-target" label={t("今日目标次数")} value={target} min={0} max={20} step={1} unit={t("轮")} disabled={pending} commitOnRelease onPreviewChange={setPreview} onChange={rounds => void save(rounds)}/>
             <p className="daily-goal-sheet-note">{goal.targetPomodoros > 20 && goal.enabled ? t("原目标 {0} 轮保留；调整范围 0–20 轮。", goal.targetPomodoros) : t("0 轮关闭目标；松手后保存。")}</p>

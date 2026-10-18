@@ -92,6 +92,7 @@ export function planResourceFluidBatches(
   atlas?: ResourcePackAtlas,
   neighboringVoxels: readonly BlueprintVoxel[] = voxels,
 ): ResourceFluidPlan {
+  if(!voxels.some(voxel=>staticFluidKind(voxel)!==undefined))return {batches:[],fallbackVoxels:[],fallbackEntries:[],fallbackBatches:[],texturedVoxelCount:0};
   const context = createFluidContext(neighboringVoxels);
   const groups = new Map<string, ResourceFluidBatch>();
   const fallbackVoxels: BlueprintVoxel[] = [];
@@ -177,6 +178,7 @@ export function planResourceWaterloggedFluidBatches(
   maximumBatchEntries = MAX_WATERLOGGED_FLUID_BATCH_ENTRIES,
 ): ResourceWaterloggedFluidPlan {
   const candidates = voxels.filter((voxel) => voxel.sourceBlockState?.waterlogged === "true");
+  if(!candidates.length)return {batches:[],fallbackVoxels:[],fallbackEntries:[],fallbackBatches:[],texturedVoxelCount:0,omittedVoxelCount:0};
   const safeBatchSize = Math.max(1, Math.min(MAX_WATERLOGGED_FLUID_BATCH_ENTRIES, Math.floor(maximumBatchEntries) || 1));
   const selectedSet = new Set(candidates);
   const context = createFluidContext(voxels, selectedSet);

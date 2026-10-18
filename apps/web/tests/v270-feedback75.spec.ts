@@ -26,7 +26,7 @@ test('both language names are stable; all supplemental and reward metadata and p
   await page.getByRole('button',{name:'设置',exact:true}).click();const language=page.getByRole('group',{name:'界面语言',exact:true});
   await expect(language.getByRole('button')).toHaveText(['简体中文','English']);await language.getByRole('button',{name:'English',exact:true}).click();
   await expect(page.getByRole('group',{name:'App language',exact:true}).getByRole('button')).toHaveText(['简体中文','English']);
-  const library=page.locator('.blueprint-library');await library.getByRole('button',{name:/All blueprints/}).click();
+  const library=page.locator('.blueprint-library');await library.getByRole('button',{name:/Blueprint library/}).click();
   await expect(library.locator('details[open]')).toHaveCount(0);
   for(const group of ['Supplemental','Daily rewards']){
     const details=library.locator('details').filter({has:page.locator('summary').filter({hasText:group})});await details.locator('summary').click();

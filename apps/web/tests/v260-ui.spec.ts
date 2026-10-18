@@ -105,7 +105,7 @@ test('production normal/minimal portal uses the actual task button and leaves fo
   const canvas = page.locator('canvas[aria-label="项目建筑世界"]');
   const initial = await canvas.evaluate(element => ({ generation: element.dataset.rendererGeneration, rebuild: element.dataset.worldRebuildCount }));
   const entry = page.getByRole('button', { name: '进入极简模式', exact: true });
-  await expect(entry.locator('[data-pixel-icon="portal"]')).toBeVisible();
+  await expect(entry.locator('[data-pixel-icon="expand"]')).toBeVisible();
   await entry.click(); await expect(page.locator('.app-shell')).toHaveAttribute('data-mode-portal-active', 'false', { timeout: 20_000 });
   await expect(page.locator('.world-screen')).toHaveAttribute('data-minimal-mode', 'true');
   await page.locator('.focus-panel').dblclick({ position: { x: 16, y: 18 } });
@@ -142,7 +142,7 @@ test('timer plan selection moves its surface and underline together in both them
   await expect(page.getByRole('button', { name: '开始 1 轮', exact: true })).toBeVisible();
 });
 
-test('whole-round dragging really holds for 500ms, includes later rests and releases immediately on reverse', async ({ page }) => {
+test('whole-round dragging really holds for 250ms, includes later rests and releases immediately on reverse', async ({ page }) => {
   test.setTimeout(90_000); await setup(page);
   await page.getByRole('button', { name: '设置', exact: true }).click();
   await page.getByLabel('普通任务专注分钟', { exact: true }).fill('25');
@@ -159,7 +159,7 @@ test('whole-round dragging really holds for 500ms, includes later rests and rele
   const r = (await clock.boundingBox())!, x = r.x + r.width / 2, y = r.y + r.height / 2;
   await page.mouse.move(x, y); await page.mouse.down(); await page.mouse.move(x, y - 72);
   await expect(clock).toHaveAttribute('data-detent-round', '1'); await expect(clock.locator('.timer-value')).toHaveText('15:25');
-  await page.mouse.move(x, y - 96); await page.clock.runFor(499);
+  await page.mouse.move(x, y - 96); await page.clock.runFor(249);
   await expect(clock).toHaveAttribute('data-round-detent', 'holding'); await expect(clock.locator('.timer-value')).toHaveText('15:25');
   await page.clock.runFor(1); await expect(clock).not.toHaveAttribute('data-round-detent', 'holding');
   await page.mouse.move(x, y - 180); await expect(clock).toHaveAttribute('data-detent-round', '2');
@@ -202,6 +202,8 @@ test('upward slider arc mirrors a lower pull and action icons animate only the c
   await page.getByRole('button', { name: '计时', exact: true }).click();
   await page.getByRole('button', { name: '设置', exact: true }).click();
   await page.locator('summary.glass-transparency-row').click();
+  await expect(page.locator('.glass-transparency-setting>.content-reveal')).toHaveAttribute('data-overflow','visible');
+  await expect.poll(()=>page.locator('.glass-transparency-setting').evaluate(e=>e.getAnimations({subtree:true}).filter(a=>Number.isFinite(Number(a.effect?.getComputedTiming().endTime))&&a.playState==='running').length)).toBe(0);
   const slider = page.locator('.physical-slider').filter({ has: page.getByLabel('液态玻璃通透程度', { exact: true }) });
   const ball = slider.locator('.physical-slider-ball').first(), r = (await ball.boundingBox())!;
   await page.mouse.move(r.x + r.width / 2, r.y + r.height / 2); await page.mouse.down();

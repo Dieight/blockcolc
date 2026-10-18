@@ -9,15 +9,19 @@ export interface StateSnapshot {
 
 export interface StateRepository {
   load(): Promise<StateSnapshot>;
+  /** Local monotonic marker, committed atomically with import/restore. Not exported. */
+  replacementRevision?(): Promise<number>;
   /** A fresh repository read; null means the committed revision is unchanged.
    * Adapters may skip parsing an unchanged aggregate, never the revision check. */
   loadIfChanged?(knownRevision: number): Promise<StateSnapshot | null>;
   /** Atomically replaces the aggregate only when expectedRevision is still current. */
   save(state: DomainState, expectedRevision: number): Promise<number>;
+  /** Atomically replace only notes; retain all persisted world and timer facts. */
+  saveQuickNotes?(notes: DomainState['quickNotes'], expectedRevision: number): Promise<number>;
 }
 
 export interface BackupImportPreview {
-  schemaVersion: 1;
+  schemaVersion: 1 | 2;
   exportedAt: ISOInstant;
   checksum: string;
   summary: {

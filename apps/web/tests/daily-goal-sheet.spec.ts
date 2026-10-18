@@ -7,7 +7,11 @@ async function createDefaultProject(page: Page) {
 }
 async function openDailyGoal(page: Page) {
   await page.getByRole('button', { name: '调整今日目标' }).click();
-  return page.getByRole('dialog', { name: '调整今日目标' });
+  const sheet=page.getByRole('dialog', { name: '调整今日目标' });
+  await expect.poll(()=>sheet.evaluate(el=>el.getAnimations().filter(animation=>
+    Number.isFinite(Number(animation.effect?.getComputedTiming().endTime))&&!['finished','idle'].includes(animation.playState)
+  ).map(animation=>({state:animation.playState,pending:animation.pending,time:animation.currentTime})))).toEqual([]);
+  return sheet;
 }
 async function currentStateRevision(page: Page) {
   return page.evaluate(async () => {
@@ -23,7 +27,7 @@ async function currentStateRevision(page: Page) {
   });
 }
 
-test('daily goal physical slider persists edits; zero disables and re-enabling restores the saved target', async ({ page }) => {
+test('daily goal slider persists edits; zero disables and a positive selection reenables without a switch', async ({ page }) => {
   await createDefaultProject(page);
   let sheet = await openDailyGoal(page);
   const target = sheet.getByLabel('今日目标次数');
@@ -31,15 +35,14 @@ test('daily goal physical slider persists edits; zero disables and re-enabling r
   await target.press('ArrowRight'); await expect(target).toHaveValue('9'); await expect(target).toBeEnabled();
   await sheet.getByRole('button', { name: '关闭今日目标' }).click();
   sheet = await openDailyGoal(page); await expect(sheet.getByLabel('今日目标次数')).toHaveValue('9');
-  await sheet.getByRole('switch').click(); await expect(sheet.getByRole('switch')).not.toBeChecked();
+  await target.press('Home'); await expect(sheet.getByRole('switch')).toHaveCount(0);
   await expect(sheet.getByLabel('今日目标次数')).toHaveValue('0');
-  await expect(sheet.getByRole('switch')).toBeEnabled();
+  await expect(target).toBeEnabled();
   await sheet.getByRole('button', { name: '关闭今日目标' }).click();
   await page.reload(); await page.getByRole('button', { name: '任务', exact: true }).click();
   sheet = await openDailyGoal(page); await expect(sheet.getByLabel('今日目标次数')).toHaveValue('0');
-  await expect(sheet.getByRole('switch')).not.toBeChecked();
-  await sheet.getByRole('switch').click(); await expect(sheet.getByRole('switch')).toBeChecked();
-  await expect(sheet.getByLabel('今日目标次数')).toHaveValue('9');
+  await expect(sheet.getByRole('switch')).toHaveCount(0);
+  await target.press('ArrowRight'); await expect(target).toHaveValue('1');
 });
 
 test('daily goal sheet traps keyboard focus and restores its trigger', async ({ page }) => {
@@ -57,8 +60,8 @@ test('daily goal slider bounds are zero through twenty; zero is not stored as a 
   await expect(target).toHaveAttribute('min', '0'); await expect(target).toHaveAttribute('max', '20');
   await target.press('End'); await expect(target).toHaveValue('20'); await expect(target).toBeEnabled();
   await target.press('Home'); await expect(target).toHaveValue('0'); await expect(target).toBeEnabled();
-  await expect(sheet.getByRole('switch')).not.toBeChecked(); await expect(sheet.getByRole('alert')).toHaveCount(0);
-  await sheet.getByRole('switch').click(); await expect(target).toHaveValue('20');
+  await expect(sheet.getByRole('switch')).toHaveCount(0); await expect(sheet.getByRole('alert')).toHaveCount(0);
+  await target.press('End'); await expect(target).toHaveValue('20');
 });
 
 test('daily goal reports an IndexedDB write failure and reopens from the saved target', async ({ page }) => {
@@ -92,12 +95,12 @@ test('daily goal horizontal drag previews without saving and commits exactly onc
   expect(await currentStateRevision(page)).toBe(before); await expect(target).toHaveValue('8');
   await page.mouse.up(); await expect(target).toHaveValue('11');
   await expect.poll(() => currentStateRevision(page)).toBe(before + 1);
-  await expect(target).toBeEnabled(); await sheet.getByRole('switch').click();
-  await expect(sheet.getByRole('switch')).not.toBeChecked(); await expect(target).toHaveValue('0');
+  await expect(target).toBeEnabled(); await target.press('Home');
+  await expect(sheet.getByRole('switch')).toHaveCount(0); await expect(target).toHaveValue('0');
   await expect.poll(() => currentStateRevision(page)).toBe(before + 2);
   await sheet.getByRole('button', { name: '关闭今日目标' }).click();
   const reopened = await openDailyGoal(page);
-  await expect(reopened.getByLabel('今日目标次数')).toHaveValue('0'); await expect(reopened.getByRole('switch')).not.toBeChecked();
+  await expect(reopened.getByLabel('今日目标次数')).toHaveValue('0'); await expect(reopened.getByRole('switch')).toHaveCount(0);
 });
 
 test('daily goal sheet fits five QA viewports and attaches to phone edges in both themes', async ({ page }, info) => {

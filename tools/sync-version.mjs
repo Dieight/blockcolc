@@ -1,6 +1,7 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import process from 'node:process';
+import { currentDocumentProblems } from './current-docs.mjs';
 
 const root = resolve(import.meta.dirname, '..');
 const mode = process.argv[2] ?? '--check';
@@ -58,6 +59,14 @@ if (mode === '--write') {
       problems.push(`package-lock.json packages[${JSON.stringify(key)}]: expected ${version.versionName}, found ${lock.packages[key]?.version ?? '<missing>'}`);
     }
   }
+}
+
+if (mode === '--check') {
+  const product = await readFile(resolve(root, 'BLOCKCOLC.md'), 'utf8');
+  const todo = await readFile(resolve(root, 'docs/TODO.md'), 'utf8');
+  const releaseCode = todo.match(/^正式版本：\[v[\d.]+\s*\/\s*(\d+)\]/m)?.[1];
+  const delivery = releaseCode ? await readFile(resolve(root, `docs/versions/V${releaseCode}.md`), 'utf8') : '';
+  problems.push(...currentDocumentProblems({ product, todo, delivery }));
 }
 
 if (problems.length) {

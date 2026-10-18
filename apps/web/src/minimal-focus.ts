@@ -106,6 +106,7 @@ export function prepareMinimalFocus(
 
 export interface MinimalFocusStartDependencies {
   snapshot: () => DomainState;
+  replacementRevision?: () => number;
   dispatch: (command: StartCommand) => Promise<ApplicationResult>;
   readPlan: () => RoundPlan | null;
   /** Write before publishing local state; throw on failure. */
@@ -140,6 +141,7 @@ export function createMinimalFocusStarter(dependencies: MinimalFocusStartDepende
                 dependencies.newAuthorizationId?.() ?? newAutomaticContinuationAuthorizationId(),
                 result.command.plannedDurationMs,
                 preferences.breakMinutes * 60_000,
+                dependencies.replacementRevision?.() ?? 0,
               ),
             }
           : result.plan;

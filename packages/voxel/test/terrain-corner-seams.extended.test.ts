@@ -15,7 +15,7 @@ const snapshots: WorldSnapshot[] = [SMALL_WORKSHOP_BLUEPRINT, TIMBER_HOUSE_BLUEP
     settlementIndex,
   }));
 
-function collectCornerSlits(seed: string, terrainGenerationVersion: 1 | 4): string[] {
+function collectCornerSlits(seed: string, terrainGenerationVersion: 4): string[] {
   const placements = layoutWorlds(snapshots);
   const roads = roadCellsForVillage(placements);
   const terrain = createSteppedTerrainData(placements, roads, [], undefined, {
@@ -145,7 +145,7 @@ function collectCornerSlits(seed: string, terrainGenerationVersion: 1 | 4): stri
 }
 
 it("leaves no sky-visible slit at cell corners of a multi-level natural settlement", () => {
-  for (const version of [1, 4] as const) {
+  for (const version of [4] as const) {
     for (const seed of ["world-default", "probe-seed-16", "stable-world", "mountain-basin"]) {
       const slits = collectCornerSlits(seed, version);
       console.log(`v${version} ${seed}: ${slits.length} open corner slits`);

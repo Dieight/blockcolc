@@ -1,6 +1,21 @@
 /** Presentation strings only. User-written names, notes and imported metadata are never catalog keys. */
 const decode = (value: string) => value.replaceAll('\\n', '\n').replaceAll('\\u0020', ' ');
 export const EN:Readonly<Record<string,string>> = Object.fromEntries(String.raw`
+修改便签|Edit note
+时长与轮数|Duration and rounds
+通知权限与返回提醒|Notification permissions and return reminders
+离开阈值、专注日与后台|Away threshold, focus days and background
+导入导出、每日合并与回滚|Import, export, daily merge and undo points
+导入与管理方块外观|Import and manage block appearances
+习惯专注|Habit focus
+每座 {0} 轮|{0} rounds per building
+请先选择下一座建筑|Choose the next building first
+任务状态已变化，请重新选择。|The task changed. Please select it again.
+任务切换未保存，请重试。|The task switch was not saved. Please retry.
+修改便签：{0}|Edit note: {0}
+保存便签|Save note
+便签最多 200 字。|Notes can contain up to 200 characters.
+未保存，双击重试|Unsaved. Double-click to retry.
 方块钟|Blockcolc
 设置|Settings
 计时|Timer
@@ -160,7 +175,7 @@ export const EN:Readonly<Record<string,string>> = Object.fromEntries(String.raw`
 正在导出…|Exporting…
 导出 JSON|Export JSON
 正在读取…|Reading…
-选择备份|Choose backup
+选择备份|Choose
 选择备份 JSON 文件|Choose backup JSON
 导入预览|Import preview
 导出时间|Exported
@@ -1011,6 +1026,22 @@ Android 天气插件返回格式异常，未确认服务端收到请求|Invalid 
 导入材质包改世界外观；自动备份之外，也可导出、导入和恢复。关于页检查更新，本教程可在设置重看。|Import texture packs; export, import or restore backups. Check updates in About. Revisit this tour in Settings.
 栋|buildings
 天|days
+聚沙成塔|Built one round at a time
+累计完成 250 轮专注|Complete 250 focus rounds
+五百次出发|Five hundred beginnings
+累计完成 500 轮专注|Complete 500 focus rounds
+五十小时的积累|Fifty hours invested
+累计记录 3000 分钟实际专注|Record 3000 minutes of actual focus
+百小时工坊|The hundred-hour workshop
+累计记录 6000 分钟实际专注|Record 6000 minutes of actual focus
+小镇落成|A town takes shape
+累计完成 25 栋普通或习惯建筑|Complete 25 task or habit buildings
+百日足迹|A hundred days of progress
+在 100 个不同日期完成专注，无需连续|Complete focus on 100 different dates; no streak required
+习惯成景|Habits take shape
+累计完成 3 栋习惯建筑|Complete 3 habit buildings
+七次如约|Seven daily promises kept
+在 7 个不同日期达成已开启的每日目标，无需连续|Meet enabled daily goals on 7 different dates; no streak required
 第一块基石|First foundation
 完成第一轮专注|Complete your first focus round
 渐入佳境|Finding your rhythm
@@ -1282,5 +1313,31 @@ zdrcgubjo4的小喷泉：围绕中央水景展开的小型喷泉，池边构件�
 下雨时自动叠加，放晴停止|Layer rain when it rains; stop when it clears
 轻雨|Gentle rain
 主音轨|Main sound
+计时与专注|Timer & focus
+外观与世界|Appearance & world
+附加功能|Extras
+高级与备份|Advanced & backup
+保护规则与计划日|Protection & planned days
+{0} 分钟 · 每座 {1} 轮|{0} min · {1} rounds per building
+导入材质包|Import resource pack
+导出是完整备份，操作回滚另存。|Exports are complete backups; rollback points are separate.
+任务与施工|Tasks & construction
+当前大任务|Current project
+下一步|Next
+正在准备世界…|Preparing your world…
+其他任务|Other tasks
+{0} 分钟 · {1} 轮/座|{0} min · {1}/building
+导入与导出|Import & export
+导入备份|Import backup
+份|copies
+导入|Import
+完成即推进建筑。|Each round advances the building.
+{0} 小时|{0} h
+{0} 小时 {1} 分钟|{0} h {1} min
+操作回滚|Undo points
+选择小任务：{0}|Select task: {0}
+选择并返回计时|Select and open timer
+切换大任务|Switch project
+暂无其他任务|No other tasks yet
 最多 8 份 · 单份 64 MiB · 主音轨仅播放一份|8 files · 64 MiB each · one main sound
 `.trim().split('\n').map(line=>{const at=line.indexOf('|');return [decode(line.slice(0,at)),decode(line.slice(at+1))];}));

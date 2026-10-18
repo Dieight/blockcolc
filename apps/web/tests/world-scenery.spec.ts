@@ -54,7 +54,7 @@ test('coastal reef surfaces keep block colors and shadows without drawing hidden
   await page.evaluate(()=>(window as SceneryWindow).__sceneryProbe.app.dispose());
 });
 
-test('expanded ocean settlements keep an exposed detailed wreck, including the legacy terrain input',async({page},info)=>{
+test('expanded current ocean settlements keep an exposed detailed wreck',async({page},info)=>{
   test.setTimeout(180_000);
   await page.goto('/');
   await page.waitForFunction(()=>!!(window as SceneryWindow).__blockcolcVoxelTest);
@@ -63,7 +63,7 @@ test('expanded ocean settlements keep an exposed detailed wreck, including the l
     canvas.style.cssText='position:fixed;inset:0;width:100vw;height:100vh;touch-action:none;z-index:99999';document.body.append(canvas);
   });
   const observations=[];
-  for(const entry of [{count:24,version:4},{count:32,version:3},{count:48,version:4}] as const){
+  for(const entry of [{count:24,version:4},{count:32,version:4},{count:48,version:4}] as const){
     await page.evaluate(async({count,version})=>{
       const scope=window as SceneryWindow;scope.__sceneryProbe?.app.dispose();
       const canvas=document.querySelector<HTMLCanvasElement>('[aria-label="扩张海岛沉船验证"]')!;

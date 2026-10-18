@@ -39,6 +39,14 @@ describe('achievement display receipts', () => {
     expect(target.value).toBeNull();
   });
 
+  it('backfills newly added achievement IDs once without replaying old receipts', () => {
+    const current = [unlocked('focus-first'), unlocked('habit-buildings-three'), unlocked('goals-seven', false)];
+    const seen = new Set(['focus-first']);
+    const batch = reconcileAchievementBatch([], current, seen, new Set());
+    expect(batch.map(entry => entry.id)).toEqual(['habit-buildings-three']);
+    const target = storage(null); expect(writeAchievementReceipt(target, [...seen, ...batch.map(entry => entry.id)])).toBe(true);
+    expect(reconcileAchievementBatch([], current, readAchievementReceipt(target).seen, new Set())).toEqual([]);
+  });
   it('reconciles pending history against the current projection after rollback/import', () => {
     const previous = [unlocked('removed'), unlocked('kept')];
     const current = [unlocked('removed', false), unlocked('kept'), unlocked('new')];
@@ -63,7 +71,7 @@ describe('monument statistics disclosure', () => {
     };
     const unallocated: UnallocatedFocusProjection = { rounds: 3, completedRounds: 2, interruptedRounds: 1, minutes: 45 };
     const html = renderToStaticMarkup(createElement(MonumentStatistics, { monuments: [monument], unallocated }));
-    expect(html).toContain('<details class="monument-statistics"><summary>');
+    expect(html).toContain('<details class="monument-statistics" data-animated-details="true" data-expanded="false"><summary aria-expanded="false">');
     expect(html).toContain('data-pixel-icon="cube"');
     expect(html).toContain('<span>纪念建筑</span><small>1 座已完成</small>');
     expect(html).toContain('展示可追溯投入；旧记录单列，不估算分配');
@@ -71,7 +79,7 @@ describe('monument statistics disclosure', () => {
     expect(html).toContain('未分配的投入');
     expect(html).toContain('2 个完成轮次、1 条中断记录 · 无法追溯，不估算分配');
     expect(html).toContain('45 分钟');
-    expect(html).toContain('<details>');
+    expect(html).toContain('<div class="monument-list"><details data-animated-details="true" data-expanded="false"><summary aria-expanded="false">');
     expect(html).not.toContain(' open=');
   });
 });

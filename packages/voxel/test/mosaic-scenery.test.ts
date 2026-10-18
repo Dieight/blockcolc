@@ -160,8 +160,8 @@ describe('supported distant scenery',()=>{
      const s=scenerySurfaceAt(input.surfaces,o.x,o.z)!;expect(s.water).toBe(false);expect(s.material).toBe('grass');expect(Math.abs(o.x)>20||Math.abs(o.z)>20).toBe(true);
    }
  });
- it('keeps existing primary landmarks while adding far coverage to real ocean and legacy valley terrain',()=>{
-   for(const [style,count,version] of [['ocean-island',24,4],['natural-valley',1,3]] as const){
+ it('keeps existing primary landmarks while adding far coverage to current ocean and valley terrain',()=>{
+   for(const [style,count,version] of [['ocean-island',24,4],['natural-valley',1,4]] as const){
      const input=sceneryPlanningFixture(style,count,version);const old=planWorldScenery(input),next=planWorldScenery({...input,normalBounds:{minX:-128,maxX:128,minZ:-128,maxZ:128}});
      for(const item of old.objects.filter(o=>['wreck','dock','house','well','farm','camp','ruin'].includes(o.role)))expect(next.objects.find(o=>o.id===item.id)).toEqual(item);
    }

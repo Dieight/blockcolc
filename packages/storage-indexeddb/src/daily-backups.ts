@@ -133,16 +133,24 @@ export function retainedDailyBackups(manifests: readonly DailyBackupManifest[], 
 
 /** A date restores independently, without replaying a chain of earlier patches. */
 export async function expandDailyBackup(manifest: DailyBackupManifest, blocks: readonly (DailyBackupBlock | undefined)[]): Promise<DomainState> {
+  const byId=new Map(blocks.filter((block):block is DailyBackupBlock=>block!==undefined).map(block=>[block.id,block]));
+  return expandDailyBackupFromReader(manifest, async id => byId.get(id));
+}
+
+/** One encoded block at a time: validation must not retain a second complete
+ * archive of raw bytes alongside the decoded domain state. Readers close each
+ * readonly transaction before hashing; callers recheck the manifest before pruning. */
+export async function expandDailyBackupFromReader(manifest: DailyBackupManifest,
+  read: (id: string) => Promise<DailyBackupBlock | undefined>): Promise<DomainState> {
   parseDailyManifest(manifest);
   const content = new Map<string, unknown>();
-  const byId=new Map(blocks.filter((block):block is DailyBackupBlock=>block!==undefined).map(block=>[block.id,block]));
-  await Promise.all(manifest.blocks.map(async reference => {
-    const block = byId.get(reference.id);
+  for (const reference of manifest.blocks) {
+    const block = await read(reference.id);
     if (!block || !(block.data instanceof Uint8Array) || block.data.byteLength !== reference.bytes
-      || await hashBytes(block.data) !== reference.id) throw new DailyBackupValidationError('每日备份内容缺失或校验失败；当前记录未更改。');
+      || block.id !== reference.id || await hashBytes(block.data) !== reference.id) throw new DailyBackupValidationError('每日备份内容缺失或校验失败；当前记录未更改。');
     try { content.set(block.id, JSON.parse(decoder.decode(block.data))); }
     catch { throw new DailyBackupValidationError('每日备份内容无法读取；当前记录未更改。'); }
-  }));
+  }
   const root=content.get(manifest.stateBlock);
   let payload:unknown=root;
   if(root&&typeof root==='object'&&'format' in root&&root.format==='blockcolc-daily-merged-v2'){

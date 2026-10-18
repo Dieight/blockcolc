@@ -7,6 +7,8 @@ import { waitForPreparedWorld } from './world-ready';
 import { openBlueprintLibrary, openImportedBlueprints } from './blueprint-library-controls';
 import { readPersistedDomainState } from './persisted-domain-state';
 import { finishPaintedReportReceipt } from './focus-plan-controls';
+import { openBackupActions,openSecondarySetting,openRollbackBackups } from './settings-controls';
+import {openTaskEditor,switchTaskProject} from './task-management-controls';
 
 test.beforeEach(async ({ page }) => {
   // Keep navigation and persistence checks independent of today's random
@@ -278,10 +280,11 @@ test('renders a monument with the active building and restores both after deleti
   await expect(page.getByText('海岛聚落 · 2 栋')).toBeVisible();
 
   await openTasks(page);
-  await page.locator('.project-portfolio-toggle').click();
+  await openTaskEditor(page);
   await page.getByRole('button', { name: '删除当前任务' }).click();
   await page.getByRole('alertdialog', { name: '删除这项任务？' }).getByRole('button', { name: '删除任务' }).click();
   await page.getByRole('button', { name: '设置' }).click();
+  await openRollbackBackups(page);
   await expect(page.getByText('删除任务前备份')).toBeVisible();
   await page.locator('.rollback-list').getByRole('button', { name: '恢复', exact: true }).first().click();
   await page.getByRole('alertdialog', { name: '恢复这份备份？' }).getByRole('button', { name: '恢复备份' }).click();
@@ -312,9 +315,7 @@ test('adds and switches unfinished large projects without moving their buildings
   await expect(summary).toContainText('海岛聚落，共 2 栋建筑');
 
   await openTasks(page);
-  const selector = page.locator('.choice-menu').filter({ has: page.getByText('当前任务', { exact: true }) });
-  await selector.getByRole('button').click();
-  await selector.getByRole('option', { name: '我的第一座工坊' }).click();
+  await switchTaskProject(page,'我的第一座工坊');
   await page.getByRole('button', { name: '计时' }).click();
   summary = page.locator('#world-summary');
   await expect(summary).toContainText('我的第一座工坊，林边工坊，正在建造');
@@ -326,7 +327,7 @@ test('adds and switches unfinished large projects without moving their buildings
   await expect(page.getByRole('button', { name: '新增任务' })).toHaveCount(0);
   await interruptFocus(page);
   await openTasks(page);
-  await expect(page.locator('.choice-menu').filter({ has: page.getByText('当前任务', { exact: true }) }).getByRole('button')).toBeEnabled();
+  await expect(page.locator('.project-portfolio-toggle')).toBeEnabled();
   await expect(page.getByRole('button', { name: '新增任务' })).toBeEnabled();
 });
 
@@ -421,7 +422,7 @@ test('@smoke navigation remains usable without overlap', async ({ page }) => {
   await page.getByRole('button', { name: '设置' }).click();
   await expect(page.getByRole('heading', { name: '设置' })).toBeVisible();
   await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
-  const unobstructed = await page.evaluate(() => { const last = (document.querySelector('.backup-panel') ?? document.querySelector('.setting:last-child'))!.getBoundingClientRect(); const nav = document.querySelector('.bottom-nav')!.getBoundingClientRect(); return innerWidth >= 700 ? last.left >= nav.right : last.bottom <= nav.top; });
+  const unobstructed = await page.evaluate(() => { const last = (document.querySelector('.backup-setting') ?? document.querySelector('.setting:last-child'))!.getBoundingClientRect(); const nav = document.querySelector('.bottom-nav')!.getBoundingClientRect(); return innerWidth >= 700 ? last.left >= nav.right : last.bottom <= nav.top; });
   expect(unobstructed).toBe(true);
 });
 
@@ -499,6 +500,7 @@ test('persists focus and break preferences and exposes period statistics', async
   await expect(page.getByLabel('开启专注完整性')).toBeChecked();
   await expect(page.getByLabel('允许有效离开次数')).toHaveValue('3');
   // Empty drafts restore their current value when the field loses focus.
+  await openSecondarySetting(page,'保护规则与计划日');
   await page.getByLabel('允许有效离开次数').fill('');
   await expect(page.getByLabel('允许有效离开次数')).toHaveValue('');
   await page.getByRole('heading', { name: '设置' }).click();
@@ -558,7 +560,7 @@ test('edits project and subtasks before progress and persists their order', asyn
   await createDefaultProject(page);
   await openTasks(page);
 
-  await page.getByRole('button', { name: '修改任务名称' }).click();
+  await page.locator('.task-project-title h2').dblclick();
   await page.getByRole('textbox', { name: '任务名称', exact: true }).fill('发布方块钟');
   await page.getByRole('button', { name: '保存任务名称' }).click();
   await expect(page.getByRole('heading', { name: '发布方块钟' })).toBeVisible();
@@ -681,7 +683,7 @@ test('persists daily goal target changes and disabled state', async ({ page }, t
   let goal = await openDailyGoal(page);
   const goalTarget = goal.getByLabel('今日目标次数');
   await expect(goalTarget).toHaveValue('8');
-  await expect(goal.getByRole('switch')).toBeChecked();
+  await expect(goal.getByRole('switch')).toHaveCount(0);
   await expect(goal.getByRole('button', { name: '保存' })).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath('v13-daily-goal.png'), fullPage: true });
   for (let i = 0; i < 6; i++) { await goalTarget.press('ArrowLeft'); await expect(goalTarget).toBeEnabled(); }
@@ -693,7 +695,7 @@ test('persists daily goal target changes and disabled state', async ({ page }, t
   await page.reload();
   await openTasks(page);
   goal = await openDailyGoal(page);
-  await expect(goal.getByRole('switch')).toBeChecked();
+  await expect(goal.getByRole('switch')).toHaveCount(0);
   await expect(goal.getByLabel('今日目标次数')).toHaveValue('2');
   await expect(goal.locator('#daily-goal-sheet-summary')).toHaveText('今日已完成 0 / 2 轮');
 
@@ -701,17 +703,18 @@ test('persists daily goal target changes and disabled state', async ({ page }, t
   await goal.getByRole('button', { name: '关闭今日目标' }).click();
   await expect(dailyGoalCard.getByRole('progressbar', { name: '今日 0 / 4 轮' })).toBeVisible();
   goal = await openDailyGoal(page);
-  await goal.getByRole('switch').uncheck();
-  await expect(dailyGoalCard.locator('.daily-goal-tally')).toHaveText('0轮 · 目标未开启');
+  await goal.getByLabel('今日目标次数').press('Home');
+  await expect(goal.getByLabel('今日目标次数')).toBeEnabled();
+  await expect(dailyGoalCard.locator('.daily-goal-tally')).toHaveText('0 轮目标未开启');
 
   await page.reload();
   await openTasks(page);
   goal = await openDailyGoal(page);
-  await expect(goal.getByRole('switch')).not.toBeChecked();
+  await expect(goal.getByRole('switch')).toHaveCount(0);
   await expect(goal.getByLabel('今日目标次数')).toHaveValue('0');
   await expect(goal.locator('#daily-goal-sheet-summary')).toHaveText('今日已完成 0 轮');
   await goal.getByRole('button', { name: '关闭今日目标' }).click();
-  await expect(dailyGoalCard.locator('.daily-goal-tally')).toHaveText('0轮 · 目标未开启');
+  await expect(dailyGoalCard.locator('.daily-goal-tally')).toHaveText('0 轮目标未开启');
 });
 
 test('renames an imported building blueprint without changing its stored snapshot', async ({ page }, testInfo) => {
@@ -836,10 +839,10 @@ test('renames an imported building blueprint without changing its stored snapsho
 test('exports, previews, imports, and restores a local backup', async ({ page }, testInfo) => {
   await createDefaultProject(page);
   await page.getByRole('button', { name: '设置' }).click();
-  await expect(page.getByRole('heading', { name: '本地备份' })).toBeVisible();
+  await openBackupActions(page);
 
   const downloadPromise = page.waitForEvent('download');
-  await page.getByRole('button', { name: '导出 JSON' }).click();
+  await page.locator('.backup-manual').getByRole('button', { name: '导出', exact:true }).click();
   const download = await downloadPromise;
   const path = await download.path();
   if (!path) throw new Error('Expected local browser download path');
@@ -849,6 +852,7 @@ test('exports, previews, imports, and restores a local backup', async ({ page },
   await page.screenshot({ path: testInfo.outputPath('backup-preview.png'), fullPage: true });
   await page.getByRole('button', { name: '确认替换本地数据' }).click();
   await expect(page.getByText('导入完成，已创建回滚备份。')).toBeVisible();
+  await page.locator('.backup-rollback-history>summary').click();
   await expect(page.getByText('导入前备份')).toBeVisible();
 
   await page.locator('.rollback-list').getByRole('button', { name: '恢复', exact: true }).first().click();
@@ -866,7 +870,7 @@ test('keeps large-project deletion unavailable during an immersive active focus'
   await expect(page.getByRole('button', { name: '删除当前任务' })).toHaveCount(0);
   await interruptFocus(page);
   await openTasks(page);
-  await page.locator('.project-portfolio-toggle').click();
+  await openTaskEditor(page);
   const deleteProject = page.getByRole('button', { name: '删除当前任务' });
   await expect(deleteProject).toBeEnabled();
 });
@@ -875,6 +879,7 @@ test('leaves immersive UI after lifecycle reconciliation interrupts focus', asyn
   await createDefaultProject(page);
   await page.getByRole('button', { name: '设置' }).click();
   await page.getByLabel('开启专注完整性').check();
+  await openSecondarySetting(page,'保护规则与计划日');
   await page.getByLabel('允许有效离开次数').fill('1');
   await page.getByLabel('允许有效离开次数').blur();
   await page.getByRole('button', { name: '计时' }).click();
@@ -901,7 +906,7 @@ test('leaves immersive UI after lifecycle reconciliation interrupts focus', asyn
 test('deletes a completed-idle project with rollback and restores it from settings', async ({ page }) => {
   await createDefaultProject(page);
   await openTasks(page);
-  await page.locator('.project-portfolio-toggle').click();
+  await openTaskEditor(page);
   await page.getByRole('button', { name: '删除当前任务' }).click();
   const dialog = page.getByRole('alertdialog', { name: '删除这项任务？' });
   await expect(dialog).toBeVisible();
@@ -911,6 +916,7 @@ test('deletes a completed-idle project with rollback and restores it from settin
 
   await page.getByRole('button', { name: '设置' }).click();
   await expect(page.getByRole('heading', { name: '设置' })).toBeVisible();
+  await openRollbackBackups(page);
   await expect(page.getByText('删除任务前备份')).toBeVisible();
   await page.locator('.rollback-list li').filter({ hasText: '删除任务前备份' })
     .getByRole('button', { name: '恢复', exact: true }).click();

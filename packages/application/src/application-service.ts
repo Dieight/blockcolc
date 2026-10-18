@@ -59,6 +59,8 @@ export class ApplicationService {
   private tail: Promise<void> = Promise.resolve();
   /** Bumped on every adopted state so render-phase projections can be cached per epoch. */
   private stateEpoch = 0;
+  private replacementEpoch = 0;
+  private persistedReplacementRevision = 0;
   private snapshotCache: { epoch: number; value: DomainState } | null = null;
   private worldProjectionCache: { epoch: number; value: WorldProjection } | null = null;
   private activeProjectionCache: { epoch: number; value: ActiveProjectProjection | null } | null = null;
@@ -92,7 +94,9 @@ export class ApplicationService {
     const revision = loaded.state === null
       ? await saveOrThrow(dependencies.repository, state, loaded.revision)
       : loaded.revision;
-    return new ApplicationService(dependencies, state, revision);
+    const service = new ApplicationService(dependencies, state, revision);
+    service.persistedReplacementRevision = await dependencies.repository.replacementRevision?.() ?? 0;
+    return service;
   }
 
   snapshot(): DomainState {
@@ -128,6 +132,9 @@ export class ApplicationService {
     return this.revision;
   }
 
+  /** Stable across restarts; ordinary saves do not change authorization lineage. */
+  stateReplacementRevision(): number { return this.persistedReplacementRevision; }
+
   notificationCapability(): Promise<NotificationCapability> {
     return this.dependencies.notifications.refreshCapability();
   }
@@ -144,9 +151,13 @@ export class ApplicationService {
    */
   startScheduledFocus(
     command: Extract<ApplicationCommand, { type: "StartFocus" }>,
-    reservation: { sessionId: string; scheduledAt: string },
+    reservation: { sessionId: string; scheduledAt: string; previousSessionIds?: readonly string[]; replacementRevision?: number },
   ): Promise<ApplicationResult> {
+    const replacementEpoch = this.replacementEpoch;
     return this.serial(async () => {
+      const obsolete = (): ApplicationResult => ({ ok: false, state: this.snapshot(), code: 'INVALID_INPUT',
+        message: 'Scheduled focus authorization belongs to replaced data', warnings: [] });
+      if (replacementEpoch !== this.replacementEpoch) return obsolete();
       const scheduledAtMs = Date.parse(reservation.scheduledAt);
       if (!command.projectId?.trim() || command.projectId.length > 256
         || !reservation.sessionId.trim() || reservation.sessionId.length > 256
@@ -165,6 +176,8 @@ export class ApplicationService {
       const loaded = await this.loadCurrentSnapshot();
       if (loaded.state === null) return this.resetMissingState(staleSessionId, loaded.revision);
       this.adoptIfChanged(loaded.state, loaded.revision);
+      if (replacementEpoch !== this.replacementEpoch || (reservation.replacementRevision ?? 0) !== this.persistedReplacementRevision || reservation.previousSessionIds?.some(id =>
+        !this.state.focusHistory.some(session => session.id === id && session.projectId === command.projectId && session.status !== 'interrupted'))) return obsolete();
 
       const requestedProjectId = command.projectId;
       const existing = this.state.activeFocusSession?.id === reservation.sessionId
@@ -396,9 +409,16 @@ export class ApplicationService {
 
   private async loadCurrentSnapshot() {
     const repository = this.dependencies.repository;
-    if (!repository.loadIfChanged) return repository.load();
-    return await repository.loadIfChanged(this.revision)
-      ?? { state: this.state, revision: this.revision };
+    const loaded = repository.loadIfChanged
+      ? await repository.loadIfChanged(this.revision) ?? { state: this.state, revision: this.revision }
+      : await repository.load();
+    const replacementRevision = await repository.replacementRevision?.() ?? 0;
+    if (replacementRevision !== this.persistedReplacementRevision) {
+      this.persistedReplacementRevision = replacementRevision;
+      this.replacementEpoch += 1;
+      this.signalCommitted({ replacement: true });
+    }
+    return loaded;
   }
 
   private async resetMissingState(staleSessionId: string | null, expectedRevision: number): Promise<ApplicationResult> {
@@ -431,15 +451,16 @@ export class ApplicationService {
     }
   }
 
-  private adopt(state: DomainState, revision: number, replacement = false): void {
+  private adopt(state: DomainState, revision: number, replacement = false, notesOnly = false): void {
+    if (replacement) this.replacementEpoch += 1;
     freezeDomainBlueprints(state);
     this.state = state;
     this.revision = revision;
     this.stateEpoch += 1;
     this.snapshotCache = null;
-    this.worldProjectionCache = null;
-    this.activeProjectionCache = null;
-    this.achievementsCache = null;
+    this.worldProjectionCache = notesOnly && this.worldProjectionCache ? { ...this.worldProjectionCache, epoch: this.stateEpoch } : null;
+    this.activeProjectionCache = notesOnly && this.activeProjectionCache ? { ...this.activeProjectionCache, epoch: this.stateEpoch } : null;
+    if (!notesOnly) this.achievementsCache = null;
     this.signalCommitted({ replacement });
   }
 
@@ -464,10 +485,11 @@ export class ApplicationService {
     }
 
     const deleted = result.events.find((event) => event.type === "ProjectDeleted");
+    const notesOnly = result.events.length === 1 && result.events[0]?.type === 'QuickNotesChanged';
     const committedRevision = deleted
       ? await this.saveDeleteWithRollback(result.state, deleted.projectId)
-      : await saveOrThrow(this.dependencies.repository, result.state, this.revision);
-    this.adopt(result.state, committedRevision);
+      : await saveOrThrow(this.dependencies.repository, result.state, this.revision, notesOnly);
+    this.adopt(result.state, committedRevision, false, notesOnly);
     const warnings = await this.runNotificationEffects(result.events, origin);
     return success(result.state, result.events, warnings);
   }
@@ -485,7 +507,7 @@ export class ApplicationService {
   }
 
   private async synchronizeAfterReplacement(staleSessionId: string | null): Promise<ApplicationResult> {
-    const loaded = await this.dependencies.repository.load();
+    const loaded = await this.loadCurrentSnapshot();
     if (loaded.state === null) return this.resetMissingState(staleSessionId, loaded.revision);
     this.adopt(loaded.state, loaded.revision, true);
     const warnings = staleSessionId !== null && staleSessionId !== loaded.state.activeFocusSession?.id
@@ -598,9 +620,11 @@ function materialize(command: ApplicationCommand, ids: IdGenerator, reservedSess
   }
 }
 
-async function saveOrThrow(repository: StateRepository, state: DomainState, expectedRevision: number): Promise<number> {
+async function saveOrThrow(repository: StateRepository, state: DomainState, expectedRevision: number, notesOnly = false): Promise<number> {
   try {
-    return await repository.save(state, expectedRevision);
+    return notesOnly && repository.saveQuickNotes
+      ? await repository.saveQuickNotes(state.quickNotes, expectedRevision)
+      : await repository.save(state, expectedRevision);
   } catch (cause) {
     throw new ApplicationPersistenceError("Could not atomically save application state", { cause });
   }

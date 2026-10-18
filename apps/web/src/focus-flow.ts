@@ -5,10 +5,12 @@ import { marathonEndInstant } from './marathon-end-time';
 import { unsettledMarathonSessions } from './marathon-settlement';
 import { createAutomaticContinuationSchedule, newAutomaticContinuationAuthorizationId, planRoundsForDuration, reconcileRoundPlan, isUnstartedMarathonPlan, type RoundPlan } from './round-plan';
 import { markFocusPerformance } from './focus-performance';
+import { t } from './i18n';
 
 interface FocusDispatchOptions { deferRefresh?: boolean }
 
 export interface FocusPlanDraft {
+  projectId?: string;
   rounds: number;
   mode: 'rounds' | 'marathon';
   endAt: string;
@@ -17,6 +19,7 @@ export interface FocusPlanDraft {
 
 export interface FocusFlowPorts {
   snapshot: () => DomainState;
+  replacementRevision?: () => number;
   dispatch: (command: ApplicationCommand, options?: FocusDispatchOptions) => Promise<ApplicationResult>;
   refresh?: () => void;
   resume: () => Promise<void>;
@@ -51,7 +54,9 @@ export function createFocusFlow(ports: FocusFlowPorts) {
     const preferences = ports.preferences();
     const nowMs = ports.nowMs();
     const active = state.projects.find(project => project.id === state.activeProjectId);
-    const plan = reconcileRoundPlan(ports.readPlan(), state, state.activeProjectId ?? '', nowMs, preferences.breakMinutes * 60000, preferences.breakMinutes * 60000);
+    const saved = ports.readPlan();
+    const valid = saved?.automaticContinuation && (saved.automaticContinuation.replacementRevision ?? 0) !== (ports.replacementRevision?.() ?? 0) ? null : saved;
+    const plan = reconcileRoundPlan(valid, state, state.activeProjectId ?? '', nowMs, preferences.breakMinutes * 60000, preferences.breakMinutes * 60000);
     return { state, preferences, nowMs, active, plan, draft: ports.draft() };
   };
   // This is a local double-submission guard, not another command queue.
@@ -151,26 +156,38 @@ export function createFocusFlow(ports: FocusFlowPorts) {
       try { return await cancelPlan(reason, note); } finally { busy = false; }
     },
     confirmPlan: () => submit(async () => {
-      const { active, plan, draft: confirmedDraft, preferences, nowMs } = context();
+      let { active, plan, draft: confirmedDraft, preferences, nowMs } = context();
       if (plan) { await cancelPlan(); return; }
-      if (!active) return;
+      if (!active || ports.snapshot().activeFocusSession) return;
       const draft = { ...(ports.planDraft?.() ?? confirmedDraft) };
-      if (active.kind !== 'habit') {
-        const selected = active.subtasks.find(item => item.id === draft.selectedId && item.progressBasisPoints < 10000)
-          ?? active.subtasks.find(item => item.progressBasisPoints < 10000);
-        if (!selected) return;
+      const target=ports.snapshot().projects.find(project=>project.id===(draft.projectId??active!.id)&&(project.status==='active'||project.status==='paused'));
+      if(!target||target.kind==='habit'&&target.habit?.awaitingNextBuilding)throw Error(t('任务状态已变化，请重新选择。'));
+      if (target.kind !== 'habit') {
+        const selected = target.subtasks.find(item => item.id === draft.selectedId && item.progressBasisPoints < 10000)
+          ?? (target.id===active.id?target.subtasks.find(item => item.progressBasisPoints < 10000):undefined);
+        if (!selected) throw Error(t('任务状态已变化，请重新选择。'));
         draft.selectedId = selected.id;
+      }else draft.selectedId=null;
+      // Validate all draft choices before changing the durable active project.
+      const endMs=draft.mode==='marathon'?marathonEndInstant(draft.endAt,nowMs):null;
+      const schedule=endMs===null?null:planRoundsForDuration(endMs-nowMs,preferences.focusMinutes,preferences.breakMinutes);
+      if(draft.mode==='marathon'&&!schedule)return;
+      let switched=false;
+      if(target.id!==active.id){
+        const result=await ports.dispatch({type:'SwitchActiveProject',projectId:target.id},{deferRefresh:true});
+        if(!result.ok)throw Error(t('任务切换未保存，请重试。'));
+        active=ports.snapshot().projects.find(project=>project.id===target.id)!;switched=true;
       }
+      try{
       if (draft.mode === 'marathon') {
-        const endMs = marathonEndInstant(draft.endAt, nowMs);
-        const schedule = endMs === null ? null : planRoundsForDuration(endMs - nowMs, preferences.focusMinutes, preferences.breakMinutes);
-        if (!schedule) return;
         const subtaskId = active.kind === 'habit' ? null : active.subtasks.find(item => item.progressBasisPoints < 10000)?.id ?? active.subtasks[0]?.id ?? null;
         if (active.kind !== 'habit' && subtaskId === null) return;
-        ports.writePlan({ projectId: active.id, subtaskId, totalRounds: schedule.rounds, completedRounds: 0, status: 'ready', reportedSessionIds: [], mode: 'marathon', endAt: new Date(endMs!).toISOString() });
+        ports.writePlan({ projectId: active.id, subtaskId, totalRounds: schedule!.rounds, completedRounds: 0, status: 'ready', reportedSessionIds: [], mode: 'marathon', endAt: new Date(endMs!).toISOString() });
       }
+      draft.projectId=active.id;
       ports.commitDraft?.(draft);
       ports.closePlan();
+      }finally{if(switched)ports.refresh?.();}
     }),
     startFocus: (total?: number) => submit(async () => {
       const { state, active, plan, draft, preferences, nowMs } = context();
@@ -207,6 +224,7 @@ export function createFocusFlow(ports: FocusFlowPorts) {
           ports.newAuthorizationId?.() ?? newAutomaticContinuationAuthorizationId(),
           focusDurationMs,
           preferences.breakMinutes * 60_000,
+          ports.replacementRevision?.() ?? 0,
         );
         // A user-started round consumes the current due slot. The next absolute
         // start is derived from this round's end and frozen break duration.

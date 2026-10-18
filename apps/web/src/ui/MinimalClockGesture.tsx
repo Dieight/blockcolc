@@ -16,7 +16,7 @@ export function shiftClockSelection(current: number | null, steps: number, now: 
   return candidate <= now ? null : Math.min(Math.floor((now + 24 * 60 * 60_000) / 60_000) * 60_000, candidate);
 }
 
-export const CLOCK_ROUND_DWELL_MS = 500;
+export const CLOCK_ROUND_DWELL_MS = 250;
 /** Stop at the first whole-round boundary crossed, even by a fast move. */
 export function clockRoundDetent(fromMs: number, toMs: number, now: number, focusMinutes: number, breakMinutes: number) {
   const rounds = toMs >= fromMs

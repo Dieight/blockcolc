@@ -1,6 +1,6 @@
 import type { DomainState } from '@blockcolc/domain';
 
-type Metric = 'completed-rounds' | 'focus-minutes' | 'buildings' | 'focus-days';
+type Metric = 'completed-rounds' | 'focus-minutes' | 'buildings' | 'focus-days' | 'habit-buildings' | 'goal-days';
 
 export interface AchievementDefinition {
   readonly id: string;
@@ -32,6 +32,14 @@ export const ACHIEVEMENTS: readonly AchievementDefinition[] = Object.freeze([
   { id: 'building-ten', title: '十景相连', description: '累计完成 10 栋普通或习惯建筑', metric: 'buildings', target: 10, unit: '栋' },
   { id: 'days-seven', title: '七日足迹', description: '在 7 个不同日期完成专注，无需连续', metric: 'focus-days', target: 7, unit: '天' },
   { id: 'days-thirty', title: '三十日留痕', description: '在 30 个不同日期完成专注，无需连续', metric: 'focus-days', target: 30, unit: '天' },
+  { id: 'focus-two-fifty', title: '聚沙成塔', description: '累计完成 250 轮专注', metric: 'completed-rounds', target: 250, unit: '轮' },
+  { id: 'focus-five-hundred', title: '五百次出发', description: '累计完成 500 轮专注', metric: 'completed-rounds', target: 500, unit: '轮' },
+  { id: 'time-fifty-hours', title: '五十小时的积累', description: '累计记录 3000 分钟实际专注', metric: 'focus-minutes', target: 3000, unit: '分钟' },
+  { id: 'time-hundred-hours', title: '百小时工坊', description: '累计记录 6000 分钟实际专注', metric: 'focus-minutes', target: 6000, unit: '分钟' },
+  { id: 'building-twenty-five', title: '小镇落成', description: '累计完成 25 栋普通或习惯建筑', metric: 'buildings', target: 25, unit: '栋' },
+  { id: 'days-hundred', title: '百日足迹', description: '在 100 个不同日期完成专注，无需连续', metric: 'focus-days', target: 100, unit: '天' },
+  { id: 'habit-buildings-three', title: '习惯成景', description: '累计完成 3 栋习惯建筑', metric: 'habit-buildings', target: 3, unit: '栋' },
+  { id: 'goals-seven', title: '七次如约', description: '在 7 个不同日期达成已开启的每日目标，无需连续', metric: 'goal-days', target: 7, unit: '天' },
 ] satisfies AchievementDefinition[]);
 
 interface Milestone { at: string | null; amount: number }
@@ -39,7 +47,7 @@ interface Milestone { at: string | null; amount: number }
 /** Pure projection over validated retained facts; no clock, writes or reward commands. */
 export function projectAchievements(state: DomainState): readonly AchievementProgress[] {
   const milestones: Record<Metric, Milestone[]> = {
-    'completed-rounds': [], 'focus-minutes': [], buildings: [], 'focus-days': [],
+    'completed-rounds': [], 'focus-minutes': [], buildings: [], 'focus-days': [], 'habit-buildings': [], 'goal-days': [],
   };
   const sessions = [...state.focusHistory].sort((left, right) => {
     const a = left.status === 'interrupted' ? left.interruptedAt : left.completedAt;
@@ -71,7 +79,16 @@ export function projectAchievements(state: DomainState): readonly AchievementPro
       || !project.subtasks.every(task => task.progressBasisPoints === 10000)) continue;
     milestones.buildings.push({ at: finalReports.get(project.id) ?? null, amount: 1 });
   }
-  for (const building of state.habitBuildings) milestones.buildings.push({ at: building.completedAt, amount: 1 });
+  for (const building of state.habitBuildings) {
+    const point = { at: building.completedAt, amount: 1 };
+    milestones.buildings.push(point); milestones['habit-buildings'].push(point);
+  }
+  milestones['habit-buildings'].sort((a, b) => Date.parse(a.at!) - Date.parse(b.at!));
+  const reachedDates = new Set<string>();
+  for (const goal of state.dailyGoals.filter(goal => goal.enabled && goal.targetPomodoros > 0 && goal.reachedAt).sort((a, b) => Date.parse(a.reachedAt!) - Date.parse(b.reachedAt!))) {
+    if (!goal.enabled || goal.targetPomodoros <= 0 || !goal.reachedAt || reachedDates.has(goal.date)) continue;
+    reachedDates.add(goal.date); milestones['goal-days'].push({ at: goal.reachedAt, amount: 1 });
+  }
   milestones.buildings.sort((a, b) => (a.at === null ? Infinity : Date.parse(a.at)) - (b.at === null ? Infinity : Date.parse(b.at)));
 
   return Object.freeze(ACHIEVEMENTS.map(definition => {

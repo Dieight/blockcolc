@@ -20,6 +20,12 @@ function voxel(id: string, x = 0, y = 0, z = 0, level?: string): BlueprintVoxel 
   };
 }
 
+it('does not build a neighbor coordinate map for a completely dry structure',()=>{
+  const dry=voxel('minecraft:stone');Object.defineProperty(dry,'x',{get(){throw new Error('No dry neighbor scan');}});
+  expect(planResourceFluidBatches([dry])).toEqual({batches:[],fallbackVoxels:[],fallbackEntries:[],fallbackBatches:[],texturedVoxelCount:0});
+  expect(planResourceWaterloggedFluidBatches([dry])).toEqual({batches:[],fallbackVoxels:[],fallbackEntries:[],fallbackBatches:[],texturedVoxelCount:0,omittedVoxelCount:0});
+});
+
 function waterloggedVoxel(id: string, x = 0, y = 0, z = 0): BlueprintVoxel {
   return {
     x, y, z, materialId: "stone", buildOrder: 10_000,

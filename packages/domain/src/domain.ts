@@ -119,6 +119,12 @@ function handle(state: DomainState, command: DomainCommand, clock: Clock): Comma
       note.completed = command.completed;
       return ok(state, [{type:'QuickNotesChanged'}]);
     }
+    case 'RenameQuickNote': {
+      const note = state.quickNotes.find(item => item.id === command.noteId);
+      if (!note || typeof command.text !== 'string' || !command.text.trim() || command.text.trim().length > 200) return fail(state, 'INVALID_INPUT', 'Invalid note text');
+      note.text = command.text.trim();
+      return ok(state, [{type:'QuickNotesChanged'}]);
+    }
     case 'DeleteQuickNote': {
       if (!state.quickNotes.some(note => note.id === command.noteId)) return fail(state, 'INVALID_INPUT', 'Note not found');
       state.quickNotes = state.quickNotes.filter(note => note.id !== command.noteId);

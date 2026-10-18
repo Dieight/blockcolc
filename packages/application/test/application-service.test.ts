@@ -1262,3 +1262,24 @@ async function waitUntil(predicate: () => boolean): Promise<void> {
   }
   throw new Error("Timed out waiting for test condition");
 }
+
+
+describe('quick notes keep derived world stable', () => {
+  it('adopts only durable notes and reuses unchanged projections', async () => {
+    const f = await fixture(); await createProject(f.service);
+    const world = f.service.worldProjection(), active = f.service.activeProjectProjection(), achievements = f.service.achievementsProjection();
+    const saves = f.repository.saves;
+    let noteWrites = 0;
+    Object.assign(f.repository, { saveQuickNotes: async (notes: DomainState['quickNotes'], revision: number) => {
+      noteWrites++; return f.repository.save({ ...f.repository.persisted!, quickNotes: notes }, revision);
+    } });
+    const [first, second] = await Promise.all([f.service.dispatch({ type: 'AddQuickNote', text: '甲' }), f.service.dispatch({ type: 'AddQuickNote', text: '乙' })]);
+    expect(first.ok && second.ok).toBe(true); expect(noteWrites).toBe(2);
+    expect(f.repository.saves).toBe(saves + 2);
+    expect(f.service.snapshot().quickNotes.map(note => note.text)).toEqual(['甲', '乙']);
+    expect(f.service.worldProjection()).toBe(world); expect(f.service.activeProjectProjection()).toBe(active); expect(f.service.achievementsProjection()).toBe(achievements);
+    const before = f.service.snapshot(); f.repository.failNextSave = true;
+    await expect(f.service.dispatch({ type: 'RenameQuickNote', noteId: before.quickNotes[0]!.id, text: '未保存' })).rejects.toBeInstanceOf(ApplicationPersistenceError);
+    expect(f.service.snapshot()).toBe(before); expect(f.repository.persisted?.quickNotes).toEqual(before.quickNotes);
+  });
+});

@@ -21,7 +21,7 @@ const snapshots: WorldSnapshot[] = [SMALL_WORKSHOP_BLUEPRINT, TIMBER_HOUSE_BLUEP
     settlementIndex,
   }));
 
-describe("v2 compact village layout", () => {
+describe("compact village layout", () => {
   it("is deterministic across input order and keeps compact collision gaps", () => {
     const forward = layoutWorlds(snapshots);
     const reverse = layoutWorlds([...snapshots].reverse());
@@ -122,6 +122,24 @@ describe("v2 compact village layout", () => {
 });
 
 describe("merged stepped terrain", () => {
+  it('rejects retired generators and defaults current worlds to V4', () => {
+    for (const version of [1, 2, 3]) expect(() => createSteppedTerrainData([], [], [], undefined,
+      { terrainGenerationVersion: version as 4 })).toThrow(/version 4/);
+    expect(createSteppedTerrainData([], [], [], undefined).terrainGenerationVersion).toBe(4);
+  });
+
+  it('keeps current mountains, foundations and downstream water within their limits', () => {
+    const placements = layoutWorlds(snapshots), roads = roadCellsForVillage(placements);
+    for (const worldSeed of ['stable-world', 'river-basin', 'quiet-valley', 'world-default']) {
+      const terrain = createSteppedTerrainData(placements, roads, [], undefined, {
+        environmentStyle: 'natural-valley', worldSeed, terrainGenerationVersion: 4,
+      });
+      expect(terrain.bounds.maxY - .5).toBeGreaterThanOrEqual(42);
+      expect(terrain.bounds.maxY - .5).toBeLessThanOrEqual(48);
+      expect(terrain.hydrology.protectedWaterCellCount).toBe(0);
+      expect(terrain.hydrology.maxUphillWaterStep).toBe(0);
+    }
+  }, 15_000);
   it("builds one exposed surface dataset with three material groups", () => {
     const placements = layoutWorlds(snapshots);
     const roads = roadCellsForVillage(placements);
@@ -356,60 +374,7 @@ describe("merged stepped terrain", () => {
     expect(otherSeed.positions).not.toEqual(natural.positions);
   }, 20_000); // Multiple full v4 builds; the refined far-fine tier made each build heavier.
 
-  it("keeps the previous terrain generators addressable while defaulting new worlds to v4", () => {
-    const placements = layoutWorlds(snapshots);
-    const roads = roadCellsForVillage(placements);
-    const previous = createSteppedTerrainData(placements, roads, [], undefined, {
-      environmentStyle: "natural-valley",
-      worldSeed: "stable-world",
-      terrainGenerationVersion: 2,
-    });
-    const previousHydrology = createSteppedTerrainData(placements, roads, [], undefined, {
-      environmentStyle: "natural-valley",
-      worldSeed: "stable-world",
-      terrainGenerationVersion: 3,
-    });
-    const current = createSteppedTerrainData(placements, roads, [], undefined, {
-      environmentStyle: "natural-valley",
-      worldSeed: "stable-world",
-      terrainGenerationVersion: 4,
-    });
-    expect(previous.terrainGenerationVersion).toBe(2);
-    expect(previousHydrology.terrainGenerationVersion).toBe(3);
-    expect(current.terrainGenerationVersion).toBe(4);
-    expect(current.positions).not.toEqual(previous.positions);
-    expect(current.positions).not.toEqual(previousHydrology.positions);
-  }, 20_000); // Three full builds; the v4 one carries the refined far-fine tier.
 
-  it("reduces water coverage and raises only the high mountain tail across fixed seeds", () => {
-    const placements = layoutWorlds(snapshots);
-    const roads = roadCellsForVillage(placements);
-    const seeds = ["stable-world", "river-basin", "quiet-valley", "world-default"];
-    const ratios = { previous: [] as number[], current: [] as number[] };
-    for (const worldSeed of seeds) {
-      const previous = createSteppedTerrainData(placements, roads, [], undefined, {
-        environmentStyle: "natural-valley", worldSeed, terrainGenerationVersion: 3,
-      });
-      const current = createSteppedTerrainData(placements, roads, [], undefined, {
-        environmentStyle: "natural-valley", worldSeed, terrainGenerationVersion: 4,
-      });
-      ratios.previous.push(previous.hydrology.waterSurfaceArea / previous.hydrology.terrainSurfaceArea);
-      ratios.current.push(current.hydrology.waterSurfaceArea / current.hydrology.terrainSurfaceArea);
-      expect(current.bounds.maxY - 0.5).toBeGreaterThanOrEqual(42);
-      expect(current.bounds.maxY - 0.5).toBeLessThanOrEqual(48);
-      expect(current.hydrology.protectedWaterCellCount).toBe(0);
-      expect(current.hydrology.maxUphillWaterStep).toBe(0);
-      // The refined 2-unit far ring multiplies v4 triangles on purpose (see
-      // farFineExtent), so compare the actual water area instead of the mesh
-      // size: v4 must still cut water coverage materially.
-      expect(current.hydrology.waterSurfaceArea).toBeLessThan(previous.hydrology.waterSurfaceArea * 0.9);
-    }
-    const median = (values: number[]) => {
-      const sorted = [...values].sort((left, right) => left - right);
-      return (sorted[1]! + sorted[2]!) / 2;
-    };
-    expect(median(ratios.current)).toBeLessThan(median(ratios.previous) * 0.82);
-  }, 15_000); // Eight full terrain builds (4 seeds × v3/v4); the default 5 s budget flakes under machine load.
 
   it.each([30, 60, 100])("keeps a %i-building natural world inside the merged-mesh budget", (count) => {
     const many = Array.from({ length: count }, (_, settlementIndex): WorldSnapshot => ({

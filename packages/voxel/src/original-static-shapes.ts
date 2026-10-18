@@ -464,12 +464,16 @@ type GridBox = { min: readonly [number, number, number]; max: readonly [number, 
 type Facing = "north" | "east" | "south" | "west";
 
 function familyForPath(path: string): OriginalStaticShapeFamily | null {
-  if (!/^[a-z0-9_]+$/.test(path)) return null;
-  for (const family of Object.keys(VANILLA_SHAPE_PATHS) as OriginalStaticShapeFamily[]) {
-    if (VANILLA_SHAPE_PATHS[family].has(path)) return family;
+  // Exact registry membership and first-family precedence stay unchanged. The
+  // registry is immutable: repeated voxel lookups need no per-call key array.
+  if(!shapeFamilyIndex){
+    shapeFamilyIndex=new Map();
+    for(const family of Object.keys(VANILLA_SHAPE_PATHS) as OriginalStaticShapeFamily[])
+      for(const block of VANILLA_SHAPE_PATHS[family])if(!shapeFamilyIndex.has(block))shapeFamilyIndex.set(block,family);
   }
-  return null;
+  return shapeFamilyIndex.get(path)??null;
 }
+let shapeFamilyIndex:Map<string,OriginalStaticShapeFamily>|undefined;
 
 function canonicalState(input: Readonly<Record<string, string>> | undefined): State | null {
   if (input === undefined || input === null || typeof input !== "object" || Array.isArray(input)) return null;

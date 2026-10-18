@@ -79,3 +79,45 @@ describe('achievements derived from retained history', () => {
     expect(newlyUnlockedAchievements(after, before)).toEqual([]);
   });
 });
+
+
+describe('extended achievement milestones', () => {
+  const at = (index: number) => new Date(Date.parse('2026-01-01T12:00:00Z') + index * 172800000).toISOString();
+  it('keeps all original IDs and extends to 20 definitions with new threshold crossings', () => {
+    expect(ACHIEVEMENTS).toHaveLength(20);
+    const state = createInitialState();
+    state.focusHistory = Array.from({ length: 249 }, (_, i) => session(`round-${i}`, at(i), 60000));
+    expect(item(state, 'focus-two-fifty')).toMatchObject({ progress: 249, unlocked: false });
+    state.focusHistory.push(session('round-249', at(249), 60000));
+    expect(item(state, 'focus-two-fifty')).toMatchObject({ progress: 250, unlocked: true, unlockedAt: at(249) });
+    expect(item(state, 'days-hundred')).toMatchObject({ unlocked: true, unlockedAt: at(99) });
+    state.focusHistory.push(...Array.from({ length: 250 }, (_, i) => session(`round-${i + 250}`, at(i + 250), 60000)));
+    expect(item(state, 'focus-five-hundred')).toMatchObject({ unlocked: true, unlockedAt: at(499) });
+  });
+  it('uses actual milliseconds for the 50 and 100 hour thresholds', () => {
+    const state = createInitialState();
+    state.focusHistory = Array.from({ length: 99 }, (_, i) => session(`time-${i}`, at(i), 1800000));
+    expect(item(state, 'time-fifty-hours')).toMatchObject({ progress: 2970, unlocked: false });
+    state.focusHistory.push(session('time-99', at(99), 1800000, 'interrupted'));
+    expect(item(state, 'time-fifty-hours')).toMatchObject({ unlocked: true, unlockedAt: at(99) });
+    state.focusHistory.push(...Array.from({ length: 100 }, (_, i) => session(`time-${i + 100}`, at(i + 100), 1800000)));
+    expect(item(state, 'time-hundred-hours')).toMatchObject({ unlocked: true, unlockedAt: at(199) });
+  });
+  it('distinguishes habit monuments from ordinary buildings and never invents old dates', () => {
+    const state = createInitialState();
+    state.projects = Array.from({ length: 25 }, (_, i) => ({ ...finite(), id: `p-${i}` }));
+    expect(item(state, 'building-twenty-five')).toMatchObject({ unlocked: true, unlockedAt: null });
+    expect(item(state, 'habit-buildings-three').unlocked).toBe(false);
+    state.habitBuildings = [2, 0, 1].map(i => ({ id: `h-${i}`, habitProjectId: 'retired-habit', habitTitle: '阅读', cycleNumber: i + 1, settlementIndex: i + 25, blueprintId: 'hut', importedBlueprint: null, targetRounds: 10, focusSessionIds: [], completedAt: at(i) }));
+    expect(item(state, 'habit-buildings-three')).toMatchObject({ progress: 3, unlocked: true, unlockedAt: at(2) });
+  });
+  it('counts only saved enabled positive goal completions, in recorded order', () => {
+    const state = createInitialState();
+    state.dailyGoals = [6, 2, 4, 0, 3, 1].map(i => ({ date: at(i).slice(0, 10), enabled: true, targetPomodoros: 2, reachedAt: at(i) }));
+    state.dailyGoals.push({ date: at(7).slice(0, 10), enabled: false, targetPomodoros: 0, reachedAt: null }, { date: at(8).slice(0, 10), enabled: true, targetPomodoros: 2, reachedAt: null });
+    expect(item(state, 'goals-seven')).toMatchObject({ progress: 6, unlocked: false, unlockedAt: null });
+    state.dailyGoals.push({ date: at(5).slice(0, 10), enabled: true, targetPomodoros: 2, reachedAt: at(5) });
+    expect(item(state, 'goals-seven')).toMatchObject({ progress: 7, unlocked: true, unlockedAt: at(6) });
+    expect(projectAchievements(structuredClone(state))).toEqual(projectAchievements(state));
+  });
+});

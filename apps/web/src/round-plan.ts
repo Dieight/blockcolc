@@ -49,6 +49,8 @@ export interface RoundPlan {
 export interface AutomaticContinuationSchedule {
   /** Stable, opaque identity for this authorization and its reserved sessions. */
   authorizationId: string;
+  /** Local data-replacement marker. Absent means the pre-marker baseline (zero). */
+  replacementRevision?: number;
   /** Frozen schedule inputs so a preference edit or process restart cannot move deadlines. */
   focusDurationMs: number;
   breakDurationMs: number;
@@ -188,7 +190,8 @@ function parseAutomaticContinuation(value: unknown, completedRounds: number): Au
   if (value === undefined) return null;
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const raw = value as Record<string, unknown>;
-  if (Object.keys(raw).some(key => !['authorizationId', 'focusDurationMs', 'breakDurationMs', 'nextRoundStartsAt', 'reservation'].includes(key))) return null;
+  if (Object.keys(raw).some(key => !['authorizationId', 'replacementRevision', 'focusDurationMs', 'breakDurationMs', 'nextRoundStartsAt', 'reservation'].includes(key))) return null;
+  if (raw.replacementRevision !== undefined && (!Number.isSafeInteger(raw.replacementRevision) || Number(raw.replacementRevision) < 0)) return null;
   if (typeof raw.authorizationId !== 'string' || raw.authorizationId.length < 1 || raw.authorizationId.length > 128
     || /[\u0000-\u001f]/.test(raw.authorizationId)) return null;
   if (!Number.isSafeInteger(raw.focusDurationMs) || (raw.focusDurationMs as number) < 1 || (raw.focusDurationMs as number) > 180 * 60_000) return null;
@@ -209,6 +212,7 @@ function parseAutomaticContinuation(value: unknown, completedRounds: number): Au
   }
   return {
     authorizationId: raw.authorizationId,
+    ...(raw.replacementRevision === undefined ? {} : { replacementRevision: Number(raw.replacementRevision) }),
     focusDurationMs: raw.focusDurationMs as number,
     breakDurationMs: raw.breakDurationMs as number,
     ...(typeof nextRoundStartsAt === 'string' ? { nextRoundStartsAt } : {}),
@@ -242,8 +246,9 @@ export function createAutomaticContinuationSchedule(
   authorizationId: string,
   focusDurationMs: number,
   breakDurationMs: number,
+  replacementRevision = 0,
 ): AutomaticContinuationSchedule {
-  return { authorizationId, focusDurationMs, breakDurationMs };
+  return { authorizationId, focusDurationMs, breakDurationMs, ...(replacementRevision ? { replacementRevision } : {}) };
 }
 
 export function newAutomaticContinuationAuthorizationId(): string {
@@ -395,6 +400,14 @@ export function reconcileRoundPlan(
       reportedSessionIds: [],
       ...(active.deferredSettlement === true ? { mode: 'marathon', deferredSettlement: true } : {}),
     } : null;
+  }
+  // A domain replacement can commit before local UI cleanup (or in another
+  // tab). The old authorization cannot manufacture its missing earlier rounds.
+  const planProjectId = plan.projectId;
+  if (plan.automaticContinuation && (plan.reportedSessionIds.length < plan.completedRounds
+    || plan.reportedSessionIds.some(id => !state.focusHistory.some(session =>
+      session.id === id && session.projectId === planProjectId && session.status !== 'interrupted')))) {
+    return reconcileRoundPlan(null, state, activeProjectId, nowMs, habitBreakDurationMs, finiteBreakDurationMs);
   }
   // Recovery observes the same manual pause as the live flow, including a crash
   // after domain persistence but before its final plan write.

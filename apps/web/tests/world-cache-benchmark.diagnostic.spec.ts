@@ -2,7 +2,12 @@ import { expect, test } from '@playwright/test';
 
 test('compares generated terrain/scenery with real IndexedDB restoration', async ({ page }, info) => {
   test.setTimeout(240_000);
-  await page.goto('/');
+  // Keep setup previews, app startup and background cache writes out of this
+  // CPU/storage comparison. Vite still serves the real source modules below.
+  await page.route('**/__world-cache-benchmark__',route=>route.fulfill({
+    contentType:'text/html',body:'<!doctype html><meta charset="utf-8"><title>World cache CPU benchmark</title>',
+  }));
+  await page.goto('/__world-cache-benchmark__');
   const report = await page.evaluate(async () => {
     // A development-server diagnostic, never included in the shipping bundle.
     const root = '/@fs/C:/Codex/blockcolc/packages/voxel/src/';
@@ -29,7 +34,7 @@ test('compares generated terrain/scenery with real IndexedDB restoration', async
     });
     const rows = [];
     try {
-      for (const [environmentStyle, count] of [['ocean-island', 1], ['ocean-island', 24], ['mosaic-coast', 24]] as const) {
+      for (const [environmentStyle, count] of [['ocean-island', 1], ['ocean-island', 24], ['mosaic-coast', 24], ['mosaic-coast', 60]] as const) {
         const worlds = alignWorldsToEnvironment(layoutWorlds(Array.from({ length: count }, (_, settlementIndex) => ({
           projectId: `bench-${settlementIndex}`, settlementIndex, blueprintId: 'builtin-small-workshop',
           buildingCompletionBasisPoints: 5000, buildingConditionBasisPoints: 10000, isMonument: false,
@@ -65,7 +70,7 @@ test('compares generated terrain/scenery with real IndexedDB restoration', async
         }
         rows.push({ environmentStyle,count,samples });
       }
-      return { userAgent:navigator.userAgent,storage:'real IndexedDB structured clone',rows };
+      return { userAgent:navigator.userAgent,page:'isolated same-origin diagnostic; no app or GPU preview',storage:'real IndexedDB structured clone',rows };
     } finally { db.close(); indexedDB.deleteDatabase('blockcolc-world-cache-benchmark'); }
   });
   await info.attach('world-cache-benchmark.json', { body:JSON.stringify(report,null,2),contentType:'application/json' });

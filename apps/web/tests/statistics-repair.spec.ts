@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { createInitialState, execute, type DomainCommand, type DomainState } from '@blockcolc/domain';
 import { createBackupEnvelope } from '@blockcolc/storage-indexeddb';
+import { openBackupActions } from './settings-controls';
 
 const RECEIPT_KEY = 'blockcolc-achievement-display-receipts-v1';
 const startAt = Date.parse('2026-09-13T08:00:00+08:00');
@@ -283,23 +284,25 @@ test.describe('statistics repair interactions', () => {
 
     const backup = await emptyBackup();
     await page.getByRole('button', { name: '设置', exact: true }).click();
+    await openBackupActions(page);
     await page.getByLabel('选择备份 JSON 文件').setInputFiles({
       name: 'empty-history.json', mimeType: 'application/json', buffer: Buffer.from(backup),
     });
     await expect(page.getByRole('heading', { name: '导入预览' })).toBeVisible();
     await page.getByRole('button', { name: '确认替换本地数据' }).click();
-    await expect(page.locator('.backup-panel .backup-notice')).toContainText('导入完成');
+    await expect(page.locator('.backup-setting .backup-notice')).toContainText('导入完成');
     await page.getByRole('button', { name: '统计', exact: true }).click();
     await expect(page.getByRole('dialog', { name: '新的成就' })).toHaveCount(0);
 
     await page.getByRole('button', { name: '设置', exact: true }).click();
     const importedBackup = page.locator('.rollback-list li').filter({ hasText: '导入前备份' });
+    await page.locator('.backup-rollback-history>summary').click();
     await expect(importedBackup).toBeVisible();
     await importedBackup.getByRole('button', { name: '恢复' }).click();
     const restoreDialog = page.getByRole('alertdialog').filter({ hasText: '恢复这份备份？' });
     await expect(restoreDialog).toBeVisible();
     await restoreDialog.getByRole('button', { name: '恢复备份' }).click();
-    await expect(page.locator('.backup-panel .backup-notice')).toContainText('已恢复备份');
+    await expect(page.locator('.backup-setting .backup-notice')).toContainText('已恢复备份');
     await page.getByRole('button', { name: '统计', exact: true }).click();
     await expect(page.getByRole('dialog', { name: '新的成就' })).toHaveCount(0);
   });

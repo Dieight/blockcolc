@@ -17,14 +17,14 @@ function pngChunk(type: string, data: Uint8Array): Uint8Array {
   return output;
 }
 
-function tinyPng(): Uint8Array {
-  const raw = new Uint8Array(16 * 65);
-  for (let y = 0; y < 16; y += 1) for (let x = 0; x < 16; x += 1)
-    raw.set([220, 45 + x * 3, 70 + y * 2, 255], y * 65 + 1 + x * 4);
+export function syntheticShapePng(height=16,cutout=false): Uint8Array {
+  const raw = new Uint8Array(height * 65);
+  for (let y = 0; y < height; y += 1) for (let x = 0; x < 16; x += 1)
+    raw.set([220, 45 + x * 3, 70 + y * 2, cutout&&x%4===0?0:255], y * 65 + 1 + x * 4);
   const header = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
   const ihdr = new Uint8Array(13);
   new DataView(ihdr.buffer).setUint32(0, 16);
-  new DataView(ihdr.buffer).setUint32(4, 16);
+  new DataView(ihdr.buffer).setUint32(4, height);
   ihdr.set([8, 6, 0, 0, 0], 8);
   const pieces = [header, pngChunk('IHDR', ihdr), pngChunk('IDAT', new Uint8Array(deflateSync(raw))), pngChunk('IEND', new Uint8Array())];
   const output = new Uint8Array(pieces.reduce((sum, piece) => sum + piece.length, 0));
@@ -39,7 +39,7 @@ export function syntheticOriginalShapePack(blockPath: string, variant: string, m
     'pack.mcmeta': strToU8(JSON.stringify({ pack: { pack_format: 97, description: 'Original shape route probe' } })),
     [`assets/minecraft/blockstates/${blockPath}.json`]: strToU8(JSON.stringify({ variants: { [variant]: { model } } })),
     'assets/minecraft/models/block/original_shape_probe.json': strToU8(JSON.stringify({ parent: 'minecraft:block/cube_all', textures: { all: 'minecraft:block/original_shape_probe' } })),
-    'assets/minecraft/textures/block/original_shape_probe.png': tinyPng(),
+    'assets/minecraft/textures/block/original_shape_probe.png': syntheticShapePng(),
   };
   const zip = Buffer.from(zipSync(files, { level: 6 }));
   return { id: `sha256:${createHash('sha256').update(zip).digest('hex')}`, manifest: parseJava16xResourcePack(zip) };

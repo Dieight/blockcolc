@@ -126,10 +126,10 @@ test('compact memory and pixel setup, goal, management and about preserve their 
   await page.setViewportSize({width:360,height:800});
   await memory.getByRole('button',{name:'关闭建筑记忆'}).click();
   await page.getByRole('button',{name:'任务',exact:true}).click();
-  await page.getByRole('button',{name:/任务总览与管理/}).click();
+  await page.getByRole('button',{name:'编辑施工清单',exact:true}).click();
   await expect(page.getByRole('button',{name:'删除当前任务'})).toBeVisible();
   await expect(page.locator('.task-management-disclosure')).toHaveCount(0);
-  await expect(page.locator('.project-portfolio-copy .pixel-progress')).toHaveCount(1);
+  await expect(page.locator('.task-building-progress .pixel-progress')).toHaveCount(1);
   await page.screenshot({path:testInfo.outputPath('merged-management.png'),fullPage:true});
   await page.getByRole('button',{name:'调整今日目标'}).click();
   const goal=page.getByRole('dialog',{name:'调整今日目标'});
@@ -200,7 +200,7 @@ for(const kind of ['finite','habit'] as const) test(`pixel plan sheets and the s
   const entries=page.locator('.workbench-heading-actions');
   await expect(entries.locator('.task-switch-action')).toHaveCount(1);
   const boxes=await entries.locator('.task-switch-action').evaluateAll(nodes=>nodes.map(node=>{const hit=node.getBoundingClientRect(),glyph=node.querySelector('svg')!.getBoundingClientRect();return {left:hit.left,right:hit.right,width:hit.width,height:hit.height,glyphLeft:glyph.left,glyphRight:glyph.right,glyphWidth:glyph.width,glyphHeight:glyph.height};}));
-  for(const box of boxes)expect([box.width,box.height,box.glyphWidth,box.glyphHeight]).toEqual([44,44,22,22]);
+  for(const box of boxes)expect([box.width,box.height,box.glyphWidth,box.glyphHeight]).toEqual([80,44,22,22]);
   await expect(entries.getByRole('button',{name:'切换当前工作',exact:true})).toHaveCount(0);
   await page.screenshot({path:info.outputPath(`sole-portal-entry-${kind}.png`)});
   await page.getByRole('navigation',{name:'主导航'}).getByRole('button',{name:'任务',exact:true}).click();
@@ -267,15 +267,16 @@ test('pixel navigation and grouped goals retain readable values across themes an
   const input = sheet.getByLabel('今日目标次数');
   await expect(input).toHaveValue('20');
   await expect(sheet).toContainText('原目标 56 轮保留');
-  await sheet.getByRole('switch').click(); await expect(input).toHaveValue('0');
-  await expect(sheet.getByRole('switch')).toBeEnabled(); await sheet.getByRole('switch').click();
+  await expect(sheet.getByRole('switch')).toHaveCount(0);
+  await expect(input).toBeEnabled();
   await expect(sheet).toContainText('今日已完成 0 / 56 轮');
   await sheet.getByRole('button', { name: '关闭今日目标' }).click();
   const goal = page.getByRole('progressbar', { name: '今日 0 / 56 轮', exact: true });
   await expect(goal).toHaveAttribute('aria-valuemax', '56');
   expect(await goal.locator(':scope > i').count()).toBeLessThanOrEqual(16);
   await expect(page.getByText('每格最多 4 轮')).toBeVisible();
-  await expect(page.locator('.task-copy [role="progressbar"]').first()).toHaveAttribute('aria-valuenow', '0');
+  await expect(page.locator('.task-building-progress [role="progressbar"]')).toHaveAttribute('aria-valuenow', '0');
+  await expect(page.locator('.task-current .task-copy')).toContainText('0%');
   await expect(page.locator('.task-current .task-order')).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
   await page.screenshot({ path: testInfo.outputPath('pixel-tasks-light.png'), fullPage: true });
 

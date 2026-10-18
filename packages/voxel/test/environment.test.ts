@@ -65,15 +65,21 @@ describe("deterministic local environment", () => {
     expect(localDateForDate(new Date(2026, 6, 5, 12))).toBe("2026-07-05");
   });
 
-  it("keeps deterministic mist behind the readable settlement depth", () => {
+  it("keeps deterministic mist across foreground and background without whitening the settlement", () => {
     expect(weatherForLocalDate("2026-07-28").kind).toBe("mist");
     const mist = fogRangeForView("mist", 80, 24);
     const clear = fogRangeForView("clear", 80, 24);
-    expect(mist.near).toBeCloseTo(74.72);
-    expect(mist.far).toBeCloseTo(128);
+    expect(mist.near).toBe(0);
+    expect(mist.far).toBeCloseTo(212);
     expect(mist.near).toBeLessThan(clear.near);
     expect(mist.far).toBeLessThan(clear.far);
-    expect(mist.near).toBeGreaterThan(50);
+    for(const distance of [24,80,160,360]){
+      const range=fogRangeForView('mist',distance,24);
+      const alpha=(depth:number)=>{const t=Math.min(1,Math.max(0,(depth-range.near)/(range.far-range.near)));return t*t*(3-2*t);};
+      expect(alpha(distance*.6)).toBeGreaterThan(.05);
+      expect(alpha(distance)).toBeLessThan(.4);
+      expect(alpha(distance*1.3)).toBeGreaterThan(alpha(distance*.6));
+    }
   });
 
   it("keeps weather appearance unified while preserving ocean probability bias", () => {

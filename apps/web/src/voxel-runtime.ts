@@ -3,7 +3,17 @@ import type { BlueprintCatalogEntry } from '@blockcolc/voxel';
 import { t } from './i18n';
 
 let voxelModulePromise:Promise<typeof import('@blockcolc/voxel')>|null=null;
-export function loadVoxelModule(){voxelModulePromise??=import('@blockcolc/voxel').then(module=>{if(testBuildEnabled())(window as typeof window&{__blockcolcVoxelTest?:typeof module}).__blockcolcVoxelTest=module;return module;});return voxelModulePromise;}
+export function loadVoxelModule(){voxelModulePromise??=import('@blockcolc/voxel').then(async module=>{
+  if(testBuildEnabled()){
+    (window as typeof window&{__blockcolcVoxelTest?:typeof module}).__blockcolcVoxelTest=module;
+    (window as typeof window&{__blockcolcDerivedCacheTest?:typeof import('./world-scene-cache')}).__blockcolcDerivedCacheTest=await import('./world-scene-cache');
+  }
+  // Fixtures use bundled Three in test preview, where Vite's /@fs route is absent.
+  if(import.meta.env.DEV||import.meta.env.MODE==='test'){
+    (window as typeof window&{__blockcolcThreeTest?:typeof import('three')}).__blockcolcThreeTest=await import('three');
+  }
+  return module;
+});return voxelModulePromise;}
 export function testBuildEnabled():boolean{return import.meta.env.DEV||import.meta.env.MODE==='test';}
 export function resourcePackAtlasMaximumSizeForTest():number|undefined{if(!testBuildEnabled())return undefined;const value=Number(new URLSearchParams(location.search).get('__atlasPageSize'));return Number.isSafeInteger(value)&&value>=32&&value<=2048?value:undefined;}
 export function useBlueprintCatalog(){const [catalog,setCatalog]=useState<readonly BlueprintCatalogEntry[]>([]);useEffect(()=>{let active=true;void loadVoxelModule().then(module=>{if(active)setCatalog(module.BUILTIN_BLUEPRINT_CATALOG);});return()=>{active=false;};},[]);return catalog;}

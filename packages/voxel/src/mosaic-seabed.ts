@@ -1,8 +1,8 @@
 import { mosaicSeabedHeight } from './mosaic-terrain';
-import type { ScenerySurface } from './scenery';
+import type { SurfaceSource } from './terrain-surface-table';
 
 /** Matches real water quads and shared shelf heights; no flat plane under the whole world. */
-export function createMosaicSeabed(surfaces: readonly ScenerySurface[], seed: number, coreRadius: number) {
+export function createMosaicSeabed(surfaces: SurfaceSource, seed: number, coreRadius: number) {
   const positions: number[] = [], normals: number[] = [], uvs: number[] = [], indices: number[] = [];
   const cache = new Map<string, {y:number;normal:readonly number[]}>();
   const vertex=(x:number,z:number)=>{

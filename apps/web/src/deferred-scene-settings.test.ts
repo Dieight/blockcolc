@@ -3,7 +3,7 @@ import { prepareResidentSceneSettings,sceneSettingsEqual,sceneGeometrySettingsEq
 const initial:SceneSettings={environmentStyle:'ocean-island',worldSeed:'seed',terrainGenerationVersion:4,lightingQuality:'cinematic',constructionOutlineVisibility:'current'};
 it('separates settings which recreate a renderer from resident quality/outline preparation',()=>{
   expect(sceneSettingsEqual(initial,{...initial})).toBe(true);
-  for(const patch of [{environmentStyle:'mosaic-coast' as const},{worldSeed:'other'},{terrainGenerationVersion:3 as const}]){
+  for(const patch of [{environmentStyle:'mosaic-coast' as const},{worldSeed:'other'}]){
     expect(sceneGeometrySettingsEqual(initial,{...initial,...patch})).toBe(false);
   }
   for(const patch of [{lightingQuality:'performance' as const},{constructionOutlineVisibility:'off' as const}]){

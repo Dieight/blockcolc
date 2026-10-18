@@ -1,4 +1,9 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
+import { waitForPreparedWorld } from './world-ready';
+
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('blockcolc-focus-preferences-v1', JSON.stringify({ focusMinutes: 45, breakMinutes: 5, lightingQuality: 'performance' })));
+});
 
 async function setNativeComposition(field: Locator, value: string) {
   await field.evaluate((element, nextValue) => {
@@ -19,6 +24,7 @@ async function createDefaultProject(page: Page) {
 }
 
 async function openTasks(page: Page) {
+  await waitForPreparedWorld(page);
   await page.getByRole('button', { name: '任务', exact: true }).click();
 }
 
@@ -48,6 +54,7 @@ test('commits native Chinese composition when adding and renaming tasks', async 
   await createDefaultProject(page);
   await openTasks(page);
 
+  await page.getByRole('button', { name: '编辑施工清单' }).click();
   await page.getByRole('button', { name: '修改任务名称' }).click();
   let projectTitle = page.getByRole('textbox', { name: '任务名称', exact: true });
   await setNativeComposition(projectTitle, '英文改成中文');
@@ -55,6 +62,7 @@ test('commits native Chinese composition when adding and renaming tasks', async 
   await page.getByRole('button', { name: '保存任务名称' }).click();
   await expect(page.getByRole('heading', { name: '英文改成中文' })).toBeVisible();
 
+  await page.getByRole('button', { name: '编辑施工清单' }).click();
   await page.getByRole('button', { name: '修改任务名称' }).click();
   projectTitle = page.getByRole('textbox', { name: '任务名称', exact: true });
   await setNativeComposition(projectTitle, '英文改成中文追加中文');

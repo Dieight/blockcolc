@@ -1,8 +1,26 @@
 import { describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
 import { GlassWorldCompositor, glassMaterialFor, glassRegionFor } from '../src/glass-surface';
+import {glassNightCeiling} from '../src/glass-material';
 
 describe('GPU glass contract', () => {
+  it('compresses clear night highlights without changing the material or daytime',()=>{
+    const material=glassMaterialFor(100);
+    expect(glassNightCeiling(100,false)).toBe(1);expect(glassNightCeiling(50,true)).toBe(1);
+    expect(glassNightCeiling(NaN,true)).toBe(1);expect(glassNightCeiling(75,true)).toBe(.2);
+    expect(glassNightCeiling(100,true)).toBeCloseTo(.3);expect(glassNightCeiling(200,true)).toBeCloseTo(.3);
+    expect(glassMaterialFor(100)).toEqual(material);
+  });
+  it('retains 4.5:1 light night ink even over the brightest permitted glass sample',()=>{
+    const linear=(v:number)=>v<=.04045?v/12.92:((v+.055)/1.055)**2.4;
+    const ink=[230,239,233].reduce((sum,v,i)=>sum+linear(v/255)*[.2126,.7152,.0722][i]!,0);
+    for(let clarity=75;clarity<=100;clarity++)for(const dark of [false,true]){
+      const m=glassMaterialFor(clarity),alpha=dark?m.darkAlpha:m.lightAlpha;
+      let background=glassNightCeiling(clarity,true)*(1-alpha)+(dark?29/255:1)*alpha;
+      for(const white of [m.highlightAlpha,m.accentAlpha])background=background*(1-white)+white;
+      expect((ink+.05)/(linear(background)+.05)).toBeGreaterThanOrEqual(4.5);
+    }
+  });
   it('copies only the bottom/right panel and never shifts or enlarges its layout', () => {
     expect(glassRegionFor(780, 1688, .3, 0)).toEqual({ x: 0, y: 0, width: 780, height: 507 });
     expect(glassRegionFor(1800, 1000, 0, .34)).toEqual({ x: 1188, y: 0, width: 612, height: 1000 });

@@ -1,8 +1,10 @@
 import { expect,test,type Page } from '@playwright/test';
+import {switchTaskProject} from './task-management-controls';
 import { waitForPreparedWorld } from './world-ready';
 import { choosePlanEndTime } from './focus-plan-controls';
 import { readPersistedDomainState } from './persisted-domain-state';
 import { fixBusinessDate } from './fixed-business-date';
+import { holdModeTransition, releaseModeTransition } from './mode-transition-controls';
 
 async function setup(page:Page,minimal=false,theme='light',glass=100) {
   await page.emulateMedia({reducedMotion:'reduce'});
@@ -261,9 +263,8 @@ for(const changeQuality of [false,true])test(`adopts hidden task changes under t
   await page.getByRole('button',{name:'开始建造',exact:true}).click();await waitForPreparedWorld(page);
   const before=await canvas.evaluate(c=>({generation:c.dataset.rendererGeneration,rebuilds:Number(c.dataset.worldRebuildCount)}));
   await page.getByRole('button',{name:'任务',exact:true}).click();
-  await page.locator('.choice-menu-trigger').click();
-  await page.getByRole('option',{name:/我的第一座工坊/}).click();
-  await expect(page.locator('.choice-menu-trigger')).toContainText('我的第一座工坊');
+  await switchTaskProject(page,/我的第一座工坊/);
+  await expect(page.locator('.task-project-title h2')).toHaveText('我的第一座工坊');
   await expect(canvas).toHaveAttribute('data-world-rebuild-count',String(before.rebuilds));
   if(changeQuality){
     await page.getByRole('button',{name:'设置',exact:true}).click();
@@ -340,42 +341,31 @@ test('the nested cancellation sheet keeps fixed glass and safe edges with a two-
 });
 
 for(const viewport of [{width:390,height:844},{width:448,height:998},{width:820,height:390}]) {
-  test(`portal return stays full-screen and burns a centered opening at ${viewport.width}x${viewport.height}`,async({page},info)=>{
+  test(`world return covers the viewport without stretching or replacing the renderer at ${viewport.width}x${viewport.height}`,async({page},info)=>{
     test.setTimeout(90_000);await page.setViewportSize(viewport);const canvas=await setup(page,true);
     await canvas.evaluate(e=>e.dataset.residencyProbe='preserved');
     await page.emulateMedia({reducedMotion:'no-preference'});
-    await page.evaluate(()=>{
-      const target=window as any;target.portalSamples=[];target.flameSamples=[];let running=true;
-      const tick=()=>{
-        const layer=document.querySelector<HTMLElement>('.mode-portal');
-        if(layer?.dataset.direction==='leave'){
-          const flame=layer.querySelector<HTMLElement>('.mode-portal__flame');
-          const fire=flame?.querySelector<HTMLCanvasElement>('.mode-portal__flame-canvas');
-          if(flame&&!flame.hidden&&fire)target.flameSamples.push({shape:flame.dataset.shape,width:fire.width,height:fire.height,frame:flame.dataset.flameFrame,
-            smoothing:fire.getContext('2d')!.imageSmoothingEnabled,pixels:getComputedStyle(fire).imageRendering});
-          const cover=layer.querySelector<HTMLCanvasElement>('.mode-portal__reveal-cover');
-          if(cover){const progress=Number(cover.dataset.revealProgress),r=cover.getBoundingClientRect(),ctx=cover.getContext('2d')!;
-            if(progress>.01&&progress<.4)target.portalSamples.push({x:r.x,y:r.y,width:r.width,height:r.height,centerAlpha:ctx.getImageData(Math.floor(cover.width/2),Math.floor(cover.height/2),1,1).data[3],cornerAlpha:ctx.getImageData(1,1,1,1).data[3],progress});
-          }
-        }
-        if(running)requestAnimationFrame(tick);
-      };target.stopPortalWatch=()=>{running=false;};requestAnimationFrame(tick);
-    });
+    await holdModeTransition(page);
     await page.getByRole('button',{name:'返回完整模式',exact:true}).press('Enter');
-    if(viewport.width===390){
-      await expect(page.locator('.mode-portal__flame')).toBeVisible();
-      await page.screenshot({path:info.outputPath('continuous-pixel-fire.png')});
+    await expect(page.locator('.app-shell')).toHaveAttribute('data-mode-transition-phase','closing');
+    const cover=page.locator('.mode-transition');
+    const box=await cover.boundingBox();expect(box).toEqual({x:0,y:0,width:viewport.width,height:viewport.height});
+    const bitmaps=await cover.locator('.mode-transition__world>canvas').evaluateAll(nodes=>nodes.map(node=>{
+      const canvas=node as HTMLCanvasElement,s=getComputedStyle(canvas);
+      return {width:canvas.width,height:canvas.height,cssWidth:parseFloat(s.width),cssHeight:parseFloat(s.height),transform:s.transform};
+    }));
+    expect(bitmaps).toHaveLength(2);
+    for(const bitmap of bitmaps){
+      expect(bitmap.width).toBeGreaterThan(0);expect(bitmap.height).toBeGreaterThan(0);
+      expect(Math.abs(bitmap.width-bitmap.cssWidth)).toBeLessThan(1);expect(Math.abs(bitmap.height-bitmap.cssHeight)).toBeLessThan(1);
+      expect(bitmap.transform==='none'||/^matrix\(1, 0, 0, 1,/.test(bitmap.transform)).toBe(true);
     }
+    await page.screenshot({path:info.outputPath('world-return-midpoint.png')});
+    await releaseModeTransition(page);
     await expect(page.locator('.world-screen')).toHaveAttribute('data-minimal-mode','false');
     await expect(page.locator('.app-shell')).toHaveAttribute('data-mode-portal-active','false',{timeout:20_000});
-    const samples=await page.evaluate(()=>{const target=window as any;target.stopPortalWatch();return {cover:target.portalSamples,flame:target.flameSamples};});
-    await info.attach('portal-viewport-samples.json',{body:JSON.stringify(samples,null,2),contentType:'application/json'});
-    expect(samples.cover.length).toBeGreaterThan(3);expect(samples.flame.length).toBeGreaterThan(3);
-    for(const sample of samples.cover){expect(sample).toMatchObject({x:0,y:0,width:viewport.width,height:viewport.height,centerAlpha:0,cornerAlpha:255});}
-    expect(samples.flame.every((sample:any)=>sample.shape==='advected-column'&&sample.width===60&&sample.height===104&&sample.smoothing===false&&sample.pixels==='pixelated')).toBe(true);
-    expect(new Set(samples.flame.map((sample:any)=>sample.frame)).size).toBeGreaterThan(2);
     await expect(canvas).toHaveAttribute('data-residency-probe','preserved');
-    await expect(page.locator('.mode-portal')).toHaveCount(0);
+    await expect(page.locator('.mode-transition,.mode-portal')).toHaveCount(0);
     expect(await page.locator('.app-shell').evaluate(e=>(e as HTMLElement).inert)).toBe(false);
     await page.screenshot({path:info.outputPath('return-native-layout.png')});
   });

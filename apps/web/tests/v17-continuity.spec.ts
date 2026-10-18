@@ -34,7 +34,7 @@ async function revealFocusControls(page: import('@playwright/test').Page) {
 test('keeps the global task portfolio collapsed until requested', async ({ page }, testInfo) => {
   await createDefaultProject(page);
   await page.getByRole('button', { name: '任务', exact: true }).click();
-  const singleProjectPortfolio = page.getByRole('button', { name: /任务总览/ });
+  const singleProjectPortfolio = page.getByRole('button', { name: /其他任务/ });
   await expect(singleProjectPortfolio).toHaveCount(1);
   await expect(singleProjectPortfolio).toHaveAttribute('aria-expanded', 'false');
   await expect(page.locator('.project-portfolio-body')).toHaveCount(0);
@@ -46,13 +46,13 @@ test('keeps the global task portfolio collapsed until requested', async ({ page 
   await page.getByRole('radio', { name: /河岸木屋/ }).check();
   await page.getByRole('button', { name: '开始建造' }).click();
   await page.getByRole('button', { name: '任务', exact: true }).click();
-  const portfolio = page.getByRole('button', { name: /任务总览/ });
+  const portfolio = page.getByRole('button', { name: /其他任务/ });
   await expect(portfolio).toHaveAttribute('aria-expanded', 'false');
   await expect(page.locator('.task-detail-panel ~ .project-portfolio')).toHaveCount(1);
   await portfolio.click();
   await expect(portfolio).toHaveAttribute('aria-expanded', 'true');
-  await expect(page.locator('.project-portfolio-row')).toHaveCount(2);
-  await expect(page.locator('.project-portfolio')).toContainText('当前');
+  await expect(page.locator('.project-portfolio-row')).toHaveCount(1);
+  await expect(page.locator('.task-project-title')).toContainText('第二项长期工作');
   await expect(page.locator('.project-portfolio')).toContainText('暂停');
   await page.screenshot({ path: testInfo.outputPath('task-portfolio-mobile.png'), fullPage: true });
 });

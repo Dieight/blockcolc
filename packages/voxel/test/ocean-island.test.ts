@@ -29,7 +29,7 @@ function buildLarge(seed: string): MergedGeometryData {
 
 function topSurfaceRectangles(terrain: MergedGeometryData): Array<{ minX: number; maxX: number; minZ: number; maxZ: number }> {
   const rectangles: Array<{ minX: number; maxX: number; minZ: number; maxZ: number }> = [];
-  for (const material of ["grass", "dirt", "stone", "water"] as const) {
+  for (const material of ["grass", "dirt", "stone", "sand", "water"] as const) {
     const indices = terrain.indicesByMaterial[material];
     for (let base = 0; base + 5 < indices.length; base += 6) {
       const vertices = [indices[base]!, indices[base + 1]!, indices[base + 2]!, indices[base + 5]!];
@@ -47,7 +47,7 @@ type SideFace = { start: number; end: number; bottom: number; top: number };
 
 function unsealedStraightSideBands(terrain: MergedGeometryData): Array<{ axis: "x" | "z"; line: number; from: number; to: number; bottom: number; top: number }> {
   const cells: SurfaceCell[] = [];
-  for (const material of ["grass", "dirt", "stone", "water"] as const) {
+  for (const material of ["grass", "dirt", "stone", "sand", "water"] as const) {
     const indices = terrain.indicesByMaterial[material];
     for (let base = 0; base + 5 < indices.length; base += 6) {
       const vertices = [indices[base]!, indices[base + 1]!, indices[base + 2]!, indices[base + 5]!];

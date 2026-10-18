@@ -1,4 +1,6 @@
 import { expect, test } from '@playwright/test';
+import {openSecondarySetting} from './settings-controls';
+import {openTaskEditor} from './task-management-controls';
 import { showWorldOverview } from './world-overview';
 
 async function expectWorldCanvasDoesNotCover(button: import('@playwright/test').Locator) {
@@ -41,6 +43,7 @@ test('runs a repeatable habit building cycle with frozen targets and stable comp
 
   await page.getByRole('button', { name: '设置' }).click();
   await expect(page.getByLabel('普通任务专注分钟')).toHaveValue('45');
+  await openSecondarySetting(page,'习惯任务');
   const habitMinutes = page.getByLabel('习惯任务专注分钟');
   await habitMinutes.fill('1');
   await habitMinutes.press('Enter');
@@ -90,5 +93,6 @@ test('runs a repeatable habit building cycle with frozen targets and stable comp
   await expect(page.locator('.project-portfolio-toggle')).toHaveAttribute('aria-expanded', 'false');
   await page.locator('.project-portfolio-toggle').click();
   await expect(page.locator('.project-portfolio-toggle')).toHaveAttribute('aria-expanded', 'true');
+  await openTaskEditor(page);
   await expect(page.locator('.project-delete-zone')).toContainText('已完成的 1 座建筑会保留');
 });

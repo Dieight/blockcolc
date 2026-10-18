@@ -4,7 +4,7 @@
 .world-debug-weather .choice-menu-trigger{min-height:44px;padding:8px 10px;font-size:.875rem}
 .world-debug-weather .choice-menu-options{max-height:280px;overflow-y:auto}
 .choice-menu-options.is-floating{position:fixed;right:auto;margin:0;z-index:100;overscroll-behavior:contain}
-.world-debug-settings .settings-list>.content-reveal>div>.setting-row{padding:8px 16px;border-top:1px solid var(--settings-separator)}
+.world-debug-settings :is(.settings-list,.settings-inner-group)>.content-reveal>div>.setting-row,.settings-inner-group.world-debug-settings>.content-reveal>div>.setting-row{padding:8px 16px;border-top:1px solid var(--settings-separator)}
 .world-debug-settings .setting-row-end{gap:12px}
 .world-debug-time{width:86px;min-height:44px}
 .world-debug-time .minimal-clock-gesture .timer-value{font-size:1.125rem;line-height:1.3;color:var(--ink)}

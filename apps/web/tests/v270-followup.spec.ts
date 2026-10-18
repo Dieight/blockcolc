@@ -66,7 +66,7 @@ test('library previews native and hidden holiday blueprints, with reversible dis
   await page.emulateMedia({reducedMotion:'reduce'});await page.goto('/');await page.getByRole('button',{name:'开始建造',exact:true}).click();
   await page.getByRole('button',{name:'设置',exact:true}).click();
   const library=page.locator('.blueprint-library');
-  await library.getByRole('button',{name:/所有图纸/}).click();
+  await library.getByRole('button',{name:/蓝图库/}).click();
   await library.locator('details').first().locator('summary').click();
   await expect(library.locator('details').first().getByRole('button')).toHaveCount(3);
   await library.locator('details').first().getByRole('button').first().click();
@@ -78,7 +78,7 @@ test('library previews native and hidden holiday blueprints, with reversible dis
   await expect(preview).toContainText('也许在某些特定节日启动方块钟会发现它');
   await expect(preview.locator('canvas')).toHaveCount(0);
   await preview.getByRole('button',{name:'关闭蓝图预览'}).click();
-  await library.getByRole('button',{name:/所有图纸/}).click();await expect(library.locator('.content-reveal')).toHaveAttribute('inert','');
+  await library.getByRole('button',{name:/蓝图库/}).click();await expect(library.locator(':scope>div>.content-reveal')).toHaveAttribute('inert','');
 });
 
 test('ambience is opt-in, accepts imported audio and removes it without touching domain data',async({page})=>{

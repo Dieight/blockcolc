@@ -3,7 +3,7 @@ import { CLOCK_ROUND_DWELL_MS, clockRoundDetent } from './ui/MinimalClockGesture
 describe('timed whole-round detents', () => {
   const now = 1_800_000_000_000, minute = 60_000;
   it('holds within the requested range without blocking the UI thread', () => {
-    expect(CLOCK_ROUND_DWELL_MS).toBe(500);
+    expect(CLOCK_ROUND_DWELL_MS).toBe(250);
   });
   it('stops fast drags at the first boundary; later rounds include the rests', () => {
     expect(clockRoundDetent(now, now + 100 * minute, now, 25, 5)).toEqual({ round: 1, endMs: now + 25 * minute });

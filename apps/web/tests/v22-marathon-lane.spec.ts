@@ -1,4 +1,6 @@
 import { expect, test } from "@playwright/test";
+import {openSecondarySetting} from './settings-controls';
+import {switchTaskProject} from './task-management-controls';
 import { executeAndReloadPersistedCommand, readPersistedDomainState } from "./persisted-domain-state";
 import { choosePlanEndTime, finishPaintedReportReceipt, prepareReadyPlanCancellation, startNextRound, waitForMarathonReport, revealFocusControls } from './focus-plan-controls';
 
@@ -32,6 +34,7 @@ async function configureDistinctNormalAndHabitRounds(page: import("@playwright/t
   const focusMinutes = page.getByLabel("普通任务专注分钟");
   await focusMinutes.fill("45");
   await focusMinutes.press("Enter");
+  await openSecondarySetting(page,'习惯任务');
   const habitFocusMinutes = page.getByLabel("习惯任务专注分钟");
   await habitFocusMinutes.fill("20");
   await habitFocusMinutes.press("Enter");
@@ -209,8 +212,7 @@ test("settlement splits rounds between a habit building and subtasks on another 
 
   // Switch back to the finite project and lock a marathon on it.
   await page.getByRole("button", { name: "任务", exact: true }).click();
-  await page.locator(".choice-menu-trigger").click();
-  await page.getByRole("option", { name: /我的第一座工坊/ }).click();
+  await switchTaskProject(page,/我的第一座工坊/);
   await page.getByRole("button", { name: "计时" }).click();
 
   await page.getByRole("button", { name: "调整本次计划" }).click();
@@ -273,8 +275,7 @@ test("switching the active project never drops or distracts a locked marathon pl
   await page.getByLabel("大型任务").fill("第二项长期工作");
   await page.getByRole("button", { name: "开始建造" }).click();
   await page.getByRole("button", { name: "任务", exact: true }).click();
-  await page.locator(".choice-menu-trigger").click();
-  await page.getByRole("option", { name: /我的第一座工坊/ }).click();
+  await switchTaskProject(page,/我的第一座工坊/);
   await page.getByRole("button", { name: "计时" }).click();
 
   await page.getByRole("button", { name: "调整本次计划" }).click();

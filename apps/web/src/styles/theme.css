@@ -9,7 +9,7 @@ html[data-theme="dark"],html[data-theme="dark"] body,html[data-theme="dark"] #ro
 [data-theme="dark"] .world,[data-theme="dark"] .setup-world{background:#0d1712}
 
 /* Inputs & generic buttons */
-[data-theme="dark"] select,[data-theme="dark"] input:not(.number-field input):not(.ios-switch input),[data-theme="dark"] textarea{background:#121a16;color:#e6efe9;border-color:#38473d}
+[data-theme="dark"] select,[data-theme="dark"] input:not(.number-field input):not(.ios-switch input):not(.quick-notes--compact input),[data-theme="dark"] textarea{background:#121a16;color:#e6efe9;border-color:#38473d}
 [data-theme="dark"] input::placeholder,[data-theme="dark"] textarea::placeholder{color:#6c8577}
 [data-theme="dark"] .duration button,[data-theme="dark"] .report-options button,[data-theme="dark"] .setting button,[data-theme="dark"] .dialog-actions button,[data-theme="dark"] .resource-pack-original button,[data-theme="dark"] .resource-pack-list li button,[data-theme="dark"] .resource-pack-import,[data-theme="dark"] .backup-actions button,[data-theme="dark"] .file-button,[data-theme="dark"] .rollback-heading button,[data-theme="dark"] .rollback-list li button,[data-theme="dark"] .setup-kind button,[data-theme="dark"] .blueprint-option,[data-theme="dark"] .danger-outline,[data-theme="dark"] .planned-days button{background:#131c17;color:#e6efe9;border-color:#38473d}
 [data-theme="dark"] .duration .selected,[data-theme="dark"] .blueprint-option.selected{background:#1f3329;border-color:var(--focus);color:var(--focus)}

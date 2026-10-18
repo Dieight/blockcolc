@@ -1,4 +1,5 @@
 import { t, appLocale, useI18n, appLanguage } from './i18n';
+import { AnimatedDetails } from './ui/AnimatedDetails';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { PixelCube, PixelClock, PixelFlag, PixelSprout, PixelDisclosure } from './ui/PixelIcon';
 import { projectFocusAttribution, projectMonumentFocus, type ApplicationService, type MonumentFocusProjection, type UnallocatedFocusProjection } from '@blockcolc/application';
@@ -141,25 +142,21 @@ export function StatsScreen({ state, achievementEntries, active = false }: { sta
 
 export function MonumentStatistics({ monuments, unallocated }: { monuments:readonly MonumentFocusProjection[]; unallocated:UnallocatedFocusProjection }) {
   useI18n();
-  return <details className="monument-statistics">
-    <summary><PixelCube/><span>{t("纪念建筑")}</span><small>{monuments.length} {t("座已完成")}</small><PixelDisclosure/></summary>
+  return <AnimatedDetails className="monument-statistics" summary={<><PixelCube/><span>{t("纪念建筑")}</span><small>{monuments.length} {t("座已完成")}</small><PixelDisclosure/></>}>
     <p className="monument-intro">{t("展示可追溯投入；旧记录单列，不估算分配。")}</p>
     {monuments.length === 0
       ? <p className="monument-empty">{t("完成一项大型任务或习惯建筑后，这里会保留它的投入记忆。")}</p>
         : <div className="monument-list">{monuments.map(monument => {
           const sourceLabel = monument.source === 'habit' ? t("已完成习惯建筑") : t("已完成大型任务");
-          // Native details owns the disclosure state. Leaving `open` out keeps
-          // every card collapsed on entry and lets the browser close it again
-          // without a React state race that could blank the stats route.
-          return <details key={monument.id}>
-            <summary><PixelCube/><span><strong>{monument.title}</strong><small>{sourceLabel}{monument.expectedRounds !== null ? t(" · {0} / {1} 轮可追溯", monument.rounds, monument.expectedRounds) : t(" · {0} 轮可追溯", monument.rounds)}{monument.interruptedRounds > 0 ? t(" · {0} 条中断", monument.interruptedRounds) : ''}</small></span><b>{formatFocusMinutes(monument.minutes)}</b></summary>
+          return <AnimatedDetails key={monument.id} summary={<><PixelCube/><span><strong>{monument.title}</strong><small>{sourceLabel}{monument.expectedRounds !== null ? t(" · {0} / {1} 轮可追溯", monument.rounds, monument.expectedRounds) : t(" · {0} 轮可追溯", monument.rounds)}{monument.interruptedRounds > 0 ? t(" · {0} 条中断", monument.interruptedRounds) : ''}</small></span><b>{formatFocusMinutes(monument.minutes)}</b><PixelDisclosure/></>}>
             <div className="monument-detail">
-              <div className="monument-metrics"><div><span>{t("实际投入")}</span><strong>{formatFocusMinutes(monument.minutes)}</strong></div><div><span>{t("完成轮次")}</span><strong>{monument.rounds} {t("轮")}</strong></div><div><span>{t("中断投入")}</span><strong>{monument.interruptedRounds > 0 ? t("{0} 条 · {1}", monument.interruptedRounds, formatFocusMinutes(monument.interruptedMinutes)) : t("无")}</strong></div><div><span>{t("完成时间")}</span><strong>{monument.completedAt ? new Date(monument.completedAt).toLocaleDateString(appLocale()) : t("未知")}</strong></div></div>
+              <div className="monument-total"><span>{t("实际投入")}</span><strong>{formatFocusMinutes(monument.minutes)}</strong></div>
+              <dl className="monument-facts"><div><dt>{t("完成轮次")}</dt><dd>{monument.rounds} {t("轮")}</dd></div><div><dt>{t("中断投入")}</dt><dd>{monument.interruptedRounds > 0 ? t("{0} 条 · {1}", monument.interruptedRounds, formatFocusMinutes(monument.interruptedMinutes)) : t("无")}</dd></div><div><dt>{t("完成时间")}</dt><dd>{monument.completedAt ? new Date(monument.completedAt).toLocaleDateString(appLocale()) : t("未知")}</dd></div></dl>
              {monument.unknownRounds > 0 && <p className="monument-unknown" role="note">{t("另有")}{' '}{monument.unknownRounds} {t("条记录无法追溯")}{monument.unknownMinutes > 0 ? `（${formatFocusMinutes(monument.unknownMinutes)}）` : ''}{t("，未分摊。")}</p>}
               <MonumentFocusChart rows={monument.subtasks}/>
             </div>
-          </details>;
+          </AnimatedDetails>;
       })}</div>}
     {unallocated.rounds > 0 && <div className="achievement monument-unallocated" role="note"><PixelClock className="achievement-emblem"/><div className="achievement-copy"><strong>{t("未分配的投入")}</strong><small>{[unallocated.completedRounds > 0 ? t("{0} 个完成轮次", unallocated.completedRounds) : '', unallocated.interruptedRounds > 0 ? t("{0} 条中断记录", unallocated.interruptedRounds) : ''].filter(Boolean).join('、')} {t("· 无法追溯，不估算分配")}</small></div><b className="achievement-unlocked">{formatFocusMinutes(unallocated.minutes)}</b></div>}
-  </details>;
+  </AnimatedDetails>;
 }

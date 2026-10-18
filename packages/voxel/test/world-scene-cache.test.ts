@@ -2,6 +2,8 @@ import { describe,expect,it } from 'vitest';
 import { createSteppedTerrainData,terrainGenerationInputKey } from '../src/terrain';
 import { compactTerrainRenderMesh } from '../src/terrain-render-mesh';
 import { sceneryGeometryLayers,sceneryHouseBlocks } from '../src/scenery';
+import { terrainSurfaceTable, peekTerrainSurfaceTable } from '../src/terrain-surface-table';
+import { surfaceSampler } from '../src/surface-index';
 import { restoreWorldSceneCache,packWorldSceneCache,sceneryGenerationInputKey,worldSceneCacheBytes,WORLD_SCENE_CACHE_MAX_BYTES,WORLD_SCENE_CACHE_REVISION,type WorldSceneCache } from '../src/world-scene-cache';
 
 function fixture():WorldSceneCache {
@@ -12,6 +14,41 @@ function fixture():WorldSceneCache {
     plan:{village:{x:40,z:0,width:7,depth:9},objects:[{id:'house',role:'house',x:40,y:1,z:0,width:7,depth:9,...house}]}}};
 }
 describe('disposable CPU scene cache',()=>{
+  it('rejects older appearance caches, including the reverted dirt banks, without touching domain records',()=>{
+    for(const revision of [3,4]){
+      const old=fixture();(old as {revision:number}).revision=revision;
+      expect(restoreWorldSceneCache(old)).toBeNull();
+    }
+    expect(JSON.parse(terrainGenerationInputKey([],[],[],undefined,{}))[0]).toBe(3);
+  });
+  it('keeps shared surface sidecars out of persistent entries and rebuilds them on restore', () => {
+    const source=fixture(), before=packWorldSceneCache(source), bytes=worldSceneCacheBytes(source);
+    const table=terrainSurfaceTable(source.terrain.data);
+    surfaceSampler(table)(0,0);
+    expect(packWorldSceneCache(source)).toEqual(before);
+    expect(worldSceneCacheBytes(source)).toBe(bytes);
+    const restored=restoreWorldSceneCache(structuredClone(before))!;
+    expect(peekTerrainSurfaceTable(restored.terrain.data)).toBeUndefined();
+    expect(Array.from(terrainSurfaceTable(restored.terrain.data))).toEqual(Array.from(table));
+  });
+  it('rejects disposable terrain from retired generators, even with a current input key', () => {
+    for (const version of [1, 2, 3]) {
+      const value = fixture();
+      (value.terrain.data as { terrainGenerationVersion: number }).terrainGenerationVersion = version;
+      expect(restoreWorldSceneCache(value)).toBeNull();
+    }
+  });
+  it('distinguishes automatic far detail from explicitly disabled far detail', () => {
+    const options = { environmentStyle: 'natural-valley' as const, terrainGenerationVersion: 4 as const };
+    const keys = [undefined, false, true].map(refinedFar =>
+      terrainGenerationInputKey([], [], [], undefined, { ...options, refinedFar }));
+    expect(new Set(keys).size).toBe(3);
+    // Automatic V4 detail uses 4-unit cells in an additional far band. This is
+    // not equivalent to false even though both used to serialize as false.
+    const auto = createSteppedTerrainData([], [], [], undefined, options);
+    const disabled = createSteppedTerrainData([], [], [], undefined, { ...options, refinedFar: false });
+    expect(auto.cellCount).not.toBe(disabled.cellCount);
+  });
   it('packs numeric buffers and a palette without changing coordinates or LOD identities',()=>{
     const source=fixture(),packed=packWorldSceneCache(source) as any;
     expect(packed.terrain.data.positions).toBeInstanceOf(Float64Array);

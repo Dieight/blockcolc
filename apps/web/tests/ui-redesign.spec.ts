@@ -1,4 +1,5 @@
 import {expect,test,type Page,type Locator} from '@playwright/test';
+import {openTaskEditor} from './task-management-controls';
 import {selectLastCalendarDays} from './select-calendar-days';
 import {expandGlassSetting} from './expand-glass-setting';
 import {openBlueprintLibrary} from './blueprint-library-controls';
@@ -88,9 +89,9 @@ test('fixed calendar shares the summary card and task cards share hierarchy',asy
  await selectLastCalendarDays(page,7);
  expect(await calendar.locator('[data-date]').evaluateAll(elements=>elements.map(element=>element.getAttribute('data-date')))).toEqual(dates);
  await page.getByRole('button',{name:'任务',exact:true}).click();
- await expect(page.locator('.tasks-page .task-surface')).toHaveCount(4);
+ await expect(page.locator('.tasks-page .task-surface')).toHaveCount(3);
  const surfaces=await page.locator('.tasks-page .task-surface').evaluateAll(elements=>elements.map(element=>{const css=getComputedStyle(element);return {background:css.backgroundColor,radius:css.borderRadius};}));
- expect(surfaces.length).toBeGreaterThanOrEqual(4);
+ expect(surfaces.length).toBe(3);
  expect(surfaces.every(surface=>surface.background===surfaces[0]!.background&&surface.radius===surfaces[0]!.radius)).toBe(true);
  const summary=page.locator('.project-portfolio-toggle');
  await summary.click();
@@ -202,7 +203,7 @@ for(const viewport of viewports)for(const theme of ['浅色','深色']){
   await page.screenshot({path:info.outputPath('statistics.png'),fullPage:true,animations:'disabled'});
   await page.getByRole('button',{name:'任务',exact:true}).click();
   await expect(page.getByRole('button',{name:'查看建筑',exact:true})).toBeVisible();
-  await page.locator('.project-portfolio-toggle').click();
+  await openTaskEditor(page);
   await expect(page.getByRole('button',{name:'删除当前任务',exact:true})).toBeVisible();
   await noOverflow(page);
   await page.screenshot({path:info.outputPath('tasks.png'),fullPage:true,animations:'disabled'});

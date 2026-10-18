@@ -43,6 +43,8 @@ import { shouldOfferTutorial, completeTutorial } from './onboarding';
 import { useProgressiveRoutes } from './use-progressive-routes';
 import { queueIdleWork } from './idle-work';
 import { installListMotion } from './ui/list-motion';
+import { TextToggle } from './ui/TextToggle';
+import { canSelectTaskContext,validTaskContext,type TaskContextRequest } from './task-context';
 import {useAmbientAudio} from './use-ambient-audio';
 
 let tasksScreenModulePromise: Promise<{ default: (typeof import('./TaskManagement'))['TasksScreen'] }> | null = null;
@@ -84,6 +86,7 @@ export function App({ service, resourcePacks }: { service: ApplicationService; r
   const [projectDraft, setProjectDraft] = useState<ProjectSetupDraft | null>(null);
   const [worldFocusProjectId,setWorldFocusProjectId]=useState<string|null>(null);
   const [worldMemoryProjectId,setWorldMemoryProjectId]=useState<string|null>(null);
+  const [taskContextRequest,setTaskContextRequest]=useState<TaskContextRequest|null>(null);
   const [aboutOpen,setAboutOpen]=useState(false);
   const [availableRelease,setAvailableRelease]=useState<AppRelease|null>(null);
   const [ceremony,setCeremony]=useState<{projectId:string;title:string}|null>(null);
@@ -174,6 +177,15 @@ export function App({ service, resourcePacks }: { service: ApplicationService; r
   const discardProjectSetup=useCallback(()=>{setCreatingProject(false);setProjectDraft(null);},[]);
   const completeProjectSetup=useCallback(()=>{setCreatingProject(false);setProjectDraft(null);navigateTo('world');},[navigateTo]);
   const viewProjectInWorld=useCallback((projectId:string)=>{setCreatingProject(false);setWorldFocusProjectId(projectId);setWorldMemoryProjectId(projectId);navigateTo('world');},[navigateTo]);
+  const selectTaskForTimer=useCallback((projectId:string,subtaskId:string)=>{
+    const state=service.snapshot(),projection=service.activeProjectProjection();
+    const plan=createRoundPlanStore(()=>window.localStorage).read(state.activeProjectId??'');
+    const request={projectId,subtaskId,revision:Date.now()};
+    if(!canSelectTaskContext(state,plan,projection?.unreportedCompletedSessions.length??0)||!validTaskContext(state,request)){
+      showMessage(t('请先结束或汇报当前专注'));return;
+    }
+    setTaskContextRequest(request);setWorldMemoryProjectId(null);setWorldFocusProjectId(projectId);navigateTo('world');
+  },[service,navigateTo,showMessage]);
   const selectWorldProject=useCallback((projectId:string)=>{setWorldFocusProjectId(projectId);setWorldMemoryProjectId(projectId);},[]);
   const clearWorldFocus=useCallback(()=>{setWorldFocusProjectId(null);setWorldMemoryProjectId(null);},[]);
   const closeWorldMemory=useCallback(()=>setWorldMemoryProjectId(null),[]);
@@ -244,6 +256,7 @@ export function App({ service, resourcePacks }: { service: ApplicationService; r
   const worldPane = workspace && !orphanedDeferredHost ? <div className={worldVisible && tab === 'world'?'world-pane':'world-pane is-hidden'} aria-hidden={!worldVisible || tab !== 'world'}>
     <WorldScreenV7 service={service} active={workspace} state={state} stateRevision={stateRevision} hasActiveProject={Boolean(active)} onCreateProject={beginProjectSetup} resourcePacks={resourcePacks} run={run} refresh={refresh}
       onReconcileFocus={resumeVisibleFocus} preferences={preferences} worldWeather={worldWeather}
+      taskContextRequest={taskContextRequest}
       worldPreparationAllowed={!progressiveBoot||firstRunRequired||preparedRoutes.size===3}
       worldDebug={worldDebugProjection}
       minimalWanted={minimalWanted} fullDeferredPresentation={fullDeferredPresentation}
@@ -272,7 +285,7 @@ export function App({ service, resourcePacks }: { service: ApplicationService; r
           <section className="focus-panel"><MarathonProgressReport variant="minimal" key={orphanedDeferredHost} state={state} hostProjectId={orphanedDeferredHost} run={run} onSubmitted={() => { createRoundPlanStore(() => window.localStorage).write(null); refresh(); }}/></section>
         </div>
         : firstRunRequired ? tutorial==='first'?null:firstRunSetup : (tab === 'tasks' || !workspace) ? <WorkspaceRest state={state} run={run} onCreate={beginProjectSetup}/> : null)}
-      {active && <RoutePane active={tab === 'tasks'} prepared={preparedRoutes.has('tasks')} revision={stateRevision} route="tasks"><Suspense fallback={<LoadingPage status={t("正在打开任务…")}/>}><TasksScreen active={active} state={state} run={run} quickNotesEnabled={preferences.quickNotesEnabled} onCreateProject={beginProjectSetup} onViewProject={viewProjectInWorld}/></Suspense></RoutePane>}
+      {active && <RoutePane active={tab === 'tasks'} prepared={preparedRoutes.has('tasks')} revision={stateRevision} route="tasks"><Suspense fallback={<LoadingPage status={t("正在打开任务…")}/>}><TasksScreen active={active} state={state} run={run} quickNotesEnabled={preferences.quickNotesEnabled} onCreateProject={beginProjectSetup} onViewProject={viewProjectInWorld} onSelectSubtask={selectTaskForTimer}/></Suspense></RoutePane>}
       <RoutePane active={tab === 'stats'} prepared={preparedRoutes.has('stats')} revision={stateRevision} route="stats"><Suspense fallback={<LoadingPage status={t("正在打开统计…")}/>}><StatsScreen state={state} active={tab === 'stats'} achievementEntries={achievementEntries}/></Suspense></RoutePane>
 <RoutePane active={tab === 'settings'} prepared={preparedRoutes.has('settings')} revision={stateRevision} route="settings"><Suspense fallback={<LoadingPage status={t("正在打开设置…")}/>}><SettingsScreen active={tab === 'settings'} service={service} resourcePacks={resourcePacks} state={state} run={run} refresh={refreshAfterReplacement} preferences={preferences} onPreferencesChange={changePreferences} worldWeather={worldWeather} worldDebug={worldDebug} onWorldDebugChange={setWorldDebug} onConfigureEnvironment={configureEnvironment} onReplayTutorial={replayTutorial} onConfigureOutline={configureOutline}/></Suspense></RoutePane>
     </>}
@@ -339,7 +352,7 @@ function ProjectSetup({run,resourcePacks,buildingBlueprints,existingProjects,dra
     </div>}
     <form onSubmit={submit}>
       <header className="setup-heading"><div className="setup-title"><PixelCube/><h1>{firstRun ? t("建立你的第一项任务") : onCancel ? t("新增任务") : t("建立新任务")}</h1></div><p>{kind === 'habit' ? t("让日常坚持，一座接一座地建造。") : t("拆成小任务，一步步建成自己的建筑。")}</p></header>
-      <div className="setup-kind" role="group" aria-label={t("任务类型")}><button type="button" disabled={submitting} aria-pressed={kind === 'finite'} onClick={() => onDraftChange({ kind: 'finite' })}><PixelCube size={18}/>{t("普通大型任务")}</button><button type="button" disabled={submitting} aria-pressed={kind === 'habit'} onClick={() => onDraftChange({ kind: 'habit' })}><PixelRepeat size={18}/>{t("习惯任务")}</button></div>
+      <TextToggle className="setup-kind" ariaLabel={t('任务类型')} value={kind} disabled={submitting} options={[{value:'finite',label:<><PixelCube size={18}/>{t('普通大型任务')}</>},{value:'habit',label:<><PixelRepeat size={18}/>{t('习惯任务')}</>}]} onChange={kind=>onDraftChange({kind})}/>
       <div className="setup-fields">
         <label>{kind === 'habit' ? t("习惯名称") : t("大型任务")}<NativeImeTextEntry targetRef={titleInput} name="projectTitle" defaultValue={draft.title} onValueChange={title => onDraftChange({ title })}/></label>
         {kind === 'finite' ? <SubtaskRowsEditor initialText={draft.subtasksText} readerRef={readSubtasks} onChange={subtasksText => onDraftChange({ subtasksText })}/> : <div className="habit-target-summary"><span>{t("每座建筑")}</span><strong>{habitTargetRounds} {t("轮专注")}</strong><small>{t("统一在设置中调整；创建后，本周期内不会改变。")}</small></div>}

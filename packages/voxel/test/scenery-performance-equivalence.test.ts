@@ -6,12 +6,12 @@ import { sceneryPlanningFixture } from './scenery-planning-fixture';
 // The performance rewrite preserved the original complete plan (archived in
 // artifacts/performance/v2.6.0-audit/scenery-performance-equivalence-before-feedback.ts).
 // The authorised coast seam/coral fixes intentionally change this biome.
-// Revised after region/footing/cross-tile regressions and real reef rendering;
-// old hashes and the failing comparison remain in latest83-scenery-fixture-before.log.
+// Revised for the adopted v2.8 ecotones/landforms after region, footing and reef
+// checks. Prior hashes and failures remain in release99-20261018/full-first.log.
 const hashes: Readonly<Record<string, string>> = {
-  'world-default': '870b6f3e70a025fad8fdffe14f7af88e9385551824187897da5f3f310c62e7f8',
-  'world-portal-0': '7966c93fd2065b9333084f04f793c1fa077d487731db541c2ceb832ec980a17c',
-  'cold-edge-regression': 'f801b5c87f869e65c34bda376ff6fda1d667e70d66d354206bf008d898899dac',
+  'world-default': 'b878984c697f21a5b5a515b64a978ceae61bdb3848bd1b97176a6cc721a74da9',
+  'world-portal-0': '14b3f205c980da5a1a36149e962fe4b10f067ce1677c843f098b0539b70aae3d',
+  'cold-edge-regression': 'f4f91114e628287f383b8c64d1dac7575971e68be66161186588894dbe8eda60',
 };
 
 it.each(['world-default', 'world-portal-0', 'cold-edge-regression'])('preserves the complete coastal scenery: %s', seed => {

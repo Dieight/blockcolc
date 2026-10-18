@@ -5,7 +5,10 @@
 .setup-title h1{margin:0;font-size:23px;line-height:1.35}
 .setup-heading>p{margin:10px 0 20px;color:var(--muted);font-size:13px;line-height:1.6}
 .setup-kind button{display:flex;align-items:center;gap:7px;min-height:44px;padding:9px 12px;border:0;border-bottom:2px solid transparent;background:transparent;border-radius:0;color:var(--muted);font-size:13px;font-weight:500}
-.setup-kind button[aria-pressed="true"]{color:var(--focus);font-weight:750;border-bottom-color:var(--focus);text-decoration:none}
+.setup-kind button[aria-pressed="true"]{color:var(--focus);font-weight:750;border-bottom-color:transparent;text-decoration:none}
+.setup-kind .text-toggle-selection{top:0;bottom:0;background:var(--surface-active);box-shadow:none}
+.setup-kind .text-toggle-selection::after{content:'';position:absolute;inset:auto 0 0;height:2px;background:var(--focus)}
+.setup-kind:not([data-indicator-ready]) button[aria-pressed='true']{border-bottom-color:var(--focus)}
 .setup-actions .setup-submit{display:flex;align-items:center;justify-content:center;gap:8px;border-radius:6px}
 .setup-cancel{min-width:64px;border:0;background:none;color:#58635d;font-weight:700}
 .setup-actions>button:first-child:not(.primary){min-width:64px;border:0;background:none;color:#58635d;font-weight:700}

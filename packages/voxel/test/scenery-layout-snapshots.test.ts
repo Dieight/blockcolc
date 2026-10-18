@@ -3,17 +3,15 @@ import { expect, it } from 'vitest';
 import { planWorldScenery } from '../src/scenery';
 import { SCENERY_PLANNING_CASES, sceneryPlanningFixture } from './scenery-planning-fixture';
 
-// Legacy/island snapshots predate the planner optimization; v4 valley
-// snapshots include v2.5.6's common-height LOD seam (32-block transition).
-// Safe ground/cone exclusion removes unsupported trees and gardens; structural
-// placement tests still guard the primary legacy landmarks and the terrain.
+// Adopted v2.8.0 landforms intentionally change supported background sites.
+// Old hashes remain in the integration evidence; task/water/road/wreck and
+// support checks are separate assertions, not replaced by accepting a hash.
 const SNAPSHOTS: Readonly<Record<string, string>> = {
-  "natural-valley:1:4": "cff6df0c74daaa1ca5a0624928e3804ce9af7748c1a6587d2a72d50f323b33ad",
+  "natural-valley:1:4": "b5df30c226364a76a011b83419d6d6b55ecdf39591d5a6927bb58e1d322a32e9",
   "classic-island:1:4": "fd711c694053ec1bcc972008ad3f58033001a26e5e1f4b226b84893e239ef935",
-  "ocean-island:1:4": "045b5c67ec56ecc7691f1815054625f66014fd28aa16555460efa1acdaece9ac",
-  "natural-valley:7:4": "a43c1b5a98fc996183709735e71a343a96a370c1626944e981b22a30ca839818",
-  "ocean-island:12:4": "7866bc98fa6424df1d04580af5565a8b9585d3e75d2b52cb6b1b954d1803e7b1",
-  "natural-valley:1:3": "660b26e147871cd050d05da7603f2a1ce7bfa0d6bb4c5faf69b941ef42fb7e83",
+  "ocean-island:1:4": "760028152bfc267b8f55f82ce19a20bcd3466617855c3b25483a7c8854e2b5a9",
+  "natural-valley:7:4": "9ee4e9581d5a15a143ec18535e7724f263e38b0cd3d02f940142aba1b1dc6f75",
+  "ocean-island:12:4": "4484026c0f9da1c95236441ebcb781322155b87d05c1dbe43829e0354056b068",
 };
 
 it.each(SCENERY_PLANNING_CASES)('preserves scenery blocks and placements: $style / $count tasks / v$version', ({ style, count, version }) => {

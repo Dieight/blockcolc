@@ -12,21 +12,20 @@ const WEATHER_CHOICES = [
   { id: 'storm', label: "雷雨" }, { id: 'snow', label: "雪" }, { id: 'mist', label: "雾" },
 ] as const;
 
-export function WorldDebugSettingsPanel({ value, onChange }: {
+export function WorldDebugSettingsPanel({ value, onChange, embedded=false }: {
   value: WorldDebugSettings;
   onChange: (next: WorldDebugSettings) => void;
+  embedded?: boolean;
 }) {
   useI18n();
   const update = (patch: Partial<WorldDebugSettings>) => onChange({ ...value, ...patch });
   const debugDate=new Date();debugDate.setHours(Math.floor((value.timeMinutes??720)/60),(value.timeMinutes??720)%60,0,0);
-  return <section className="settings-group world-debug-settings" aria-labelledby="settings-group-debug">
-    <h2 id="settings-group-debug">{t("画面调试")}</h2>
-    <div className="settings-list">
+  const content=<>
       <div className="setting-row">
-        <div className="setting-name"><span>{t("临时调试世界")}</span><small>{t("关闭后恢复；不改变专注记录")}</small></div>
+        <div className="setting-name"><span>{t("画面调试")}</span><small>{t("关闭后恢复；不改变专注记录")}</small></div>
         <label className="switch-control ios-switch"><input type="checkbox" aria-label={t("临时调试世界")} checked={value.enabled} onChange={() => update({ enabled: !value.enabled })}/></label>
       </div>
-      <Reveal open={value.enabled}>
+      <Reveal open={value.enabled} overflowVisible>
         <div className="setting-row">
           <div className="setting-name"><span>{t("天气")}</span></div>
           <div id="world-debug-weather" className="world-debug-weather">
@@ -49,8 +48,8 @@ export function WorldDebugSettingsPanel({ value, onChange }: {
             <label className="switch-control ios-switch"><input type="checkbox" aria-label={t('指定程度')} checked={value.decayAmount !== null} onChange={() => update({ decayAmount: value.decayAmount === null ? 0.5 : null })}/></label>
           </div>
         </div>
-        <Reveal open={value.decayAmount !== null}><div className="world-debug-decay"><PhysicalSlider label={t('世界调试腐败程度')} value={Math.round((value.decayAmount??0)*100)} commitOnRelease onChange={amount=>update({decayAmount:amount/100})}/></div></Reveal>
+        <Reveal open={value.decayAmount !== null} overflowVisible><div className="world-debug-decay"><PhysicalSlider label={t('世界调试腐败程度')} value={Math.round((value.decayAmount??0)*100)} commitOnRelease onChange={amount=>update({decayAmount:amount/100})}/></div></Reveal>
       </Reveal>
-    </div>
-  </section>;
+  </>;
+  return embedded?<div className="settings-inner-group world-debug-settings">{content}</div>:<section className="settings-group world-debug-settings" aria-labelledby="settings-group-debug"><h2 id="settings-group-debug">{t('画面调试')}</h2><div className="settings-list">{content}</div></section>;
 }

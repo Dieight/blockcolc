@@ -1,4 +1,4 @@
-import { expect, test, type CDPSession } from "@playwright/test";
+import { expect, test, type CDPSession, type Locator } from "@playwright/test";
 import { selectValleyFixture } from './valley-fixture';
 import { observeShadowRequests, readShadowRequests } from './world-shadow-observer';
 
@@ -13,7 +13,7 @@ test("renders the current compact world and supports bounded rotate and pinch ge
   await page.getByRole("button", { name: "开始建造" }).click();
   const canvas = page.getByLabel("项目建筑世界");
   await expect(canvas).toHaveAttribute("data-quality-tier", /^(low|balanced|high)$/);
-  await expect(canvas).toHaveAttribute("data-world-root-members", "terrain,roads,buildingsAndDecorations,worldLightRig,atmosphere");
+  await expect(canvas).toHaveAttribute("data-world-root-members", "terrain,roads,buildingsAndDecorations,worldLightRig,atmosphere,world-animals");
   await expect(canvas).toHaveAttribute("data-initial-reveal-completed-count", "1", { timeout: 20_000 });
   await page.getByRole("button", { name: "重置地图", exact: true }).click();
   // Check the cold-start reveal before replacing its renderer with the valley.
@@ -86,12 +86,9 @@ test("renders the current compact world and supports bounded rotate and pinch ge
   expect(Number(await canvas.getAttribute("data-camera-minimum-distance-ratio"))).toBeCloseTo(0.45, 2);
   await expect(canvas).toHaveAttribute("data-visibility-near-clip-safe", "true");
   await expect(canvas).toHaveAttribute("data-visibility-far-clip-safe", "true");
-  const zoomedInNear = Number(await canvas.getAttribute("data-camera-near"));
-  const zoomedInFar = Number(await canvas.getAttribute("data-camera-far"));
-  const zoomedInNearestTerrain = Number(await canvas.getAttribute("data-visibility-nearest-distance"));
-  const zoomedInFarthestTerrain = Number(await canvas.getAttribute("data-visibility-farthest-distance"));
-  expect(zoomedInNear).toBeLessThanOrEqual(Math.max(0.5, zoomedInNearestTerrain * 0.72) + 0.01);
-  expect(zoomedInFar - zoomedInFarthestTerrain).toBeGreaterThanOrEqual(23.99);
+  const zoomedInClip = await readClipFrame(canvas);
+  expect(zoomedInClip.near).toBeLessThanOrEqual(Math.max(0.5, zoomedInClip.nearest * 0.72) + 0.01);
+  expect(zoomedInClip.far - zoomedInClip.farthest).toBeGreaterThanOrEqual(23.99);
   const zoomed = await canvas.screenshot({ path: testInfo.outputPath("v2-world-pinched.png") });
   expect(Buffer.compare(rotated, zoomed)).not.toBe(0);
 
@@ -116,12 +113,9 @@ test("renders the current compact world and supports bounded rotate and pinch ge
   expect(zoomedOut.byteLength).toBeGreaterThan(2_000);
   await expect(canvas).toHaveAttribute("data-visibility-near-clip-safe", "true");
   await expect(canvas).toHaveAttribute("data-visibility-far-clip-safe", "true");
-  const cameraNear = Number(await canvas.getAttribute("data-camera-near"));
-  const cameraFar = Number(await canvas.getAttribute("data-camera-far"));
-  const nearestTerrain = Number(await canvas.getAttribute("data-visibility-nearest-distance"));
-  const farthestTerrain = Number(await canvas.getAttribute("data-visibility-farthest-distance"));
-  expect(cameraNear).toBeLessThanOrEqual(Math.max(0.5, nearestTerrain * 0.72) + 0.01);
-  expect(cameraFar - farthestTerrain).toBeGreaterThanOrEqual(23.99);
+  const zoomedOutClip = await readClipFrame(canvas);
+  expect(zoomedOutClip.near).toBeLessThanOrEqual(Math.max(0.5, zoomedOutClip.nearest * 0.72) + 0.01);
+  expect(zoomedOutClip.far - zoomedOutClip.farthest).toBeGreaterThanOrEqual(23.99);
 
   expect(Number(await canvas.getAttribute("data-render-calls"))).toBeGreaterThan(0);
   expect(Number(await canvas.getAttribute("data-render-calls"))).toBeLessThan(120);
@@ -166,6 +160,14 @@ test("lets the settlement inspect the same large blueprint closer than its previ
   await expect(world).toHaveAttribute("data-visibility-near-clip-safe", "true");
   await expect(world).toHaveAttribute("data-visibility-far-clip-safe", "true");
 });
+
+async function readClipFrame(canvas: Locator) {
+  return canvas.evaluate(node => {
+    const data = (node as HTMLCanvasElement).dataset;
+    return { near: Number(data.cameraNear), far: Number(data.cameraFar),
+      nearest: Number(data.visibilityNearestDistance), farthest: Number(data.visibilityFarthestDistance) };
+  });
+}
 
 async function touch(
   session: CDPSession,

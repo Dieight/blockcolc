@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { glassMaterialFor, glassRegionFor, type GlassSurfacePreference } from './glass-material';
+import { glassMaterialFor, glassRegionFor, glassNightCeiling, type GlassSurfacePreference } from './glass-material';
 export { glassMaterialFor, glassRegionFor, type GlassSurfacePreference } from './glass-material';
 
 const vertexShader = `varying vec2 vUv;
@@ -12,6 +12,7 @@ uniform vec2 stepUv;
 uniform float saturation;
 uniform float brightness;
 uniform float finishPass;
+uniform float nightCeiling;
 varying vec2 vUv;
 void main() {
   vec3 rgb = vec3(0.0);
@@ -25,6 +26,11 @@ void main() {
   if (finishPass > 0.5) {
     float luminance = dot(rgb, vec3(0.2126, 0.7152, 0.0722));
     rgb = mix(vec3(luminance), rgb, saturation) * brightness;
+    // Compress only bright reflected scenery; no extra backdrop or alpha floor.
+    if (nightCeiling < 0.999) {
+      float peak = max(rgb.r, max(rgb.g, rgb.b));
+      rgb *= min(1.0, nightCeiling / max(0.001, peak));
+    }
   }
   gl_FragColor = vec4(clamp(rgb, 0.0, 1.0), 1.0);
 }`;
@@ -40,7 +46,7 @@ export class GlassWorldCompositor {
   private material = new THREE.ShaderMaterial({
     vertexShader, fragmentShader, depthTest: false, depthWrite: false, toneMapped: false,
     uniforms: { source: { value: this.frame }, stepUv: { value: new THREE.Vector2() },
-      saturation: { value: 1 }, brightness: { value: 1 }, finishPass: { value: 0 } },
+      saturation: { value: 1 }, brightness: { value: 1 }, finishPass: { value: 0 }, nightCeiling: { value: 1 } },
   });
   private preference: GlassSurfacePreference | null = null;
   private failed = false;
@@ -84,7 +90,7 @@ export class GlassWorldCompositor {
     this.horizontal.setSize(1, 1);
   }
 
-  render(bottom: number, right: number): void {
+  render(bottom: number, right: number, night=false): void {
     const preference = this.preference;
     if (!preference?.enabled || preference.reducedTransparency) return;
     if (this.failed) { this.mode = 'css'; return; }
@@ -125,6 +131,7 @@ export class GlassWorldCompositor {
       this.material.uniforms.stepUv!.value.set(0, material.blur * ratio / (3 * region.height));
       this.material.uniforms.saturation!.value = material.saturation;
       this.material.uniforms.brightness!.value = preference.theme === 'dark' ? .92 : material.brightness;
+      this.material.uniforms.nightCeiling!.value = glassNightCeiling(preference.clarity,night);
       this.material.uniforms.finishPass!.value = 1;
       this.renderer.setRenderTarget(null);
       this.renderer.setViewport(region.x / ratio, region.y / ratio, region.width / ratio, region.height / ratio);

@@ -1,3 +1,4 @@
+import { openSecondarySetting } from './settings-controls';
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { chooseDebugWeather } from './world-debug-controls';
 import { mkdir, writeFile } from 'node:fs/promises';
@@ -218,7 +219,7 @@ test('captures WebGL link, error, and context state at natural flower routing st
   };
   await mark('world-start');
   await page.getByRole('button', { name: '开始建造', exact: true }).click();
-  await page.getByRole('button', { name: '设置', exact: true }).click();
+  await page.getByRole('button', { name: '设置', exact: true }).click(); await openSecondarySetting(page,'方块材质包');
   await page.getByRole('group', { name: '聚落环境', exact: true }).getByRole('button', { name: '山谷', exact: true }).click();
   await page.getByLabel('临时调试世界', { exact: true }).check();
   await page.getByLabel('指定时间', { exact: true }).check();
@@ -244,11 +245,11 @@ test('captures WebGL link, error, and context state at natural flower routing st
   observations.push({ stage: 'no-pack-far', route: await routeSnapshot(canvas) });
   for (const partial of [false, true]) {
     const packStage = partial ? 'partial-pack' : 'full-pack';
-    await page.getByRole('button', { name: '设置', exact: true }).click();
+    await page.getByRole('button', { name: '设置', exact: true }).click(); await openSecondarySetting(page,'方块材质包');
     await page.getByLabel('导入 Java 资源包 ZIP').setInputFiles({
       name: `synthetic-${partial ? 'partial' : 'full'}-flower.zip`, mimeType: 'application/zip', buffer: syntheticFlowerPack(partial),
     });
-    await expect(page.locator('.resource-pack-panel .backup-notice')).toContainText('已导入并启用');
+    await expect(page.locator('.resource-pack-setting .backup-notice')).toContainText('已导入并启用');
     await mark(`${packStage}-adopt`);
     await page.getByRole('button', { name: '计时', exact: true }).click();
     await expect(canvas).toHaveAttribute('data-active-resource-pack-id', /^sha256:/);
@@ -264,8 +265,8 @@ test('captures WebGL link, error, and context state at natural flower routing st
     await expectProjectedLods(canvas);
   }
   await mark('restore-original-pack');
-  await page.getByRole('button', { name: '设置', exact: true }).click();
-  await page.locator('.resource-pack-original').getByRole('button', { name: '使用', exact: true }).click();
+  await page.getByRole('button', { name: '设置', exact: true }).click(); await openSecondarySetting(page,'方块材质包');
+  await page.locator('.resource-pack-current').getByRole('button', { name: '使用', exact: true }).click();
   await page.getByRole('button', { name: '计时', exact: true }).click();
   await expect.poll(async () => (await routeSnapshot(canvas)).pack).toBe(0);
   observations.push({ stage: 'restored-original-full', route: await routeSnapshot(canvas) });

@@ -17,4 +17,10 @@ describe('button glyph motion audit', () => {
     expect(page.keyframes.at(-1)?.transform).toContain('rotateX(180deg)');
     expect(page.keyframes.at(-1)?.opacity).toBe(0);
   });
+  it('opens pixel corners away from the center, without transforming the control',()=>{
+    for(const part of ['corner-tl','corner-tr','corner-bl','corner-br','core'])expect(iconPartMotion('expand',part)?.duration).toBe(ICON_MOTION_MS);
+    expect(iconPartMotion('expand','corner-tl')!.keyframes[1]!.transform).toBe('translate(-1px,-1px)');
+    expect(iconPartMotion('expand','corner-br')!.keyframes[1]!.transform).toBe('translate(1px,1px)');
+    expect(iconPartMotion('expand')).toBeNull();
+  });
 });

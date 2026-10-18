@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import {openSecondarySetting} from './settings-controls';
 import { openBlueprintLibrary, openImportedBlueprints } from './blueprint-library-controls';
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
@@ -124,6 +125,7 @@ test("habit plans support an isolated end-time schedule without the finite-task 
   const focusMinutes = page.getByLabel("普通任务专注分钟");
   await focusMinutes.fill("2");
   await focusMinutes.press("Enter");
+  await openSecondarySetting(page,'习惯任务');
   const habitMinutes = page.getByLabel("习惯任务专注分钟");
   await habitMinutes.fill("2");
   await habitMinutes.press("Enter");
@@ -193,6 +195,7 @@ test("a locked habit end-time lane keeps its host after another project becomes 
   await page.getByRole("button", { name: "设置" }).click();
   await page.getByLabel("普通任务专注分钟").fill("1");
   await page.getByLabel("普通任务专注分钟").press("Enter");
+  await openSecondarySetting(page,'习惯任务');
   await page.getByLabel("习惯任务专注分钟").fill("1");
   await page.getByLabel("习惯任务专注分钟").press("Enter");
   await page.getByLabel("每轮休息分钟").fill("0");
@@ -257,6 +260,7 @@ test("the native live-update action skips an active habit break", async ({ page 
   await page.clock.install({ time: new Date("2026-08-03T08:00:00Z") });
   await createDefaultProject(page);
   await page.getByRole("button", { name: "设置" }).click();
+  await openSecondarySetting(page,'习惯任务');
   const habitMinutes = page.getByLabel("习惯任务专注分钟");
   await habitMinutes.fill("1");
   await habitMinutes.press("Enter");

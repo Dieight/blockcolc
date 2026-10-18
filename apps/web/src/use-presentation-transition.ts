@@ -27,6 +27,12 @@ export function usePresentationTransition(immersive: boolean) {
       }
     }
     if (!root || !world) return;
+    if(root.dataset.modeTransitionActive==='true'){
+      previous.current={immersive,rect:world.getBoundingClientRect()};
+      animations.current.forEach(animation=>animation.cancel());
+      root.dataset.presentationTransition='complete';
+      return;
+    }
     const next = world.getBoundingClientRect();
     // Inactive routes keep the world mounted but have no layout. Do not let a
     // settings visit replace the last visible frame with a zero-sized rectangle.

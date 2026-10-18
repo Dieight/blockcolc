@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import {openSecondarySetting} from './settings-controls';
 import { execute, type DomainCommand, type DomainState } from '@blockcolc/domain';
 import { choosePlanEndTime } from './focus-plan-controls';
 import { executeAndReloadPersistedCommand, readPersistedDomainState } from './persisted-domain-state';
@@ -88,10 +89,10 @@ test('v256 plan menu omits completed tasks and starting uses the unfinished choi
     focusSessionIds: ['completed-step-round'], progressBasisPoints: 10000 }, Date.parse('2026-10-03T08:00:01.002Z'));
   await page.getByRole('button', { name: '调整本次计划' }).click();
   const sheet = page.getByRole('dialog', { name: '安排下一轮' });
-  await sheet.locator('.choice-menu-trigger').click();
-  await expect(sheet.getByRole('option', { name: new RegExp(done.title) })).toHaveCount(0);
-  await expect(sheet.getByRole('option', { name: /剩余施工/ })).toBeVisible();
-  await sheet.getByRole('option', { name: /剩余施工/ }).click();
+  const tasks=sheet.locator('.focus-task-options');
+  await expect(tasks.getByRole('button', { name: new RegExp(done.title) })).toHaveCount(0);
+  await expect(tasks.getByRole('button', { name: /剩余施工/ })).toBeVisible();
+  await tasks.getByRole('button', { name: /剩余施工/ }).click();
   await sheet.getByRole('button', { name: '确认计划' }).click();
   await expect(sheet).toHaveCount(0);
   await page.getByRole('button', { name: '开始 1 轮', exact: true }).click();
@@ -102,6 +103,7 @@ test('v256 focus weekdays persist, resist an empty week and recover from save fa
   test.setTimeout(60_000);
   await setup(page);
   await page.getByRole('button', { name: '设置', exact: true }).click();
+  await openSecondarySetting(page,'保护规则与计划日');
   const row = page.locator('.planned-days-setting');
   const days = row.getByRole('group', { name: '计划专注日' });
   const prior = (await readPersistedDomainState(page)).state.calendar;
@@ -130,6 +132,7 @@ test('v256 focus weekdays persist, resist an empty week and recover from save fa
   await page.screenshot({ path: info.outputPath('v256-planned-days.png'), fullPage: true });
   await page.reload();
   await page.getByRole('button', { name: '设置', exact: true }).click();
+  await openSecondarySetting(page,'保护规则与计划日');
   await expect(row).toContainText('每周 1 天');
   await expect(days.getByRole('button', { name: '一', exact: true })).toBeDisabled();
 });
@@ -188,7 +191,7 @@ test('v256 all 36 blueprint entries survive a reload and the UI advertises the s
   await executeAndReloadPersistedCommand(page, state, command(35), Date.parse('2026-10-03T08:00:01Z'));
   await page.getByRole('button', { name: '设置', exact: true }).click();
   const library = page.locator('.blueprint-library');
-  await library.getByRole('button', {name:/所有图纸/}).click();
+  await library.getByRole('button', {name:/蓝图库/}).click();
   await expect(library.locator('.library-toolbar small')).toHaveText('36/36');
   const imported = library.locator('details').filter({has:page.locator('summary',{hasText:'自添加图纸'})});
   await imported.locator('summary').click();

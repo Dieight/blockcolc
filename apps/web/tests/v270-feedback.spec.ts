@@ -14,15 +14,15 @@ async function setup(page:Page,preferences:Record<string,unknown>={}){
 test('animated library preview lives outside settings layout and closes without reopening',async({page},info)=>{
   test.setTimeout(90000);const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));await setup(page);
   await page.getByRole('button',{name:'设置',exact:true}).click();const library=page.locator('.blueprint-library');
-  await library.getByRole('button',{name:/所有图纸/}).click();await library.locator('details').first().locator('summary').click();await library.locator('details').first().getByRole('button').first().click();
+  await library.getByRole('button',{name:/蓝图库/}).click();await library.locator('details').first().locator('summary').click();await library.locator('details').first().getByRole('button').first().click();
   const modal=page.getByRole('dialog',{name:'蓝图预览'});await expect(modal.locator('canvas')).toBeVisible();
   expect(await modal.evaluate(el=>el.parentElement?.parentElement===document.body)).toBe(true);
   await modal.locator('h2').click();await expect(modal).toBeVisible();
   await modal.getByRole('button',{name:'关闭蓝图预览'}).click();await expect(modal).toHaveCount(0);
   await library.locator('details').first().getByRole('button').first().click();await expect(modal).toBeVisible();await page.keyboard.press('Escape');await expect(modal).toHaveCount(0);
-  await library.getByRole('button',{name:/所有图纸/}).click();await expect(library.locator('.content-reveal')).toHaveAttribute('inert','');
+  await library.getByRole('button',{name:/蓝图库/}).click();await expect(library.locator(':scope>div>.content-reveal')).toHaveAttribute('inert','');
   const transforms=await page.locator('.app-shell,main,.settings-screen').evaluateAll(elements=>elements.map(el=>getComputedStyle(el).transform));expect(transforms.every(t=>t==='none')).toBe(true);
-  await library.getByRole('button',{name:/所有图纸/}).click();await library.locator('summary').filter({hasText:'补充图纸'}).click();
+  await library.getByRole('button',{name:/蓝图库/}).click();await library.locator('summary').filter({hasText:'补充图纸'}).click();
   await library.scrollIntoViewIfNeeded();await library.evaluate(el=>Promise.all(el.getAnimations({subtree:true}).map(animation=>animation.finished.catch(()=>{}))));
   await page.screenshot({path:info.outputPath('settings-library-integrated.png')});expect(errors).toEqual([]);
 });
@@ -119,6 +119,15 @@ test('both reset controls use the same default angles while ordinary reset retai
   const angles=()=>canvas.evaluate(el=>[el.dataset.cameraAzimuth,el.dataset.cameraPitchDegrees]);const selected=await angles();
   await map.click();await expect(map).toHaveCount(0);await expect.poll(angles).toEqual(selected);
   const camera=()=>canvas.evaluate(el=>[el.dataset.cameraDistance,el.dataset.cameraTargetX,el.dataset.cameraTargetY,el.dataset.cameraTargetZ,...[el.dataset.cameraAzimuth,el.dataset.cameraPitchDegrees]]);const defaults=await camera();
-  const box=(await canvas.boundingBox())!;await page.mouse.move(box.x+box.width*.45,box.y+box.height*.5);await page.mouse.down();await page.mouse.move(box.x+box.width*.7,box.y+box.height*.65,{steps:12});await page.mouse.up();
+  // The accessible building hit target can cover the middle of a compact
+  // world. Start a real drag on exposed canvas, not that sibling button.
+  const point=await canvas.evaluate(el=>{
+    const b=el.getBoundingClientRect();
+    for(const fy of [.35,.5,.7])for(const fx of [.15,.3,.45,.65]){
+      const x=b.x+b.width*fx,y=b.y+b.height*fy;
+      if(document.elementFromPoint(x,y)===el)return{x,y,toX:Math.min(b.right-12,x+b.width*.25),toY:Math.min(b.bottom-12,y+20)};
+    }return null;
+  });expect(point).not.toBeNull();
+  await page.mouse.move(point!.x,point!.y);await page.mouse.down();await page.mouse.move(point!.toX,point!.toY,{steps:12});await page.mouse.up();
   await expect.poll(angles).not.toEqual(selected);await view.click();await expect.poll(camera).toEqual(defaults);
 });

@@ -1,8 +1,8 @@
 import type { StateRepository, DailyBackupRepository, DailyBackupCollection, DailyBackupSummary } from "@blockcolc/application";
-import { assertISODate, localDateOf, type DomainState } from "@blockcolc/domain";
+import { assertISODate, createInitialState, localDateOf, type DomainState } from "@blockcolc/domain";
 import { cloneAndParseState, createBackupEnvelope, parseBackup, previewOf, stateSummary } from "./codec.js";
 import { DAILY_BACKUP_BLOCK_STORE, DAILY_BACKUP_STORE, DAILY_BACKUP_MAX_BYTES, DAILY_BACKUP_RETENTION_DAYS,
-  prepareDailyBackup, parseDailyManifest, expandDailyBackup, retainedDailyBackups, dailyBackupStoredBytes, dailyBackupSummary,
+  prepareDailyBackup, parseDailyManifest, expandDailyBackupFromReader, retainedDailyBackups, dailyBackupStoredBytes, dailyBackupSummary,
   type DailyBackupBlock, type DailyBackupManifest } from './daily-backups.js';
 import type {
   DeleteActiveProjectRollbackReason,
@@ -48,6 +48,15 @@ export class IndexedDbStateRepository implements StateRepository, DailyBackupRep
 
   async load(): Promise<{ state: DomainState | null; revision: number }> {
     return this.readSnapshot();
+  }
+
+  async replacementRevision(): Promise<number> {
+    const db = await this.database();
+    const tx = db.transaction(METADATA_STORE, 'readonly'), done = transactionDone(tx);
+    const marker = await requestResult<{ revision: number } | undefined>(tx.objectStore(METADATA_STORE).get('last-domain-replacement'));
+    await done;
+    if (marker && (!Number.isSafeInteger(marker.revision) || marker.revision < 0)) throw new Error('Invalid data replacement marker');
+    return marker?.revision ?? 0;
   }
 
   async loadIfChanged(knownRevision: number): Promise<{ state: DomainState | null; revision: number } | null> {
@@ -101,6 +110,27 @@ export class IndexedDbStateRepository implements StateRepository, DailyBackupRep
     }
   }
 
+  async saveQuickNotes(notes: DomainState['quickNotes'], expectedRevision: number): Promise<number> {
+    assertExpectedRevision(expectedRevision);
+    // Validate this bounded slice once, without reparsing every unchanged voxel.
+    // The transaction reads its own world facts and only replaces the note list.
+    const safeNotes = cloneAndParseState({ ...createInitialState(), quickNotes: notes }).quickNotes;
+    const db = await this.database();
+    const tx = db.transaction(APP_STATE_STORE, 'readwrite'), done = transactionDone(tx);
+    try {
+      const store = tx.objectStore(APP_STATE_STORE);
+      const current = await requestResult<CurrentStateRecord | undefined>(store.get(CURRENT_KEY));
+      if ((current?.revision ?? 0) !== expectedRevision) throw new StorageConflictError(expectedRevision, current?.revision ?? 0);
+      if (!current?.state || current.state.schemaVersion !== 14) throw new Error('Reload before saving notes');
+      const revision = current.revision + 1;
+      store.put({ ...current, revision, state: { ...current.state, quickNotes: safeNotes } } satisfies CurrentStateRecord);
+      await done;
+      return revision;
+    } catch (error) {
+      tx.abort(); await done.catch(() => undefined); throw error;
+    }
+  }
+
   async exportBackup(): Promise<string> {
     const { state } = await this.readSnapshot();
     if (state === null) throw new Error("Cannot export an empty database");
@@ -129,6 +159,7 @@ export class IndexedDbStateRepository implements StateRepository, DailyBackupRep
       if (options.injectFailureAfterRollbackWrite) throw new Error("Injected import replacement failure");
       const nextRevision = actualRevision + 1;
       tx.objectStore(APP_STATE_STORE).put({ id: CURRENT_KEY, revision: nextRevision, state: cloneAndParseState(incoming.payload) } satisfies CurrentStateRecord);
+      tx.objectStore(METADATA_STORE).put({ id: 'last-domain-replacement', revision: nextRevision });
       await done;
       return { rollbackBackupId: rollback.id, revision: nextRevision };
     } catch (error) {
@@ -204,6 +235,7 @@ export class IndexedDbStateRepository implements StateRepository, DailyBackupRep
       const nextRevision = actualRevision + 1;
       const state = backup.state === null ? null : cloneAndParseState(backup.state);
       tx.objectStore(APP_STATE_STORE).put({ id: CURRENT_KEY, revision: nextRevision, state } satisfies CurrentStateRecord);
+      tx.objectStore(METADATA_STORE).put({ id: 'last-domain-replacement', revision: nextRevision });
       await done;
       return { rollbackBackupId: beforeRestore.id, revision: nextRevision };
     } catch (error) {
@@ -221,12 +253,13 @@ export class IndexedDbStateRepository implements StateRepository, DailyBackupRep
       const db = await this.database();
       const read = db.transaction([APP_STATE_STORE, DAILY_BACKUP_STORE], 'readonly');
       const readDone = transactionDone(read);
-      const [current, existing] = await Promise.all([
+      const [current, rawPrior] = await Promise.all([
         requestResult<CurrentStateRecord | undefined>(read.objectStore(APP_STATE_STORE).get(CURRENT_KEY)),
-        requestResult<DailyBackupManifest | undefined>(read.objectStore(DAILY_BACKUP_STORE).get(date)),
+        requestResult<DailyBackupManifest[]>(read.objectStore(DAILY_BACKUP_STORE).getAll()),
       ]);
       await readDone;
-      if (existing) return await this.compactDailyBackupHistory();
+      const prior = rawPrior.map(parseDailyManifest).sort((a, b) => b.date.localeCompare(a.date));
+      if (prior.some(item => item.date >= date)) return await this.compactDailyBackupHistory();
       if (!current?.state) return null;
       const state = cloneAndParseState(current.state);
       const timeZone = state.calendar.timeZone;
@@ -235,6 +268,13 @@ export class IndexedDbStateRepository implements StateRepository, DailyBackupRep
       // workspace can still receive its first history point on the next idle turn.
       if (!state.projects.some(project => localDateOf(project.createdAt, timeZone) <= date)
         && !state.habitBuildings.some(building => localDateOf(building.completedAt, timeZone) <= date)) return null;
+      // Every pruning path validates the old root first, including the first
+      // capture on a new day after upgrading a multi-date archive. Hashing and
+      // domain validation finish outside the write transaction.
+      if (prior[0]) {
+        const verified = await this.readDailyBackup(prior[0].id);
+        if (JSON.stringify(verified.manifest) !== JSON.stringify(prior[0])) continue;
+      }
       const prepared = await prepareDailyBackup(state, date, this.now().toISOString(), current.revision);
       const tx = db.transaction([APP_STATE_STORE, DAILY_BACKUP_STORE, DAILY_BACKUP_BLOCK_STORE], 'readwrite');
       const done = transactionDone(tx);
@@ -242,17 +282,18 @@ export class IndexedDbStateRepository implements StateRepository, DailyBackupRep
         const actual = await requestResult<CurrentStateRecord | undefined>(tx.objectStore(APP_STATE_STORE).get(CURRENT_KEY));
         assertMatchingRevision(current.revision, actual?.revision ?? 0);
         const manifests = tx.objectStore(DAILY_BACKUP_STORE), content = tx.objectStore(DAILY_BACKUP_BLOCK_STORE);
-        const old = (await requestResult<DailyBackupManifest[]>(manifests.getAll())).map(parseDailyManifest);
-        const duplicate = old.find(item => item.id === date);
-        if (duplicate) { await done; return await this.compactDailyBackupHistory(); }
-        if(old.some(item=>item.date>date)){await done;return await this.compactDailyBackupHistory();}
+        const old = (await requestResult<DailyBackupManifest[]>(manifests.getAll())).map(parseDailyManifest)
+          .sort((a, b) => b.date.localeCompare(a.date));
+        // Another tab may have captured or compacted while we hashed. Only
+        // reuse the immutable blocks of the root that was actually validated.
+        if (JSON.stringify(old) !== JSON.stringify(prior)) { await done; continue; }
         const retained = retainedDailyBackups([...old, prepared.manifest], date);
         if (!retained.some(item => item.id === date)) throw new Error('本次合并备份超出 200 MiB 或早于现存备份；原有备份和当前记录未更改。');
         const keptIds = new Set(retained.map(item => item.id));
         const keptBlocks = new Set(retained.flatMap(item => item.blocks.map(block => block.id)));
         const existingKeys=await requestResult<IDBValidKey[]>(content.getAllKeys());
-        const existingIds=new Set(existingKeys.map(String));
-        for (const block of prepared.blocks) if(!existingIds.has(block.id))content.put(block);
+        const verifiedIds = new Set(prior[0]?.blocks.map(block => block.id) ?? []);
+        for (const block of prepared.blocks) if (!verifiedIds.has(block.id)) content.put(block);
         manifests.put(prepared.manifest);
         for (const item of old) if (!keptIds.has(item.id)) manifests.delete(item.id);
         // Keys, not getAll(), avoid cloning up to 200 MiB of contents just to prune.
@@ -290,15 +331,15 @@ export class IndexedDbStateRepository implements StateRepository, DailyBackupRep
         .sort((a,b) => b.date.localeCompare(a.date));
       await readDone;
       if (!prior[0]) return null;
-      if (prior.length === 1) return dailyBackupSummary(prior[0]);
       const latest = prior[0];
-      await this.readDailyBackup(latest.id); // Missing/corrupt contents preserve every old index.
+      const verified = await this.readDailyBackup(latest.id); // A single corrupt root is not a successful capture either.
+      if (JSON.stringify(verified.manifest) !== JSON.stringify(latest)) continue;
       const tx = db.transaction([DAILY_BACKUP_STORE, DAILY_BACKUP_BLOCK_STORE], 'readwrite');
       const done = transactionDone(tx), manifests = tx.objectStore(DAILY_BACKUP_STORE), content = tx.objectStore(DAILY_BACKUP_BLOCK_STORE);
       try {
         const current = (await requestResult<DailyBackupManifest[]>(manifests.getAll())).map(parseDailyManifest)
           .sort((a,b) => b.date.localeCompare(a.date));
-        if (current[0]?.id !== latest.id || current[0]?.stateBlock !== latest.stateBlock) { await done; continue; }
+        if (JSON.stringify(current) !== JSON.stringify(prior)) { await done; continue; }
         const referenced = new Set(latest.blocks.map(block => block.id));
         for (const old of current.slice(1)) manifests.delete(old.id);
         for (const key of await requestResult<IDBValidKey[]>(content.getAllKeys())) if (!referenced.has(String(key))) content.delete(key);
@@ -315,14 +356,19 @@ export class IndexedDbStateRepository implements StateRepository, DailyBackupRep
   private async readDailyBackup(backupId: string): Promise<{ state: DomainState; manifest: DailyBackupManifest }> {
     assertISODate(backupId);
     const db = await this.database();
-    const tx = db.transaction([DAILY_BACKUP_STORE, DAILY_BACKUP_BLOCK_STORE], 'readonly');
+    const tx = db.transaction(DAILY_BACKUP_STORE, 'readonly');
     const done = transactionDone(tx);
     const raw = await requestResult<DailyBackupManifest | undefined>(tx.objectStore(DAILY_BACKUP_STORE).get(backupId));
     if (!raw) { await done; throw new Error('这份每日留档已不存在，当前记录未更改。'); }
     const manifest = parseDailyManifest(raw);
-    const blocks = await Promise.all(manifest.blocks.map(reference => requestResult<DailyBackupBlock | undefined>(tx.objectStore(DAILY_BACKUP_BLOCK_STORE).get(reference.id))));
     await done;
-    return { state: await expandDailyBackup(manifest, blocks), manifest };
+    const state = await expandDailyBackupFromReader(manifest, async id => {
+      const read = db.transaction(DAILY_BACKUP_BLOCK_STORE, 'readonly'), readDone = transactionDone(read);
+      const block = await requestResult<DailyBackupBlock | undefined>(read.objectStore(DAILY_BACKUP_BLOCK_STORE).get(id));
+      await readDone;
+      return block;
+    });
+    return { state, manifest };
   }
 
   async exportDailyBackup(backupId: string): Promise<string> {
@@ -347,6 +393,7 @@ export class IndexedDbStateRepository implements StateRepository, DailyBackupRep
       await pruneRollbackBackups(rollbackStore, tx.objectStore(METADATA_STORE));
       const revision = expectedRevision + 1;
       store.put({ id: CURRENT_KEY, revision, state } satisfies CurrentStateRecord);
+      tx.objectStore(METADATA_STORE).put({ id: 'last-domain-replacement', revision });
       await done;
       return { rollbackBackupId: rollback.id, revision };
     } catch (error) {

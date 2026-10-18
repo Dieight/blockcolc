@@ -1,0 +1,10 @@
+/* The resident scene is reframed once; the short-lived cover changes only its viewport. */
+.mode-transition{position:fixed;inset:0;z-index:10000;overflow:hidden;pointer-events:auto;contain:strict}
+.mode-transition__world,.mode-transition__snapshot{position:absolute;inset:0;pointer-events:none}
+.mode-transition__world{overflow:hidden;will-change:clip-path}
+.mode-transition__world>canvas{display:block;max-width:none;max-height:none;pointer-events:none;will-change:transform}
+.mode-transition__seam{position:absolute;height:3px;background:repeating-linear-gradient(90deg,transparent 0 8px,var(--focus) 8px 16px,transparent 16px 32px);pointer-events:none}
+.mode-transition__pending{position:absolute;right:max(20px,var(--safe-right));bottom:calc(88px + var(--safe-bottom));padding:8px 12px;color:var(--ink);background:var(--surface);border:1px solid var(--line);font-size:.75rem}
+.mode-transition__pending[hidden]{display:none}
+.task-switch-action [data-pixel-icon='expand']{width:24px;height:24px}
+@media(prefers-reduced-motion:reduce){.mode-transition{display:none}}

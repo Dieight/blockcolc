@@ -47,7 +47,7 @@ test('numeric settings have no idle frame in either theme, but keep an accessibl
     for(const style of idle)expect(style).toEqual({background:'rgba(0, 0, 0, 0)',border:'rgba(0, 0, 0, 0)'});
     await inputs.first().focus();
     expect(await inputs.first().evaluate(node=>getComputedStyle(node).borderTopColor)).not.toBe('rgba(0, 0, 0, 0)');
-    await page.getByRole('heading',{name:'计时',exact:true}).click();
+    await page.getByRole('heading',{name:'计时与专注',exact:true}).click();
     await expect(inputs.first()).toHaveCSS('background-color','rgba(0, 0, 0, 0)');
     await inputs.first().screenshot({path:info.outputPath(`numeric-${theme}.png`)});
   }

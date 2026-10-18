@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import {openSecondarySetting} from './settings-controls';
 import { readFileSync } from 'node:fs';
 import { finishPaintedReportReceipt, startNextRound } from './focus-plan-controls';
 
@@ -59,7 +60,9 @@ test('one-round early completion records the task and ends the plan without a br
   await expect(page.getByLabel('项目建筑世界')).toHaveAttribute('data-construction-pulse-count', '0');
   await expect(page.getByLabel('项目建筑世界')).toHaveAttribute('data-continuous-rendering', 'false');
   await expect(page.getByRole('button', { name: '开始 1 轮' })).toBeVisible();
-  await expect(page.locator('.workbench-context small')).toContainText('今日 1 / 8 轮');
+  await expect(page.locator('.workbench-context small')).not.toContainText('今日');
+  await page.getByRole('button',{name:'任务',exact:true}).click();
+  await expect(page.locator('.daily-goal-tally')).toContainText('1 / 8');
   await page.getByRole('button', { name: '统计' }).click();
   const firstUnlockDialog = page.getByRole('dialog', { name: '新的成就' });
   await expect(firstUnlockDialog).toBeVisible();
@@ -264,9 +267,9 @@ test('keeps the global daily goal above the construction queue and in a secondar
   await page.getByRole('button', { name: '调整今日目标' }).click();
   const dialog = page.getByRole('dialog', { name: '调整今日目标' });
   await expect(dialog).toBeVisible();
-  await expect(dialog.getByRole('switch')).toBeVisible();
+  await expect(dialog.getByRole('switch')).toHaveCount(0);
   await expect(dialog.getByLabel('今日目标次数')).toHaveValue('8');
-  await expect(dialog.getByRole('switch')).toBeChecked();
+  await expect(dialog.getByLabel('今日目标次数')).toBeEnabled();
   await expect(dialog.getByRole('button', { name: '保存' })).toHaveCount(0);
   await dialog.getByRole('button', { name: '关闭今日目标' }).click();
   await expect(dialog).toBeHidden();
@@ -277,10 +280,9 @@ test('keeps routine task lists compact and exposes editing only on demand', asyn
   await page.getByRole('button', { name: '任务', exact: true }).click();
 
   const rows = page.locator('.task-editor-row');
-  await expect(rows).toHaveCount(1);
-  await expect(page.getByRole('button', { name: '后续任务 2 项' })).toBeVisible();
+  await expect(rows).toHaveCount(3);
+  await expect(page.getByRole('button', { name: '后续任务 2 项' })).toHaveCount(0);
   await expect(page.getByLabel('新增小任务')).toHaveCount(0);
-  await page.getByRole('button', { name: '后续任务 2 项' }).click();
   await expect(rows).toHaveCount(3);
   await rows.nth(1).dblclick();
   await expect(rows.nth(1).getByRole('textbox', { name: '小任务名称' })).toBeVisible();
@@ -347,6 +349,7 @@ test('about page exposes local-first, repository and manual update information',
 test('planned focus days can be changed and persist locally', async ({ page }, testInfo) => {
   await createDefaultProject(page);
   await page.getByRole('button', { name: '设置' }).click();
+  await openSecondarySetting(page,'保护规则与计划日');
   const days = page.getByRole('group', { name: '计划专注日' });
   const monday = days.getByRole('button', { name: '一' });
   const saturday = days.getByRole('button', { name: '六' });
@@ -356,6 +359,7 @@ test('planned focus days can be changed and persist locally', async ({ page }, t
   await expect(monday).toHaveAttribute('aria-pressed', 'false');
   await page.reload();
   await page.getByRole('button', { name: '设置' }).click();
+  await openSecondarySetting(page,'保护规则与计划日');
   await expect(page.getByRole('group', { name: '计划专注日' }).getByRole('button', { name: '一' })).toHaveAttribute('aria-pressed', 'false');
   await page.screenshot({ path: testInfo.outputPath('planned-focus-days.png'), fullPage: true });
 });

@@ -25,12 +25,12 @@ const placements = layoutWorlds(snapshots);
 const roads = roadCellsForVillage(placements);
 
 for (const seed of seeds) {
-  const versions = [3, 4].map((terrainGenerationVersion) => {
+  const versions = [4].map((terrainGenerationVersion) => {
     const startedAt = performance.now();
     const terrain = createSteppedTerrainData(placements, roads, [], undefined, {
       environmentStyle: "natural-valley",
       worldSeed: seed,
-      terrainGenerationVersion: terrainGenerationVersion as 3 | 4,
+      terrainGenerationVersion: terrainGenerationVersion as 4,
     });
     const surfaces = analyzeSurfaces(terrain);
     return {

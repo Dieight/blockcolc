@@ -1,3 +1,22 @@
+.focus-task-picker{margin:16px 0;color:var(--ink)}
+.focus-task-picker>h3{font-size:.875rem;margin:0 0 8px;font-weight:600}
+.focus-task-project{border-top:1px solid var(--reading-glass-border)}
+.focus-task-project>summary{list-style:none;min-height:52px;display:flex;align-items:center;gap:10px;cursor:pointer}
+.focus-task-project>summary::-webkit-details-marker{display:none}
+.focus-task-project>summary>span{min-width:0;flex:1}
+.focus-task-project>summary>svg:last-child{transition:rotate .25s ease;flex:none}
+.focus-task-project[data-expanded='true']>summary>svg:last-child{rotate:180deg}
+@media(prefers-reduced-motion:reduce){.focus-task-project>summary>svg:last-child{transition:none}}
+.focus-task-project strong,.focus-task-project small{display:block;overflow-wrap:anywhere}
+.focus-task-project strong{font-size:1rem}.focus-task-project small{font-size:.75rem;line-height:1.4;margin-top:3px}
+.focus-task-habit{width:100%;display:flex;align-items:center;gap:10px;min-height:60px;padding:8px 0;border:0;border-top:1px solid var(--reading-glass-border);border-radius:0;background:transparent;color:var(--ink);text-align:left}
+.focus-task-habit>span{flex:1;min-width:0}.focus-task-habit>svg{flex:none}
+.focus-task-habit[aria-pressed='true']{box-shadow:inset 2px 0 0 currentColor}
+.focus-task-habit:disabled{opacity:.55}
+.focus-task-options{padding:0 0 8px 28px;display:grid;gap:2px}
+.focus-task-options>button{display:flex;align-items:center;gap:8px;justify-content:space-between;min-height:48px;padding:8px 10px;border:0;background:transparent;text-align:left;color:var(--ink);font-size:.875rem;line-height:1.4}
+.focus-task-options>button[aria-pressed='true']{box-shadow:inset 2px 0 0 currentColor}
+.focus-task-options>button:disabled{opacity:.55}
 /* End actions use fixed functional glass, independent of the timer band's clarity. */
 .focus-end-backdrop{background:rgb(10 18 14 / .16)}
 .end-focus-dialog{position:relative;padding-top:24px}
@@ -24,6 +43,10 @@
 @media(max-width:480px){.interruption-options{grid-template-columns:1fr}.interruption-options button:last-child{grid-column:auto}}
 
 /* Functional sheets have fixed clarity, independent of the focus setting. */
+@media(prefers-reduced-motion:no-preference){
+  .dialog-backdrop :is(.about-dialog,.focus-plan-sheet,.daily-goal-sheet,.tutorial-sheet,.library-preview-dialog,.end-focus-dialog,.minimal-end-sheet):not(.is-leaving){animation:sheet-rise .28s cubic-bezier(.2,.75,.25,1) backwards}
+}
+@keyframes sheet-rise{from{opacity:0;translate:0 28px}to{opacity:1;translate:0 0}}
 .edge-sheet-backdrop :is(.about-dialog,.focus-plan-sheet,.daily-goal-sheet,.tutorial-sheet,.library-preview-dialog,.end-focus-dialog){background:var(--sheet-glass-background);backdrop-filter:var(--sheet-glass-filter);-webkit-backdrop-filter:var(--sheet-glass-filter);border-color:var(--sheet-glass-border);box-shadow:var(--sheet-glass-shadow);border-radius:0}
 .about-dialog .update-download{display:inline-flex;align-items:center;gap:7px;min-height:44px;color:var(--ink)}
 @media(max-width:699px){

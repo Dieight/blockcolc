@@ -1,3 +1,4 @@
+import { openSecondarySetting } from './settings-controls';
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { chooseDebugWeather } from './world-debug-controls';
 import { syntheticFlowerPack } from './synthetic-flower-pack';
@@ -70,7 +71,7 @@ for (const environment of [
     });
     await page.goto('/');
     await page.getByRole('button', { name: '开始建造', exact: true }).click();
-    await page.getByRole('button', { name: '设置', exact: true }).click();
+    await page.getByRole('button', { name: '设置', exact: true }).click(); await openSecondarySetting(page,'方块材质包');
     await page.getByRole('group', { name: '聚落环境', exact: true }).getByRole('button', { name: environment.label, exact: true }).click();
     await page.getByLabel('临时调试世界', { exact: true }).check();
     await page.getByLabel('指定时间', { exact: true }).check();
@@ -89,12 +90,12 @@ for (const environment of [
 
     const observations: unknown[] = [{ stage: 'original', ...initial }];
     for (const partial of [false, true]) {
-      await page.getByRole('button', { name: '设置', exact: true }).click();
+      await page.getByRole('button', { name: '设置', exact: true }).click(); await openSecondarySetting(page,'方块材质包');
       await page.getByLabel('导入 Java 资源包 ZIP').setInputFiles({
         name: partial ? 'synthetic-partial-flower.zip' : 'synthetic-full-flower.zip',
         mimeType: 'application/zip', buffer: syntheticFlowerPack(partial),
       });
-      await expect(page.locator('.resource-pack-panel .backup-notice')).toContainText('已导入并启用');
+      await expect(page.locator('.resource-pack-setting .backup-notice')).toContainText('已导入并启用');
       await page.getByRole('button', { name: '计时', exact: true }).click();
       await expect(canvas).toHaveAttribute('data-active-resource-pack-id', /^sha256:/);
       await expect.poll(async () => (await routeSnapshot(canvas)).pack, { timeout: 20_000 }).toBeGreaterThan(0);
@@ -123,8 +124,8 @@ for (const environment of [
       await expectProjectedLods(canvas);
       expect((await routeSnapshot(canvas)).rebuilds).toBe(rebuilds);
     }
-    await page.getByRole('button', { name: '设置', exact: true }).click();
-    await page.locator('.resource-pack-original').getByRole('button', { name: '使用', exact: true }).click();
+    await page.getByRole('button', { name: '设置', exact: true }).click(); await openSecondarySetting(page,'方块材质包');
+    await page.locator('.resource-pack-current').getByRole('button', { name: '使用', exact: true }).click();
     await page.getByRole('button', { name: '计时', exact: true }).click();
     await expect.poll(async () => (await routeSnapshot(canvas)).pack).toBe(0);
     await expect.poll(async () => (await routeSnapshot(canvas)).fallback).toBe(initial.fallback);

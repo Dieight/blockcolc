@@ -11,5 +11,6 @@
 - `building-memory.css`: building-memory panel only.
 - `about.css`: About layout and project/dependency license links.
 - `focus-plan.css`: fixed-round and end-time plan-sheet presentation.
+- `mode-transition.css`: the short-lived world viewport unfold/fold cover; no renderer scaling.
 
 New work goes to the owning feature file, uses semantic class names, and must not introduce version-number selectors. The compatibility files are reduced when a touched component is migrated; they are not an override dumping ground.

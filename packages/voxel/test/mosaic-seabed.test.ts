@@ -9,9 +9,12 @@ it('matches water quads only and samples a continuous, non-flat underwater shelf
   expect(data.indices.length).toBe(25*6);expect(data.positions.length/3).toBe(100);
   const heights=new Set(data.positions.filter((_v,i)=>i%3===1).map(y=>Math.round(y*10)));
   expect(heights.size).toBeGreaterThan(4);
+  // The adopted coast joins shallow shores to the deeper offshore floor.
+  const ys=data.positions.filter((_v,i)=>i%3===1);
+  expect(Math.max(...ys)).toBeGreaterThan(-4);expect(Math.min(...ys)).toBeLessThan(-4);
   for(let i=0;i<data.positions.length;i+=3){const [x,y,z]=data.positions.slice(i,i+3);
     expect(x).toBeGreaterThanOrEqual(sea.minX);expect(x).toBeLessThanOrEqual(sea.maxX);
-    expect(y).toBeCloseTo(mosaicSeabedHeight(x!,z!,1234,26));expect(y).toBeLessThan(-4);
+    expect(y).toBeCloseTo(mosaicSeabedHeight(x!,z!,1234,26));expect(y).toBeLessThanOrEqual(-1.1);expect(y).toBeGreaterThan(-14);
     expect(Math.hypot(...data.normals.slice(i,i+3))).toBeCloseTo(1);
   }
   expect(createMosaicSeabed([sea],1234,26)).toEqual(data);

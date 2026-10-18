@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import {openRollbackBackups} from './settings-controls';
 import { choosePlanEndTime } from './focus-plan-controls';
 import { expandGlassSetting } from './expand-glass-setting';
 import { readPersistedDomainState } from './persisted-domain-state';
@@ -187,7 +188,7 @@ test('pointer feedback has no selection outlines, refresh rotates its own icon, 
   await page.getByText('世界色彩', { exact: true }).click();
   const restore = page.getByRole('button', { name: '恢复默认', exact: true }); await restore.click();
   await expect(restore).toHaveCSS('outline-style', 'none'); await expect(restore).toHaveCSS('box-shadow', 'none');
-  const refresh = page.getByRole('button', { name: '刷新可恢复备份', exact: true }); await refresh.click();
+  await openRollbackBackups(page);const refresh = page.getByRole('button', { name: '刷新可恢复备份', exact: true }); await refresh.click();
   await expect(refresh).toHaveAttribute('aria-busy', 'true');
   expect(await refresh.evaluate(element => getComputedStyle(element, '::after').display)).toBe('none');
   await expect(refresh.locator('.refresh-motion')).toHaveCSS('animation-name', 'control-spin');

@@ -1,22 +1,23 @@
 import { t, useI18n } from './i18n';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ApplicationCommand, ApplicationResult, ApplicationService } from '@blockcolc/application';
 import { projectProgressBasisPoints } from '@blockcolc/domain';
 import { GripVertical, LockKeyhole, Trash2 } from 'lucide-react';
 import { PixelCheck as Check, PixelChevron as ChevronDown, PixelCube as MapPinned, PixelEdit as Pencil, PixelPlus as Plus, PixelRepeat as Repeat2, PixelClose as X, PixelIcon, PixelDisclosure } from './ui/PixelIcon';
 import { DailyGoalControl } from './DailyGoalControl';
 import { PixelProgress } from './ui/PixelProgress';
-import { ChoiceMenu } from './ChoiceMenu';
 import { NativeImeTextEntry, isImeCommitKey } from './NativeImeTextEntry';
 import { useBackLayer } from './back-layer';
 import { QuickNotes } from './QuickNotes';
+import { createRoundPlanStore } from './round-plan-store';
+import { canSelectTaskContext } from './task-context';
 
 type ActiveProject = NonNullable<ReturnType<ApplicationService['activeProjectProjection']>>;
 type AppState = ReturnType<ApplicationService['snapshot']>;
 type RunCommand = (command: ApplicationCommand) => Promise<ApplicationResult>;
 type DropTarget = { id: string; position: 'before' | 'after' };
 
-export function TasksScreen({ active, state, run, onCreateProject, onViewProject, quickNotesEnabled=false }: { active: ActiveProject; state: AppState; run: RunCommand; onCreateProject: () => void; onViewProject: (projectId: string) => void; quickNotesEnabled?: boolean }) {
+export function TasksScreen({ active, state, run, onCreateProject, onViewProject, onSelectSubtask, quickNotesEnabled=false }: { active: ActiveProject; state: AppState; run: RunCommand; onCreateProject: () => void; onViewProject: (projectId: string) => void; onSelectSubtask:(projectId:string,subtaskId:string)=>void; quickNotesEnabled?: boolean }) {
   useI18n();
   const [pending, setPending] = useState(false);
   const commandInFlight = useRef(false);
@@ -28,7 +29,6 @@ export function TasksScreen({ active, state, run, onCreateProject, onViewProject
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
   const [deleteProjectOpen, setDeleteProjectOpen] = useState(false);
   const [managingTasks, setManagingTasks] = useState(false);
-  const [futureExpanded, setFutureExpanded] = useState(false);
   const [completedExpanded, setCompletedExpanded] = useState(false);
   const [portfolioExpanded, setPortfolioExpanded] = useState(false);
   const [draggingSubtaskId, setDraggingSubtaskId] = useState<string | null>(null);
@@ -39,20 +39,20 @@ export function TasksScreen({ active, state, run, onCreateProject, onViewProject
   const habit = active.project.habit;
   const completedHabitBuildings = state.habitBuildings.filter(building => building.habitProjectId === active.project.id).length;
   const hasActiveFocus = state.activeFocusSession !== null;
-  const unfinishedProjects = state.projects.filter(project => project.status === 'active' || project.status === 'paused');
-  const switchBlocked = hasActiveFocus || active.unreportedCompletedSessions.length > 0;
+  const focusContextBlocked=useMemo(()=>!canSelectTaskContext(state,null,active.unreportedCompletedSessions.length),[state,active.unreportedCompletedSessions.length]);
+  const switchBlocked = focusContextBlocked||createRoundPlanStore(()=>window.localStorage).read(active.project.id)!==null;
 
   useEffect(() => {
     setProjectTitle(active.project.title);
     setEditingProject(false);
     setManagingTasks(false);
-    setFutureExpanded(false);
     setCompletedExpanded(false);
     setPortfolioExpanded(false);
   }, [active.project.id, active.project.title]);
 
   const perform = async (command: ApplicationCommand) => {
     if (commandInFlight.current) return false;
+    if(command.type==='SwitchActiveProject'&&createRoundPlanStore(()=>window.localStorage).read(active.project.id)!==null)return false;
     commandInFlight.current = true;
     setPending(true);
     try {
@@ -204,6 +204,8 @@ export function TasksScreen({ active, state, run, onCreateProject, onViewProject
       onDragEnd={finishTaskDrag}
       onDragCancel={cancelTaskDrag}
       onDelete={() => setDeleteTarget({ id: subtask.id, title: subtask.title })}
+      onFocus={()=>onSelectSubtask(active.project.id,subtask.id)}
+      focusDisabled={switchBlocked}
     />;
   };
 
@@ -212,12 +214,11 @@ export function TasksScreen({ active, state, run, onCreateProject, onViewProject
     <DailyGoalControl state={state} run={perform} onViewReward={onViewProject}/>
     {quickNotesEnabled && <QuickNotes state={state} run={run}/>}
 
-    <section className="task-planning-panel task-surface" aria-label={t("任务选择与创建")}>
-    <h2 className="task-queue-label">{t("我的任务")}</h2>
-    <div className="project-switcher">
-      <ChoiceMenu label={t("当前任务")} value={active.project.id} disabled={pending || switchBlocked} onChange={projectId=>void perform({ type: 'SwitchActiveProject', projectId })} options={unfinishedProjects.map(project=>({id:project.id,label:project.title,detail:project.kind==='habit'?(project.habit?.awaitingNextBuilding?t("习惯 · 等待选择建筑"):t("习惯 · {0} / {1} 轮", project.habit?.completedFocusSessionIds.length??0, project.habit?.targetRounds??10)):`${Math.round(project.subtasks.reduce((sum, subtask) => sum + subtask.progressBasisPoints, 0) / project.subtasks.length / 100)}%`}))}/>
-      <div className="project-switcher-actions"><button type="button" className="project-view-action" disabled={pending} onClick={() => onViewProject(active.project.id)}><MapPinned/>{isHabit&&habit?.awaitingNextBuilding?t("查看聚落"):t("查看建筑")}</button><button type="button" disabled={pending || switchBlocked} title={switchBlocked ? t("请先结束或汇报当前专注") : t("新增任务")} onClick={onCreateProject}><Plus/>{t("新增任务")}</button></div>
-    </div>
+    <section className="task-planning-panel" aria-label={t("任务选择与创建")}>
+      <h2 className="task-queue-label">{t("任务与施工")}</h2>
+      <div className="task-planning-actions">
+      <button type="button" className="task-inline-action" disabled={pending || switchBlocked} title={switchBlocked ? t("请先结束或汇报当前专注") : t("新增任务")} onClick={onCreateProject}><Plus/>{t("新增任务")}</button>
+      </div>
     </section>
 
     <section className="task-detail-panel task-surface" aria-label={t("当前任务详情")}>
@@ -231,9 +232,14 @@ export function TasksScreen({ active, state, run, onCreateProject, onViewProject
         <IconButton label={t("保存任务名称")} disabled={pending || !projectTitle.trim()} onClick={() => void renameProject()}><Check/></IconButton>
         <IconButton label={t("取消修改")} disabled={pending} onClick={() => { setProjectTitle(active.project.title); setEditingProject(false); }}><X/></IconButton>
       </> : <>
-        <h2>{active.project.title}</h2>
-        <IconButton label={t("修改任务名称")} disabled={pending} onClick={() => setEditingProject(true)}><Pencil/></IconButton>
+        <div className="task-project-heading"><span>{isHabit?t("习惯任务"):t("当前大任务")}</span><h2 onDoubleClick={()=>{if(!pending)setEditingProject(true);}}>{active.project.title}</h2></div>
+        <IconButton label={managingTasks?t("结束编辑施工清单"):t("编辑施工清单")} disabled={pending} onClick={()=>setManagingTasks(value=>!value)}>{managingTasks?<Check/>:<Pencil/>}</IconButton>
       </>}
+    </div>
+    <PixelProgress className="task-building-progress" value={projectProgressBasisPoints(active.project)} max={10000} label={t("{0} 建造进度",active.project.title)}/>
+    <div className={managingTasks?'task-management-actions is-editing':'task-management-actions'}>
+      {managingTasks&&<button type="button" className="task-inline-action" disabled={pending} onClick={()=>setEditingProject(true)}><Pencil/>{t("修改任务名称")}</button>}
+      <button type="button" className="task-inline-action" disabled={pending} onClick={()=>onViewProject(active.project.id)}><MapPinned/>{isHabit&&habit?.awaitingNextBuilding?t("查看聚落"):t("查看建筑")}</button>
     </div>
 
     {isHabit ? <section className="habit-cycle-panel" aria-labelledby="habit-cycle-title">
@@ -243,14 +249,13 @@ export function TasksScreen({ active, state, run, onCreateProject, onViewProject
     </section> : <>
       <div className="task-section-heading">
         <div><h2>{t("施工清单")}</h2><p>{t("已完成")}{' '}{completedSubtasks.length} / {active.project.subtasks.length} {t("项")}</p></div>
-        <div className="task-section-actions"><IconButton label={managingTasks ? t("结束编辑施工清单") : t("编辑施工清单")} disabled={pending} onClick={() => setManagingTasks(value => !value)}>{managingTasks ? <Check/> : <Pencil/>}</IconButton></div>
       </div>
       {locked && <div className="structure-lock task-structure-note"><LockKeyhole/><span>{t("已有进度后不能增删，可继续改名和排序。")}</span></div>}
 
       <div className="task-editor-list">
         {managingTasks ? active.project.subtasks.map(renderSubtask) : <>
           {nextSubtask && <div className="subtask-group current-subtask-group"><span className="subtask-group-label">{t("当前")}</span>{renderSubtask(nextSubtask, active.project.subtasks.indexOf(nextSubtask))}</div>}
-          {futureSubtasks.length > 0 && <SubtaskGroup label={t("后续任务")} count={futureSubtasks.length} expanded={futureExpanded} onToggle={() => setFutureExpanded(value => !value)}>{futureSubtasks.map(subtask => renderSubtask(subtask, active.project.subtasks.indexOf(subtask)))}</SubtaskGroup>}
+          {futureSubtasks.map(subtask => renderSubtask(subtask, active.project.subtasks.indexOf(subtask)))}
           {completedSubtasks.length > 0 && <SubtaskGroup label={t("已完成")} count={completedSubtasks.length} expanded={completedExpanded} onToggle={() => setCompletedExpanded(value => !value)}>{completedSubtasks.map(subtask => renderSubtask(subtask, active.project.subtasks.indexOf(subtask)))}</SubtaskGroup>}
         </>}
       </div>
@@ -260,14 +265,13 @@ export function TasksScreen({ active, state, run, onCreateProject, onViewProject
         <div><NativeImeTextEntry targetRef={newSubtaskRef} id="new-subtask" name="new-subtask" defaultValue="" disabled={pending} placeholder={t("例如：整理验证结果")} onValueChange={setNewSubtask} onNativeKeyDown={event => { if (isImeCommitKey(event)) void addSubtask(); }}/><button type="button" disabled={pending || !newSubtask.trim()} onClick={() => void addSubtask()}><Plus/>{t("添加")}</button></div>
       </div>}
     </>}
-    </section>
-
-    <ProjectPortfolio state={state} activeProjectId={active.project.id} expanded={portfolioExpanded} switchBlocked={switchBlocked} pending={pending} onToggle={()=>setPortfolioExpanded(value=>!value)} onActivate={projectId=>perform({type:'SwitchActiveProject',projectId})} onView={onViewProject}>
-    <section className="project-delete-zone" aria-labelledby="delete-project-title">
+    {managingTasks && <section className="project-delete-zone" aria-labelledby="delete-project-title">
       <div><h2 id="delete-project-title">{t("删除任务")}</h2><p>{hasActiveFocus ? t("请先结束当前专注，才能删除任务。") : isHabit ? t("当前未完成建筑会移除，已完成的 {0} 座建筑会保留。删除前仍会创建回滚备份。", completedHabitBuildings) : t("删除前会自动创建本地回滚备份，可在设置中恢复。")}</p></div>
       <button type="button" className="danger-outline" title={hasActiveFocus ? t("请先结束当前专注后再删除任务") : undefined} disabled={pending || hasActiveFocus} onClick={() => setDeleteProjectOpen(true)}><PixelIcon name="close"/>{t("删除当前任务")}</button>
+    </section>}
     </section>
-    </ProjectPortfolio>
+
+    <ProjectPortfolio state={state} activeProjectId={active.project.id} expanded={portfolioExpanded} switchBlocked={switchBlocked} pending={pending} onToggle={()=>setPortfolioExpanded(value=>!value)} onActivate={projectId=>perform({type:'SwitchActiveProject',projectId})} onView={onViewProject}/>
 
     {deleteTarget && <ConfirmDialog
       title={t("删除这个小任务？")}
@@ -290,18 +294,17 @@ export function TasksScreen({ active, state, run, onCreateProject, onViewProject
   </section>;
 }
 
-function ProjectPortfolio({state,activeProjectId,expanded,switchBlocked,pending,onToggle,onActivate,onView,children}:{state:AppState;activeProjectId:string;expanded:boolean;switchBlocked:boolean;pending:boolean;onToggle:()=>void;onActivate:(projectId:string)=>Promise<boolean>;onView:(projectId:string)=>void;children:React.ReactNode}) {
+function ProjectPortfolio({state,activeProjectId,expanded,switchBlocked,pending,onToggle,onActivate,onView}:{state:AppState;activeProjectId:string;expanded:boolean;switchBlocked:boolean;pending:boolean;onToggle:()=>void;onActivate:(projectId:string)=>Promise<boolean>;onView:(projectId:string)=>void}) {
   useI18n();
-  const visible=state.projects.filter(project=>project.status!=='deleted');
+  const visible=state.projects.filter(project=>project.status!=='deleted'&&project.id!==activeProjectId);
   const groups=[
-    {id:'current',label:t("当前"),projects:visible.filter(project=>project.id===activeProjectId)},
     {id:'habit',label:t("习惯"),projects:visible.filter(project=>project.kind==='habit'&&project.id!==activeProjectId)},
     {id:'paused',label:t("暂停"),projects:visible.filter(project=>project.kind==='finite'&&project.status==='paused')},
     {id:'completed',label:t("纪念"),projects:visible.filter(project=>project.status==='monument')},
   ].filter(group=>group.projects.length>0);
-  return <section className={`project-portfolio task-surface${expanded?' is-expanded':''}`} aria-label={t("任务总览与管理")}>
+  return <section className={`project-portfolio task-surface${expanded?' is-expanded':''}`} aria-label={t("其他任务")}>
     <button type="button" className="project-portfolio-toggle" aria-expanded={expanded} onClick={onToggle}>
-      <PixelIcon name="tasks"/><span><strong>{t("任务总览与管理")}</strong><small>{groups.map(group=>`${group.label} ${group.projects.length}`).join(' · ')}</small></span><PixelDisclosure expanded={expanded}/>
+      <PixelIcon name="tasks"/><span><strong>{t("其他任务")}</strong><small>{groups.length?groups.map(group=>`${group.label} ${group.projects.length}`).join(' · '):t("暂无其他任务")}</small></span><PixelDisclosure expanded={expanded}/>
     </button>
     {expanded && <div className="project-portfolio-body">
       <div className="project-portfolio-groups">{groups.map(group=><section key={group.id}>
@@ -317,12 +320,11 @@ function ProjectPortfolio({state,activeProjectId,expanded,switchBlocked,pending,
           </div>;
         })}</div>
       </section>)}</div>
-      {children}
     </div>}
   </section>;
 }
 
-function SubtaskRow({ id, title, progressBasisPoints, phase, index, pending, managing, dragging, dropPosition, showDelete, canDelete, deleteReason, onRename, onMove, onDragStart, onDragMove, onDragEnd, onDragCancel, onDelete }: {
+function SubtaskRow({ id, title, progressBasisPoints, phase, index, pending, managing, dragging, dropPosition, showDelete, canDelete, deleteReason, onRename, onMove, onDragStart, onDragMove, onDragEnd, onDragCancel, onDelete, onFocus,focusDisabled }: {
   id: string;
   title: string;
   progressBasisPoints: number;
@@ -342,6 +344,8 @@ function SubtaskRow({ id, title, progressBasisPoints, phase, index, pending, man
   onDragEnd: (event: React.PointerEvent<HTMLButtonElement>) => void;
   onDragCancel: (event: React.PointerEvent<HTMLButtonElement>) => void;
   onDelete: () => void;
+  onFocus:()=>void;
+  focusDisabled:boolean;
 }) {
   useI18n();
   const [editing, setEditing] = useState(false);
@@ -367,8 +371,9 @@ function SubtaskRow({ id, title, progressBasisPoints, phase, index, pending, man
         if (isImeCommitKey(event)) void save();
         if (event.key === 'Escape') { setDraft(title); setEditing(false); }
       }}/></label> : <strong>{title}</strong>}
-      <div><PixelProgress max={10000} value={progressBasisPoints} label={t("{0} 施工进度", title)}/><span>{Math.round(progressBasisPoints / 100)}%</span></div>
+      <div><span className="task-phase-label">{phase==='current'?t("进行中"):phase==='complete'?t("已完成"):t("下一步")}</span><span>{Math.round(progressBasisPoints / 100)}%</span></div>
     </div>
+    {!editing&&!managing&&phase!=='complete'&&<button type="button" className="subtask-focus" aria-label={t('选择小任务：{0}',title)} title={t('选择并返回计时')} disabled={pending||focusDisabled} onClick={event=>{event.stopPropagation();onFocus();}}><PixelIcon name="play" size={18}/></button>}
     {editing && <div className="task-row-actions">
       {editing ? <>
         <IconButton label={t("保存小任务名称")} disabled={pending || !draft.trim()} onClick={() => void save()}><Check/></IconButton>

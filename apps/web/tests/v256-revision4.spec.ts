@@ -3,6 +3,7 @@ import {choosePlanEndTime} from './focus-plan-controls';
 import {expandGlassSetting} from './expand-glass-setting';
 import {readPersistedDomainState} from './persisted-domain-state';
 import {waitForPreparedWorld} from './world-ready';
+import {openBackupActions} from './settings-controls';
 
 async function setup(page:Page){
   await page.emulateMedia({reducedMotion:'reduce'});
@@ -105,6 +106,7 @@ test('refresh rotates one compositor layer; other busy actions use the shared th
   const brand=page.locator('.app-brand .pixel-brand');await expect(brand.locator('image')).toHaveCount(0);
   await expect(brand).toHaveCSS('background-color','rgba(0, 0, 0, 0)');
   await page.getByRole('button',{name:'设置',exact:true}).click();
+  await openBackupActions(page);await page.locator('.backup-rollback-history>summary').click();
   const refresh=page.getByRole('button',{name:'刷新可恢复备份',exact:true});await refresh.click();
   await expect(refresh).toHaveAttribute('aria-busy','true');
   await expect(refresh.locator('.refresh-motion')).toHaveCSS('animation-name','control-spin');
@@ -113,7 +115,7 @@ test('refresh rotates one compositor layer; other busy actions use the shared th
   expect(await refresh.evaluate(element=>getComputedStyle(element,'::after').display)).toBe('none');
   await expect(refresh).toHaveAttribute('aria-busy','false');
   // Inspect the actual shared state skin without invoking a native file picker.
-  const exporting=page.getByRole('button',{name:/导出 JSON/}).first();
+  const exporting=page.locator('.backup-manual').getByRole('button',{name:'导出',exact:true});
   const skin=await exporting.evaluate(element=>{element.setAttribute('aria-busy','true');const css=getComputedStyle(element,'::after');const result={animation:css.animationName,mask:css.maskImage,shadow:css.boxShadow,border:css.borderWidth};element.setAttribute('aria-busy','false');return result;});
   expect(skin.animation).toBe('control-spin');expect(skin.mask).toContain('svg');expect(skin.shadow).toBe('none');expect(skin.border).toBe('0px');
   await page.screenshot({path:info.outputPath('dark-settings-brand.png')});

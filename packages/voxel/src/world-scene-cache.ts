@@ -7,7 +7,7 @@ export { packWorldSceneCache } from './world-scene-cache-codec';
 
 // Bump when terrain, placement, scenery or compact-mesh generation changes.
 // This is a disposable rendering cache, not a domain schema migration.
-export const WORLD_SCENE_CACHE_REVISION = 3;
+export const WORLD_SCENE_CACHE_REVISION = 5;
 export const WORLD_SCENE_CACHE_MAX_BYTES = 64 * 1024 * 1024;
 export interface WorldSceneCache {
   revision: typeof WORLD_SCENE_CACHE_REVISION;
@@ -56,7 +56,7 @@ export function restoreWorldSceneCache(value: unknown): WorldSceneCache | null {
     const terrain = value.terrain.data;
     if (!coords(terrain.bounds,['minX','maxX','minY','maxY','minZ','maxZ'])
       || !coords(terrain.framingBounds,['minX','maxX','minZ','maxZ']) || !coords(terrain.nearDetailBounds,['minX','maxX','minZ','maxZ'])
-      || ![1,2,3,4].includes(terrain.terrainGenerationVersion) || !count(terrain.cellCount)
+      || terrain.terrainGenerationVersion !== 4 || !count(terrain.cellCount)
       || !record(terrain.lodCellCounts) || !['near','middle','far'].every(name => count(terrain.lodCellCounts[name]))
       || !record(terrain.hydrology) || !['networkCount','basinCount','riverCellCount','lakeCellCount','riverSegmentCount','outletCount',
         'maxUphillWaterStep','protectedWaterCellCount','waterSurfaceArea','terrainSurfaceArea'].every(name => finite(terrain.hydrology[name]))
