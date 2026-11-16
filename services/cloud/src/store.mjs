@@ -1,0 +1,244 @@
+import { DatabaseSync } from 'node:sqlite';
+import { randomBytes,randomUUID,scrypt,timingSafeEqual } from 'node:crypto';
+import { promisify } from 'node:util';
+import { mkdirSync,writeFileSync,readFileSync,existsSync,renameSync,unlinkSync,readdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { ApiError,fail,sha,canonical,hashPattern,assembleDomain,assetKeys,validateExtra,validateKey,validatePlanDomain,sharing,defaultSharing,accountDate } from './wire.mjs';
+const derive=promisify(scrypt),DAY=86400000;
+const random=()=>randomBytes(32).toString('base64url');
+const cleanDevice=(id,name)=>{fail(typeof id==='string'&&/^[a-zA-Z0-9_-]{16,80}$/.test(id),'INVALID_DEVICE');fail(typeof name==='string'&&name.length>0&&name.length<=64);};
+
+export class CloudStore {
+  constructor(directory,{clock=Date.now,quotaBytes=200*1024*1024}={}){
+    mkdirSync(directory,{recursive:true,mode:0o700});this.directory=directory;this.clock=clock;this.quota=quotaBytes;
+    this.db=new DatabaseSync(join(directory,'cloud.db'));this.db.exec('PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;');
+    this.db.exec(`CREATE TABLE IF NOT EXISTS accounts(id TEXT PRIMARY KEY,username TEXT UNIQUE NOT NULL,name TEXT NOT NULL,salt TEXT NOT NULL,password TEXT NOT NULL,code TEXT UNIQUE NOT NULL,zone TEXT NOT NULL,sharing TEXT NOT NULL,friends_enabled INTEGER NOT NULL DEFAULT 0,created INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS devices(user TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,id TEXT NOT NULL,name TEXT NOT NULL,last_seen INTEGER NOT NULL,PRIMARY KEY(user,id));
+      CREATE TABLE IF NOT EXISTS sessions(token TEXT PRIMARY KEY,user TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,device TEXT NOT NULL,expires INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS heads(user TEXT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,epoch TEXT NOT NULL,revision INTEGER NOT NULL DEFAULT 0,owner TEXT,execution INTEGER NOT NULL DEFAULT 0,changed INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS entries(user TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,key TEXT NOT NULL,canonical TEXT NOT NULL,sha TEXT NOT NULL,PRIMARY KEY(user,key));
+      CREATE TABLE IF NOT EXISTS receipts(user TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,id TEXT NOT NULL,request_sha TEXT NOT NULL,result TEXT NOT NULL,created INTEGER NOT NULL,PRIMARY KEY(user,id));
+      CREATE TABLE IF NOT EXISTS assets(user TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,sha TEXT NOT NULL,bytes INTEGER NOT NULL,created INTEGER NOT NULL,PRIMARY KEY(user,sha));
+      CREATE TABLE IF NOT EXISTS backup_blocks(user TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,sha TEXT NOT NULL,canonical TEXT NOT NULL,PRIMARY KEY(user,sha));
+      CREATE TABLE IF NOT EXISTS backups(user TEXT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,date TEXT NOT NULL,at INTEGER NOT NULL,manifest TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS friends(a TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,b TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,status TEXT NOT NULL,sender TEXT NOT NULL,PRIMARY KEY(a,b));
+      CREATE TABLE IF NOT EXISTS friend_sharing(user TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,friend TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,value TEXT NOT NULL,PRIMARY KEY(user,friend));
+      CREATE TABLE IF NOT EXISTS presence(user TEXT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,value TEXT NOT NULL,expires INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS forwarding(user TEXT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,version INTEGER NOT NULL,value TEXT NOT NULL,attempts INTEGER NOT NULL DEFAULT 0,after INTEGER NOT NULL DEFAULT 0);
+      CREATE TABLE IF NOT EXISTS external_sources(id TEXT PRIMARY KEY,user TEXT UNIQUE NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,kind TEXT NOT NULL,origin TEXT NOT NULL,remote_account TEXT NOT NULL DEFAULT '',enabled INTEGER NOT NULL DEFAULT 1,projection TEXT,updated INTEGER,expires INTEGER NOT NULL DEFAULT 0,error TEXT);`);
+    if(!this.db.prepare('PRAGMA table_info(external_sources)').all().some(c=>c.name==='remote_account'))this.db.exec("ALTER TABLE external_sources ADD COLUMN remote_account TEXT NOT NULL DEFAULT ''");
+    this.authInFlight=0;
+  }
+  transaction(work){this.db.exec('BEGIN IMMEDIATE');try{const result=work();this.db.exec('COMMIT');return result;}catch(error){this.db.exec('ROLLBACK');throw error;}}
+  close(){this.db.close();}
+  account(user){const a=this.db.prepare('SELECT id,username,name,code,zone,sharing,friends_enabled FROM accounts WHERE id=?').get(user);fail(a,'UNAUTHORIZED',401);
+    return {id:a.id,username:a.username,name:a.name,friendCode:a.code,timeZone:a.zone,sharing:JSON.parse(a.sharing),friendsEnabled:!!a.friends_enabled};}
+  async password(password,salt){fail(typeof password==='string'&&password.length>=10&&password.length<=256,'PASSWORD_LENGTH');
+    fail(this.authInFlight<3,'AUTH_BUSY',429);this.authInFlight++;
+    try{return Buffer.from(await derive(password,salt,32,{N:16384,r:8,p:1,maxmem:32*1024*1024})).toString('hex');}finally{this.authInFlight--;}}
+  async register({username,password,name,deviceId,deviceName,timeZone='UTC'}){
+    fail(typeof username==='string'&&/^[a-zA-Z0-9_]{3,32}$/.test(username),'USERNAME_FORMAT');username=username.toLowerCase();
+    fail(typeof name==='string'&&name.trim().length>0&&name.length<=64);cleanDevice(deviceId,deviceName);accountDate(this.clock(),timeZone);
+    const salt=random(),digest=await this.password(password,salt),id=randomUUID(),now=this.clock();
+    this.transaction(()=>{fail(!this.db.prepare('SELECT id FROM accounts WHERE username=?').get(username),'USERNAME_TAKEN',409);
+      this.db.prepare('INSERT INTO accounts VALUES(?,?,?,?,?,?,?,?,?,?)').run(id,username,name.trim(),salt,digest,randomBytes(9).toString('hex').toUpperCase(),timeZone,canonical(defaultSharing()),0,now);
+      this.db.prepare('INSERT INTO heads(user,epoch,changed) VALUES(?,?,?)').run(id,randomUUID(),now);});
+    return this.session(id,deviceId,deviceName);
+  }
+  async login({username,password,deviceId,deviceName}){
+    cleanDevice(deviceId,deviceName);fail(typeof username==='string'&&username.length<=32,'LOGIN_FAILED',401);
+    const a=this.db.prepare('SELECT id,salt,password FROM accounts WHERE username=?').get(username.toLowerCase());
+    const digest=await this.password(password,a?.salt??'blockcolc-nonexistent-user');
+    fail(a&&!this.db.prepare('SELECT 1 FROM external_sources WHERE user=?').get(a.id)&&timingSafeEqual(Buffer.from(a.password,'hex'),Buffer.from(digest,'hex')),'LOGIN_FAILED',401);
+    fail(this.db.prepare('SELECT password FROM accounts WHERE id=?').get(a.id)?.password===a.password,'LOGIN_FAILED',401);return this.session(a.id,deviceId,deviceName);
+  }
+  session(user,device,name){const token=random(),now=this.clock();this.transaction(()=>{
+    const exists=this.db.prepare('SELECT 1 FROM devices WHERE user=? AND id=?').get(user,device);
+    fail(exists||this.db.prepare('SELECT count(*) n FROM devices WHERE user=?').get(user).n<16,'DEVICE_LIMIT',409);
+    this.db.prepare('INSERT INTO devices VALUES(?,?,?,?) ON CONFLICT(user,id) DO UPDATE SET name=excluded.name,last_seen=excluded.last_seen').run(user,device,name,now);
+    this.db.prepare('DELETE FROM sessions WHERE user=? AND device=?').run(user,device);
+    this.db.prepare('INSERT INTO sessions VALUES(?,?,?,?)').run(sha(token),user,device,now+90*DAY);
+  });return {token,account:this.account(user)};}
+  authenticate(token){fail(typeof token==='string'&&token.length<=128,'UNAUTHORIZED',401);const s=this.db.prepare('SELECT * FROM sessions WHERE token=? AND expires>?').get(sha(token),this.clock());
+    fail(s,'UNAUTHORIZED',401);this.db.prepare('UPDATE devices SET last_seen=? WHERE user=? AND id=?').run(this.clock(),s.user,s.device);return s;}
+  assertSession(s){const row=this.db.prepare('SELECT * FROM sessions WHERE token=?').get(s.token);fail(row&&row.user===s.user&&row.device===s.device&&row.expires>this.clock(),'UNAUTHORIZED',401);}
+  logout(s){this.transaction(()=>{this.db.prepare('DELETE FROM sessions WHERE token=?').run(s.token);
+    if(this.head(s.user).owner===s.device){this.db.prepare('UPDATE heads SET owner=NULL,execution=execution+1 WHERE user=?').run(s.user);this.db.prepare('DELETE FROM presence WHERE user=?').run(s.user);}});}
+  devices(s){return this.db.prepare('SELECT id,name,last_seen FROM devices WHERE user=? ORDER BY last_seen DESC').all(s.user).map(d=>({...d,current:d.id===s.device}));}
+  revokeDevice(s,id){fail(typeof id==='string');this.transaction(()=>{this.db.prepare('DELETE FROM sessions WHERE user=? AND device=?').run(s.user,id);this.db.prepare('DELETE FROM devices WHERE user=? AND id=?').run(s.user,id);
+    if(this.head(s.user).owner===id)this.db.prepare('DELETE FROM presence WHERE user=?').run(s.user);
+    this.db.prepare('UPDATE heads SET owner=NULL,execution=execution+1 WHERE user=? AND owner=?').run(s.user,id);});}
+  updateAccount(s,input){this.assertSession(s);const current=this.account(s.user),policy=input.sharing==null?current.sharing:sharing(input.sharing);
+    const name=input.name??current.name,zone=input.timeZone??current.timeZone,enabled=input.friendsEnabled??current.friendsEnabled;
+    fail(typeof enabled==='boolean'&&typeof name==='string'&&name.trim().length>0&&name.length<=64);accountDate(this.clock(),zone);
+    this.db.prepare('UPDATE accounts SET name=?,zone=?,sharing=?,friends_enabled=? WHERE id=?').run(name.trim(),zone,canonical(policy),enabled?1:0,s.user);
+    // Friends' access is filtered when reading. The short-lived execution
+    // receipt also serves the owner's explicitly configured private relay.
+    return this.account(s.user);}
+  async changePassword(s,{currentPassword,password}){const a=this.db.prepare('SELECT salt,password FROM accounts WHERE id=?').get(s.user);
+    const actual=await this.password(currentPassword,a.salt);fail(timingSafeEqual(Buffer.from(actual,'hex'),Buffer.from(a.password,'hex')),'LOGIN_FAILED',401);
+    const salt=random(),digest=await this.password(password,salt);this.assertSession(s);this.transaction(()=>{this.db.prepare('UPDATE accounts SET salt=?,password=? WHERE id=?').run(salt,digest,s.user);this.db.prepare('DELETE FROM sessions WHERE user=? AND token<>?').run(s.user,s.token);});}
+  entries(user){return Object.fromEntries(this.db.prepare('SELECT key,canonical FROM entries WHERE user=? ORDER BY key').all(user).map(r=>[r.key,r.canonical]));}
+  head(user){const h=this.db.prepare('SELECT * FROM heads WHERE user=?').get(user);fail(h,'UNAUTHORIZED',401);return h;}
+  assetPath(user,key){fail(hashPattern.test(key));return join(this.directory,'assets',user,key);}
+  putAsset(s,key,body){this.assertSession(s);fail(hashPattern.test(key)&&Buffer.isBuffer(body));fail(body.length<=100*1024*1024,'ASSET_TOO_LARGE',413);fail(sha(body)===key,'ASSET_DIGEST');
+    try{new TextDecoder('utf-8',{fatal:true}).decode(body);}catch{throw new ApiError(400,'ASSET_ENCODING');}
+    const previous=this.db.prepare('SELECT bytes FROM assets WHERE user=? AND sha=?').get(s.user,key);
+    if(previous&&existsSync(this.assetPath(s.user,key))&&sha(readFileSync(this.assetPath(s.user,key)))===key)return {present:true};
+    const used=this.db.prepare('SELECT coalesce(sum(bytes),0) n FROM assets WHERE user=?').get(s.user).n;fail(used+body.length-(previous?.bytes??0)<=this.quota,'STORAGE_QUOTA',413);
+    const path=this.assetPath(s.user,key);mkdirSync(join(this.directory,'assets',s.user),{recursive:true,mode:0o700});
+    const staging=path+'.'+randomUUID()+'.part';try{writeFileSync(staging,body,{mode:0o600,flag:'wx'});renameSync(staging,path);
+      this.db.prepare('INSERT OR IGNORE INTO assets VALUES(?,?,?,?)').run(s.user,key,body.length,this.clock());}finally{if(existsSync(staging))unlinkSync(staging);}
+    return {present:true};
+  }
+  asset(user,key){fail(this.db.prepare('SELECT 1 FROM assets WHERE user=? AND sha=?').get(user,key),'MISSING_ASSET',409);
+    let bytes;try{bytes=readFileSync(this.assetPath(user,key));}catch{throw new ApiError(503,'ASSET_UNAVAILABLE');}
+    fail(sha(bytes)===key,'ASSET_CORRUPT',503);return bytes.toString('utf8');}
+  assetStatus(s,keys){fail(Array.isArray(keys)&&keys.length<=1024&&keys.every(k=>hashPattern.test(k)));return {missing:keys.filter(key=>{
+    if(!this.db.prepare('SELECT 1 FROM assets WHERE user=? AND sha=?').get(s.user,key))return true;
+    try{return sha(readFileSync(this.assetPath(s.user,key)))!==key;}catch{return true;}
+  })};}
+  workspace(s){const h=this.head(s.user);return {schema:1,epoch:h.epoch,revision:h.revision,entries:this.entries(s.user),execution:{owner:h.owner,generation:h.execution},devices:this.devices(s),backup:this.backupInfo(s)};}
+  claim(s,{generation,takeover=false}){this.assertSession(s);return this.transaction(()=>{const h=this.head(s.user);fail(Number.isSafeInteger(generation)&&generation===h.execution,'EXECUTION_CHANGED',409);
+    fail(h.owner==null||h.owner===s.device||takeover===true,'EXECUTING_ELSEWHERE',409);
+    if(h.owner!==s.device){this.db.prepare('UPDATE heads SET owner=?,execution=execution+1,changed=? WHERE user=?').run(s.device,this.clock(),s.user);this.db.prepare('DELETE FROM presence WHERE user=?').run(s.user);}
+    const actual=this.head(s.user);return {owner:actual.owner,generation:actual.execution};});}
+  release(s,{generation}){return this.transaction(()=>{const h=this.head(s.user);fail(h.owner===s.device&&h.execution===generation,'EXECUTION_CHANGED',409);
+    this.db.prepare('UPDATE heads SET owner=NULL,execution=execution+1,changed=? WHERE user=?').run(this.clock(),s.user);this.db.prepare('DELETE FROM presence WHERE user=?').run(s.user);return {owner:null,generation:h.execution+1};});}
+  commit(s,input){this.assertSession(s);fail(input&&typeof input.requestId==='string'&&/^[a-zA-Z0-9_:-]{8,128}$/.test(input.requestId));
+    fail(Array.isArray(input.changes)&&input.changes.length<=100000);const requestSha=sha(canonical(input));
+    return this.transaction(()=>{
+      const replay=this.db.prepare('SELECT request_sha,result FROM receipts WHERE user=? AND id=?').get(s.user,input.requestId);
+      if(replay){fail(replay.request_sha===requestSha,'REQUEST_ID_REUSED',409);return JSON.parse(replay.result);}
+      const h=this.head(s.user);fail(h.epoch===input.epoch,'WORKSPACE_REPLACED',409);
+      const entries=this.entries(s.user),conflicts=[],seen=new Set();
+      for(const change of input.changes){
+        validateKey(change.key);fail(!seen.has(change.key));seen.add(change.key);
+        fail(change.before===null||hashPattern.test(change.before));fail(change.canonical===null||typeof change.canonical==='string');
+        const current=entries[change.key],actual=current==null?null:sha(current);
+        if(actual!==change.before&&change.canonical!==current)conflicts.push(change.key);
+        if(change.canonical==null)delete entries[change.key];else{fail(Buffer.byteLength(change.canonical)<=4*1024*1024,'ENTITY_TOO_LARGE',413);JSON.parse(change.canonical);entries[change.key]=change.canonical;}
+      }
+      if(conflicts.length)throw new ApiError(409,'SYNC_CONFLICT',{keys:conflicts});
+      const protectedChange=input.changes.some(c=>c.key==='$/activeFocusSession'||c.key==='@plan'||c.key.startsWith('focusHistory/')||c.key.startsWith('progressReports/'));
+      if(protectedChange)fail(h.owner===s.device&&input.execution===h.execution,'EXECUTION_CHANGED',409);
+      for(const key of ['@preferences','@plan'])if(entries[key]!=null)validateExtra(key,entries[key]);
+      validatePlanDomain(entries,assembleDomain(entries,key=>this.asset(s.user,key)));
+      const size=Object.values(entries).reduce((sum,text)=>sum+Buffer.byteLength(text),0);fail(size<=100*1024*1024,'WORKSPACE_TOO_LARGE',413);
+      for(const change of input.changes){if(change.canonical==null)this.db.prepare('DELETE FROM entries WHERE user=? AND key=?').run(s.user,change.key);
+        else this.db.prepare('INSERT INTO entries VALUES(?,?,?,?) ON CONFLICT(user,key) DO UPDATE SET canonical=excluded.canonical,sha=excluded.sha').run(s.user,change.key,change.canonical,sha(change.canonical));}
+      this.db.prepare('UPDATE heads SET revision=revision+1,changed=? WHERE user=?').run(this.clock(),s.user);
+      const result={epoch:h.epoch,revision:h.revision+1};
+      this.db.prepare('INSERT INTO receipts VALUES(?,?,?,?,?)').run(s.user,input.requestId,requestSha,canonical(result),this.clock());
+      this.db.prepare('DELETE FROM receipts WHERE user=? AND created<?').run(s.user,this.clock()-30*DAY);
+      return result;
+    });
+  }
+  replace(s,{revision,entries,requestId}){this.assertSession(s);fail(Number.isSafeInteger(revision)&&entries&&typeof entries==='object'&&!Array.isArray(entries));
+    fail(typeof requestId==='string'&&/^[a-zA-Z0-9_:-]{8,128}$/.test(requestId));
+    const requestSha=sha(canonical({revision,entries,requestId}));
+    // A deliberate whole-workspace choice gets a new epoch. No stale device
+    // can silently reapply changes made against the discarded history.
+    return this.transaction(()=>{const replay=this.db.prepare('SELECT request_sha,result FROM receipts WHERE user=? AND id=?').get(s.user,requestId);
+      if(replay){fail(replay.request_sha===requestSha,'REQUEST_ID_REUSED',409);return JSON.parse(replay.result);}
+      const h=this.head(s.user);fail(h.revision===revision,'SYNC_CONFLICT',409);
+      for(const key of ['@preferences','@plan'])if(entries[key]!=null)validateExtra(key,entries[key]);validatePlanDomain(entries,assembleDomain(entries,k=>this.asset(s.user,k)));
+      this.db.prepare('DELETE FROM entries WHERE user=?').run(s.user);
+      for(const [key,value]of Object.entries(entries))this.db.prepare('INSERT INTO entries VALUES(?,?,?,?)').run(s.user,key,value,sha(value));
+      this.db.prepare('UPDATE heads SET epoch=?,revision=revision+1,owner=NULL,execution=execution+1,changed=? WHERE user=?').run(randomUUID(),this.clock(),s.user);
+      this.db.prepare('DELETE FROM presence WHERE user=?').run(s.user);const result=this.workspace(s);
+      this.db.prepare('INSERT INTO receipts VALUES(?,?,?,?,?)').run(s.user,requestId,requestSha,canonical(result),this.clock());return result;});
+  }
+  backupInfo(s){const row=this.db.prepare('SELECT date,at FROM backups WHERE user=?').get(s.user);return row?{date:row.date,createdAt:new Date(row.at).toISOString()}:null;}
+  capture(user,date=undefined){const account=this.account(user),day=date??accountDate(this.clock(),account.timeZone),entries=this.entries(user);if(!Object.keys(entries).length)return null;
+    fail(/^\d{4}-\d{2}-\d{2}$/.test(day));const old=this.db.prepare('SELECT date FROM backups WHERE user=?').get(user);if(old&&old.date>day)return this.backupInfo({user});
+    // Validate all referenced bytes before replacing the sole recovery root.
+    assembleDomain(entries,key=>this.asset(user,key));
+    return this.transaction(()=>{const manifest={schema:1,entries:{},assets:[...assetKeys(entries)]};
+      for(const [key,wire] of Object.entries(entries)){if(key==='@plan')continue;const digest=sha(wire);manifest.entries[key]=digest;
+        this.db.prepare('INSERT OR IGNORE INTO backup_blocks VALUES(?,?,?)').run(user,digest,wire);}
+      this.db.prepare('INSERT INTO backups VALUES(?,?,?,?) ON CONFLICT(user) DO UPDATE SET date=excluded.date,at=excluded.at,manifest=excluded.manifest').run(user,day,this.clock(),canonical(manifest));
+      const referenced=new Set(Object.values(manifest.entries));for(const row of this.db.prepare('SELECT sha FROM backup_blocks WHERE user=?').all(user))if(!referenced.has(row.sha))this.db.prepare('DELETE FROM backup_blocks WHERE user=? AND sha=?').run(user,row.sha);
+      return this.backupInfo({user});});
+  }
+  daily(){for(const row of this.db.prepare('SELECT id,zone FROM accounts').all()){
+    const today=accountDate(this.clock(),row.zone),date=new Date(Date.parse(today+'T00:00:00Z')-DAY).toISOString().slice(0,10),last=this.db.prepare('SELECT date FROM backups WHERE user=?').get(row.id);
+    if(!last||last.date<date)this.capture(row.id,date);
+  }this.collect();}
+  restore(s,{revision,requestId}){const backup=this.db.prepare('SELECT manifest FROM backups WHERE user=?').get(s.user);fail(backup,'NO_BACKUP',404);
+    const manifest=JSON.parse(backup.manifest),entries={};for(const [key,digest]of Object.entries(manifest.entries)){
+      const wire=this.db.prepare('SELECT canonical FROM backup_blocks WHERE user=? AND sha=?').get(s.user,digest)?.canonical;fail(wire&&sha(wire)===digest,'BACKUP_CORRUPT',503);entries[key]=wire;}
+    // A restored active session remains a fact, but no local automatic grant
+    // or execution permission is resurrected by this snapshot.
+    return this.replace(s,{revision,entries,requestId});}
+  collect(){for(const account of this.db.prepare('SELECT id FROM accounts').all()){
+    const used=assetKeys(this.entries(account.id)),root=this.db.prepare('SELECT manifest FROM backups WHERE user=?').get(account.id);
+    if(root)for(const key of JSON.parse(root.manifest).assets)used.add(key);
+    for(const asset of this.db.prepare('SELECT sha,created FROM assets WHERE user=?').all(account.id))if(!used.has(asset.sha)&&asset.created<this.clock()-DAY){
+      const file=this.assetPath(account.id,asset.sha);if(existsSync(file))unlinkSync(file);this.db.prepare('DELETE FROM assets WHERE user=? AND sha=?').run(account.id,asset.sha);}
+  }this.db.prepare('DELETE FROM sessions WHERE expires<?').run(this.clock());}
+  pair(a,b){return [a,b].sort();}
+  invite(s,code){fail(this.account(s.user).friendsEnabled,'FRIENDS_DISABLED',409);fail(typeof code==='string'&&/^[A-F0-9]{18}$/.test(code));
+    const other=this.db.prepare('SELECT id,friends_enabled FROM accounts WHERE code=?').get(code);fail(other&&other.friends_enabled&&other.id!==s.user,'FRIEND_NOT_FOUND',404);
+    const [a,b]=this.pair(s.user,other.id);const previous=this.db.prepare('SELECT * FROM friends WHERE a=? AND b=?').get(a,b);
+    fail(!previous,'INVITE_ALREADY_EXISTS',409);
+    // Public external sources have no person or login session to accept an
+    // invitation. The reader explicitly adds this read-only source instead.
+    const external=this.db.prepare('SELECT 1 FROM external_sources WHERE user=? AND enabled=1').get(other.id);
+    this.db.prepare('INSERT INTO friends VALUES(?,?,?,?)').run(a,b,external?'accepted':'pending',s.user);return {sent:true};}
+  relation(s,id,action){const [a,b]=this.pair(s.user,id),row=this.db.prepare('SELECT * FROM friends WHERE a=? AND b=?').get(a,b);fail(row,'FRIEND_NOT_FOUND',404);
+    if(action==='accept'){fail(row.status==='pending'&&row.sender!==s.user&&this.account(s.user).friendsEnabled);this.db.prepare("UPDATE friends SET status='accepted' WHERE a=? AND b=?").run(a,b);}
+    else if(action==='remove'){this.transaction(()=>{this.db.prepare('DELETE FROM friends WHERE a=? AND b=?').run(a,b);this.db.prepare('DELETE FROM friend_sharing WHERE (user=? AND friend=?) OR (user=? AND friend=?)').run(a,b,b,a);});}
+    else fail(false);return {ok:true};}
+  friendPolicy(s,id,value){const [a,b]=this.pair(s.user,id);fail(this.db.prepare("SELECT 1 FROM friends WHERE a=? AND b=? AND status='accepted'").get(a,b),'FRIEND_NOT_FOUND',404);
+    fail(!this.db.prepare('SELECT 1 FROM external_sources WHERE user=?').get(id),'READ_ONLY_FRIEND',409);
+    if(value===null)this.db.prepare('DELETE FROM friend_sharing WHERE user=? AND friend=?').run(s.user,id);
+    else this.db.prepare('INSERT INTO friend_sharing VALUES(?,?,?) ON CONFLICT(user,friend) DO UPDATE SET value=excluded.value').run(s.user,id,canonical(sharing(value)));return {ok:true};}
+  presence(s,value,execution){const h=this.head(s.user);fail(h.owner===s.device&&h.execution===execution,'EXECUTION_CHANGED',409);
+    fail(value&&typeof value==='object'&&Object.keys(value).sort().join()==='currentName,estimatedElapsedMs,estimatedEndsAt,startedAt,todayActualFocusMs');
+    const now=this.clock();fail(Number.isSafeInteger(value.todayActualFocusMs)&&value.todayActualFocusMs>=0&&value.todayActualFocusMs<=DAY);
+    if(value.currentName!=null){fail(typeof value.currentName==='string'&&value.currentName.length<=512);
+      const start=Date.parse(value.startedAt),end=Date.parse(value.estimatedEndsAt);fail(Number.isFinite(start)&&Number.isFinite(end)&&start<=now+30000&&end>start&&end-start<=DAY);
+      fail(Number.isSafeInteger(value.estimatedElapsedMs)&&value.estimatedElapsedMs>=0&&value.estimatedElapsedMs<=end-start);
+    }else fail(value.startedAt===null&&value.estimatedEndsAt===null&&value.estimatedElapsedMs===0);
+    const expires=value.currentName==null?now+90000:Math.min(now+90000,Date.parse(value.estimatedEndsAt));
+    this.db.prepare('INSERT INTO presence VALUES(?,?,?) ON CONFLICT(user) DO UPDATE SET value=excluded.value,expires=excluded.expires').run(s.user,canonical({...value,updatedAt:new Date(now).toISOString()}),expires);
+    return {ok:true};}
+  dayTotals(user,zone){
+    const history=this.db.prepare("SELECT canonical FROM entries WHERE user=? AND key LIKE 'focusHistory/%'").all(user),totals={};
+    for(const record of history){const value=JSON.parse(record.canonical).value;let cursor=Date.parse(value.startedAt),end=cursor+value.actualDurationMs;
+      while(cursor<end){const day=accountDate(cursor,zone);let next=end;
+        if(accountDate(end-1,zone)!==day){let low=cursor+1,high=Math.min(end,cursor+30*3600000);
+          while(low<high){const mid=Math.floor((low+high)/2);if(accountDate(mid,zone)===day)low=mid+1;else high=mid;}next=low;}
+        totals[day]=(totals[day]??0)+next-cursor;cursor=next;}}
+    return totals;
+  }
+  friends(s){if(!this.account(s.user).friendsEnabled)return [];return this.db.prepare('SELECT * FROM friends WHERE a=? OR b=?').all(s.user,s.user).map(row=>{
+    const id=row.a===s.user?row.b:row.a,account=this.account(id),base={id,name:account.name,status:row.status,incoming:row.sender!==s.user};
+    const external=this.db.prepare('SELECT * FROM external_sources WHERE user=?').get(id);
+    if(external){
+      base.readOnly=true;base.source={kind:external.kind,name:'Mutsumi Focus',origin:external.origin};
+      if(row.status!=='accepted')return base;
+      if(!external.enabled||external.error||external.expires<=this.clock()||!external.projection){base.stale=true;return base;}
+      return {...base,...JSON.parse(external.projection),updatedAt:new Date(external.updated).toISOString()};
+    }
+    const override=this.db.prepare('SELECT value FROM friend_sharing WHERE user=? AND friend=?').get(s.user,id);base.sharing=override?JSON.parse(override.value):null;
+    if(row.status!=='accepted'||!account.friendsEnabled)return base;
+    const policy=JSON.parse(this.db.prepare('SELECT value FROM friend_sharing WHERE user=? AND friend=?').get(id,s.user)?.value??canonical(account.sharing));
+    const live=this.db.prepare('SELECT value,expires FROM presence WHERE user=?').get(id),snapshot=live?JSON.parse(live.value):null;
+    base.visible=policy;if(policy.time)base.updatedAt=snapshot?.updatedAt??null;
+    if(live&&live.expires>this.clock()){
+      if(policy.status)base.focusing=snapshot.currentName!=null;
+      if(policy.name)base.currentName=snapshot.currentName;
+      if(policy.time){base.startedAt=snapshot.startedAt;base.endsAt=snapshot.estimatedEndsAt;}
+    }else if(policy.status||policy.name||policy.time)base.stale=true;
+    if(policy.daily){const history=this.db.prepare("SELECT canonical FROM entries WHERE user=? AND key LIKE 'focusHistory/%'").all(id),totals={};
+      for(const record of history){const value=JSON.parse(record.canonical).value;let cursor=Date.parse(value.startedAt),end=cursor+value.actualDurationMs;
+        while(cursor<end){const day=accountDate(cursor,account.timeZone);let next=end;
+          if(accountDate(end-1,account.timeZone)!==day){let low=cursor+1,high=Math.min(end,cursor+30*3600000);
+            while(low<high){const mid=Math.floor((low+high)/2);if(accountDate(mid,account.timeZone)===day)low=mid+1;else high=mid;}next=low;}
+          totals[day]=(totals[day]??0)+next-cursor;cursor=next;}}
+      base.days=Object.entries(totals).sort((a,b)=>b[0].localeCompare(a[0])).slice(0,366).map(([date,actualFocusMs])=>({date,actualFocusMs}));}
+    return base;
+  });}
+}

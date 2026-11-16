@@ -1,0 +1,16 @@
+import { CloudStore } from './store.mjs';
+import { createCloudServer } from './server.mjs';
+import { RelayForwarder } from './forwarder.mjs';
+import { ExternalFocusBridge } from './external-focus.mjs';
+const directory=process.env.BLOCKCOLC_CLOUD_DATA;
+if(!directory||!process.env.BLOCKCOLC_TLS_KEY||!process.env.BLOCKCOLC_TLS_CERT)throw new Error('Explicit private data and TLS paths are required');
+const port=Number(process.env.BLOCKCOLC_CLOUD_PORT??8443);if(!Number.isInteger(port)||port<1024||port>65535)throw new Error('Invalid service port');
+const store=new CloudStore(directory),forwarder=new RelayForwarder(store,{configuration:process.env.BLOCKCOLC_FORWARD_CONFIG});
+const external=new ExternalFocusBridge(store,{configuration:process.env.BLOCKCOLC_EXTERNAL_CONFIG});
+const server=createCloudServer(store,{tls:{key:process.env.BLOCKCOLC_TLS_KEY,cert:process.env.BLOCKCOLC_TLS_CERT},forwarder,onError:type=>console.error('Cloud request failed:',type)});
+server.listen(port,process.env.BLOCKCOLC_CLOUD_BIND??'0.0.0.0',()=>console.log('blockcolc cloud ready'));
+const daily=setInterval(()=>{try{store.daily();}catch(error){console.error('Daily capture failed:',error.constructor.name);}},60000);
+const forwarding=setInterval(()=>{void forwarder.drain();},5000);
+const importing=setInterval(()=>{void external.poll();},5000);void external.poll();
+const stop=()=>{clearInterval(daily);clearInterval(forwarding);clearInterval(importing);server.close(async()=>{await external.stop();store.close();process.exit(0);});setTimeout(()=>process.exit(1),10000).unref();};
+process.on('SIGTERM',stop);process.on('SIGINT',stop);
