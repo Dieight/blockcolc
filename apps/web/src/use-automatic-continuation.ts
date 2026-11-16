@@ -58,6 +58,7 @@ export function useAutomaticContinuation(options: UseAutomaticContinuationOption
     const ports: AutomaticContinuationCoordinatorPorts = {
       service: {
         snapshot: () => latest.current.service.snapshot(),
+        stateReplacementRevision: () => latest.current.service.stateReplacementRevision(),
         resume: () => latest.current.service.resume(),
         startScheduledFocus: (command, reservation) => latest.current.service.startScheduledFocus(command, reservation),
         subscribeCommitted: listener => latest.current.service.subscribeCommitted(listener),

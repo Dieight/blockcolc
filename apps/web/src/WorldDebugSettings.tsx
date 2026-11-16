@@ -5,6 +5,7 @@ import { ChoiceMenu } from './ChoiceMenu';
 import { MinimalClockGesture } from './ui/MinimalClockGesture';
 import { Reveal } from './ui/Reveal';
 import { PhysicalSlider } from './ui/PhysicalSlider';
+import {previewCelebration} from './celebrations';
 
 const WEATHER_CHOICES = [
   { id: 'normal', label: "正常天气" }, { id: 'clear', label: "晴" },
@@ -26,6 +27,8 @@ export function WorldDebugSettingsPanel({ value, onChange, embedded=false }: {
         <label className="switch-control ios-switch"><input type="checkbox" aria-label={t("临时调试世界")} checked={value.enabled} onChange={() => update({ enabled: !value.enabled })}/></label>
       </div>
       <Reveal open={value.enabled} overflowVisible>
+        <div className="setting-row"><div className="setting-name"><span>{t('落成彩纸')}</span><small>{t('仅预览，不发放奖励')}</small></div><button type="button" className="settings-text-action" aria-label={t('播放落成彩纸')} onClick={()=>previewCelebration()}>{t('播放')}</button></div>
+        <div className="setting-row"><div className="setting-name"><span>{t('目标达成彩纸')}</span><small>{t('仅预览，不发放奖励')}</small></div><button type="button" className="settings-text-action" aria-label={t('播放目标彩纸')} onClick={()=>previewCelebration(true)}>{t('播放')}</button></div>
         <div className="setting-row">
           <div className="setting-name"><span>{t("天气")}</span></div>
           <div id="world-debug-weather" className="world-debug-weather">

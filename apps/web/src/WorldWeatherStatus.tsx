@@ -97,7 +97,7 @@ export function WorldWeatherSettingsStatus({ enabled, view }: { enabled: boolean
   const status = !enabled
     ? view.fallbackReason === 'cache_clear_failed'
       ? t("已关闭 · 本机位置缓存未能清除")
-      : t("已关闭 · 聚落继续使用本地天气")
+      : t("本地天气与日月")
     : view.source === 'real'
       ? t("当前显示 {0}{1}{2}{3}", realWeatherLabel(view.conditionCode,view.conditionText), view.locationSource === 'cached' ? t(' · 使用本机上次保存的位置') : '', observedAt ? t(' · 数据时间 {0}',observedAt) : '', view.syncState === 'syncing' ? t(' · 正在刷新') : '')
       : view.syncState === 'not_synced'
@@ -106,11 +106,11 @@ export function WorldWeatherSettingsStatus({ enabled, view }: { enabled: boolean
           ? t("正在同步现实天气 · 当前暂用本地天气")
       : t("{0} · 当前使用本地天气{1}", failureLabel(view.fallbackReason), manualRetry ? t(' · 已暂停自动重试；处理后关闭并重新开启天气同步') : '');
   const astronomyStatus = !enabled
-    ? t("天文增强已关闭")
+    ? null
     : view.astronomySyncState === 'calendar'
-      ? t("天文日历已同步 · 日月方向按本地时间连续计算")
+      ? t("日月已同步")
       : view.astronomySyncState === 'ephemeris_only'
-        ? t("日历暂不可用 · 按已授权位置本地历算")
+        ? t("日月按所在地计算")
         : view.astronomySyncState === 'syncing'
           ? t("正在获取天文日历")
           : view.astronomySyncState === 'unavailable'
@@ -119,7 +119,7 @@ export function WorldWeatherSettingsStatus({ enabled, view }: { enabled: boolean
 
   return <div className="weather-setting-status" role="status" aria-live="polite">
     <small>{status}</small>
-    <small className="weather-astronomy-status">{astronomyStatus}</small>
+    {astronomyStatus&&<small className="weather-astronomy-status">{astronomyStatus}</small>}
     {(hasWeatherSource || hasAstronomySource) && <div className="weather-setting-attribution">
       <span>{t("数据来源：")}</span>
       <a href="https://www.qweather.com" target="_blank" rel="noopener noreferrer">{t("和风天气")}</a>

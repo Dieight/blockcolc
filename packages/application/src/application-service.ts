@@ -66,6 +66,13 @@ export class ApplicationService {
   private activeProjectionCache: { epoch: number; value: ActiveProjectProjection | null } | null = null;
   private achievementsCache: readonly AchievementProgress[] | null = null;
   private readonly committedObservers = new Set<(event: { replacement: boolean; breakEndsAt?: string | null }) => void>();
+  private readonly eventObservers = new Set<(events: readonly DomainEvent[]) => void>();
+
+  /** Saved commands only. Loading/replacing a snapshot never replays rewards. */
+  subscribeEvents(observer: (events: readonly DomainEvent[]) => void): () => void {
+    this.eventObservers.add(observer);
+    return () => { this.eventObservers.delete(observer); };
+  }
 
   /** Read-only post-adoption signal. Observer failures never affect a saved command. */
   subscribeCommitted(observer: (event: { replacement: boolean; breakEndsAt?: string | null }) => void): () => void {
@@ -239,6 +246,20 @@ export class ApplicationService {
         warnings.push(warning("NOTIFICATION_SCHEDULE_FAILED", "Break continues, but its completion notification could not be scheduled", cause));
       }
       return warnings;
+    });
+  }
+
+  setPlanCompletionNotification(notification: import('./ports.js').PlanCompletionNotification | null, replacementRevision: number): Promise<ApplicationWarning[]> {
+    return this.serial(async () => {
+      if (replacementRevision !== this.stateReplacementRevision()) return [];
+      const port = this.dependencies.notifications;
+      try {
+        if (!notification || Date.parse(notification.endsAt) <= nowMs(this.dependencies.clock)) {
+          await port.cancelPlanCompletion?.(); return [];
+        }
+        if (!port.schedulePlanCompletion) return [warning('NOTIFICATION_SCHEDULE_FAILED', 'This platform cannot schedule a plan reminder')];
+        await port.schedulePlanCompletion(notification); return [];
+      } catch (cause) { return [warning('NOTIFICATION_SCHEDULE_FAILED', 'Plan reminder unavailable; saved focus is unchanged', cause)]; }
     });
   }
 
@@ -480,7 +501,7 @@ export class ApplicationService {
     // than once. A lifecycle no-op must not write the cloned aggregate, bump
     // the epoch, or notify renderer consumers; a real foreground reconciliation
     // that merely clears the pending background still differs and is saved.
-    if (origin === "recovery" && result.events.length === 0 && result.state === this.state) {
+    if (result.events.length === 0 && result.state === this.state) {
       return success(this.state, [], []);
     }
 
@@ -490,6 +511,9 @@ export class ApplicationService {
       ? await this.saveDeleteWithRollback(result.state, deleted.projectId)
       : await saveOrThrow(this.dependencies.repository, result.state, this.revision, notesOnly);
     this.adopt(result.state, committedRevision, false, notesOnly);
+    for (const observer of this.eventObservers) {
+      try { observer(result.events); } catch { /* Presentation never rolls back a durable command. */ }
+    }
     const warnings = await this.runNotificationEffects(result.events, origin);
     return success(result.state, result.events, warnings);
   }
@@ -590,6 +614,7 @@ function focusCompletionNotification(
     ...(projectTitle ? { projectTitle } : {}),
     ...(taskTitle ? { taskTitle } : {}),
     ...(active.marathon === true ? { marathon: true } : {}),
+    ...(project?.kind === 'habit' && active.deferredSettlement !== true ? { requiresReport: false } : {}),
   };
 }
 

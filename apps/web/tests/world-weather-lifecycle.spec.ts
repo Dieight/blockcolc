@@ -53,7 +53,7 @@ test('ordinary opening ends in real building focus and keeps its target/limits t
   const map=page.getByRole('button',{name:'重置地图',exact:true});
   await expect(map).toBeVisible();
   await expect(page.getByRole('region',{name:'我的第一座工坊',exact:true})).toHaveCount(0);
-  const framing=()=>canvas.evaluate(node=>({distance:Number(node.dataset.cameraDistance),target:[node.dataset.cameraTargetX,node.dataset.cameraTargetY,node.dataset.cameraTargetZ],
+  const framing=()=>canvas.evaluate(node=>({distance:Number(node.dataset.cameraDistance),ratio:Number(node.dataset.cameraDistanceRatio),target:[node.dataset.cameraTargetX,node.dataset.cameraTargetY,node.dataset.cameraTargetZ],
     minimum:Number(node.dataset.cameraMinimumDistanceRatio),maximum:Number(node.dataset.cameraMaximumDistanceRatio)}));
   const opened=await framing();
   expect(opened.minimum).toBe(.9);expect(opened.maximum).toBe(1.35);
@@ -69,7 +69,8 @@ test('ordinary opening ends in real building focus and keeps its target/limits t
   expect((await framing()).target).toEqual(opened.target);
   await map.click();
   await expect(map).toBeHidden();
-  expect((await framing()).minimum).toBe(.45);
+  const reset=await framing(),fitted=reset.distance/reset.ratio;
+  expect(reset.minimum).toBeCloseTo(Math.max(.1,12/fitted),3);expect(reset.maximum).toBe(.9);
   const building=page.getByRole('button',{name:'查看建筑记忆：我的第一座工坊',exact:true});
   await building.focus();await building.press('Enter');
   const memory=page.getByRole('region',{name:'我的第一座工坊',exact:true});

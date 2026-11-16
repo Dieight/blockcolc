@@ -106,6 +106,14 @@ export interface FocusCompletionNotification {
   projectTitle?: string;
   taskTitle?: string;
   marathon?: boolean;
+  /** Habits settle directly; their completion must not ask for a progress report. */
+  requiresReport?: boolean;
+}
+
+export interface PlanCompletionNotification {
+  planKey: string;
+  endsAt: ISOInstant;
+  requiresReport: boolean;
 }
 
 export interface BreakCompletionNotification {
@@ -133,6 +141,9 @@ export interface NotificationPort {
   cancelFocusCompletion(sessionId: string): Promise<void>;
   scheduleBreakCompletion(notification: BreakCompletionNotification): Promise<void>;
   cancelBreakCompletion(): Promise<void>;
+  /** Optional on older/headless adapters. This is a presentation alarm only. */
+  schedulePlanCompletion?(notification: PlanCompletionNotification): Promise<void>;
+  cancelPlanCompletion?(): Promise<void>;
 }
 
 export type FocusLifecycleEvent =

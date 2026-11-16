@@ -79,6 +79,7 @@ test('one planned round ends directly after its natural progress report', async 
   await page.clock.install({ time: new Date('2026-08-03T08:00:00Z') });
   await createDefaultProject(page);
   await page.getByRole('button', { name: '设置' }).click();
+  await openSecondarySetting(page,'普通任务');
   const focusMinutes = page.getByLabel('普通任务专注分钟');
   await focusMinutes.fill('1');
   await focusMinutes.press('Enter');
@@ -123,6 +124,7 @@ test('keeps each multi-round progress report before its configured break', async
   await page.clock.install({ time: new Date('2026-08-03T08:00:00Z') });
   await createDefaultProject(page);
   await page.getByRole('button', { name: '设置' }).click();
+  await openSecondarySetting(page,'普通任务');
   const focusMinutes = page.getByLabel('普通任务专注分钟');
   await focusMinutes.fill('1');
   await focusMinutes.press('Enter');

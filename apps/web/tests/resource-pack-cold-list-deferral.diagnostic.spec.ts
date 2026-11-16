@@ -1,3 +1,4 @@
+import {openSecondarySetting} from "./settings-controls";
 import { expect, test, type Page } from '@playwright/test';
 
 interface ColdRepositoryProbeWindow {
@@ -52,6 +53,7 @@ test('cold world boot defers the hidden list, then reads once and preserves it a
   await expect(page.locator('.resource-pack-list-status')).toContainText('本机尚无导入的资源包。');
   expect(await listCallCount(page)).toBe(1);
 
+  await openSecondarySetting(page,'普通任务');
   const focusMinutes = page.getByLabel('普通任务专注分钟');
   await focusMinutes.fill('42');
   await page.getByRole('button', { name: '计时', exact: true }).click();

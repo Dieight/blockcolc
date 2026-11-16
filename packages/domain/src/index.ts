@@ -3,4 +3,5 @@ export * from "./domain.js";
 export * from "./model.js";
 export * from "./validation.js";
 export * from './holidays.js';
+export * from './birthday.js';
 export { copyDomainState, freezeDomainBlueprints } from './state-copy.js';

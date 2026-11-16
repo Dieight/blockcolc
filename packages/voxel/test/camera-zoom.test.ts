@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { cameraZoomBounds, clampCameraDistance, openingZoomDistance } from "../src/camera-zoom";
+import { cameraZoomBounds, clampCameraDistance, openingZoomDistance,settlementOpeningDistance } from "../src/camera-zoom";
 
 describe("renderer camera zoom bounds", () => {
   it('keeps the whole valley fitted while no longer zooming beyond its overview, without changing close inspection', () => {
-    expect(cameraZoomBounds(100, 'settlement', 'natural-valley')).toEqual({ minimum: 45, maximum: 90 });
-    expect(cameraZoomBounds(100, 'settlement', 'ocean-island').maximum).toBeCloseTo(114);
+    expect(cameraZoomBounds(200, 'settlement', 'natural-valley')).toEqual({ minimum: 20, maximum: 180 });
+    expect(cameraZoomBounds(100, 'settlement', 'ocean-island').maximum).toBeCloseTo(90);
     expect(cameraZoomBounds(100, 'preview', 'natural-valley').maximum).toBeCloseTo(135);
     expect(cameraZoomBounds(100, 'focused', 'natural-valley').minimum).toBe(90);
   });
@@ -22,11 +22,19 @@ describe("renderer camera zoom bounds", () => {
     const settlement = cameraZoomBounds(fittedDistance, "settlement");
     const preview = cameraZoomBounds(fittedDistance, "preview");
 
-    expect(settlement.minimum).toBe(45);
+    expect(settlement.minimum).toBe(12);
     expect(preview.minimum).toBe(65);
     expect(settlement.minimum).toBeLessThan(preview.minimum);
-    expect(settlement.maximum).toBeCloseTo(114);
+    expect(settlement.maximum).toBeCloseTo(90);
     expect(preview.maximum).toBeCloseTo(135);
+  });
+  it('preserves opening composition while allowing close inspection and guards tiny worlds',()=>{
+    for(const fitted of [20,80,240,1200]){
+      const {minimum,maximum}=cameraZoomBounds(fitted,'settlement');
+      expect(minimum).toBeLessThanOrEqual(maximum);
+      expect(minimum).toBeGreaterThanOrEqual(12);
+      expect(settlementOpeningDistance(fitted,minimum,maximum)).toBe(clampCameraDistance(fitted*.45,minimum,maximum));
+    }
   });
 
   it("keeps focused-building bounds and clamps shared zoom input at both ends", () => {

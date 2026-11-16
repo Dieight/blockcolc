@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import {expectSettlementZoomBounds} from './world-overview';
 
 async function selectBuilding(page: Page, title: string) {
   const canvas = page.getByLabel('项目建筑世界');
@@ -14,7 +15,7 @@ async function selectBuilding(page: Page, title: string) {
     await map.click();
     await expect(map).toBeHidden();
   }
-  await expect(canvas).toHaveAttribute('data-camera-minimum-distance-ratio', '0.4500');
+  await expectSettlementZoomBounds(canvas);
   const before = await cameraState(page);
   const entry = page.getByRole('button', { name: `查看建筑记忆：${title}` });
   await entry.focus();

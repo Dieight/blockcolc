@@ -1,6 +1,7 @@
 import { assertISODate, assertValidTimeZone, localDateOf } from "./calendar.js";
 import { MAX_BUILDING_BLUEPRINTS, SIGN_DYE_COLORS } from "./model.js";
 import { HOLIDAY_IDS, holidaysOnDate } from './holidays.js';
+import { DEFAULT_BIRTHDAY, isBirthdayDateValid } from './birthday.js';
 import type {
   ActiveFocusSession,
   DailyGoal,
@@ -38,14 +39,24 @@ function migrateV13State(raw: unknown): unknown {
 
 export function parseDomainState(raw: unknown): DomainState {
   const migrated = withoutWithdrawnTodayNextSteps(migrateV9State(migrateV8State(migrateV7State(migrateTerrainV4State(migrateV6State(migrateV5State(migrateV4State(withBuildingBlueprintDefaults(migrateV2State(withDecorationDefaults(migrateV1State(raw))))))))))));
-  const root = object(migrateV13State(migrateV12State(migrateV11State(migrateV10State(migrated)))), "$", [
+  const root = object(migrateV14State(migrateV13State(migrateV12State(migrateV11State(migrateV10State(migrated))))), "$", [
     "schemaVersion", "projects", "habitBuildings", "activeProjectId", "retiredSubtaskIds", "activeFocusSession",
     "focusHistory", "progressReports", "dailyGoals", "calendar", "decayPolicy", "projectConditions", "focusIntegrityPolicy",
     "decorationBlueprintResources", "decorationRewards", "holidayRewards", "buildingBlueprintResources", "worldSettings", "quickNotes",
+    'birthday', 'birthdayRewards',
   ]);
-  if (root.schemaVersion !== 14) invalid("$.schemaVersion", "must equal 14");
+  if (root.schemaVersion !== 15) invalid("$.schemaVersion", "must equal 15");
+  const birthday = object(root.birthday, '$.birthday', ['enabled', 'month', 'day']);
+  if (!isBirthdayDateValid(Number(birthday.month), Number(birthday.day))) invalid('$.birthday', 'invalid month/day');
   const state: DomainState = {
-    schemaVersion: 14,
+    schemaVersion: 15,
+    birthday: { enabled: boolean(birthday.enabled, '$.birthday.enabled'), month: integer(birthday.month, '$.birthday.month', 1, 12), day: integer(birthday.day, '$.birthday.day', 1, 31) },
+    birthdayRewards: array(root.birthdayRewards, '$.birthdayRewards', (raw, path) => {
+      const reward = object(raw, path, ['year', 'date', 'awardedAt', 'settlementIndex']);
+      const date = isoDate(reward.date, path+'.date'), year = integer(reward.year, path+'.year', 100, 9999);
+      if (Number(date.slice(0,4)) !== year) invalid(path+'.year', 'does not match reward date');
+      return { year, date, awardedAt: instant(reward.awardedAt, path+'.awardedAt'), settlementIndex: reward.settlementIndex === null ? null : integer(reward.settlementIndex, path+'.settlementIndex', 0) };
+    }),
     quickNotes: array(root.quickNotes, '$.quickNotes', (raw, path) => {
       const note = object(raw, path, ['id','text','completed','createdAt']);
       const id = nonBlankString(note.id, path+'.id'), text = nonBlankString(note.text, path+'.text');
@@ -72,8 +83,16 @@ export function parseDomainState(raw: unknown): DomainState {
   };
   if (state.quickNotes.length > 100) invalid('$.quickNotes','at most 100 notes');
   unique(state.quickNotes.map(note => note.id), '$.quickNotes');
+  unique(state.birthdayRewards.map(reward => String(reward.year)), '$.birthdayRewards');
   validateReferences(state);
   return state;
+}
+
+function migrateV14State(raw: unknown): unknown {
+  const candidate = record(raw, '$');
+  if (candidate.schemaVersion !== 14) return raw;
+  if (Object.hasOwn(candidate, 'birthday') || Object.hasOwn(candidate, 'birthdayRewards')) invalid('$.birthday', 'requires schema 15');
+  return { ...candidate, schemaVersion: 15, birthday: { ...DEFAULT_BIRTHDAY }, birthdayRewards: [] };
 }
 
 function parseProject(raw: unknown, path: string): Project {

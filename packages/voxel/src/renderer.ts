@@ -9,6 +9,8 @@ import { SkySpectacle, twilightPalette } from './sky-spectacle';
 import { mosaicColdDirection, mosaicSeed } from './mosaic-terrain';
 import { createMosaicSeabed } from './mosaic-seabed';
 import { detachTerrainWaterSurface } from './terrain-water-surface';
+import {createValleyWaterfallMesh,valleyWaterfallFaces} from './terrain-waterfalls';
+import {roadLampCells} from './road-lamps';
 import { terrainGeometryBytes, TERRAIN_CACHE_BYTES } from './terrain-cache';
 import { configureTerrainTile, terrainTileColor, TERRAIN_SIDE_SHADE } from './terrain-material';
 import { TerrainSurfaceTable, peekTerrainSurfaceTable, terrainSurfaceTable, terrainSurfaceTableBytes } from './terrain-surface-table';
@@ -20,7 +22,7 @@ import { cloudDrawCountForQuality, cloudGroupsForBudget, type CloudGroup } from 
 import { cloudVoxels } from './cloud-shape';
 import { patchWeatherWaterMaterial } from './water-weather';
 import { FrameRequestScheduler, PointerOwnership, type ReleasedPointer } from "./input-frame-scheduler";
-import { cameraZoomBounds, clampCameraDistance, openingZoomDistance } from "./camera-zoom";
+import { cameraZoomBounds, clampCameraDistance, openingZoomDistance, settlementOpeningDistance } from "./camera-zoom";
 import type { BlockFace, ResourcePackManifest } from "@blockcolc/resource-pack";
 import { BlueprintV1, resolveBuiltinBlueprint, validateBlueprint, type BlueprintVoxel } from "./blueprint";
 import {
@@ -153,6 +155,8 @@ import {
 import { LightingPostProcessor } from "./lighting-postprocess";
 import { cloneEnvironmentRevealMaterial } from "./environment-reveal-material";
 import { addOriginalFlowerShapes } from "./original-flower-shapes";
+import {addOriginalBlockDetails} from './original-block-details';
+import {addConnectedOriginalGlass,isConnectedOriginalGlass} from './connected-original-glass';
 import {
   emptyPrecipitationViewCache,
   invalidatePrecipitationViewCache,
@@ -816,9 +820,11 @@ export function createVoxelRenderer(
   const skyGeometry = new THREE.SphereGeometry(SKY_RADIUS, 24, 12);
   skyGeometry.setAttribute("color", new THREE.Float32BufferAttribute(new Float32Array(skyGeometry.getAttribute("position").count * 3), 3));
   const skyMaterial = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, depthWrite: false, depthTest: false, fog: false });
-  const skySpectacle = new SkySpectacle();
+  const floatingSkyBackdrop=(options.environmentStyle??'classic-island')==='classic-island';
+  const skySpectacle = new SkySpectacle(floatingSkyBackdrop);
   skySpectacle.uniforms.bcSkyColdDirection.value.set(...mosaicColdDirection(options.worldSeed ?? 'world-default'));
-  skySpectacle.patchSky(skyMaterial);
+  skySpectacle.patchSky(skyMaterial,floatingSkyBackdrop);
+  canvas.dataset.nightSkyBackdrop=floatingSkyBackdrop?'floating-dome':'upper-hemisphere';
   const skyDome = new THREE.Mesh(skyGeometry, skyMaterial);
   skyDome.name = "threeLayerSkyDome";
   skyDome.renderOrder = -1000;
@@ -1176,9 +1182,9 @@ export function createVoxelRenderer(
     cameraDistance = fromDistance;
     updateCamera();
     let toTarget = fromTarget.clone();
-    // Settlement opening (minimal and marathon) must traverse the complete
-    // approved zoom range, not stop at the intermediate fit distance.
-    let toDistance = minimumCameraDistance;
+    // Inspection can go much closer than the opening composition. Keep the
+    // settlement readable on launch rather than opening inside its rooftops.
+    let toDistance = settlementOpeningDistance(fittedDistance,minimumCameraDistance,maximumCameraDistance);
     const project = projectId ? positionedWorlds.find(world => world.projectId === projectId) : undefined;
     if (project) {
       const previousFocus = focusedProjectId;
@@ -1195,7 +1201,7 @@ export function createVoxelRenderer(
     if (reducedMotion) {
       focusedProjectId = project?.projectId ?? null;
       frameScene(true);
-      if (!project) { cameraDistance = minimumCameraDistance; updateCamera(); }
+      if (!project) { cameraDistance = toDistance; updateCamera(); }
       openingRevealCompletedCount += 1;
       canvas.dataset.openingRevealState = "completed";
       updateDiagnosticsDataset();
@@ -1336,10 +1342,13 @@ export function createVoxelRenderer(
     lastUpdateMs: number;
   } | null = null;
   let constructionReveals: Array<{ mesh: THREE.InstancedMesh; index: number; popAtMs: number; targetScale: number; done: boolean }> = [];
+  let constructionSurfaceRestorations:Array<()=>void>=[];
   let constructionRevealStartedMs = 0;
   let constructionRevealPendingStart = false;
   const terrainPackTextures: THREE.Texture[] = [];
   let terrainMeshForPicking: THREE.Mesh | null = null;
+  const waterfallClock={value:0};
+  let waterfallFaceCount=0,lastWaterfallFrame:number|null=null;
   let ambientDecorationCount = 0;
   let ambientDecorationKindCount = 0;
   let ambientDecorationDrawCalls = 0;
@@ -1476,6 +1485,10 @@ export function createVoxelRenderer(
 
   let totalRenderedFrames = 0;
   function renderFrame(frameStarted: number): boolean {
+    if(waterfallFaceCount>0&&ambientMotionAllowed()&&lastWaterfallFrame!==null){
+      waterfallClock.value+=Math.max(0,Math.min(250,frameStarted-lastWaterfallFrame))/1000;
+    }
+    lastWaterfallFrame=frameStarted;
     const probeFrameStarted = options.onPerformanceFrame ? performance.now() : 0;
     const probeQualityBefore = qualityTier;
     const probeProgramsBefore = options.onPerformanceFrame ? renderer.info.programs?.length ?? 0 : 0;
@@ -1764,6 +1777,7 @@ export function createVoxelRenderer(
     // A rebuild invalidates every per-frame animation state whose meshes just got
     // disposed: stale reveal entries must never write into freed instanced meshes.
     constructionReveals = [];
+    constructionSurfaceRestorations=[];
     cloudDrift = null;
     clearGroup(roadGroup);
     sceneryTreeCount = 0;
@@ -2157,6 +2171,13 @@ export function createVoxelRenderer(
     mesh.userData.ownedMaterials = ownedTerrainMaterials;
     terrainGroup.add(mesh);
     terrainMeshForPicking = mesh;
+    if(options.environmentStyle==='natural-valley'){
+      const faces=valleyWaterfallFaces(terrainSurfaceTable(data));
+      const falls=createValleyWaterfallMesh(faces,waterfallClock);
+      if(falls)terrainGroup.add(falls);
+      waterfallFaceCount=faces.length;
+    }else waterfallFaceCount=0;
+    canvas.dataset.waterfallFaceCount=String(waterfallFaceCount);
     if((options.environmentStyle==='mosaic-coast'||animalsEnabled&&(options.environmentStyle??'classic-island')!=='classic-island')&&!options.debugFlatColors){
       const waterSurface = detachTerrainWaterSurface(geometry, materialIds.indexOf('water'), material('terrainWater'));
       if (waterSurface) terrainGroup.add(waterSurface);
@@ -2233,31 +2254,24 @@ export function createVoxelRenderer(
     roadGroup.add(mesh);
   }
 
-  function addRoadLamps(roads: ReturnType<typeof roadCellsForVillage>, placements: readonly VillagePlacement[], emissivePoints: EmissivePoint[], groundHeightAt: (x: number, z: number) => number): void {
-    if (roads.length < 8) return;
-    const occupied = placements.map((placement) => ({
-      x: placement.worldPosition.x, z: placement.worldPosition.z,
-      radius: Math.max(placement.footprint.width, placement.footprint.depth) / 2 + 2,
-    }));
-    const candidates = roads.filter((cell, index) => index % 14 === 7
-      && occupied.every((building) => Math.hypot(cell.x - building.x, cell.z - building.z) > building.radius));
-    const selected = candidates.slice(0, 8);
-    if (selected.length === 0) return;
-    const poles = new THREE.InstancedMesh(new THREE.BoxGeometry(0.28, 2.5, 0.28), material("wood"), selected.length);
-    const lanterns = new THREE.InstancedMesh(new THREE.BoxGeometry(0.72, 0.72, 0.72), material("lamp"), selected.length);
-    const matrix = new THREE.Matrix4();
-    selected.forEach((cell, index) => {
-      const ground = groundHeightAt(cell.x, cell.z) - 0.455;
-      matrix.makeTranslation(cell.x, ground + 1.25, cell.z); poles.setMatrixAt(index, matrix);
-      matrix.makeTranslation(cell.x, ground + 2.55, cell.z); lanterns.setMatrixAt(index, matrix);
-        registerEmissivePoint(emissivePoints, emissivePointColors,
-          { x: cell.x, y: ground + 2.55, z: cell.z, intensity: 15 }, 0xffb45f);
+  function addRoadLamps(roads: readonly RoadCell[], placements: readonly VillagePlacement[], points: EmissivePoint[], groundAt: (x:number,z:number)=>number): void {
+    const cells=roadLampCells(roads,placements);
+    canvas.dataset.roadLampCount=String(cells.length);
+    if(!cells.length)return;
+    const poles=new THREE.InstancedMesh(new THREE.BoxGeometry(.18,2.4,.18),material('wood'),cells.length);
+    const cores=new THREE.InstancedMesh(new THREE.BoxGeometry(.36,.4,.36),material('lamp'),cells.length);
+    const caps=new THREE.InstancedMesh(new THREE.BoxGeometry(.5,.1,.5),material('roof'),cells.length*2);
+    poles.name='sparse-road-lamp-posts';cores.name='sparse-road-lanterns';caps.name='sparse-road-lantern-caps';
+    const matrix=new THREE.Matrix4();
+    cells.forEach((cell,index)=>{
+      const ground=groundAt(cell.x,cell.z)-.455;
+      poles.setMatrixAt(index,matrix.makeTranslation(cell.x,ground+1.2,cell.z));
+      cores.setMatrixAt(index,matrix.makeTranslation(cell.x,ground+2.55,cell.z));
+      caps.setMatrixAt(index*2,matrix.makeTranslation(cell.x,ground+2.3,cell.z));
+      caps.setMatrixAt(index*2+1,matrix.makeTranslation(cell.x,ground+2.8,cell.z));
+      registerEmissivePoint(points,emissivePointColors,{x:cell.x,y:ground+2.55,z:cell.z,intensity:8},0xffb45f);
     });
-    poles.instanceMatrix.needsUpdate = true;
-    lanterns.instanceMatrix.needsUpdate = true;
-    poles.castShadow = true;
-    lanterns.castShadow = true;
-    roadGroup.add(poles, lanterns);
+    for(const mesh of [poles,cores,caps]){mesh.castShadow=true;mesh.receiveShadow=true;mesh.instanceMatrix.needsUpdate=true;roadGroup.add(mesh);}
   }
 
   function addBuilding(world: PositionedWorldSnapshot, emissivePoints: EmissivePoint[], reveal: { previousCompletionBasisPoints: number } | null): void {
@@ -2369,7 +2383,9 @@ export function createVoxelRenderer(
       !specialVoxels.has(voxel) && !blockEntityFallbackVoxels.has(voxel)
     ));
     const flowerShapes = addOriginalFlowerShapes(structure, ordinaryFallbackVoxels);
-    const remainingFallbackVoxels = ordinaryFallbackVoxels.filter((voxel) => !flowerShapes.has(voxel));
+    const detailShapes=addDetailedOriginalMeshes(structure,ordinaryFallbackVoxels.filter(voxel=>!flowerShapes.has(voxel)),conditionVisual.weathering,revealOrderIndex,revealSchedule);
+    const joinedGlass=addOriginalGlassMeshes(structure,ordinaryFallbackVoxels.filter(voxel=>!flowerShapes.has(voxel)&&!detailShapes.has(voxel)),conditionVisual.weathering,!revealing);
+    const remainingFallbackVoxels = ordinaryFallbackVoxels.filter((voxel) => !flowerShapes.has(voxel)&&!detailShapes.has(voxel)&&!joinedGlass.has(voxel));
     const resourceFluidCount = addStaticFluidVoxels(structure, remainingFallbackVoxels, conditionVisual.intactVoxels);
     if (activeResourcePack) fallbackVoxelCount += ordinaryFallbackVoxels.length - resourceFluidCount;
     const staticShapeVoxels = remainingFallbackVoxels.filter((voxel) => isOriginalStaticShapeBlockId(voxel.sourceBlockId));
@@ -2386,7 +2402,7 @@ export function createVoxelRenderer(
       const owned = conditionVisual.weathering > 0 || emissiveActive;
       const meshMaterial = owned ? material(materialId!).clone() : material(materialId!);
       const translucent = materialId === "glass" || parseFallbackVisualKey(materialId!)?.transparent === true;
-      trackMaterialEffects(meshMaterial, translucent ? 0.22 : 0.12);
+      trackMaterialEffects(meshMaterial, translucent ? 0.22 : 0.025);
       if (conditionVisual.weathering > 0) {
         meshMaterial.color.multiplyScalar(1 - conditionVisual.weathering * 0.28);
         meshMaterial.roughness = Math.min(1, meshMaterial.roughness + conditionVisual.weathering * 0.1);
@@ -2394,7 +2410,8 @@ export function createVoxelRenderer(
       if (emissiveActive) {
         emissiveMaterials.push({ material: meshMaterial, level: level > 0 ? level : 15, kind: emissiveKind || "light" });
       }
-      const mesh = new THREE.InstancedMesh(new THREE.BoxGeometry(0.97, 0.97, 0.97), meshMaterial, voxels.length);
+      const mesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), meshMaterial, voxels.length);
+      if(revealing&&voxels.every(isConnectedOriginalGlass))mesh.userData.pendingJoinedGlass=true;
       const matrix = new THREE.Matrix4();
       const hiddenMatrix = new THREE.Matrix4();
       const matrixKey=voxels.map(voxel=>currentBuildingIndices!.get(voxel)).join(',');
@@ -2411,7 +2428,7 @@ export function createVoxelRenderer(
             mesh,
             index,
             popAtMs: revealSchedule.popAtMsFor(constructionRevealStartedMs, orderIndex),
-            targetScale: 0.97,
+            targetScale: 1,
             done: false,
           });
           return;
@@ -2429,13 +2446,24 @@ export function createVoxelRenderer(
       structure.add(mesh);
     }
     addVines(structure, conditionVisual.vines);
+    if(revealing){
+      const glasses=remainingFallbackVoxels.filter(isConnectedOriginalGlass);
+      if(glasses.length)constructionSurfaceRestorations.push(()=>{
+        const retired=new THREE.Group();
+        for(const child of [...structure.children])if(child.userData.pendingJoinedGlass){
+          if(child instanceof THREE.InstancedMesh)fallbackOcclusionMeshes.delete(child);
+          retired.add(child);
+        }
+        clearGroup(retired);addOriginalGlassMeshes(structure,glasses,conditionVisual.weathering,true);
+      });
+    }
     const showOutline = constructionOutlineVisibility === "all"
       || (constructionOutlineVisibility === "current" && world.isActive === true);
     const outlineRoot=new THREE.Group();outlineRoot.name='construction-outline';structure.add(outlineRoot);
     constructionOutlines.push({root:outlineRoot,blueprint:world.blueprint,completion,active:world.isActive===true,built:showOutline});
     outlineRoot.visible=showOutline;
     addPlannedOutline(outlineRoot, world.blueprint, completion, showOutline);
-    addDecorations(structure, world, emissivePoints);
+    addDecorations(structure, world);
     return root;
   }
 
@@ -2591,7 +2619,9 @@ export function createVoxelRenderer(
       !specialVoxels.has(voxel) && !blockEntityFallbackVoxels.has(voxel)
     ));
     const flowerShapes = addOriginalFlowerShapes(structure, ordinaryFallbackVoxels);
-    const remainingFallbackVoxels = ordinaryFallbackVoxels.filter((voxel) => !flowerShapes.has(voxel));
+    const detailShapes=addDetailedOriginalMeshes(structure,ordinaryFallbackVoxels.filter(voxel=>!flowerShapes.has(voxel)),0,null,null);
+    const joinedGlass=addOriginalGlassMeshes(structure,ordinaryFallbackVoxels.filter(voxel=>!flowerShapes.has(voxel)&&!detailShapes.has(voxel)),0,true);
+    const remainingFallbackVoxels = ordinaryFallbackVoxels.filter((voxel) => !flowerShapes.has(voxel)&&!detailShapes.has(voxel)&&!joinedGlass.has(voxel));
     const resourceFluidCount = addStaticFluidVoxels(structure, remainingFallbackVoxels, renderVoxels);
     if (activeResourcePack) fallbackVoxelCount += ordinaryFallbackVoxels.length - resourceFluidCount;
     const staticShapeVoxels = remainingFallbackVoxels.filter((voxel) => isOriginalStaticShapeBlockId(voxel.sourceBlockId));
@@ -2607,7 +2637,7 @@ export function createVoxelRenderer(
       const owned = emissiveActive;
       const meshMaterial = owned ? material(materialId!).clone() : material(materialId!);
       const translucent = materialId === "glass" || parseFallbackVisualKey(materialId!)?.transparent === true;
-      trackMaterialEffects(meshMaterial, translucent ? 0.22 : 0.12);
+      trackMaterialEffects(meshMaterial, translucent ? 0.22 : 0.025);
       if (emissiveActive) emissiveMaterials.push({ material: meshMaterial, level: level > 0 ? level : 15, kind: emissiveKind || "light" });
       if (reefSurfaces && !activeResourcePack && !translucent && !emissiveActive && voxels.every(isReefSolid)) {
         const stored=currentBuildingRecipe?.staticSurfaces?.get(key);
@@ -2638,7 +2668,7 @@ export function createVoxelRenderer(
         applyStaticSurfaceOcclusion(mesh);
         structure.add(mesh);continue;
       }
-      const mesh = new THREE.InstancedMesh(new THREE.BoxGeometry(0.97, 0.97, 0.97), meshMaterial, voxels.length);
+      const mesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), meshMaterial, voxels.length);
       const matrix = new THREE.Matrix4();
       const matrixKey=`static-cubes:${key}`,cachedMatrices=currentBuildingRecipe?.cubeMatrices.get(matrixKey);
       if(cachedMatrices&&cachedMatrices.length===mesh.instanceMatrix.array.length)mesh.instanceMatrix.array.set(cachedMatrices);
@@ -3225,8 +3255,11 @@ export function createVoxelRenderer(
       projectedWidth: o.userData.sceneryProjectedWidth })));
   }
 
-  function addDecorations(root: THREE.Group, world: PositionedWorldSnapshot, emissivePoints: EmissivePoint[]): void {
+  function addDecorations(root: THREE.Group, world: PositionedWorldSnapshot): void {
     for (const placement of decorationsForProject(world.projectId, world.decorationDates ?? [], world.blueprint)) {
+      // Retain the earned date/slot in saved history, but retire the old
+      // thin-pole fill lights. Source lights inside a blueprint still render.
+      if(placement.kind==='lamp')continue;
       const decoration = new THREE.Group();
       decoration.position.set(placement.x, 0, placement.z);
       decoration.userData.decorationId = placement.id;
@@ -3234,19 +3267,7 @@ export function createVoxelRenderer(
       if (placement.kind === "tree") {
         addStaticVoxelStructure(decoration, sceneryTreeBlocks(placement.variant % 2 ? 'birch' : 'oak', placement.variant).voxels);
       } else if (placement.kind === "road") addBox(decoration, "path", [1.8, 0.18, 1.8], [0, -0.05, 0]);
-      else if (placement.kind === "lamp") {
-        addBox(decoration, "wood", [0.28, 2.5, 0.28], [0, 1.25, 0]);
-        addBox(decoration, "lamp", [0.72, 0.72, 0.72], [0, 2.55, 0]);
-        const localX = placement.x + world.blueprintOffset.x;
-        const localZ = placement.z + world.blueprintOffset.z;
-        const cos = Math.cos(world.rotationY); const sin = Math.sin(world.rotationY);
-        registerEmissivePoint(emissivePoints, emissivePointColors, {
-          x: world.worldPosition.x + localX * cos + localZ * sin,
-          y: world.worldPosition.y + 2.55,
-          z: world.worldPosition.z - localX * sin + localZ * cos,
-          intensity: 15,
-        }, 0xffb45f);
-      } else {
+      else {
         addBox(decoration, "wood", [1.8, 0.3, 0.7], [0, 0.75, 0]);
         addBox(decoration, "wood", [0.25, 0.75, 0.25], [-0.62, 0.35, 0]);
         addBox(decoration, "wood", [0.25, 0.75, 0.25], [0.62, 0.35, 0]);
@@ -4195,7 +4216,11 @@ export function createVoxelRenderer(
       else reveal.done = true;
     }
     canvas.dataset.constructionRevealCount = String(remaining);
-    if (remaining === 0) constructionReveals = [];
+    if (remaining === 0) {
+      constructionReveals = [];
+      const restorations=constructionSurfaceRestorations;constructionSurfaceRestorations=[];
+      for(const restore of restorations)restore();
+    }
     else requestRender();
   }
 
@@ -4237,6 +4262,27 @@ export function createVoxelRenderer(
     for (const spriteMaterial of glowMaterials.values()) spriteMaterial.opacity = opacity;
   }
 
+  function addDetailedOriginalMeshes(root:THREE.Group,voxels:readonly BlueprintVoxel[],weathering:number,revealOrder:Map<BlueprintVoxel,number>|null,schedule:ReturnType<typeof constructionWaveSchedule>|null):Set<BlueprintVoxel>{
+    const first=root.children.length;
+    const handled=addOriginalBlockDetails(root,voxels,(mesh,index,voxel)=>{
+      const order=revealOrder?.get(voxel);
+      if(order!==undefined&&schedule){
+        const matrix=new THREE.Matrix4();mesh.getMatrixAt(index,matrix);matrix.scale(new THREE.Vector3(.0001,.0001,.0001));mesh.setMatrixAt(index,matrix);
+        constructionReveals.push({mesh,index,popAtMs:schedule.popAtMsFor(constructionRevealStartedMs,order),targetScale:1,done:false});
+      }
+    });
+    for(const child of root.children.slice(first))if(child instanceof THREE.Mesh&&child.material instanceof THREE.MeshStandardMaterial){trackMaterialEffects(child.material,.025);if(weathering>0)child.material.color.multiplyScalar(1-weathering*.28);}
+    return handled;
+  }
+
+  function addOriginalGlassMeshes(root:THREE.Group,voxels:readonly BlueprintVoxel[],weathering:number,enabled:boolean):Set<BlueprintVoxel>{
+    if(!enabled)return new Set();const first=root.children.length,handled=addConnectedOriginalGlass(root,voxels);
+    for(const child of root.children.slice(first))if(child instanceof THREE.Mesh&&child.material instanceof THREE.MeshStandardMaterial){
+      trackMaterialEffects(child.material,0);skySpectacle.patchReflection(child.material,.7);
+      if(weathering>0)child.material.color.multiplyScalar(1-weathering*.28);
+    }return handled;
+  }
+
   function addOriginalStaticShapeMeshes(
     root: THREE.Group,
     voxels: readonly BlueprintV1["voxels"][number][],
@@ -4266,7 +4312,7 @@ export function createVoxelRenderer(
         const owned=weathering>0||level>0;
         const meshMaterial=owned?material(materialId).clone():material(materialId);
         const translucent=materialId==='glass'||parseFallbackVisualKey(materialId)?.transparent===true;
-        trackMaterialEffects(meshMaterial,translucent ? .22 : .12);
+        trackMaterialEffects(meshMaterial,translucent ? 0 : .12);
         if(weathering>0){meshMaterial.color.multiplyScalar(1-weathering*.28);meshMaterial.roughness=Math.min(1,meshMaterial.roughness+weathering*.1);}
         if(level>0){emissiveMaterials.push({material:meshMaterial,level,kind:emissiveKind||'light'});originalStaticShapeEmissiveMaterialGroupCount++;}
         const mesh=new THREE.InstancedMesh(restoreCpuGeometry(batch.geometry),meshMaterial,batch.indices.length);
@@ -4306,7 +4352,7 @@ export function createVoxelRenderer(
       const owned = weathered || emissiveActive;
       const meshMaterial = owned ? material(materialId).clone() : material(materialId);
       const translucent = materialId === "glass" || parseFallbackVisualKey(materialId)?.transparent === true;
-      trackMaterialEffects(meshMaterial, translucent ? 0.22 : 0.12);
+      trackMaterialEffects(meshMaterial, translucent ? 0 : 0.12);
       if (weathered) {
         meshMaterial.color.multiplyScalar(1 - weathering * 0.28);
         meshMaterial.roughness = Math.min(1, meshMaterial.roughness + weathering * 0.1);
@@ -4407,6 +4453,7 @@ export function createVoxelRenderer(
     if (lightingTransition && paneVisible && !document.hidden && !reducedMotion) updateLighting(new Date());
     updateStormLightning(nowMs);
     updateCloudDrift(nowMs);
+    if(waterfallFaceCount>0&&ambientMotionAllowed())requestAmbientRender(nowMs);
     updateConstructionReveals(nowMs);
     if (skySpectacle.tick(nowMs,paneVisible&&!document.hidden)) requestAmbientRender(nowMs);
     canvas.dataset.ambientMotionActive = String(ambientMotionAllowed());
@@ -4532,6 +4579,7 @@ export function createVoxelRenderer(
       }
       contentBounds.expandByPoint(new THREE.Vector3(world.worldPosition.x, world.worldPosition.y + world.blueprint.bounds.maxY + 0.5, world.worldPosition.z));
       for (const decoration of decorationsForProject(world.projectId, world.decorationDates ?? [], world.blueprint)) {
+        if(decoration.kind==='lamp')continue;
         const cos = Math.cos(world.rotationY); const sin = Math.sin(world.rotationY);
         const localX = decoration.x + world.blueprintOffset.x;
         const localZ = decoration.z + world.blueprintOffset.z;

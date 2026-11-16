@@ -130,6 +130,40 @@ async function harness(initialMarathon = true) {
   };
 }
 
+describe('exact end-time continuation',()=>{
+  it('catches up a short final round at the selected deadline and never repeats it',async()=>{
+    const f=await harness();const end=BASE+3*60_000+30_000;
+    f.setPlan({...f.plan()!,totalRounds:2,deadlinePolicy:'exact',endAt:new Date(end).toISOString()});
+    f.setNow(end+10*60_000);await f.coordinator.onResume();
+    const history=f.service.snapshot().focusHistory;
+    expect(history).toHaveLength(2);expect(history[1]).toMatchObject({startedAt:new Date(BASE+3*60_000).toISOString(),endsAt:new Date(end).toISOString(),plannedDurationMs:30000,actualDurationMs:30000,status:'completed'});
+    expect(f.plan()).toMatchObject({status:'report',completedRounds:2,totalRounds:2});
+    await f.coordinator.onResume();expect(f.service.snapshot().focusHistory).toEqual(history);
+  });
+  it('projects and finishes a terminal short rest, not a phantom focus round',async()=>{
+    const f=await harness();const end=BASE+4*60_000+30_000;
+    f.setPlan({...f.plan()!,totalRounds:2,deadlinePolicy:'exact',endAt:new Date(end).toISOString()});
+    const timeline=projectAutomaticContinuationTimeline(f.plan()!,f.service.snapshot(),{eventId:`${AUTH}:round:2`,scheduledAtEpochMs:BASE+3*60_000})!;
+    expect(timeline.phases).toEqual([
+      {kind:'focus',startsAtEpochMs:BASE+3*60_000,endsAtEpochMs:BASE+4*60_000,round:2,eventId:`${AUTH}:round:2`},
+      {kind:'break',startsAtEpochMs:BASE+4*60_000,endsAtEpochMs:end,round:2},
+    ]);
+    f.setNow(BASE+4*60_000+1000);await f.coordinator.onResume();
+    expect(f.plan()).toMatchObject({status:'break',endAfterBreak:true,completedRounds:2,breakEndsAt:new Date(end).toISOString()});
+    expect(f.service.snapshot().focusHistory).toHaveLength(2);
+    f.setNow(end);await f.coordinator.onResume();expect(f.plan()).toMatchObject({status:'report',completedRounds:2});expect(f.service.snapshot().focusHistory).toHaveLength(2);
+  });
+  it('does not invent manually paused rounds when their deadline has passed',async()=>{
+    const f=await harness();f.setPlan({...f.plan()!,deadlinePolicy:'exact',automaticContinuation:undefined,endAt:new Date(BASE+3*60_000).toISOString()});
+    f.setNow(BASE+20*60_000);await f.coordinator.onResume();expect(f.service.snapshot().focusHistory).toHaveLength(1);expect(f.plan()).toMatchObject({status:'report',completedRounds:1});
+  });
+  it('finishes rather than hanging ready when a tiny final focus no longer fits after saving',async()=>{
+    const f=await harness();const end=BASE+3*60_000;
+    f.setPlan({...f.plan()!,totalRounds:2,deadlinePolicy:'exact',endAt:new Date(end).toISOString()});
+    f.setNow(end+1);await f.coordinator.onResume();expect(f.service.snapshot().focusHistory).toHaveLength(1);expect(f.plan()).toMatchObject({status:'report',completedRounds:1});
+  });
+});
+
 describe('automatic continuation coordinator', () => {
   it('keeps the last authorized native phase until the plan reaches report',async()=>{
     const f=await harness();

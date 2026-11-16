@@ -15,9 +15,7 @@ export interface MinimalFocusDraft {
 }
 
 /**
- * Minimal mode only rounds an end-time forward when it is at most one minute
- * before the next real round boundary. Boundaries include the breaks between
- * rounds; the first boundary is one focus duration from `now`.
+ * The gesture selects an exact deadline, never a rounded-up replacement.
  */
 export function roundsForMinimalEndTime(
   endMs: number,
@@ -27,22 +25,7 @@ export function roundsForMinimalEndTime(
   maxRounds = MAX_MARATHON_ROUNDS,
 ): { rounds: number; endsAtMs: number } | null {
   const schedule = planRoundsForDuration(endMs - now, focusMinutes, breakMinutes, maxRounds + 1);
-  const rounds = schedule?.rounds ?? 0;
-  if (rounds > maxRounds) return { rounds, endsAtMs: now + rounds * focusMinutes * 60_000 + Math.max(0, rounds - 1) * breakMinutes * 60_000 };
-
-  const nextRound = rounds + 1;
-  const nextBoundary = now + nextRound * focusMinutes * 60_000 + (nextRound - 1) * breakMinutes * 60_000;
-  const shortfall = nextBoundary - endMs;
-  const previousBoundary=now+rounds*focusMinutes*60_000+Math.max(0,rounds-1)*breakMinutes*60_000;
-  // Grace repairs a partly entered next round, never adds a whole round to an
-  // already exact boundary (notably one-minute / zero-break debug schedules).
-  const shouldCompleteNextRound = endMs>previousBoundary && shortfall>0 && shortfall<=60_000;
-  const plannedRounds = rounds + (shouldCompleteNextRound ? 1 : 0);
-  if (plannedRounds === 0) return null;
-  const endsAtMs = shouldCompleteNextRound
-    ? nextBoundary
-    : endMs;
-  return { rounds: plannedRounds, endsAtMs };
+  return schedule?{rounds:schedule.rounds,endsAtMs:endMs}:null;
 }
 
 /** Round-end instants crossed by one discrete selection update. */
@@ -97,10 +80,10 @@ export function prepareMinimalFocus(
     plan: {
       projectId: host.id, subtaskId: null, totalRounds: schedule.rounds, completedRounds: 0,
       status: 'ready', reportedSessionIds: [], mode: 'marathon', deferredSettlement: true,
-    endAt: new Date(schedule.endsAtMs).toISOString(),
+    endAt: new Date(schedule.endsAtMs).toISOString(),deadlinePolicy:'exact',
     },
     command: { type: 'StartFocus', projectId: host.id, subtaskId: null,
-      plannedDurationMs: preferences.focusMinutes * 60_000, marathon: true, deferredSettlement: true },
+      plannedDurationMs: Math.min(preferences.focusMinutes * 60_000,endMs-now),deadlineAt:new Date(endMs).toISOString(), marathon: true, deferredSettlement: true },
   };
 }
 
@@ -157,13 +140,7 @@ export function createMinimalFocusStarter(dependencies: MinimalFocusStartDepende
         const session = started.state.activeFocusSession;
         if (!session) throw new Error('专注未能开始，请返回完整模式检查当前状态。');
         markFocusPerformance('command-committed');
-        // Reserving the local plan and committing StartFocus are separate
-        // writes. Anchor the confirmed round count to the actual first start,
-        // so a few milliseconds spent saving cannot disqualify the final round.
-        const confirmedEnd = Date.parse(session.startedAt) + prepared.plan.totalRounds * session.plannedDurationMs
-          + Math.max(0, prepared.plan.totalRounds - 1) * preferences.breakMinutes * 60_000;
-        const focusedPlan: RoundPlan = { ...prepared.plan, status: 'focus', currentSessionId: session.id,
-          endAt: new Date(Math.max(Date.parse(prepared.plan.endAt!), confirmedEnd)).toISOString() };
+        const focusedPlan: RoundPlan = { ...prepared.plan, status: 'focus', currentSessionId: session.id };
         try { dependencies.writePlan(focusedPlan); }
         catch { return { ok: true, plan: focusedPlan, warning: '专注已保存；轮次界面保存失败，重新打开时将按真实计时恢复。' }; }
         return { ok: true, plan: focusedPlan };

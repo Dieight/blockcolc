@@ -42,6 +42,7 @@ test('runs a repeatable habit building cycle with frozen targets and stable comp
   await page.getByRole('button', { name: '开始建造' }).click();
 
   await page.getByRole('button', { name: '设置' }).click();
+  await openSecondarySetting(page,'普通任务');
   await expect(page.getByLabel('普通任务专注分钟')).toHaveValue('45');
   await openSecondarySetting(page,'习惯任务');
   const habitMinutes = page.getByLabel('习惯任务专注分钟');

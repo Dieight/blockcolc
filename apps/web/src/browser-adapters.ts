@@ -1,4 +1,4 @@
-import type { Clock, FocusLifecycleEvent, FocusLifecyclePort, IdGenerator, NotificationCapability, NotificationPort } from '@blockcolc/application';
+import type { Clock, FocusLifecycleEvent, FocusLifecyclePort, IdGenerator, NotificationCapability, NotificationPort, FocusCompletionNotification, PlanCompletionNotification } from '@blockcolc/application';
 import { MAX_BACKUP_BYTES } from '@blockcolc/storage-indexeddb';
 
 export const LITEMATIC_MAX_COMPRESSED_BYTES = 64 * 1024 * 1024;
@@ -10,10 +10,12 @@ export class BrowserNotificationPort implements NotificationPort {
   private timers = new Map<string, number>();
   async requestPermission() { if (!('Notification' in window)) return unavailable(); const permission = Notification.permission === 'default' ? await Notification.requestPermission() : Notification.permission; return capability(permission); }
   async refreshCapability() { return 'Notification' in window ? capability(Notification.permission) : unavailable(); }
-  async scheduleFocusCompletion({ sessionId, endsAt }: { sessionId: string; endsAt: string }) { if (!('Notification' in window) || Notification.permission !== 'granted') return; this.cancel(sessionId); const delay = Math.min(2_147_000_000, Math.max(0, Date.parse(endsAt) - Date.now())); this.timers.set(sessionId, window.setTimeout(() => { new Notification('专注完成', { body: '回来记录这次小任务的实际进度。', tag: sessionId }); this.timers.delete(sessionId); }, delay)); }
+  async scheduleFocusCompletion({ sessionId, endsAt, marathon, requiresReport }: FocusCompletionNotification) { this.cancel(sessionId); if (marathon || !('Notification' in window) || Notification.permission !== 'granted') return; const delay = Math.min(2_147_000_000, Math.max(0, Date.parse(endsAt) - Date.now())); this.timers.set(sessionId, window.setTimeout(() => { new Notification('专注完成', { body: requiresReport===false?'本轮已计入习惯建筑。':'回来记录这次小任务的实际进度。', tag: sessionId }); this.timers.delete(sessionId); }, delay)); }
   async cancelFocusCompletion(sessionId: string) { this.cancel(sessionId); }
   async scheduleBreakCompletion({ endsAt, returnToFocus }: { endsAt: string; returnToFocus?: boolean; deadlineReached?: boolean }) { const id='break-completion'; if (!('Notification' in window) || Notification.permission !== 'granted') return; this.cancel(id); const delay=Math.min(2_147_000_000,Math.max(0,Date.parse(endsAt)-Date.now()));this.timers.set(id,window.setTimeout(()=>{new Notification(returnToFocus===true?'返回专注':'休息结束',{body:returnToFocus===true?'休息已结束，回来开始下一轮专注。':'回来开始下一轮专注。',tag:id});this.timers.delete(id);},delay)); }
   async cancelBreakCompletion() { this.cancel('break-completion'); }
+  async schedulePlanCompletion(notice:PlanCompletionNotification) { const id='plan-completion';this.cancel(id);if(!('Notification' in window)||Notification.permission!=='granted')return;this.timers.set(id,window.setTimeout(()=>{new Notification('本次计划已完成',{body:notice.requiresReport?'所有轮次已结束，回来汇报本次推进。':'本次专注已计入习惯建筑。',tag:id});this.timers.delete(id);},Math.min(2_147_000_000,Math.max(0,Date.parse(notice.endsAt)-Date.now())))); }
+  async cancelPlanCompletion() { this.cancel('plan-completion'); }
   private cancel(id: string) { const timer = this.timers.get(id); if (timer !== undefined) window.clearTimeout(timer); this.timers.delete(id); }
 }
 

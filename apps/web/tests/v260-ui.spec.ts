@@ -1,3 +1,4 @@
+import {openSecondarySetting} from "./settings-controls";
 import { expect, test, type Page } from '@playwright/test';
 import { createInitialState, execute, type DomainCommand } from '@blockcolc/domain';
 import { defaultFocusPreferences } from '../src/focus-preferences';
@@ -145,7 +146,9 @@ test('timer plan selection moves its surface and underline together in both them
 test('whole-round dragging really holds for 250ms, includes later rests and releases immediately on reverse', async ({ page }) => {
   test.setTimeout(90_000); await setup(page);
   await page.getByRole('button', { name: '设置', exact: true }).click();
+  await openSecondarySetting(page,'普通任务');
   await page.getByLabel('普通任务专注分钟', { exact: true }).fill('25');
+  await openSecondarySetting(page,'普通任务');
   await page.getByLabel('普通任务专注分钟', { exact: true }).blur();
   await page.getByLabel('每轮休息分钟', { exact: true }).fill('5');
   await page.getByLabel('每轮休息分钟', { exact: true }).blur();

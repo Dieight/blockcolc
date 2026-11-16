@@ -28,8 +28,13 @@
 .settings-disclosure-toggle .setting-name{flex:1}
 .settings-disclosure-value{display:flex;align-items:center;justify-content:flex-end;gap:8px;max-width:52%;flex:0 0 auto;text-align:right;color:var(--ink)}
 .settings-disclosure-value>span{font-size:.75rem;line-height:1.4;overflow-wrap:anywhere}
-.habit-setting .settings-disclosure-value{max-width:70%;flex:0 1 auto;gap:6px}
-.habit-setting .settings-disclosure-value>span{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:.6875rem}
+.focus-kind-setting .settings-disclosure-value{max-width:58%;flex:0 1 auto;gap:6px}
+.focus-kind-setting .settings-disclosure-value>span{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+:is(.ambient-audio-settings,.birthday-setting)>.settings-disclosure-toggle .settings-disclosure-value{min-width:0;max-width:44%;flex:0 1 auto}
+:is(.ambient-audio-settings,.birthday-setting)>.settings-disclosure-toggle .settings-disclosure-value>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+:is(.focus-kind-setting,.ambient-audio-settings,.birthday-setting) .settings-disclosure-content .setting-name>span,.birthday-setting .settings-disclosure-content>.content-reveal .setting-name,.ambient-tracks .setting-name{font-size:.875rem;font-weight:500}
+.settings-disclosure:first-child{border-top:0}
+.settings-disclosure .settings-inner-group>.setting-row{padding-inline:16px}
 .settings-disclosure-value>svg{width:16px;height:16px;flex:none;color:var(--muted);transition:rotate .25s ease}
 .settings-disclosure-toggle[aria-expanded='true'] .settings-disclosure-value>svg{rotate:180deg}
 :is(.settings-disclosure-content,.settings-inner-group)>.setting-row{padding:8px 16px;border-top:1px solid var(--settings-separator)}
@@ -46,7 +51,7 @@
 .resource-pack-setting-actions{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:8px 16px;width:100%}
 .resource-pack-setting-actions .resource-pack-delete{min-width:44px;color:var(--danger)}
 .backup-setting>.content-reveal>div>.settings-disclosure-content{padding:0 12px 12px}
-.backup-manual .disclosure-body>.setting-row{flex-wrap:wrap;padding:8px 0;border-top:1px solid var(--settings-separator)}
+.backup-manual :is(.disclosure-body>.setting-row,.backup-import>.setting-row){flex-wrap:wrap;padding:8px 0;border-top:1px solid var(--settings-separator)}
 .backup-manual .setting-name{flex:1 1 7rem}
 .backup-manual .setting-name>span{font-size:.875rem;font-weight:500}
 .backup-manual .backup-file-action{display:inline-flex;align-items:center;justify-content:flex-end;flex:0 0 auto;gap:7px;width:max(96px,7em);max-width:100%;min-height:44px;margin-left:auto;padding:8px 0;border:0;background:transparent;box-shadow:none;color:var(--focus);font-size:.875rem;line-height:1.4;font-weight:600}
@@ -78,7 +83,7 @@
 .number-field input:focus{background:var(--settings-field);border-color:var(--control-border)}
 .number-field input:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
 .number-field input:disabled{opacity:.5}
-.settings-text-action{min-height:44px;padding:8px 2px;border:0;background:none;color:#276749;font-weight:700;display:inline-flex;align-items:center;gap:6px}
+.settings-text-action{min-width:44px;min-height:44px;padding:8px 2px;border:0;background:none;color:#276749;font-weight:700;display:inline-flex;align-items:center;justify-content:center;gap:6px}
 .settings-text-action svg{width:16px}
 .settings-text-action:disabled{opacity:.45;cursor:not-allowed}
 .notification-health>.settings-text-action{width:44px;height:44px;display:grid;place-items:center;padding:0;border-radius:6px}

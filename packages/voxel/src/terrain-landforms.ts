@@ -3,12 +3,38 @@ import {noise,smooth} from './landscape-fields';
 type Material='grass'|'dirt'|'stone'|'water'|'sand'|'snow'|'ice'|'terracotta';
 export interface Sample {height:number;material:Material;supportInfluence:number;moisture:number;waterKind:'none'|'river'|'lake';mountainSignal?:number;}
 export interface SupportRect {minX:number;maxX:number;minZ:number;maxZ:number;height:number;}
+export interface ValleyCascade {x:number;z:number;axis:'x'|'z';direction:1|-1;low:number}
+export function createValleyCascades(radius:number,seed:number,heightAt:(x:number,z:number)=>number):ValleyCascade[]{
+  const offset=(noise(seed^0x724a,radius,0,90)-.5)*24;
+  return [{x:Math.round((radius+72)/4)*4,z:Math.round((-radius*.18+offset)/4)*4,axis:'x' as const,direction:-1 as const},
+    {x:Math.round((-radius*.3-offset)/4)*4,z:Math.round((-radius-88)/4)*4,axis:'z' as const,direction:1 as const}]
+    .map(site=>({...site,low:Math.max(2,Math.min(48,heightAt(site.x,site.z)))}));
+}
+
+/** Hanging pool, rock sill and plunge pool share one land field at every LOD.
+ * The visible curtain later connects these exact surfaces. */
+export function valleyCascade<T extends Sample>(sample:T,x:number,z:number,sites:readonly ValleyCascade[],includeWater=true):T{
+  if(sample.supportInfluence>.02)return sample;
+  for(const site of sites){
+    const p=((site.axis==='x'?x:z)-(site.axis==='x'?site.x:site.z))*site.direction;
+    const q=(site.axis==='x'?z:x)-(site.axis==='x'?site.z:site.x);
+    const weight=(1-smooth(14,30,Math.abs(p)))*(1-smooth(9,22,Math.abs(q)));
+    if(weight<=0)continue;
+    const step=1-smooth(-2,2,p),land=site.low+2+step*14;
+    const channel=includeWater&&p> -14&&p<15&&Math.abs(q)<2.8+smooth(0,9,p)*1.6;
+    if(channel)return {...sample,height:Math.round(land-1),material:'water',waterKind:'river'};
+    if(sample.waterKind!=='none')return sample;
+    return {...sample,height:Math.round(sample.height+(land-sample.height)*weight),
+      material:weight>.5&&Math.abs(p)<6?'stone':sample.material};
+  }
+  return sample;
+}
 export function createValleyBench(rects:readonly SupportRect[],roads:readonly {x:number;z:number}[],heightAt:(x:number,z:number)=>number){
   const bins=new Map<string,SupportRect[]>();
   const insert=(rect:SupportRect,radius:number)=>{for(let x=Math.floor((rect.minX-radius)/64);x<=Math.floor((rect.maxX+radius)/64);x++)for(let z=Math.floor((rect.minZ-radius)/64);z<=Math.floor((rect.maxZ+radius)/64);z++){
     const key=`${x}:${z}`,rows=bins.get(key)??[];rows.push(rect);bins.set(key,rows);
   }};
-  for(const rect of rects)insert({...rect},80);
+  for(const rect of rects)insert({...rect},128);
   // Road datums are fixed once, not repeatedly looked up for every terrain cell.
   for(const road of roads)insert({minX:road.x-1,maxX:road.x+1,minZ:road.z-1,maxZ:road.z+1,height:heightAt(road.x,road.z)},38);
   return {at(x:number,z:number,seed:number){
@@ -16,7 +42,7 @@ export function createValleyBench(rects:readonly SupportRect[],roads:readonly {x
     for(const rect of bins.get(`${Math.floor(x/64)}:${Math.floor(z/64)}`)??[]){
       const distance=Math.hypot(Math.max(rect.minX-x,0,x-rect.maxX),Math.max(rect.minZ-z,0,z-rect.maxZ));
       const road=rect.maxX-rect.minX===2&&rect.maxZ-rect.minZ===2;
-      const reach=road?34:64+(noise(seed^0x157b,x,z,53)-.5)*18;
+      const reach=road?34:108+(noise(seed^0x157b,x,z,53)-.5)*24;
       const weight=1-smooth(3,reach,distance);
       if(weight>=influence){influence=weight;height=rect.height;}
     }return{influence,height};
@@ -28,7 +54,7 @@ export function createValleyBench(rects:readonly SupportRect[],roads:readonly {x
 export function valleyBench<T extends Sample>(original:T,x:number,z:number,seed:number,bench:ReturnType<typeof createValleyBench>):T{
   if(original.supportInfluence>=.995||original.waterKind!=='none'||original.material==='dirt')return original;
   const support=bench.at(x,z,seed);if(support.influence<=.001||support.height>=original.height)return original;
-  const weight=support.influence**1.65;
+  const weight=support.influence**1.25;
   const height=Math.max(support.height,Math.round(original.height+(support.height-original.height)*weight));
   return {...original,height};
 }

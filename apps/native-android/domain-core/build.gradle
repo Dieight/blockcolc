@@ -1,0 +1,77 @@
+plugins { id 'org.jetbrains.kotlin.jvm' }
+java { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
+kotlin { compilerOptions { jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17 } }
+dependencies {
+    compileOnly 'org.json:json:20240303' // Android supplies org.json; JVM tests use the same API.
+    implementation 'io.github.erdtman:java-json-canonicalization:1.1'
+    implementation 'cn.6tail:lunar:1.7.7'
+    testImplementation 'org.json:json:20240303'
+    testImplementation 'junit:junit:4.13.2'
+}
+tasks.register('exportStateOracle', Exec) {
+    workingDir rootProject.projectDir
+    commandLine 'node', 'tools/export-state-oracle.mjs', layout.buildDirectory.dir('generated/state-oracle').get().asFile.absolutePath
+    inputs.files(fileTree('../../../packages/domain/src') { include '**/*.ts' })
+    inputs.file('../tools/export-state-oracle.mjs')
+    inputs.files('../../../package-lock.json', '../../../node_modules/lunar-typescript/dist/index.mjs')
+    outputs.dir layout.buildDirectory.dir('generated/state-oracle')
+}
+sourceSets.test.resources.srcDir layout.buildDirectory.dir('generated/state-oracle')
+
+// A checkpoint is reusable only with the exact domain validation code that
+// produced it. UI-only builds do not invalidate an otherwise identical cache.
+def checkpointMarker = layout.buildDirectory.dir('generated/checkpoint-marker')
+tasks.register('generateCheckpointMarker') {
+    def sources = fileTree('src/main/kotlin') { include '**/*.kt' }
+    def markerInputs = files(sources, project.buildFile, rootProject.buildFile, rootProject.file('gradle.properties'))
+    inputs.files(markerInputs)
+    outputs.dir checkpointMarker
+    doLast {
+        def digest = java.security.MessageDigest.getInstance('SHA-256')
+        markerInputs.files.findAll { it.isFile() }.sort { a,b -> a.path <=> b.path }.each { source ->
+            digest.update(project.relativePath(source).replace('\\','/').getBytes('UTF-8'))
+            digest.update((byte)0)
+            digest.update(source.bytes)
+        }
+        def target = new File(checkpointMarker.get().asFile, 'domain-checkpoint-validator.sha256')
+        target.parentFile.mkdirs()
+        target.setText(digest.digest().encodeHex().toString(), 'UTF-8')
+    }
+}
+sourceSets.main.resources.srcDir checkpointMarker
+tasks.named('processResources').configure { dependsOn 'generateCheckpointMarker' }
+tasks.named('processTestResources').configure { dependsOn 'exportStateOracle' }
+tasks.register('checkStateOracle') {
+    dependsOn 'exportStateOracle'
+    doLast {
+        def oracle = new groovy.json.JsonSlurper().parse(layout.buildDirectory.file('generated/state-oracle/state-oracle.json').get().asFile)
+        oracle.sourceHashes.each { name, expected ->
+            def actual = java.security.MessageDigest.getInstance('SHA-256').digest(rootProject.file('../../' + name).bytes).encodeHex().toString()
+            if (actual != expected) throw new GradleException('Stale formal state oracle: ' + name)
+        }
+    }
+}
+tasks.withType(Test).configureEach { dependsOn 'checkStateOracle' }
+tasks.register('exportCommandOracle', Exec) {
+    dependsOn 'exportStateOracle'
+    workingDir rootProject.projectDir
+    commandLine 'node', 'tools/export-command-oracle.mjs', layout.buildDirectory.dir('generated/command-oracle').get().asFile.absolutePath
+    inputs.files(fileTree('../../../packages/domain/src') { include '**/*.ts' })
+    inputs.file('../tools/export-command-oracle.mjs')
+    inputs.file('../../../packages/application/src/focus-attribution.ts')
+    inputs.file(layout.buildDirectory.file('generated/state-oracle/state-oracle.json'))
+    outputs.dir layout.buildDirectory.dir('generated/command-oracle')
+}
+sourceSets.test.resources.srcDir layout.buildDirectory.dir('generated/command-oracle')
+tasks.named('processTestResources').configure { dependsOn 'exportCommandOracle' }
+tasks.register('checkCommandOracle') {
+    dependsOn 'exportCommandOracle'
+    doLast {
+        def oracle = new groovy.json.JsonSlurper().parse(layout.buildDirectory.file('generated/command-oracle/command-oracle.json').get().asFile)
+        oracle.sourceHashes.each { name, expected ->
+            def actual = java.security.MessageDigest.getInstance('SHA-256').digest(rootProject.file('../../' + name).bytes).encodeHex().toString()
+            if (actual != expected) throw new GradleException('Stale formal command oracle: ' + name)
+        }
+    }
+}
+tasks.withType(Test).configureEach { dependsOn 'checkCommandOracle' }

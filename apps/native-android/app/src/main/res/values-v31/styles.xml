@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="BlockcolcNative" parent="BlockcolcNativeBase">
+        <item name="android:windowSplashScreenBackground">@color/blockcolc_splash_background</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@mipmap/ic_launcher_foreground</item>
+    </style>
+</resources>

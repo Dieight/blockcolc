@@ -61,6 +61,7 @@ try {
             $probeArgument = '-PblockcolcPerformanceDiagnostics=' + $PerformanceDiagnostics.ToString().ToLowerInvariant()
             & .\gradlew.bat --no-daemon --console=plain $relayArgument $probeArgument testDebugUnitTest lintRelease assembleRelease
             if ($LASTEXITCODE -ne 0) { throw 'Android release build failed.' }
+            & (Join-Path $PSScriptRoot 'Test-ApkLaunchAssets.ps1') -ApkPath (Join-Path $repositoryRoot 'apps\android\android\app\build\outputs\apk\release\app-release.apk')
         }
         finally {
             Pop-Location

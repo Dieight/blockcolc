@@ -344,7 +344,7 @@ export function MarathonProgressReport({ state, hostProjectId, run, onSubmitted,
           </div>}
     {missingTaskRounds > 0 && <p className="plan-sheet-note" role="alert">{t("已选任务至少计入 1 轮，或取消推进。")}</p>}
     {totalRounds > 0 && allocatedRounds === totalRounds && <p className="plan-sheet-note">{t("全部轮次已明确分配，仍会一次性提交。")}</p>}
-    {totalRounds > 0 && hasTargets && allocatedRounds < totalRounds && entries.length === 0 && <p className="plan-sheet-note">{t("还有")}{' '}{totalRounds - allocatedRounds} {t("轮未分配，可直接提交并明确记为未分配。")}</p>}
+    {totalRounds > 0 && hasTargets && allocatedRounds < totalRounds && <p className="plan-sheet-note">{t("还有")}{' '}{totalRounds - allocatedRounds} {t("轮未分配，可直接提交并明确记为未分配。")}</p>}
     </fieldset>
     <div className="marathon-report-footer">
       {minimal && totalRounds > 0 && <p className="minimal-report-allocation" aria-live="polite"><span>{t("已分配")}{' '}{allocatedRounds} / {totalRounds} {t("轮")}</span><span>{totalRounds - allocatedRounds} {t("轮未分配")}</span></p>}

@@ -811,7 +811,7 @@ export function patchFluidSurfaceVertexShader(vertexShader: string, atlasMode = 
     : "attribute float instanceFaceOcclusion;\nattribute float instanceMaterialResponse;\n";
   const positionPatch = `
 float blockcolcPositionFluidMeta = instanceFaceOcclusion - 1000000.0;
-if (blockcolcPositionFluidMeta > 0.5 && position.y > 0.0) {
+if (blockcolcPositionFluidMeta >= 0.0 && position.y > 0.0) {
   float blockcolcPackedCorners = instanceMaterialResponse;
   float blockcolcCornerNorthWest = mod(blockcolcPackedCorners, 64.0) / 63.0;
   float blockcolcCornerNorthEast = mod(floor(blockcolcPackedCorners / 64.0), 64.0) / 63.0;
@@ -824,7 +824,7 @@ if (blockcolcPositionFluidMeta > 0.5 && position.y > 0.0) {
 }`;
   const fluidMetadata = `
 float blockcolcUvFluidMeta = instanceFaceOcclusion - 1000000.0;
-float blockcolcUvFluidActive = step(0.5, blockcolcUvFluidMeta);
+float blockcolcUvFluidActive = step(0.0, blockcolcUvFluidMeta);
 float blockcolcUvFluidWater = blockcolcUvFluidActive > 0.5 ? mod(floor(blockcolcUvFluidMeta / 65536.0), 2.0) : 0.0;
 float blockcolcUvFluidFlowing = blockcolcUvFluidActive > 0.5 ? mod(floor(blockcolcUvFluidMeta / 32768.0), 2.0) : 0.0;
 float blockcolcUvFluidAngle = blockcolcUvFluidActive > 0.5 ? mod(blockcolcUvFluidMeta, 32768.0) * 6.283185307179586 / 4096.0 : 0.0;`;
@@ -905,7 +905,7 @@ export function patchAtlasUvVertexShader(vertexShader: string, animated = false)
     .replace("uniform vec3 blockcolcLilyPadTint;", "uniform vec3 blockcolcLilyPadTint;\nuniform vec3 blockcolcStateTint;")
     .replace(
       "vBlockcolcLocalOcclusion = mod(floor(instanceFaceOcclusion / blockcolcOcclusionDivisor), 4.0) / 3.0;",
-      "float blockcolcFaceFluidMeta = instanceFaceOcclusion - 1000000.0;\nvBlockcolcLocalOcclusion = blockcolcFaceFluidMeta > 0.5 ? 0.0 : mod(floor(instanceFaceOcclusion / blockcolcOcclusionDivisor), 4.0) / 3.0;",
+      "float blockcolcFaceFluidMeta = instanceFaceOcclusion - 1000000.0;\nvBlockcolcLocalOcclusion = blockcolcFaceFluidMeta >= 0.0 ? 0.0 : mod(floor(instanceFaceOcclusion / blockcolcOcclusionDivisor), 4.0) / 3.0;",
     )
     .replace(
       ": blockcolcTintKind < 7.5 ? blockcolcLilyPadTint : vec3(1.0);",

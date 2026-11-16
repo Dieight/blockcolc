@@ -1,7 +1,7 @@
 import { t, useI18n } from './i18n';
 import {useEffect,useRef,useState} from 'react';
 import type {FocusPreferences} from './app-types';
-import {AMBIENT_TRACKS,defaultAmbience,type AmbientPreferences} from './ambient-preferences';
+import {AMBIENT_TRACKS,AMBIENT_TITLES,defaultAmbience,type AmbientPreferences} from './ambient-preferences';
 import {importAmbient,listAmbientImports,removeAmbient} from './ambient-audio';
 import {isNativeAmbient,type AmbientImport} from '@blockcolc/platform-capacitor';
 import {Reveal} from './ui/Reveal';
@@ -14,12 +14,12 @@ export function AmbientAudioSettings({preferences,onChange,embedded=false}:{pref
   const update=(patch:Partial<AmbientPreferences>)=>onChange({...latest.current,ambience:{...(latest.current.ambience??defaultAmbience()),...patch}});
   useEffect(()=>{let live=true;void listAmbientImports().then(result=>{if(live)setItems(result);}).catch(()=>{if(live)setError(t("无法读取本机音频"));});return()=>{live=false;};},[]);
   const add=async(file?:File)=>{if(lane.current)return;lane.current=true;setBusy(true);setError('');try{const item=await importAmbient(file);if(item){setItems(await listAmbientImports());update({primary:item.id});}}catch(cause){setError(cause instanceof Error?cause.message:t("音频导入失败"));}finally{lane.current=false;setBusy(false);if(input.current)input.current.value='';}};
-  const remove=async(id:string)=>{if(lane.current)return;lane.current=true;setBusy(true);setError('');try{await removeAmbient(id);setItems(await listAmbientImports());if(latest.current.ambience?.primary===id)update({primary:'morning-birdsong',enabled:false});}catch{setError(t('音频未能删除'));}finally{lane.current=false;setBusy(false);}};
+  const remove=async(id:string)=>{if(lane.current)return;lane.current=true;setBusy(true);setError('');try{await removeAmbient(id);setItems(await listAmbientImports());if(latest.current.ambience?.primary===id)update({primary:defaultAmbience().primary,enabled:false});}catch{setError(t('音频未能删除'));}finally{lane.current=false;setBusy(false);}};
   const content=<>
-    <div className="setting-row"><div className="setting-name"><span>{t('自然白噪音')}</span><small>{t('所有聚落共用一个声音')}</small></div><label className="switch-control ios-switch"><input aria-label={t('自然白噪音')} type="checkbox" checked={value.enabled} onChange={()=>update({enabled:!value.enabled})}/></label></div>
+    <div className="setting-row"><div className="setting-name"><span>{t('自然白噪音')}</span><small>{t('聚落共用 · 循环间随机留白')}</small></div><label className="switch-control ios-switch"><input aria-label={t('自然白噪音')} type="checkbox" checked={value.enabled} onChange={()=>update({enabled:!value.enabled})}/></label></div>
     <Reveal open={value.enabled} overflowVisible><div className="ambient-options">
       <div className="ambient-tracks" role="radiogroup" aria-label={t('主音轨')}>
-        {AMBIENT_TRACKS.map(id=><label className="setting-row ambient-track" key={id}><span className="setting-name">{t('晨间鸟鸣')}</span><input type="radio" name="ambient-main" aria-label={t('晨间鸟鸣')} checked={value.primary===id} onChange={()=>update({primary:id})}/></label>)}
+        {AMBIENT_TRACKS.map(id=><label className="setting-row ambient-track" key={id}><span className="setting-name">{t(AMBIENT_TITLES[id])}</span><input type="radio" name="ambient-main" aria-label={t(AMBIENT_TITLES[id])} checked={value.primary===id} onChange={()=>update({primary:id})}/></label>)}
         {items.map(item=><div className="setting-row ambient-track" key={item.id}><label><span className="setting-name">{item.name}</span><input type="radio" name="ambient-main" aria-label={item.name} checked={value.primary===item.id} onChange={()=>update({primary:item.id})}/></label><button type="button" className="settings-text-action" disabled={busy} aria-label={t('删除音频：{0}',item.name)} onClick={()=>void remove(item.id)}>{t('删除')}</button></div>)}
       </div>
       <input hidden ref={input} type="file" accept="audio/*" onChange={event=>{const file=event.target.files?.[0];if(file)void add(file);}}/>
@@ -29,5 +29,6 @@ export function AmbientAudioSettings({preferences,onChange,embedded=false}:{pref
     <Reveal open={value.enabled||value.rainEnabled} overflowVisible><SettingsDisclosure title={t('白噪音音量')} value={`${value.volume}%`} className="ambient-volume-setting"><div className="ambient-options"><PhysicalSlider label={t('白噪音音量')} value={value.volume} onChange={volume=>update({volume})}/></div></SettingsDisclosure></Reveal>
     {error&&<p role="alert">{t(error)}</p>}
   </>;
-  return embedded?<div className="settings-inner-group ambient-audio-settings">{content}</div>:<section className="settings-group ambient-audio-settings"><h2>{t('白噪音')}</h2><div className="settings-list">{content}</div></section>;
+  const summary=[value.enabled?t(AMBIENT_TITLES[value.primary as keyof typeof AMBIENT_TITLES]??'导入音频'):'',value.rainEnabled?t('雨声'):''].filter(Boolean).join(' · ')||t('关闭');
+  return embedded?<SettingsDisclosure title={t('白噪音')} description={t('环境录音、雨声与音量')} value={summary} className="ambient-audio-settings">{content}</SettingsDisclosure>:<section className="settings-group ambient-audio-settings"><h2>{t('白噪音')}</h2><div className="settings-list">{content}</div></section>;
 }

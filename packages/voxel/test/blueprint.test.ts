@@ -19,6 +19,9 @@ function coordinate(x: number, y: number, z: number): string {
 }
 
 describe("BlueprintV1", () => {
+  it('does not add the legacy floating fill-light cubes to the three originals',()=>{
+    for(const blueprint of INITIAL_BLUEPRINTS)expect(blueprint.voxels.filter(v=>(v.emissiveLevel??0)>0)).toHaveLength(0);
+  });
   it("ships a deterministic staged small workshop", () => {
     expect(SMALL_WORKSHOP_BLUEPRINT.id).toBe("builtin-small-workshop");
     expect(SMALL_WORKSHOP_BLUEPRINT.voxels.length).toBeGreaterThan(250);
@@ -137,23 +140,22 @@ describe("BlueprintV1", () => {
     const interiorDetails: Array<{ blueprint: BlueprintV1; cells: Array<[number, number, number]> }> = [
       {
         blueprint: SMALL_WORKSHOP_BLUEPRINT,
-        cells: [[-3, 2, -2], [-2, 2, -2], [-1, 2, -2], [-3, 3, 3], [3, 3, 3]],
+        cells: [[-3, 2, -2], [-2, 2, -2], [-1, 2, -2]],
       },
       {
         blueprint: TIMBER_HOUSE_BLUEPRINT,
-        cells: [[-3, 2, -1], [-2, 2, -1], [3, 6, -2], [-3, 3, 2], [3, 3, 2]],
+        cells: [[-3, 2, -1], [-2, 2, -1], [3, 6, -2]],
       },
       {
         blueprint: VILLAGE_CHAPEL_BLUEPRINT,
         cells: [
           [-2, 2, -6], [2, 2, -6], [-2, 2, -4], [2, 2, -4],
           [-2, 2, -2], [2, 2, -2], [-2, 2, 0], [2, 2, 0],
-          [-2, 2, 8], [2, 2, 8], [-3, 2, 0], [3, 2, 0],
           [-1, 2, -7], [0, 2, -7], [1, 2, -7],
         ],
       },
     ];
-    const interiorTorches: Array<{ blueprint: BlueprintV1; cells: Array<[number, number, number]> }> = [
+    const retiredTorches: Array<{ blueprint: BlueprintV1; cells: Array<[number, number, number]> }> = [
       { blueprint: SMALL_WORKSHOP_BLUEPRINT, cells: [[-3, 3, 3], [3, 3, 3]] },
       { blueprint: TIMBER_HOUSE_BLUEPRINT, cells: [[-3, 3, 2], [3, 3, 2]] },
       {
@@ -176,14 +178,10 @@ describe("BlueprintV1", () => {
         .toBeGreaterThanOrEqual(highestRoofOrder);
     }
 
-    for (const { blueprint, cells } of interiorTorches) {
+    for (const { blueprint, cells } of retiredTorches) {
       const voxels = voxelMap(blueprint);
       for (const [x, y, z] of cells) {
-        expect(voxels.get(coordinate(x, y, z))).toMatchObject({
-          sourceBlockId: "minecraft:torch",
-          emissiveKind: "torch",
-          emissiveLevel: 14,
-        });
+        expect(voxels.has(coordinate(x,y,z))).toBe(false);
       }
     }
   });

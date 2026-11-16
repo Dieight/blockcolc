@@ -37,6 +37,8 @@ const WOOD_COLORS: Readonly<Record<string, number>> = {
   bamboo: 0xc5a746, crimson: 0x6d2635, warped: 0x2d7d78, oak: 0xb68c55, poplar: 0xa9825f,
 };
 
+const TERRACOTTA_COLORS:Readonly<Record<string,number>>={white:0xd3b59e,orange:0xa95827,magenta:0x95576c,light_blue:0x716c89,yellow:0xba8524,lime:0x677532,pink:0xa14f4f,gray:0x3d2e29,light_gray:0x876b62,cyan:0x565b5b,purple:0x764556,blue:0x4a3b5b,brown:0x4d3326,green:0x4c542b,red:0x913e2c,black:0x251810};
+
 const CORAL_COLORS: Readonly<Record<string, number>> = {
   tube: 0x3c66cb, brain: 0xd969aa, bubble: 0xa348c6, fire: 0xce493e, horn: 0xe5cb4b,
 };
@@ -71,7 +73,7 @@ export function fallbackVisualStyleForVoxel(
   } else if (componentColor !== undefined) {
     color = componentColor;
   } else if (dyed && /(?:wool|carpet|concrete|terracotta|glazed_terracotta|glass|glass_pane|bed|banner|candle|cushion|shulker_box)/.test(path)) {
-    color = dyed[1];
+    color = path.endsWith('_terracotta')&&!path.endsWith('_glazed_terracotta')?TERRACOTTA_COLORS[dyed[0]]!:dyed[1];
   } else if (wood && /(?:planks|log|wood|stem|hyphae|bamboo|shelf|bookshelf|door|trapdoor|fence|gate|sign|button|pressure_plate|stairs|slab)/.test(path)) {
     color = wood[1];
     response = "wood";

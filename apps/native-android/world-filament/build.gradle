@@ -1,0 +1,34 @@
+plugins { id 'com.android.library'; id 'org.jetbrains.kotlin.android' }
+def diagnostics=providers.gradleProperty('nativeDiagnostics').getOrElse('false')=='true'
+android {
+    namespace 'com.blockcolc.world.filament'
+    compileSdk 35
+    defaultConfig { minSdk 23; buildConfigField 'boolean','NATIVE_DIAGNOSTICS',diagnostics.toString() }
+    buildFeatures { buildConfig true }
+    if(!diagnostics) sourceSets.main.assets.exclude 'color-probe.filamat'
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+    kotlinOptions { jvmTarget = '17' }
+    sourceSets.main.assets.srcDir layout.buildDirectory.dir('generated/materials')
+}
+tasks.register('compileWorldMaterials', Exec) {
+    workingDir rootProject.projectDir
+    def compiler = providers.gradleProperty('matcPath')
+    doFirst { if(!compiler.isPresent() || !file(compiler.get()).isFile())throw new GradleException('Pass -PmatcPath=<matching Filament 1.56.0 matc.exe>; runtime shader compilation is not used.') }
+    commandLine 'node', 'tools/compile-materials.mjs', compiler.getOrElse('missing-matc'), layout.buildDirectory.dir('generated/materials').get().asFile.absolutePath
+    inputs.file 'src/main/materials/instanced.mat.in'
+    inputs.file 'src/main/materials/night-field.glsl.in'
+    inputs.file 'src/main/materials/source-color.glsl.in'
+    inputs.files 'src/main/materials/terminal-color.mat','src/main/materials/color-probe.mat'
+    inputs.files 'src/main/materials/bloom-bright.mat','src/main/materials/bloom-blur.mat'
+    inputs.files 'src/main/materials/glass-blur.mat','src/main/materials/glass-compose.mat'
+    inputs.file '../tools/compile-materials.mjs'
+    inputs.property 'filamentCompilerVersion', '56'
+    if(compiler.isPresent())inputs.file rootProject.file(compiler.get())
+    outputs.dir layout.buildDirectory.dir('generated/materials')
+}
+tasks.named('preBuild').configure { dependsOn 'compileWorldMaterials' }
+dependencies {
+    implementation project(':world-core')
+    api 'com.google.android.filament:filament-android:1.56.0'
+    testImplementation 'junit:junit:4.13.2'
+}

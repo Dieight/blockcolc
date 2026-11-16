@@ -9,6 +9,8 @@ import {
   reconcileRoundPlan,
   reserveAutomaticContinuation,
   roundPlansEqual,
+  exactPlanEndMs,
+  planRoundDurationMs,
   type RoundPlan,
 } from './round-plan';
 
@@ -90,19 +92,25 @@ export function projectAutomaticContinuationTimeline(
     : project.subtasks.find(candidate => candidate.id === plan.subtaskId)?.title ?? project.title;
   const projectTitle = project.title;
   for (let index = 0; index < remainingStarts; index += 1, round += 1) {
-    const focusEnd = focusStart + authorization.focusDurationMs;
+    const durationMs=planRoundDurationMs(plan,authorization.focusDurationMs,focusStart);
+    if(durationMs<=0)break;
+    const focusEnd = focusStart + durationMs;
     if (!Number.isSafeInteger(focusEnd)) break;
     if (plan.mode === 'marathon' && plan.endAt && focusEnd > Date.parse(plan.endAt)) break;
     phases.push({
       kind: 'focus', startsAtEpochMs: focusStart, endsAtEpochMs: focusEnd, round,
       eventId: automaticContinuationEventId(authorization.authorizationId, round),
     });
-    if (index + 1 >= remainingStarts) break;
+    if (index + 1 >= remainingStarts) {
+      const end=exactPlanEndMs(plan);
+      if(end!==null&&focusEnd<end)phases.push({kind:'break',startsAtEpochMs:focusEnd,endsAtEpochMs:end,round});
+      break;
+    }
     if (authorization.breakDurationMs <= 0) {
       focusStart = focusEnd;
       continue;
     }
-    const breakEnd = focusEnd + authorization.breakDurationMs;
+    const breakEnd = Math.min(exactPlanEndMs(plan)??Infinity,focusEnd + authorization.breakDurationMs);
     if (!Number.isSafeInteger(breakEnd)) break;
     phases.push({ kind: 'break', startsAtEpochMs: focusEnd, endsAtEpochMs: breakEnd, round });
     focusStart = breakEnd;
@@ -121,8 +129,7 @@ export interface AutomaticContinuationDeadlinePort {
 }
 
 export interface AutomaticContinuationCoordinatorPorts {
-  service: Pick<ApplicationService, 'snapshot' | 'resume' | 'startScheduledFocus' | 'subscribeCommitted'>
-    & Partial<Pick<ApplicationService, 'stateReplacementRevision'>>;
+  service: Pick<ApplicationService, 'snapshot' | 'resume' | 'startScheduledFocus' | 'subscribeCommitted' | 'stateReplacementRevision'>;
   deadlines: AutomaticContinuationDeadlinePort;
   readPlan: () => RoundPlan | null;
   /** Must throw if the local round-plan write did not commit. */
@@ -426,6 +433,7 @@ export function createAutomaticContinuationCoordinator(ports: AutomaticContinuat
           projectId: plan.projectId,
           subtaskId: plan.subtaskId,
           plannedDurationMs: reservation.plannedDurationMs,
+          ...(exactPlanEndMs(plan)!==null?{deadlineAt:plan.endAt}:{}),
           ...(plan.mode === 'marathon' ? { marathon: true } : {}),
           ...(plan.deferredSettlement === true ? { deferredSettlement: true } : {}),
         };
@@ -460,7 +468,7 @@ export function createAutomaticContinuationCoordinator(ports: AutomaticContinuat
   function reconcileAndPersist(state: DomainState): RoundPlan | null {
     let current = ports.readPlan();
     if (current?.automaticContinuation && (retiredAuthorizations.has(current.automaticContinuation.authorizationId)
-      || (current.automaticContinuation.replacementRevision ?? 0) !== (ports.service.stateReplacementRevision?.() ?? 0))) {
+      || (current.automaticContinuation.replacementRevision ?? 0) !== ports.service.stateReplacementRevision())) {
       retiredAuthorizations.add(current.automaticContinuation.authorizationId);
       void cancelAuthorization(current.automaticContinuation.authorizationId);
       persist(null); current = null;

@@ -46,6 +46,8 @@ import { installListMotion } from './ui/list-motion';
 import { TextToggle } from './ui/TextToggle';
 import { canSelectTaskContext,validTaskContext,type TaskContextRequest } from './task-context';
 import {useAmbientAudio} from './use-ambient-audio';
+import {CelebrationLayer} from './CelebrationLayer';
+import { BackupImport } from './BackupImport';
 
 let tasksScreenModulePromise: Promise<{ default: (typeof import('./TaskManagement'))['TasksScreen'] }> | null = null;
 let statsScreenModulePromise: Promise<{ default: (typeof import('./StatsScreen'))['StatsScreen'] }> | null = null;
@@ -91,7 +93,6 @@ export function App({ service, resourcePacks }: { service: ApplicationService; r
   const [availableRelease,setAvailableRelease]=useState<AppRelease|null>(null);
   const [ceremony,setCeremony]=useState<{projectId:string;title:string}|null>(null);
   const { preferences, updatePreferences } = useFocusPreferences();
-  const [progressiveBoot] = useState(preferences.progressiveStartup === true);
   const [minimalTemporarilyExited, setMinimalTemporarilyExited] = useState(false);
   const [minimalPresentation, setMinimalPresentation] = useState(false);
   const [worldImmersive, setWorldImmersive] = useState(false);
@@ -114,8 +115,9 @@ export function App({ service, resourcePacks }: { service: ApplicationService; r
   const recordedIntegrityNotice = useApplicationLifecycle(service, refresh);
   const refreshAfterReplacement = useCallback(() => {
     // Backup import/rollback is a silent new baseline, never an unlock event.
+    void service.setPlanCompletionNotification(null, service.stateReplacementRevision());
     clearMessage(); refresh();
-  }, [refresh, clearMessage]);
+  }, [service, refresh, clearMessage]);
   const resumeVisibleFocus = useCallback(async () => {
     await service.resume();
     refresh();
@@ -155,7 +157,7 @@ export function App({ service, resourcePacks }: { service: ApplicationService; r
   const achievementEntries = useMemo(() => tab === 'stats' ? service.achievementsProjection() : [], [service, version, tab]);
   const orphanedDeferredHostForGate = unsettledMarathonSessions(state).some(session => session.deferredSettlement === true);
   const firstRunRequired = requiresFirstProjectSetup(state, firstProjectSetupDone, orphanedDeferredHostForGate);
-  const preparedRoutes=useProgressiveRoutes(Boolean(workspace)&&!firstRunRequired&&!creatingProject,ROUTE_LOADERS,progressiveBoot);
+  const preparedRoutes=useProgressiveRoutes(Boolean(workspace)&&!firstRunRequired&&!creatingProject,ROUTE_LOADERS);
   firstRunRequiredRef.current = firstRunRequired;
   const receiveUpdate = useCallback((release: AppRelease) => {
     setAvailableRelease(release); setAboutOpen(true); void appUpdater.download(release, true);
@@ -221,7 +223,7 @@ export function App({ service, resourcePacks }: { service: ApplicationService; r
     ? unsettledMarathonSessions(state).find(session => session.deferredSettlement === true)?.projectId
     : undefined;
   const immersiveFocus = !creatingProject && Boolean(orphanedDeferredHost && (tab === 'world' || tab === 'tasks')
-    || tab === 'world' && active && (worldImmersive || minimalPresentation && minimalWanted || state.activeFocusSession && !fullDeferredPresentation));
+    || tab === 'world' && workspace && (worldImmersive || minimalPresentation && minimalWanted || state.activeFocusSession && !fullDeferredPresentation));
   const shellRef = usePresentationTransition(immersiveFocus);
   const travelMode = useModePortal(shellRef, minimal => setMinimalTemporarilyExited(!minimal), () => showMessage(t("转场未完成，已恢复操作。")));
   const [landscape,setLandscape]=useState(()=>matchMedia('(orientation: landscape)').matches);
@@ -257,7 +259,6 @@ export function App({ service, resourcePacks }: { service: ApplicationService; r
     <WorldScreenV7 service={service} active={workspace} state={state} stateRevision={stateRevision} hasActiveProject={Boolean(active)} onCreateProject={beginProjectSetup} resourcePacks={resourcePacks} run={run} refresh={refresh}
       onReconcileFocus={resumeVisibleFocus} preferences={preferences} worldWeather={worldWeather}
       taskContextRequest={taskContextRequest}
-      worldPreparationAllowed={!progressiveBoot||firstRunRequired||preparedRoutes.size===3}
       worldDebug={worldDebugProjection}
       minimalWanted={minimalWanted} fullDeferredPresentation={fullDeferredPresentation}
       onMinimalPresentationChange={setMinimalPresentation} onImmersiveLayoutChange={setWorldImmersive}
@@ -266,7 +267,8 @@ export function App({ service, resourcePacks }: { service: ApplicationService; r
       onFocusWorldProject={selectWorldProject} onInitialProjectFocus={setWorldFocusProjectId} onClearWorldFocus={clearWorldFocus} onCloseWorldMemory={closeWorldMemory}
       visible={worldVisible && tab === 'world'}/>
   </div> : null;
-  const firstRunSetup = <ProjectSetup run={run} resourcePacks={resourcePacks} buildingBlueprints={state.buildingBlueprintResources} existingProjects={state.projects.filter(project=>project.status==='paused')} draft={setupDraft} firstRun={firstRunRequired} onDraftChange={updateSetupDraft} onCreated={()=>{setProjectDraft(null);writeFirstProjectSetupMarker();setFirstProjectSetupDone(true);navigateTo('world');}}/>;
+  const finishFirstRun=()=>{setProjectDraft(null);writeFirstProjectSetupMarker();setFirstProjectSetupDone(true);navigateTo('world');};
+  const firstRunSetup = <ProjectSetup run={run} resourcePacks={resourcePacks} buildingBlueprints={state.buildingBlueprintResources} existingProjects={state.projects.filter(project=>project.status==='paused')} draft={setupDraft} firstRun={firstRunRequired} restoreService={service} onRestored={()=>{refreshAfterReplacement();finishFirstRun();}} onDraftChange={updateSetupDraft} onCreated={finishFirstRun}/>;
   const creationSetup = <ProjectSetup run={run} resourcePacks={resourcePacks} buildingBlueprints={state.buildingBlueprintResources} existingProjects={[]} draft={setupDraft} onDraftChange={updateSetupDraft} onCancel={discardProjectSetup} onCreated={completeProjectSetup}/>;
   const content = <>
     {worldPane}
@@ -285,9 +287,9 @@ export function App({ service, resourcePacks }: { service: ApplicationService; r
           <section className="focus-panel"><MarathonProgressReport variant="minimal" key={orphanedDeferredHost} state={state} hostProjectId={orphanedDeferredHost} run={run} onSubmitted={() => { createRoundPlanStore(() => window.localStorage).write(null); refresh(); }}/></section>
         </div>
         : firstRunRequired ? tutorial==='first'?null:firstRunSetup : (tab === 'tasks' || !workspace) ? <WorkspaceRest state={state} run={run} onCreate={beginProjectSetup}/> : null)}
-      {active && <RoutePane active={tab === 'tasks'} prepared={preparedRoutes.has('tasks')} revision={stateRevision} route="tasks"><Suspense fallback={<LoadingPage status={t("正在打开任务…")}/>}><TasksScreen active={active} state={state} run={run} quickNotesEnabled={preferences.quickNotesEnabled} onCreateProject={beginProjectSetup} onViewProject={viewProjectInWorld} onSelectSubtask={selectTaskForTimer}/></Suspense></RoutePane>}
-      <RoutePane active={tab === 'stats'} prepared={preparedRoutes.has('stats')} revision={stateRevision} route="stats"><Suspense fallback={<LoadingPage status={t("正在打开统计…")}/>}><StatsScreen state={state} active={tab === 'stats'} achievementEntries={achievementEntries}/></Suspense></RoutePane>
-<RoutePane active={tab === 'settings'} prepared={preparedRoutes.has('settings')} revision={stateRevision} route="settings"><Suspense fallback={<LoadingPage status={t("正在打开设置…")}/>}><SettingsScreen active={tab === 'settings'} service={service} resourcePacks={resourcePacks} state={state} run={run} refresh={refreshAfterReplacement} preferences={preferences} onPreferencesChange={changePreferences} worldWeather={worldWeather} worldDebug={worldDebug} onWorldDebugChange={setWorldDebug} onConfigureEnvironment={configureEnvironment} onReplayTutorial={replayTutorial} onConfigureOutline={configureOutline}/></Suspense></RoutePane>
+      {active && <RoutePane active={tab === 'tasks'} prepared={preparedRoutes.has('tasks')} revision={stateRevision} route="tasks">{()=><Suspense fallback={<LoadingPage status={t("正在打开任务…")}/>}><TasksScreen active={active} state={state} run={run} quickNotesEnabled={preferences.quickNotesEnabled} onCreateProject={beginProjectSetup} onViewProject={viewProjectInWorld} onSelectSubtask={selectTaskForTimer}/></Suspense>}</RoutePane>}
+      <RoutePane active={tab === 'stats'} prepared={preparedRoutes.has('stats')} revision={stateRevision} route="stats">{()=><Suspense fallback={<LoadingPage status={t("正在打开统计…")}/>}><StatsScreen state={state} active={tab === 'stats'} achievementEntries={achievementEntries}/></Suspense>}</RoutePane>
+<RoutePane active={tab === 'settings'} prepared={preparedRoutes.has('settings')} revision={stateRevision} route="settings">{()=><Suspense fallback={<LoadingPage status={t("正在打开设置…")}/>}><SettingsScreen active={tab === 'settings'} service={service} resourcePacks={resourcePacks} state={state} run={run} refresh={refreshAfterReplacement} preferences={preferences} onPreferencesChange={changePreferences} worldWeather={worldWeather} worldDebug={worldDebug} onWorldDebugChange={setWorldDebug} onConfigureEnvironment={configureEnvironment} onReplayTutorial={replayTutorial} onConfigureOutline={configureOutline}/></Suspense>}</RoutePane>
     </>}
   </>;
   return <div ref={shellRef} className={immersiveFocus?'app-shell focus-immersive':'app-shell'}>{!immersiveFocus&&<header className="topbar"><div className="app-brand"><button type="button" className="brand-bounce" aria-label={t("跳一跳，方块钟")}><PixelBrand/></button><div><span className="brand-mark">{t("方块钟")}</span><span className="brand-en">Blockcolc</span></div></div><button className="today" type="button" aria-label={t("关于方块钟")} onClick={()=>setAboutOpen(true)}><PixelCalendar size={18}/>{new Intl.DateTimeFormat(appLocale(),{month:'short',day:'numeric'}).format(new Date())}</button></header>}
@@ -295,11 +297,12 @@ export function App({ service, resourcePacks }: { service: ApplicationService; r
     {message && <div className={message.action?'toast has-action':'toast'} role="status">{t(message.text)}{message.action&&<button type="button" className="toast-action" onClick={()=>{const target=message.action!.target;setMessage(null);navigateTo(target);}}>{t(message.action.label)}</button>}</div>}
     {!immersiveFocus&&<nav className="bottom-nav" aria-label={t("主导航")}><NavButton active={tab==='world'} icon={<Clock3/>} label={t("计时")} onClick={()=>{if(creatingProject)setCreatingProject(false);navigateTo('world');}}/><NavButton active={tab==='tasks'} icon={<ListTodo/>} label={t("任务")} onClick={()=>navigateTo('tasks')}/><NavButton active={tab==='stats'} icon={<BarChart3/>} label={t("统计")} onClick={()=>navigateTo('stats')}/><NavButton active={tab==='settings'} icon={<Settings/>} label={t("设置")} onClick={()=>navigateTo('settings')}/></nav>}
     {aboutOpen&&<AboutDialog availableRelease={availableRelease} onClose={()=>setAboutOpen(false)}/>}
-    {ceremony&&<CompletionCeremony title={ceremony.title} onClose={()=>setCeremony(null)}/>}
+    {ceremony&&<CompletionCeremony title={ceremony.title} minimal={minimalWanted && tab === 'world'} onClose={()=>setCeremony(null)}/>}
     {tutorial&&<OnboardingDialog onClose={closeTutorial}/>}
+    <CelebrationLayer service={service} refresh={refresh}/>
   </div>;
 }
-function RoutePane({active,prepared,revision,route,children}:{active:boolean;prepared:boolean;revision:number;route:Exclude<Tab,'world'>;children:ReactNode}) {
+function RoutePane({active,prepared,revision,route,children}:{active:boolean;prepared:boolean;revision:number;route:Exclude<Tab,'world'>;children:()=>ReactNode}) {
   useI18n();
   const visited=useRef(false),previousActive=useRef(active);
   const retained=useRef<{children:ReactNode;revision:number}|null>(null);
@@ -308,13 +311,15 @@ function RoutePane({active,prepared,revision,route,children}:{active:boolean;pre
   if(active||prepared)visited.current=true;
   // Deactivation is immediate (receipt/native effects must see active=false).
   // Further hidden projections advance only in a quiet slot, not every tick.
-  if(visited.current&&(active||!retained.current||previousActive.current!==active))retained.current={children,revision};
+  // Do not even construct lazy JSX before admission: React's development
+  // owner-name lookup can initialize memo(lazy(...)) while creating an element.
+  if(visited.current&&(active||!retained.current||previousActive.current!==active))retained.current={children:children(),revision};
   previousActive.current=active;
   useEffect(()=>{
     if(active||!visited.current||retained.current?.revision===revision)return;
     return queueIdleWork(`route-refresh:${route}`,()=>{
       if(latest.current.active)return;
-      startTransition(()=>{retained.current={children:latest.current.children,revision:latest.current.revision};renderPrepared(value=>value+1);});
+      startTransition(()=>{retained.current={children:latest.current.children(),revision:latest.current.revision};renderPrepared(value=>value+1);});
     });
   },[active,prepared,revision,route]);
   return visited.current ? <div className="route-pane" data-route={route} data-route-mounted="true" hidden={!active} aria-hidden={!active}>{retained.current?.children}</div> : null;
@@ -325,8 +330,9 @@ function NavButton({active,icon,label,onClick}:{active:boolean;icon:ReactNode;la
   return <button type="button" className={active?'nav-active':''} aria-current={active?'page':undefined} onClick={()=>{setMotion(value=>value+1);onClick();}}><span className="nav-icon-motion" data-nav-motion={motion>0?'playing':undefined} key={motion}>{icon}</span><span>{label}</span></button>;
 }
 
-function ProjectSetup({run,resourcePacks,buildingBlueprints,existingProjects,draft,firstRun=false,onDraftChange,onCancel,onCreated}:{run:(c:ApplicationCommand)=>Promise<ApplicationResult>;resourcePacks:ResourcePackRepository;buildingBlueprints:ReturnType<ApplicationService['snapshot']>['buildingBlueprintResources'];existingProjects:ReturnType<ApplicationService['snapshot']>['projects'];draft:ProjectSetupDraft;firstRun?:boolean;onDraftChange:(patch:Partial<ProjectSetupDraft>)=>void;onCancel?:()=>void;onCreated?:()=>void}) {
+function ProjectSetup({run,resourcePacks,buildingBlueprints,existingProjects,draft,firstRun=false,restoreService,onRestored,onDraftChange,onCancel,onCreated}:{run:(c:ApplicationCommand)=>Promise<ApplicationResult>;resourcePacks:ResourcePackRepository;buildingBlueprints:ReturnType<ApplicationService['snapshot']>['buildingBlueprintResources'];existingProjects:ReturnType<ApplicationService['snapshot']>['projects'];draft:ProjectSetupDraft;firstRun?:boolean;restoreService?:ApplicationService;onRestored?:()=>void;onDraftChange:(patch:Partial<ProjectSetupDraft>)=>void;onCancel?:()=>void;onCreated?:()=>void}) {
   useI18n();
+  const [restoreSelected,setRestoreSelected]=useState(false),[restoring,setRestoring]=useState(false);
   const catalog=useBlueprintCatalog(); const {kind,blueprintId,habitTargetRounds,imported,packCompatibility,importRole}=draft; const [importing,setImporting]=useState(false); const [submitting,setSubmitting]=useState(false); const submittingRef=useRef(false); const [submitError,setSubmitError]=useState(''); const [importError,setImportError]=useState(''); const [importNotice,setImportNotice]=useState(''); const [nativePicker,setNativePicker]=useState(false);
   const titleInput=useRef<HTMLInputElement>(null);
   const readSubtasks=useRef<(()=>string[])|null>(null);
@@ -350,9 +356,10 @@ function ProjectSetup({run,resourcePacks,buildingBlueprints,existingProjects,dra
       <h2>{t("已有任务")}</h2>
       {existingProjects.map(project => <button type="button" key={project.id} onClick={() => void resume(project.id)}><span><strong>{project.title}</strong><small>{project.kind === 'habit' ? t("习惯 · {0}", project.habit?.awaitingNextBuilding ? '等待选择下一建筑' : `${project.habit?.completedFocusSessionIds.length ?? 0} / ${project.habit?.targetRounds ?? 10} 轮`) : t("{0}% · {1} 个小任务", Math.round(projectProgressBasisPoints(project) / 100), project.subtasks.length)}</small></span><span>{t("切换")}</span></button>)}
     </div>}
-    <form onSubmit={submit}>
-      <header className="setup-heading"><div className="setup-title"><PixelCube/><h1>{firstRun ? t("建立你的第一项任务") : onCancel ? t("新增任务") : t("建立新任务")}</h1></div><p>{kind === 'habit' ? t("让日常坚持，一座接一座地建造。") : t("拆成小任务，一步步建成自己的建筑。")}</p></header>
-      <TextToggle className="setup-kind" ariaLabel={t('任务类型')} value={kind} disabled={submitting} options={[{value:'finite',label:<><PixelCube size={18}/>{t('普通大型任务')}</>},{value:'habit',label:<><PixelRepeat size={18}/>{t('习惯任务')}</>}]} onChange={kind=>onDraftChange({kind})}/>
+    <form onSubmit={event=>{if(restoreSelected){event.preventDefault();return;}void submit(event);}}>
+      <header className="setup-heading"><div className="setup-title"><PixelCube/><h1>{firstRun ? t("建立你的第一项任务") : onCancel ? t("新增任务") : t("建立新任务")}</h1></div><p>{restoreSelected ? t('从备份接着建造，无需新建任务。') : kind === 'habit' ? t("让日常坚持，一座接一座地建造。") : t("拆成小任务，一步步建成自己的建筑。")}</p></header>
+      <TextToggle className={`setup-kind${firstRun?' first-run-choices':''}`} ariaLabel={t('任务类型')} value={restoreSelected?'restore':kind} disabled={submitting||restoring} options={[{value:'finite',label:<><PixelCube size={18}/>{t('普通大型任务')}</>},{value:'habit',label:<><PixelRepeat size={18}/>{t('习惯任务')}</>},...(firstRun&&restoreService?[{value:'restore',label:<><FileUp size={18}/>{t('恢复备份')}</>}]:[])]} onChange={choice=>{setRestoreSelected(choice==='restore');if(choice==='finite'||choice==='habit')onDraftChange({kind:choice});}}/>
+      {restoreSelected&&restoreService ? <div className="setup-backup"><BackupImport service={restoreService} onRestored={onRestored??(()=>{})} onBusyChange={setRestoring}/></div> : <>
       <div className="setup-fields">
         <label>{kind === 'habit' ? t("习惯名称") : t("大型任务")}<NativeImeTextEntry targetRef={titleInput} name="projectTitle" defaultValue={draft.title} onValueChange={title => onDraftChange({ title })}/></label>
         {kind === 'finite' ? <SubtaskRowsEditor initialText={draft.subtasksText} readerRef={readSubtasks} onChange={subtasksText => onDraftChange({ subtasksText })}/> : <div className="habit-target-summary"><span>{t("每座建筑")}</span><strong>{habitTargetRounds} {t("轮专注")}</strong><small>{t("统一在设置中调整；创建后，本周期内不会改变。")}</small></div>}
@@ -360,6 +367,7 @@ function ProjectSetup({run,resourcePacks,buildingBlueprints,existingProjects,dra
       {selected ? <BlueprintPicker resourcePacks={resourcePacks} options={options} selected={selected} onSelect={id => onDraftChange({ blueprintId: id, ...(!imported || id !== imported.blueprint.id ? { importRole: 'building' } : {}) })} importControl={importControl}/> : <div className="blueprint-loading" role="status">{t("正在准备建筑预览...")}</div>}
       {submitError&&<p className="setup-error" role="alert">{submitError}</p>}
       <div className="setup-actions">{onCancel && <button type="button" className="setup-cancel" disabled={submitting} onClick={onCancel}>{t("取消")}</button>}{importRole === 'decoration' && imported ? <button className="primary setup-submit" type="button" aria-busy={importing} disabled={submitting||importing || Boolean(decorationLimitError)} onClick={() => void addDecoration()}><PixelCube size={18}/>{t("加入装饰池")}</button> : <button className="primary setup-submit" type="submit" aria-busy={submitting} disabled={submitting||!selected || importing || !Number.isInteger(habitTargetRounds) || habitTargetRounds < 10 || habitTargetRounds > 30 || (kind === 'finite' && draft.subtasksText.split('\n').map(x => x.trim()).filter(Boolean).length === 0)}><PixelHammer size={18}/>{submitting?t("正在创建…"):t("开始建造")}</button>}</div>
+      </>}
     </form>
   </section>;
 }
@@ -413,5 +421,14 @@ function litematicErrorMessage(error:unknown):string { const code=typeof error==
 
 
 
-function CompletionCeremony({title,onClose}:{title:string;onClose:()=>void}){
-  useI18n();const button=useRef<HTMLButtonElement>(null);useEffect(()=>{button.current?.focus();},[]);return <div className="ceremony-backdrop" role="presentation"><section className="completion-ceremony" role="dialog" aria-modal="true" aria-labelledby="ceremony-title"><div className="ceremony-rays"/><Trophy/><span>{t("主体建筑完成")}</span><h2 id="ceremony-title">{title}</h2><p>{t("这项长期工作已经在聚落中留下完整建筑。")}</p><button ref={button} onClick={onClose}>{t("回到聚落")}</button></section></div>;}
+function CompletionCeremony({title,minimal=false,onClose}:{title:string;minimal?:boolean;onClose:()=>void}){
+  useI18n();const button=useRef<HTMLButtonElement>(null);useEffect(()=>{button.current?.focus();},[]);
+  return <div className={minimal?'dialog-backdrop edge-sheet-backdrop minimal-completion-backdrop':'ceremony-backdrop'} role="presentation">
+    <section className={minimal?'completion-ceremony minimal-completion':'completion-ceremony'} role="dialog" aria-modal="true" aria-labelledby="ceremony-title" onKeyDown={event=>{if(event.key==='Escape')onClose();}}>
+      {minimal?<PixelCube/>:<><div className="ceremony-rays"/><Trophy/></>}
+      <span>{t("主体建筑完成")}</span><h2 id="ceremony-title">{title}</h2>
+      <p>{t("这项长期工作已经在聚落中留下完整建筑。")}</p>
+      <button ref={button} onClick={onClose}>{minimal?t("留在此刻"):t("回到聚落")}</button>
+    </section>
+  </div>;
+}

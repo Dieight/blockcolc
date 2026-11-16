@@ -14,6 +14,7 @@ import { useBackLayer } from './back-layer';
 import { useBlueprintCatalog, blueprintName, loadVoxelModule, testBuildEnabled } from './voxel-runtime';
 import { planRoundsForDuration, plannedDurationMs, reconcileRoundPlan, remainingPlanDurationMs, isUnstartedMarathonPlan, type RoundPlan } from './round-plan';
 import { useRoundPlan } from './use-round-plan';
+import { planCompletionNotification } from './plan-completion-notification';
 import { useAutomaticContinuation } from './use-automatic-continuation';
 import { useFocusFlow } from './use-focus-flow';
 import type { FocusPlanDraft } from './focus-flow';
@@ -134,6 +135,7 @@ export function WorldScreenV7({ service, active: committedActive, state: committ
   const [planMode, setPlanMode] = useState<'rounds' | 'marathon'>('rounds');
   const [endAtDraft, setEndAtDraft] = useState('18:00');
   const [planDraft, setPlanDraft] = useState<FocusPlanDraft>({ rounds: 1, mode: 'rounds', endAt: '18:00', selectedId: selected });
+  const selectPlanTask=useCallback((projectId:string,selectedId:string|null)=>setPlanDraft(draft=>({...draft,projectId,selectedId})),[]);
   const confirmedProjectDraft=useRef<FocusPlanDraft|null>(null);
   const focusPanelRef = useRef<HTMLElement>(null);
   const [worldReady, setWorldReady] = useState(false);
@@ -251,6 +253,11 @@ export function WorldScreenV7({ service, active: committedActive, state: committ
   const { session, integrityFailure, plan: reconciledPlan, isBreak, minimal, minimalBreak, isImmersiveLayout,
     minimalIdle, planHostProject, planHostIsHabit, marathonPlan, marathonReportPhase, activePendingBlocksWorkbench,
     activeHabitAwaitingBlocksWorkbench } = focusView;
+  const completionNotice = JSON.stringify(planCompletionNotification(reconciledPlan, state));
+  const replacementRevision = service.stateReplacementRevision();
+  useEffect(() => {
+    void service.setPlanCompletionNotification(JSON.parse(completionNotice), replacementRevision);
+  }, [service, completionNotice, replacementRevision]);
   reportBandRef.current=marathonReportPhase||!session&&pending.length>0;
   const [panelWeather, setPanelWeather] = useState<WeatherState | null>(null);
   const effectiveWeatherOverride = worldDebug?.weather ?? worldWeather.override;
@@ -521,7 +528,7 @@ export function WorldScreenV7({ service, active: committedActive, state: committ
   const marathonDraftEndMs = planMode === 'marathon' && !reconciledPlan ? marathonEndInstant(endAtDraft) : null;
   const marathonDraftSchedule = marathonDraftEndMs === null
     ? null
-    : planRoundsForDuration(marathonDraftEndMs - Date.now(), focusMinutes, preferences.breakMinutes);
+    : planRoundsForDuration(marathonDraftEndMs - Date.now(), focusMinutes, preferences.breakMinutes,25);
   const plannedRounds = reconciledPlan?.totalRounds ?? rounds;
   const fullPlanDurationMs = plannedDurationMs(focusMinutes, preferences.breakMinutes, plannedRounds);
   // While idle the clock shows the per-round length for the classic schedule,
@@ -554,7 +561,7 @@ export function WorldScreenV7({ service, active: committedActive, state: committ
     : planMode === 'marathon' && !reconciledPlan
       ? (marathonDraftEndMs !== null && marathonDraftSchedule ? t("开始到 {0}", formatClockTime(marathonDraftEndMs)) : t("选择结束时间"))
       : t("开始 {0} 轮", plannedRounds);
-  const startDisabled = planMode === 'marathon' && !reconciledPlan && !(marathonDraftEndMs !== null && marathonDraftSchedule);
+  const startDisabled = planMode === 'marathon' && !reconciledPlan && !(marathonDraftEndMs !== null && marathonDraftSchedule&&marathonDraftSchedule.rounds<=24);
   const canReenterMinimal = preferences.minimalMode === true && !minimalWanted
     && (session?.deferredSettlement === true || reconciledPlan?.deferredSettlement === true);
   const reenterMinimalButton = canReenterMinimal
@@ -592,7 +599,7 @@ export function WorldScreenV7({ service, active: committedActive, state: committ
   }, [memory?.projectId]);
   const sheetPlan=sheetPlanRef.current;
   const sheetProject=state.projects.find(project=>project.id===(sheetPlan?.projectId??planDraft.projectId??active.project.id))??active.project;
-  const taskPicker=<FocusTaskPicker projects={state.projects} currentId={sheetCurrentProject.current} projectId={sheetProject.id} subtaskId={planDraft.selectedId} disabled={Boolean(sheetPlan)} onSelect={(projectId,selectedId)=>setPlanDraft(draft=>({...draft,projectId,selectedId}))}/>;
+  const taskPicker=<FocusTaskPicker projects={state.projects} currentId={sheetCurrentProject.current} projectId={sheetProject.id} subtaskId={planDraft.selectedId} disabled={Boolean(sheetPlan)} onSelect={selectPlanTask}/>;
   const sheetLocked=Boolean(sheetPlan),sheetMode=sheetPlan?.mode??planDraft.mode;
   const sheetUnstarted=isUnstartedMarathonPlan(sheetPlan,Boolean(session));
 
@@ -615,7 +622,7 @@ export function WorldScreenV7({ service, active: committedActive, state: committ
       {rewardMemory&&<aside className="reward-memory-plate" aria-label={t("每日奖励记忆")}><PixelChest/><div><strong>{localBlueprintTitle(rewardMemory.blueprint.id,rewardMemory.blueprint.title)}</strong><p>{rewardMemory.date.replaceAll('-','.')} {t("获得的建造奖励")}</p></div><button type="button" aria-label={t("关闭奖励记忆")} onClick={onCloseWorldMemory}><PixelClose/></button></aside>}
     </div>
     {visible && <section ref={focusPanelRef} className={`focus-panel focus-workbench-panel${memory ? ' is-memory' : ''}`} onPointerUp={(event) => { if (!memory) handlePanelTap({ target: event.target, clientX: event.clientX, clientY: event.clientY }); }}>
-      {!hasActiveProject && !memory && !marathonReportPhase ? <WorkspaceRest state={state} run={run} onCreate={onCreateProject}/> : memory ? <BuildingMemoryPanel key={memory.projectId} memory={memory} switchBlockedReason={memory.isActive ? undefined : switchBlockedReason}
+      {!hasActiveProject && !memory && !marathonReportPhase && !minimal ? <WorkspaceRest state={state} run={run} onCreate={onCreateProject}/> : memory ? <BuildingMemoryPanel key={memory.projectId} memory={memory} switchBlockedReason={memory.isActive ? undefined : switchBlockedReason}
         onClose={onCloseWorldMemory} onContinue={async () => {
           if (memory.projectId !== state.activeProjectId) {
             const result = await run({ type: 'SwitchActiveProject', projectId: memory.projectId });
@@ -634,19 +641,19 @@ export function WorldScreenV7({ service, active: committedActive, state: committ
       </div>}
        {showIdleWorkbench && !isBreak && !activePendingBlocksWorkbench && !activeHabitAwaitingBlocksWorkbench && !marathonReportPhase && <>
          {marathonPlan
-           ? <div className="workbench-context"><span>{t("本场安排")}</span><strong>{t("按结束时间排程")}</strong><small>{planHostIsHabit ? t("习惯轮次直接推进建筑 · 已完成 {0} / {1} 轮", reconciledPlan?.completedRounds ?? 0, reconciledPlan?.totalRounds ?? 1) : t("本场不指定小任务，结束后统一汇报")}</small><HolidayEmblem date={today} slot={0}/></div>
+           ? <div className="workbench-context"><span>{t("本场安排")}</span><strong>{t("按结束时间排程")}</strong><small>{planHostIsHabit ? t("习惯轮次直接推进建筑 · 已完成 {0} / {1} 轮", reconciledPlan?.completedRounds ?? 0, reconciledPlan?.totalRounds ?? 1) : t("本场不指定小任务，结束后统一汇报")}</small><HolidayEmblem date={today} slot={0} birthday={state.birthday}/></div>
            : isHabit
-             ? <div className="workbench-context"><span>{t("当前习惯建筑 · 第")}{' '}{habit!.cycleNumber} {t("座")}</span><strong>{currentBuildingLabel}</strong><small>{t("本周期")}{' '}{habit!.completedFocusSessionIds.length} / {habit!.targetRounds} {t("轮")}</small><HolidayEmblem date={today} slot={0}/></div>
-             : <div className="workbench-context"><span>{t("当前小任务")}</span><strong>{subtask!.title}</strong><small>{t("已完成")}{' '}{Math.round(subtask!.progressBasisPoints / 100)}%</small><HolidayEmblem date={today} slot={0}/></div>}
+             ? <div className="workbench-context"><span>{t("当前习惯建筑 · 第")}{' '}{habit!.cycleNumber} {t("座")}</span><strong>{currentBuildingLabel}</strong><small>{t("本周期")}{' '}{habit!.completedFocusSessionIds.length} / {habit!.targetRounds} {t("轮")}</small><HolidayEmblem date={today} slot={0} birthday={state.birthday}/></div>
+             : <div className="workbench-context"><span>{t("当前小任务")}</span><strong>{subtask!.title}</strong><small>{t("已完成")}{' '}{Math.round(subtask!.progressBasisPoints / 100)}%</small><HolidayEmblem date={today} slot={0} birthday={state.birthday}/></div>}
          <button type="button" className="plan-summary" aria-label={t("调整本次计划")} aria-expanded={planOpen} onClick={openPlan}><span>{planSummary}</span><span><PixelEdit/>{t("调整")}</span></button>
        </>}
-         {minimalIdle && <div className="holiday-panel-slot"><HolidayEmblem date={today} slot={0}/></div>}
+         {minimalIdle && <div className="holiday-panel-slot"><HolidayEmblem date={today} slot={0} birthday={state.birthday}/></div>}
          {minimalRest ? <FocusFace
            context={<>{isBreak && <div className="focus-task-context"><strong>{t("休息中")}</strong></div>}{!isBreak && <div className="focus-task-context"><strong>{t("准备第")}{' '}{(reconciledPlan?.completedRounds ?? 0) + 1} / {reconciledPlan?.totalRounds ?? 1} {t("轮")}</strong></div>}{integrityFailure && !integrityEndedHidden && <div className={`focus-integrity-ended${integrityEndedLeaving ? ' is-leaving' : ''}`} role="alert"><AlertTriangle/>{t("本轮专注因达到离开应用次数上限而结束。下次可以从这里继续。")}</div>}</>}
            timer={<MinimalBreakClock phase={isBreak ? 'break' : 'ready'} busy={continuing} onContinue={() => void continueFromBreak()}><FocusTimer mode={isBreak ? 'break' : 'ready'} endsAt={isBreak ? timerEndsAt : undefined} fallbackMs={isBreak ? 0 : remainingTotalMs ?? 0} onElapsed={finishBreak}/></MinimalBreakClock>}
            controls={marathonPlan&&isBreak ? <button type="button" className={`task-switch-action minimal-rest-adjust${breakControlsRevealed ? '' : ' is-veiled'}`} aria-label={t("调整本次计划")} onClick={openPlan}><ListTodo/><span>{t("调整计划")}</span></button> : null}/>
          : minimalIdle ? <MinimalIdleCarousel state={state} date={today} notes={preferences.quickNotesEnabled ? <QuickNotes compact state={state} run={run}/> : undefined}
-          clock={<MinimalClockGesture clockText={minimalFlow.clockText} busy={minimalFlow.busy} focusMinutes={preferences.focusMinutes} breakMinutes={preferences.breakMinutes} onConfirm={endMs => void minimalFlow.startAt(endMs)}/>}
+          clock={hasActiveProject?<MinimalClockGesture clockText={minimalFlow.clockText} busy={minimalFlow.busy} focusMinutes={preferences.focusMinutes} breakMinutes={preferences.breakMinutes} onConfirm={endMs => void minimalFlow.startAt(endMs)}/>:<div className="minimal-clock-gesture minimal-completed-clock"><FocusTimer mode="clock" fallbackMs={0} onElapsed={()=>{}}/><small>{t("主体建筑完成")}</small></div>}
           exit={<button type="button" className={`minimal-exit${idleExitRevealed ? '' : ' is-veiled'}`} disabled={minimalFlow.busy} onClick={onExitMinimal}>{t("返回完整模式")}</button>}/>
         : activeHabitAwaitingBlocksWorkbench ? <HabitBuildingSelection state={state} active={active} resourcePacks={resourcePacks} run={run} targetRounds={preferences.habitTargetRounds}/>
         : marathonReportPhase ? <MarathonProgressReport variant="minimal" state={state} hostProjectId={reconciledPlan!.projectId} run={run} cancellationReason={reconciledPlan?.cancellationReason} cancellationNote={reconciledPlan?.cancellationNote} onSubmitted={flow.afterMarathonReport} onBusyChange={onReportBusyChange}/>

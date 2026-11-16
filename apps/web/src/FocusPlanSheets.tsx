@@ -7,7 +7,7 @@ import { ChoiceMenu } from './ChoiceMenu';
 import { TextToggle } from './ui/TextToggle';
 import { marathonEndInstant } from './marathon-end-time';
 import { MAX_MARATHON_ROUNDS, planRoundsForDuration } from './round-plan';
-import { formatClockTime, formatDurationSummary } from './focus-format';
+import { formatClockTime } from './focus-format';
 
 const CANCEL_REASONS: ReadonlyArray<{ value: FocusInterruptionCategory; label: string }> = [
   { value: 'external-interruption', label: "外部打扰" }, { value: 'task-blocked', label: "任务受阻" },
@@ -102,7 +102,7 @@ export function FocusPlanSheet({ habit=false,deferredSettlement=false,taskPicker
   const schedule = endMs === null ? null : planRoundsForDuration(endMs - Date.now(), focusMinutes, breakMinutes);
   const rawSchedule = endMs === null ? null : planRoundsForDuration(endMs - Date.now(), focusMinutes, breakMinutes, 1_000_000);
   const capped = schedule !== null && rawSchedule !== null && rawSchedule.rounds > schedule.rounds;
-  const marathonValid = endMs !== null && schedule !== null;
+  const marathonValid = endMs !== null && schedule !== null&&!capped;
   const note = locked ? t(" 已锁定，可取消后重新安排。") : '';
   const available = subtasks.filter(subtask => subtask.progressBasisPoints < 10000);
   return <div className="dialog-backdrop plan-sheet-backdrop edge-sheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
@@ -117,11 +117,11 @@ export function FocusPlanSheet({ habit=false,deferredSettlement=false,taskPicker
         <EndTimeChoice draft={endAtDraft} endMs={endMs} focusMinutes={focusMinutes} breakMinutes={breakMinutes} locked={locked} onChange={onEndAtDraftChange}/>
         {endMs === null
           ? <p className="plan-sheet-error">{t("请先选择结束时间。")}</p>
-          : schedule === null
-            ? <p className="plan-sheet-error">{t("从现在到")}{' '}{formatClockTime(endMs)} {t("不足一轮专注（")}{focusMinutes} {t("分钟），请选择更晚的时间。")}</p>
+          : schedule === null||capped
+            ? <p className="plan-sheet-error">{t(capped?'本场最多 24 轮，请选择更近的结束时间。':'请选择未来的有效结束时间。')}</p>
             : habit&&!deferredSettlement
-              ? <p className="plan-sheet-note">{schedule.rounds} {t("轮习惯专注，每轮")}{' '}{focusMinutes} {t("分钟")}{t("。完成即推进建筑。")}{schedule.breaks>0?t(" · {0} 次休息",schedule.breaks):''}{note}</p>
-              : <p className="plan-sheet-note">{schedule.rounds} {t("轮专注")}{schedule.breaks > 0 ? t(" · {0} 次休息", schedule.breaks) : ''} {t("· 结束后统一汇报。")}{capped ? t("最多 {0} 轮，约 {1}。", MAX_MARATHON_ROUNDS, formatDurationSummary(schedule.usableMs)) : ''}{note}</p>}
+              ? <p className="plan-sheet-note">{schedule.rounds} {t("轮专注")}{schedule.breaks>0?t(" · {0} 次休息",schedule.breaks):''}{' '}{t('按选定时刻结束，末轮可缩短。')}{t("。完成即推进建筑。")}{note}</p>
+              : <p className="plan-sheet-note">{schedule.rounds} {t("轮专注")}{schedule.breaks > 0 ? t(" · {0} 次休息", schedule.breaks) : ''} {t("· 结束后统一汇报。")}{t('按选定时刻结束，末轮可缩短。')}{note}</p>}
       </>}
       {locked ? unstarted ? <ConfirmPlanAction label={t("取消计划")} destructive disabled={false} onConfirm={async()=>{if(!await onCancelPlan(null,''))throw new Error(t("取消未完成"));}}/> : <CancelPlanReason onCancelPlan={onCancelPlan} initialNote={cancellationNote} initialReason={cancellationReason}/> : <ConfirmPlanAction disabled={mode === 'marathon' ? !marathonValid : !habit&&available.length === 0} onConfirm={onConfirm}/>}
     </section>

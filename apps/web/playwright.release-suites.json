@@ -37,6 +37,8 @@
       "workers": 1,
       "specs": [
         "automatic-continuation.spec.ts",
+        "v290-round-continuity.spec.ts",
+        "v290-recovery-workspace.spec.ts",
         "focus-regressions.spec.ts",
         "minimal-achievement-entry.spec.ts",
         "switch-contracts.spec.ts",
@@ -67,6 +69,8 @@
         "blueprint-orientation.spec.ts",
         "focus-native-bundle.spec.ts",
         "navigation-cache.spec.ts",
+        "v290-polish.spec.ts",
+        "v290-feedback104.spec.ts",
         "v10-habit-flow.spec.ts",
         "v17-continuity.spec.ts",
         "v21-marathon.spec.ts",
@@ -79,6 +83,8 @@
         "v256-revision5.spec.ts",
         "v256-receipt-colour.spec.ts",
         "v256-holiday-daily.spec.ts",
+        "v290-birthday.spec.ts",
+        "v290-integration.spec.ts",
         "statistics-repair.spec.ts"
       ]
     },

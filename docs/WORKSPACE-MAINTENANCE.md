@@ -19,8 +19,11 @@
 | artifacts/archive/codex-20261014 | Codex 外层归拢的旧发布、设备记录、材质参考、历史文档、停用 skill 和工具 |
 | 用户素材目录和外部输入目录 | 原始蓝图、资源包及合法测试样本 |
 | 私有工作区 | 私有实现、配置、部署工具和证据 |
+| `D:/blockcolc-android/` | 迁移验证用 Android SDK 镜像、AVD 数据、下载与临时文件；Gradle 构建继续使用原 C 盘 SDK |
 
 按现有 Git 忽略边界维护。公开前检查将提交的文件，内部规范、凭据、用户素材和产物不强制加入源码仓库。
+
+模拟器镜像与可写磁盘留在 D 盘。Android Studio 默认 AVD 目录只保留指向 D 盘的登记文件；关闭自动快照，按需要保留一台运行实例。清理前先核对 emulator／qemu 进程及数据用途，不删除正在运行的虚拟磁盘。
 
 ## 整理与恢复
 
@@ -30,9 +33,13 @@
 
 恢复时先解压到临时目录，再按清单挑选需要的文件，避免覆盖当前改动。
 
+原生设备实验的 APK 按 SHA-256 留一份不可改写的内容，证据目录通过硬链接保留原文件名，并附摘要回执。用 `apps/native-android/tools/Save-ExperimentApk.ps1` 保存，不与 Gradle 输出建立硬链接，也不覆盖旧证据。需要修改历史包的副本时，先复制到新文件再操作。已停用实验的构建中间文件可在确认无进程使用后清除，原输入、交付包和测试报告保留。
+
 2026-09-27 归档清单位于 `artifacts/archive/2026-09-27/`，包括 `cleanup-manifest.json`、`mixed-screens-manifest.json` 和 `legacy-jpeg-and-trace.manifest.json`。相关记录见 [维护记录](maintenance/2026-09-27-workflow.md)和 [v2.0.0 归档](archive/v2.0.0/README.md)。
 
 2026-10-14 整理结果见 [本轮维护记录](maintenance/2026-10-14-workspace.md)。迁移清单、脏工作树 diff 和逐文件摘要位于 `artifacts/maintenance/2026-10-14/`；近期证据的旧路径保留 junction，历史引用仍可访问。旧工作树用 Git 正规迁移，当前路径以 `git worktree list` 为准。
+
+2026-11-01 迁移实验清理释放约 21.1 GiB，历史包去重和原文件复核见 [维护记录](maintenance/2026-11-01-experiment-cleanup.md)。
 
 ## 名称与旧文件
 

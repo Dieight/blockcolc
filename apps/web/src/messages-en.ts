@@ -1,6 +1,39 @@
 /** Presentation strings only. User-written names, notes and imported metadata are never catalog keys. */
 const decode = (value: string) => value.replaceAll('\\n', '\n').replaceAll('\\u0020', ' ');
 export const EN:Readonly<Record<string,string>> = Object.fromEntries(String.raw`
+留在此刻|Stay in this moment
+生日祝福|Birthday wishes
+同步所在地的天气与日月|Local weather, sun and moon
+本地天气与日月|Local weather, sun and moon cycle
+日月已同步|Sun and moon synced
+日月按所在地计算|Sun and moon calculated locally
+每轮专注时长|Focus time per round
+环境录音、雨声与音量|Recordings, rain and volume
+普通任务|Regular tasks
+雨声|Rain
+生日启动即送蛋糕，每年一次|Open on your birthday for a cake, once a year
+公历月份|Month
+公历日期|Day
+生日月份|Birthday month
+生日日期|Birthday day
+2 月 29 日在平年按 2 月 28 日庆祝|February 29 is celebrated on February 28 in non-leap years
+仅保存月和日|Only month and day are saved
+保存日期|Save date
+保存日期后生效|Save the date to enable
+请检查生日日期。|Please check the birthday date.
+生日快乐！小蛋糕已送到聚落。|Happy birthday! A cake has arrived in your settlement.
+建筑落成！|Building completed!
+彩纸预览|Confetti preview
+落成彩纸|Completion confetti
+仅预览，不发放奖励|Preview only; no rewards are granted
+播放|Play
+生日蛋糕|Birthday cake
+生日快乐|Happy birthday
+今天属于你。小蛋糕留在聚落，祝你新的一岁自在生长。|Today is yours. A little cake stays in your settlement. Here is to another year of growing at your own pace.
+生日礼物|Birthday gifts
+生日小蛋糕|Birthday cake
+{0} · 生日小蛋糕|{0} · Birthday cake
+开启生日祝福，生日当天启动即可获得。|Enable birthday wishes and open the app on your birthday to receive this gift.
 修改便签|Edit note
 时长与轮数|Duration and rounds
 通知权限与返回提醒|Notification permissions and return reminders
@@ -1306,6 +1339,15 @@ Togawa15akiko的刷铁机：分层平台与收集结构组成的方块机械建�
 zdrcgubjo4的铁傀儡：宽肩长臂的铁傀儡造型，以方块呈现守卫姿态。|zdrcgubjo4: a broad-shouldered, long-armed iron golem standing guard.
 zdrcgubjo4的小喷泉：围绕中央水景展开的小型喷泉，池边构件形成整齐轮廓。|zdrcgubjo4: a small fountain with neatly arranged poolside details.
 自然白噪音|Nature sounds
+平静海浪|Calm ocean waves
+今日目标达成！|Daily goal reached!
+目标达成彩纸|Goal celebration
+播放目标彩纸|Preview goal confetti
+播放落成彩纸|Preview building confetti
+按选定时刻结束，末轮可缩短。|Ends at your chosen time; the final round may be shorter.
+聚落共用 · 循环间随机留白|Shared across worlds · a pause between repeats
+贴岸小浪|Gentle shore waves
+清晨林中鸟鸣|Morning forest birds
 删除音频：{0}|Delete audio: {0}
 所有聚落共用一个声音|One sound across all environments
 晨间鸟鸣|Morning birdsong
@@ -1340,4 +1382,11 @@ zdrcgubjo4的小喷泉：围绕中央水景展开的小型喷泉，池边构件�
 切换大任务|Switch project
 暂无其他任务|No other tasks yet
 最多 8 份 · 单份 64 MiB · 主音轨仅播放一份|8 files · 64 MiB each · one main sound
+从备份接着建造，无需新建任务。|Restore your world without creating a new task.
+本机材质 · 返回世界时采用|Local packs · applied on return to the world
+{0} 张纹理 · {1} 个模型|{0} textures · {1} models
+资源原件缺失或已变化，请重新导入。|The original pack is missing or changed. Import it again.
+未找到可用的方块材质或模型。|No usable block textures or models were found.
+无法读取或保存本机资源包，原件已保留。|Could not read or save local packs. Originals were kept.
+材质准备失败，可重试或选择原创。|Could not prepare textures. Retry or select originals.
 `.trim().split('\n').map(line=>{const at=line.indexOf('|');return [decode(line.slice(0,at)),decode(line.slice(at+1))];}));

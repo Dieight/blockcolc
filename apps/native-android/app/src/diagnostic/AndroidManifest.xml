@@ -1,0 +1,17 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <activity android:name=".P2CostActivity" android:exported="false" />
+        <!-- Empty foreground owner for derived-file instrumentation. Not the
+             real app page, no domain store and absent from release builds. -->
+        <activity android:name=".P3DerivedCacheCheckActivity" android:exported="false" />
+        <activity android:name=".P3BackupCaptureActivity" android:exported="true" android:label="blockcolc · 本机实验备份">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/json" />
+                <data android:mimeType="application/octet-stream" />
+            </intent-filter>
+        </activity>
+        <provider android:name=".P3AudioSourceProvider" android:authorities="${applicationId}.p3-audio" android:exported="false" android:grantUriPermissions="false" />
+    </application>
+</manifest>

@@ -1,0 +1,29 @@
+// Renderer-only diagnostic: exercises a real HDR attachment, not an inline
+// final-color shortcut. The ordinary world never uses this material.
+material {
+    name : "blockcolc-hdr-probe",
+    shadingModel : unlit,
+    vertexDomain : device,
+    flipUV : false,
+    culling : none,
+    depthCulling : false,
+    depthWrite : false,
+    requires : [uv0]
+}
+fragment {
+    void material(inout MaterialInputs material) {
+        prepareMaterial(material);
+        int column = min(7, int(getUV0().x * 8.0));
+        int row = min(7, int(getUV0().y * 8.0));
+        float value = exp2(float(column - 6));
+        float3 color = float3(value);
+        if (row == 1) color = float3(value, 0.0, 0.0);
+        if (row == 2) color = float3(0.0, value, 0.0);
+        if (row == 3) color = float3(0.0, 0.0, value);
+        if (row == 4) color = value * float3(1.0, 0.5, 0.1);
+        if (row == 5) color = value * float3(0.1, 0.5, 1.0);
+        if (row == 6) color = value * float3(0.2, 1.0, 0.3);
+        if (row == 7) color = float3(0.0);
+        material.baseColor = float4(color, 1.0);
+    }
+}

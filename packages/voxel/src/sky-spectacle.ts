@@ -33,7 +33,7 @@ export function nightSkyVisibility(state:SunState,weather:WeatherState,coldRegio
 // No screen-space stickers or a different random star map in the water.
 export const NIGHT_SKY_GLSL = `
 uniform float bcSkyStars, bcSkyGalaxy, bcSkyAurora, bcSkyTime, bcSkyDensity, bcSkyMeteor;
-uniform vec3 bcSkyColdDirection;
+uniform vec3 bcSkyColdDirection, bcSkyGalaxyNormal;
 float bcSkyHash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
 float bcSkyHash3(vec3 p){return bcSkyHash(vec2(p.x+p.z*59.0,p.y+p.z*7.0));}
 float bcSkyNoise3(vec3 p){
@@ -44,8 +44,11 @@ float bcSkyNoise3(vec3 p){
                  mix(bcSkyHash3(a+vec3(0,1,1)),bcSkyHash3(a+vec3(1,1,1)),b.x),b.y),b.z);
 }
 float bcSkyCloud(vec3 p){return bcSkyNoise3(p)*.55+bcSkyNoise3(p*2.07+vec3(11.3,7.1,3.7))*.3+bcSkyNoise3(p*4.13+vec3(2.9,17.4,6.3))*.15;}
-vec3 bcNightSky(vec3 direction){
-  vec3 d=normalize(direction);float horizon=smoothstep(0.015,0.13,d.y);
+vec3 bcNightSkyField(vec3 direction, bool floatingBackdrop){
+  // A floating island has no ground below its horizon: its void is a full
+  // celestial backdrop. Other worlds and every reflection retain the physical
+  // upper hemisphere. The directional field itself is identical in both.
+  vec3 d=normalize(direction);float horizon=floatingBackdrop?1.0:smoothstep(0.015,0.13,d.y);
   if(horizon<0.001 || bcSkyStars+bcSkyGalaxy+bcSkyAurora<0.001)return vec3(0);
   vec2 uv=vec2(atan(d.z,d.x)/6.2831853+0.5,asin(clamp(d.y,-1.0,1.0))/3.1415926+0.5);
   vec2 cell=floor(uv*vec2(320,160)),within=fract(uv*vec2(320,160));
@@ -60,7 +63,7 @@ vec3 bcNightSky(vec3 direction){
   float dotStar=1.0-smoothstep(size,size+edge,length(within-vec2(0.5)));
   float twinkle=0.92+0.08*sin(bcSkyTime*1.3+seed*121.0);
   vec3 stars=mix(vec3(0.65,0.79,1.0),vec3(1.0,0.86,0.67),bcSkyHash(cell+8.0))*dotStar*star*bcSkyStars*twinkle*1.5;
-  float band=abs(dot(d,normalize(vec3(0.82,0.22,-0.52))));
+  float band=abs(dot(d,normalize(bcSkyGalaxyNormal)));
   // Sample the sphere itself, not a longitude texture. There is no atlas seam
   // at atan's +/-PI or at the poles, even when reflected across many water cells.
   float dust=bcSkyCloud(d*7.0+vec3(4.3,1.7,8.9)),fine=bcSkyNoise3(d*53.0+vec3(21,7,14));
@@ -80,10 +83,17 @@ vec3 bcNightSky(vec3 direction){
   float line=1.0-smoothstep(.0008,.0025,length(p-tail*along));
   float meteor=line*exp(along*12.0)*sin(clamp(bcSkyMeteor,0.0,1.0)*3.1415926)*bcSkyStars*step(0.0,bcSkyMeteor);
   return (stars+milk+aurora+vec3(.7,.86,1.0)*meteor*2.0)*horizon;
-}`;
+}
+vec3 bcNightSky(vec3 direction){return bcNightSkyField(direction,false);}
+vec3 bcFloatingNightSky(vec3 direction){return bcNightSkyField(direction,true);}`;
 
 export class SkySpectacle {
-  readonly uniforms={bcSkyStars:{value:0},bcSkyGalaxy:{value:0},bcSkyAurora:{value:0},bcSkyTime:{value:0},bcSkyDensity:{value:1},bcSkyMeteor:{value:-1},bcSkyColdDirection:{value:new THREE.Vector3(0,0,-1)}};
+  readonly uniforms={bcSkyStars:{value:0},bcSkyGalaxy:{value:0},bcSkyAurora:{value:0},bcSkyTime:{value:0},bcSkyDensity:{value:1},bcSkyMeteor:{value:-1},bcSkyColdDirection:{value:new THREE.Vector3(0,0,-1)},bcSkyGalaxyNormal:{value:new THREE.Vector3(.82,.22,-.52)}};
+  constructor(floatingBackdrop=false){
+    // Frame the same continuous field across the floating island's backdrop,
+    // rather than leaving only an off-screen edge of the Milky Way visible.
+    if(floatingBackdrop)this.uniforms.bcSkyGalaxyNormal.value.set(-.27,.925,-.27);
+  }
   private elapsed=0; private last:number|null=null; private reduced=false;
   private patched=new WeakSet<THREE.Material>();
   update(state:SunState,weather:WeatherState,coldRegion:boolean,reducedMotion:boolean,density:number){
@@ -96,9 +106,9 @@ export class SkySpectacle {
     const slot=this.elapsed%48;this.uniforms.bcSkyMeteor.value=active&&slot>=12&&slot<13.6?(slot-12)/1.6:-1;
     return active;
   }
-  patchSky(material:THREE.Material){this.patch(material,true);}
+  patchSky(material:THREE.Material,floatingBackdrop=false){this.patch(material,true,1,floatingBackdrop);}
   patchReflection(material:THREE.MeshStandardMaterial,gain=1){this.patch(material,false,gain);}
-  private patch(material:THREE.Material,sky:boolean,gain=1){
+  private patch(material:THREE.Material,sky:boolean,gain=1,floatingBackdrop=false){
     if(this.patched.has(material))return;this.patched.add(material);
     const before=material.onBeforeCompile,key=material.customProgramCacheKey();
     material.onBeforeCompile=(shader,renderer)=>{
@@ -116,7 +126,7 @@ bcWorldPos=instanceMatrix*bcWorldPos;
 #endif
 vBcSkyDirection=(modelMatrix*bcWorldPos).xyz;`);
       shader.fragmentShader=shader.fragmentShader.replace('#include <common>',`#include <common>\n${declaration}\n${sky?'':'uniform float bcSkyReflectionGain;'}\n${NIGHT_SKY_GLSL}`)
-        .replace('#include <opaque_fragment>',sky?`outgoingLight += bcNightSky(vBcSkyDirection);\n#include <opaque_fragment>`:`
+        .replace('#include <opaque_fragment>',sky?`outgoingLight += ${floatingBackdrop?'bcFloatingNightSky':'bcNightSky'}(vBcSkyDirection);\n#include <opaque_fragment>`:`
 float bcReflective=(1.0-smoothstep(.34,.6,roughnessFactor));
 if(bcReflective>0.001){
 vec3 bcWorldNormal=inverseTransformDirection(normal,viewMatrix);
@@ -126,6 +136,6 @@ float bcFresnel=.18+.82*pow(1.0-abs(dot(-bcIncident,bcWorldNormal)),3.0);
 outgoingLight += bcNightSky(bcReflected)*bcReflective*bcFresnel*1.8*bcSkyReflectionGain;
 }
 #include <opaque_fragment>`);
-    };material.customProgramCacheKey=()=>`${key}|bc-night-field-v4:${sky}`;material.needsUpdate=true;
+    };material.customProgramCacheKey=()=>`${key}|bc-night-field-v6:${sky}:${floatingBackdrop}`;material.needsUpdate=true;
   }
 }

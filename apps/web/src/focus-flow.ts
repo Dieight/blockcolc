@@ -3,7 +3,7 @@ import type { DomainState, FocusInterruptionCategory } from '@blockcolc/domain';
 import type { FocusPreferences } from './app-types';
 import { marathonEndInstant } from './marathon-end-time';
 import { unsettledMarathonSessions } from './marathon-settlement';
-import { createAutomaticContinuationSchedule, newAutomaticContinuationAuthorizationId, planRoundsForDuration, reconcileRoundPlan, isUnstartedMarathonPlan, type RoundPlan } from './round-plan';
+import { createAutomaticContinuationSchedule, newAutomaticContinuationAuthorizationId, planRoundsForDuration, reconcileRoundPlan, isUnstartedMarathonPlan, exactPlanEndMs,planRoundDurationMs,finishExactPlan,MAX_MARATHON_ROUNDS,type RoundPlan } from './round-plan';
 import { markFocusPerformance } from './focus-performance';
 import { t } from './i18n';
 
@@ -69,7 +69,7 @@ export function createFocusFlow(ports: FocusFlowPorts) {
     const plan = ports.readPlan();
     if (plan?.status !== 'break') return;
     if (!skip && (!plan.breakEndsAt || Date.parse(plan.breakEndsAt) > ports.nowMs())) return;
-    if (plan.endAfterBreak) ports.writePlan(null);
+    if (plan.endAfterBreak) ports.writePlan(exactPlanEndMs(plan)!==null?finishExactPlan(plan,ports.snapshot()):null);
     else {
       const { breakStartedAt: _breakStartedAt, breakEndsAt: _breakEndsAt, ...withoutBreak } = plan;
       const nextRoundStartsAt = new Date(skip ? ports.nowMs() : Date.parse(plan.breakEndsAt!)).toISOString();
@@ -170,8 +170,8 @@ export function createFocusFlow(ports: FocusFlowPorts) {
       }else draft.selectedId=null;
       // Validate all draft choices before changing the durable active project.
       const endMs=draft.mode==='marathon'?marathonEndInstant(draft.endAt,nowMs):null;
-      const schedule=endMs===null?null:planRoundsForDuration(endMs-nowMs,preferences.focusMinutes,preferences.breakMinutes);
-      if(draft.mode==='marathon'&&!schedule)return;
+      const schedule=endMs===null?null:planRoundsForDuration(endMs-nowMs,preferences.focusMinutes,preferences.breakMinutes,MAX_MARATHON_ROUNDS+1);
+      if(draft.mode==='marathon'&&(!schedule||schedule.rounds>MAX_MARATHON_ROUNDS))return;
       let switched=false;
       if(target.id!==active.id){
         const result=await ports.dispatch({type:'SwitchActiveProject',projectId:target.id},{deferRefresh:true});
@@ -182,7 +182,7 @@ export function createFocusFlow(ports: FocusFlowPorts) {
       if (draft.mode === 'marathon') {
         const subtaskId = active.kind === 'habit' ? null : active.subtasks.find(item => item.progressBasisPoints < 10000)?.id ?? active.subtasks[0]?.id ?? null;
         if (active.kind !== 'habit' && subtaskId === null) return;
-        ports.writePlan({ projectId: active.id, subtaskId, totalRounds: schedule!.rounds, completedRounds: 0, status: 'ready', reportedSessionIds: [], mode: 'marathon', endAt: new Date(endMs!).toISOString() });
+        ports.writePlan({ projectId: active.id, subtaskId, totalRounds: schedule!.rounds, completedRounds: 0, status: 'ready', reportedSessionIds: [], mode: 'marathon', endAt: new Date(endMs!).toISOString(),deadlinePolicy:'exact' });
       }
       draft.projectId=active.id;
       ports.commitDraft?.(draft);
@@ -201,8 +201,8 @@ export function createFocusFlow(ports: FocusFlowPorts) {
       let endAt = plan?.endAt;
       if (marathonDraft) {
         const endMs = marathonEndInstant(draft.endAt, nowMs);
-        const schedule = endMs === null ? null : planRoundsForDuration(endMs - nowMs, focusMinutes, preferences.breakMinutes);
-        if (!schedule) return;
+        const schedule = endMs === null ? null : planRoundsForDuration(endMs - nowMs, focusMinutes, preferences.breakMinutes,MAX_MARATHON_ROUNDS+1);
+        if (!schedule||schedule.rounds>MAX_MARATHON_ROUNDS) return;
         rounds = schedule.rounds; endAt = new Date(endMs!).toISOString();
       }
       const deferred = plan?.deferredSettlement === true;
@@ -213,11 +213,13 @@ export function createFocusFlow(ports: FocusFlowPorts) {
       if (!isHabit && !deferred && subtaskId === null) return;
       const next: RoundPlan = plan ? { ...plan } : { projectId: host.id, subtaskId, totalRounds: rounds, completedRounds: 0, status: 'focus', reportedSessionIds: [] };
       if (!isHabit && !deferred) next.subtaskId = subtaskId;
-      if (marathonDraft) { next.mode = 'marathon'; next.endAt = endAt; }
+      if (marathonDraft) { next.mode = 'marathon'; next.endAt = endAt; next.deadlinePolicy='exact'; }
       const previousPlan = ports.readPlan();
       const focusDurationMs = preferences.autoContinueFocus && plan?.automaticContinuation
         ? plan.automaticContinuation.focusDurationMs
         : focusMinutes * 60_000;
+      const boundedDurationMs=planRoundDurationMs(next,focusDurationMs,nowMs);
+      if(boundedDurationMs<=0){ports.writePlan(finishExactPlan(next,state));ports.refresh?.();return;}
       const hasNextRound = next.completedRounds + 1 < next.totalRounds && !next.endAfterBreak && next.status !== 'report';
       if (preferences.autoContinueFocus && hasNextRound) {
         next.automaticContinuation ??= createAutomaticContinuationSchedule(
@@ -242,7 +244,8 @@ export function createFocusFlow(ports: FocusFlowPorts) {
         ports.writePlan(writeAhead);
       }
       markFocusPerformance('command-queued');
-      const result = await ports.dispatch({ type: 'StartFocus', subtaskId: next.subtaskId, plannedDurationMs: focusDurationMs,
+      const result = await ports.dispatch({ type: 'StartFocus', subtaskId: next.subtaskId, plannedDurationMs: boundedDurationMs,
+        ...(exactPlanEndMs(next)!==null?{deadlineAt:next.endAt}:{}),
         ...(deferred ? { deferredSettlement: true } : {}), ...(marathonRound ? { projectId: host.id, marathon: true } : {}) }, { deferRefresh: true });
       if (!result.ok) {
         if ((automaticPlanChanged || !plan) && !ports.snapshot().activeFocusSession) ports.writePlan(previousPlan);
@@ -252,7 +255,7 @@ export function createFocusFlow(ports: FocusFlowPorts) {
       const { breakStartedAt: _breakStartedAt, breakEndsAt: _breakEndsAt, ...withoutBreak } = next;
       const started = result.events.find(event => event.type === 'FocusStarted');
       const firstSession = result.state.activeFocusSession;
-      if (next.mode === 'marathon' && next.completedRounds === 0 && firstSession && next.endAt) {
+      if (next.mode === 'marathon' && next.deadlinePolicy!=='exact' && next.completedRounds === 0 && firstSession && next.endAt) {
         const confirmedEnd = Date.parse(firstSession.startedAt) + next.totalRounds * focusDurationMs
           + Math.max(0, next.totalRounds - 1) * (next.automaticContinuation?.breakDurationMs ?? preferences.breakMinutes * 60_000);
         if (confirmedEnd - Date.parse(next.endAt) <= 60_000)

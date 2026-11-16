@@ -9,6 +9,20 @@
 .setup-kind .text-toggle-selection{top:0;bottom:0;background:var(--surface-active);box-shadow:none}
 .setup-kind .text-toggle-selection::after{content:'';position:absolute;inset:auto 0 0;height:2px;background:var(--focus)}
 .setup-kind:not([data-indicator-ready]) button[aria-pressed='true']{border-bottom-color:var(--focus)}
+.setup-kind.first-run-choices{grid-column:1/-1;width:100%}
+.setup-kind.first-run-choices button{flex:1;min-width:0;flex-direction:column;justify-content:center;text-align:center;padding:8px 6px;font-size:12px;white-space:normal}
+.setup-kind.first-run-choices svg{width:18px;height:18px;flex:none}
+.setup-backup{grid-column:1/-1;width:100%;max-width:640px}
+.setup-backup .setting-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 0;border-block:1px solid var(--line)}
+.setup-backup .setting-name{display:grid;gap:5px;min-width:0;font-size:14px}
+.setup-backup .setting-name small{font-size:12px;line-height:1.5;color:var(--muted)}
+.setup-backup .backup-file-action{flex:none;display:inline-flex;align-items:center;gap:7px;min-height:44px;color:var(--focus);cursor:pointer}
+.setup-backup .import-preview{margin-top:16px;padding:16px;border:1px solid var(--line);background:var(--surface)}
+.backup-import-actions{display:flex;align-items:center;justify-content:flex-end;gap:12px;flex-wrap:wrap}
+.backup-import-actions button{min-height:44px;display:inline-flex;align-items:center;justify-content:center;gap:7px}
+.backup-import-actions button{padding:0 12px;border:1px solid var(--line);background:transparent;color:var(--ink)}
+.backup-import-actions .backup-confirm{border-color:var(--danger);background:var(--danger);color:#fff}
+.backup-import .import-error{color:var(--danger);font-size:13px;overflow-wrap:anywhere}
 .setup-actions .setup-submit{display:flex;align-items:center;justify-content:center;gap:8px;border-radius:6px}
 .setup-cancel{min-width:64px;border:0;background:none;color:#58635d;font-weight:700}
 .setup-actions>button:first-child:not(.primary){min-width:64px;border:0;background:none;color:#58635d;font-weight:700}

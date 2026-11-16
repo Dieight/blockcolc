@@ -57,7 +57,9 @@ export function reconcileAchievementBatch(
   for (const entry of current) {
     if (entry.unlocked && !seen.has(entry.id) && !sessionDismissed.has(entry.id)) merged.set(entry.id, entry);
   }
-  return [...merged.values()];
+  const next=[...merged.values()];
+  // Re-entering an unchanged/empty receipt must not repaint the whole calendar.
+  return next.length===previous.length&&next.every((entry,index)=>entry===previous[index])?previous:next;
 }
 
 export function StatsScreen({ state, achievementEntries, active = false }: { state:AppState; achievementEntries?:ReadonlyArray<AchievementEntry>; active?:boolean }) {

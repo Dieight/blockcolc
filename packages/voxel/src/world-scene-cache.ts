@@ -7,7 +7,7 @@ export { packWorldSceneCache } from './world-scene-cache-codec';
 
 // Bump when terrain, placement, scenery or compact-mesh generation changes.
 // This is a disposable rendering cache, not a domain schema migration.
-export const WORLD_SCENE_CACHE_REVISION = 5;
+export const WORLD_SCENE_CACHE_REVISION = 6;
 export const WORLD_SCENE_CACHE_MAX_BYTES = 64 * 1024 * 1024;
 export interface WorldSceneCache {
   revision: typeof WORLD_SCENE_CACHE_REVISION;

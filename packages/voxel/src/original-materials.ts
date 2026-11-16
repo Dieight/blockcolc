@@ -17,6 +17,7 @@ export const ORIGINAL_MATERIAL_PATTERNS = [
   "grass",
   "foliage",
   "glass",
+  "clear-glass",
   "metal",
   "ore",
   "sculk",
@@ -96,7 +97,9 @@ export function originalPatternForBlockId(sourceBlockId: string | undefined, mat
     if (["stone_button", "stone_pressure_plate", "polished_blackstone_button", "polished_blackstone_pressure_plate"].includes(path)) return "stone";
     if (path === "light_weighted_pressure_plate" || path === "heavy_weighted_pressure_plate") return "metal";
   }
+  if (namespace==='minecraft' && /^(?:(?:white|orange|magenta|light_blue|yellow|lime|pink|gray|light_gray|cyan|purple|blue|brown|green|red|black)_stained_)?glass_pane$/.test(path)) return 'clear-glass';
   if (/(?:glass|ice)(?:$|_)/.test(path)) return "glass";
+  if(namespace==='minecraft'&&/^(?:acacia|bamboo|bamboo_mosaic|birch|cherry|crimson|dark_oak|jungle|mangrove|oak|pale_oak|poplar|spruce|warped)_(?:stairs|slab)$/.test(path))return 'planks';
   if (/(?:^|_)(?:log|wood|stem|hyphae)(?:$|_)|bamboo_block/.test(path)) return "bark";
   if (/(?:planks|shelf|bookshelf|door|trapdoor|fence|gate|sign|button|pressure_plate)/.test(path)) return "planks";
   if (/(?:wool|carpet|bed|banner)/.test(path)) return "fabric";
@@ -111,7 +114,7 @@ export function originalPatternForBlockId(sourceBlockId: string | undefined, mat
   if (/(?:torch|lantern|glowstone|shroomlight|froglight|sea_lantern|redstone_lamp|magma|fire|candle)/.test(path)) return "emissive";
   if (/(?:leaves|vine|moss|azalea|grass|fern|sapling|roots|lichen|shrub)/.test(path)) return "foliage";
   if (/(?:dirt|mud|podzol|mycelium|soul_soil)/.test(path)) return "soil";
-  if (/(?:stone|deepslate|tuff|blackstone|basalt|netherrack|quartz|sandstone|prismarine|purpur|obsidian)/.test(path)) return "stone";
+  if (/(?:stone|andesite|diorite|granite|calcite|deepslate|tuff|blackstone|basalt|netherrack|quartz|sandstone|prismarine|purpur|obsidian)/.test(path)) return "stone";
   return originalPatternForMaterialId(materialId);
 }
 
@@ -241,6 +244,7 @@ function originalMaterialTone(pattern: OriginalMaterialPattern, x: number, y: nu
     const reflection = x - y === 4 || x - y === 5;
     return edge ? 190 : innerEdge ? 224 : reflection ? 255 : clampByte(246 + fine * 0.025);
   }
+  if(pattern==='clear-glass')return clampByte(246+fine*.025+((x-y===4||x-y===5)?5:0));
   if (pattern === "metal") {
     const seam = x === 0 || y === 0 || x === 8 || y === 8;
     const rivet = (x % 8 === 2 || x % 8 === 6) && (y % 8 === 2 || y % 8 === 6);

@@ -1,7 +1,9 @@
+import {openSecondarySetting} from "./settings-controls";
 import { expect, test } from '@playwright/test';
 import { expandGlassSetting } from './expand-glass-setting';
 
 async function openSettings(page: import('@playwright/test').Page) {
+  await page.addInitScript(()=>{if(!localStorage.getItem('blockcolc-focus-preferences-v1'))localStorage.setItem('blockcolc-focus-preferences-v1',JSON.stringify({focusMinutes:45,breakMinutes:5,lightingQuality:'performance'}));});
   await page.goto('/');
   await page.getByRole('button', { name: '开始建造' }).click();
   await page.getByRole('button', { name: '设置' }).click();
@@ -45,7 +47,7 @@ test('real-weather availability stays in Settings while Web keeps the local simu
   const weather = page.getByRole('checkbox', { name: '同步现实天气' });
   const weatherStatus = page.locator('.weather-setting-status');
   await expect(weather).not.toBeChecked();
-  await expect(weatherStatus).toContainText('已关闭 · 聚落继续使用本地天气');
+  await expect(weatherStatus).toHaveText('本地天气与日月');
   await weather.check();
   await expect(weather).toBeChecked();
   await page.getByRole('button', { name: '计时', exact: true }).click();
@@ -61,6 +63,7 @@ test('real-weather availability stays in Settings while Web keeps the local simu
 
 test('settings page keeps grouped rows, quiet secondary actions, and 44px targets', async ({ page }, testInfo) => {
   await openSettings(page);
+  await openSecondarySetting(page,'普通任务');
   await expect(page.getByLabel('开启专注完整性')).not.toBeChecked();
   await page.getByLabel('开启专注完整性').check();
 
@@ -104,6 +107,7 @@ test('settings page keeps grouped rows, quiet secondary actions, and 44px target
     expect(metric.inputHeight, JSON.stringify(numberMetrics)).toBeGreaterThanOrEqual(43.5);
     expect(Math.abs(metric.inputRight - metric.rowContentRight), JSON.stringify(numberMetrics)).toBeLessThanOrEqual(1);
   }
+  await openSecondarySetting(page,'普通任务');
   const focusMinutes = page.getByLabel('普通任务专注分钟');
   await focusMinutes.fill('');
   await expect(focusMinutes).toHaveValue('');
@@ -271,6 +275,7 @@ test('settings page keeps grouped rows, quiet secondary actions, and 44px target
 
 test('a failed preference write shows an error and restores the persisted number', async ({ page }) => {
   await openSettings(page);
+  await openSecondarySetting(page,'普通任务');
   const focusMinutes = page.getByLabel('普通任务专注分钟');
   await expect(focusMinutes).toHaveValue('45');
   await page.evaluate(() => {
@@ -289,6 +294,7 @@ test('a failed preference write shows an error and restores the persisted number
   await page.reload();
   await expect(page.getByRole('button', { name: '设置', exact: true })).toBeVisible();
   await page.getByRole('button', { name: '设置', exact: true }).click();
+  await openSecondarySetting(page,'普通任务');
   await expect(page.getByLabel('普通任务专注分钟')).toHaveValue('45');
 });
 

@@ -61,6 +61,23 @@ function condition(state: DomainState, projectId = state.activeProjectId!) {
   return state.projectConditions.find((item) => item.projectId === projectId)!;
 }
 
+describe('absolute end-time focus commands',()=>{
+  it('clips the last round at the authoritative dispatch time and keeps actual duration exact',()=>{
+    const f=fixture();f.create();const deadline='2026-07-20T09:01:00.000Z';f.clock.advance(125);
+    const started=f.run({type:'StartFocus',sessionId:'short',subtaskId:'a',projectId:'p1',marathon:true,plannedDurationMs:60_000,deadlineAt:deadline});
+    expect(started.ok).toBe(true);expect(f.state().activeFocusSession).toMatchObject({endsAt:deadline,plannedDurationMs:59_875});
+    f.clock.set(deadline);expect(f.run({type:'CompleteFocus'}).ok).toBe(true);
+    expect(f.state().focusHistory[0]).toMatchObject({actualDurationMs:59_875,plannedDurationMs:59_875,endsAt:deadline});expect(parseDomainState(f.state())).toEqual(f.state());
+  });
+  it('rejects an expired or malformed deadline without starting or losing data',()=>{
+    const f=fixture();f.create();const before=structuredClone(f.state());
+    for(const deadlineAt of ['not-an-instant','2026-07-20T08:59:00.000Z','2026-07-20T09:00:00.000Z']){
+      expect(f.run({type:'StartFocus',sessionId:'expired',subtaskId:'a',plannedDurationMs:60000,deadlineAt})).toMatchObject({ok:false,code:'FOCUS_DEADLINE_PASSED'});
+      expect(f.state()).toEqual(before);
+    }
+  });
+});
+
 function importedBlueprint(id = "imported-house"): ImportedBlueprintV1 {
   return {
     schemaVersion: 1 as const,

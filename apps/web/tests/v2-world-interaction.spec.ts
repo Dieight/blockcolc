@@ -1,6 +1,7 @@
 import { expect, test, type CDPSession, type Locator } from "@playwright/test";
 import { selectValleyFixture } from './valley-fixture';
 import { observeShadowRequests, readShadowRequests } from './world-shadow-observer';
+import {expectSettlementZoomBounds} from './world-overview';
 
 test("renders the current compact world and supports bounded rotate and pinch gestures", async ({ page }, testInfo) => {
   // Two prepared worlds, real gestures and four software-WebGL captures.
@@ -81,9 +82,10 @@ test("renders the current compact world and supports bounded rotate and pinch ge
   await touch(cdp, "touchEnd", []);
   await expect.poll(async () => Number(await canvas.getAttribute("data-camera-distance-ratio"))).toBeLessThan(beforePinch);
   const zoomRatio = Number(await canvas.getAttribute("data-camera-distance-ratio"));
-  expect(zoomRatio).toBeCloseTo(0.45, 2);
+  const minimumRatio=Number(await canvas.getAttribute('data-camera-minimum-distance-ratio'));
+  expect(zoomRatio).toBeCloseTo(Math.max(minimumRatio,beforePinch/3),2);
   expect(zoomRatio).toBeLessThanOrEqual(0.9);
-  expect(Number(await canvas.getAttribute("data-camera-minimum-distance-ratio"))).toBeCloseTo(0.45, 2);
+  await expectSettlementZoomBounds(canvas);
   await expect(canvas).toHaveAttribute("data-visibility-near-clip-safe", "true");
   await expect(canvas).toHaveAttribute("data-visibility-far-clip-safe", "true");
   const zoomedInClip = await readClipFrame(canvas);
@@ -95,7 +97,7 @@ test("renders the current compact world and supports bounded rotate and pinch ge
   // Reset now lands at the valley overview's maximum (0.9). Zoom out from
   // the pinched-in view instead, so this actually exercises a bounded gesture.
   const beforeZoomOut = Number(await canvas.getAttribute("data-camera-distance-ratio"));
-  expect(beforeZoomOut).toBeCloseTo(0.45, 2);
+  expect(beforeZoomOut).toBeCloseTo(zoomRatio,2);
   await touch(cdp, "touchStart", [
     { id: 21, x: centerX - 75, y: centerY },
     { id: 22, x: centerX + 75, y: centerY },
@@ -151,7 +153,8 @@ test("lets the settlement inspect the same large blueprint closer than its previ
   expect(Math.abs(worldBox.width - previewBox.width)).toBeLessThanOrEqual(2);
   expect(Math.abs(worldBox.height - previewBox.height)).toBeLessThanOrEqual(2);
   await world.dispatchEvent("wheel", { deltaY: -4_000, deltaMode: 0 });
-  await expect.poll(async () => Number(await world.getAttribute("data-camera-distance-ratio"))).toBeCloseTo(0.45, 2);
+  await expect.poll(async () => Number(await world.getAttribute("data-camera-distance-ratio"))).toBeCloseTo(Number(await world.getAttribute('data-camera-minimum-distance-ratio')),3);
+  await expectSettlementZoomBounds(world);
   const worldDistance = Number(await world.getAttribute("data-camera-distance"));
   const worldRatio = Number(await world.getAttribute("data-camera-distance-ratio"));
 

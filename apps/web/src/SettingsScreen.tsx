@@ -5,10 +5,10 @@ import type { CSSProperties, ReactNode } from 'react';
 import type { ApplicationCommand, ApplicationService, NotificationCapability } from '@blockcolc/application';
 import type { ResourcePackRepository } from '@blockcolc/resource-pack-indexeddb';
 import type { BreakLiveUpdateCapability } from '@blockcolc/platform-capacitor';
-import { MAX_BACKUP_BYTES } from '@blockcolc/storage-indexeddb';
-import { AlertTriangle, Download, FileUp, History, Upload } from 'lucide-react';
+import { AlertTriangle, Download, History, Upload } from 'lucide-react';
 import { PixelChevron as ChevronDown, PixelReset as RefreshCw, PixelClose as X } from './ui/PixelIcon';
-import { readBackupFileText, saveBackupFile } from './browser-adapters';
+import { saveBackupFile } from './browser-adapters';
+import { BackupImport } from './BackupImport';
 import { ResourcePackPanel } from './ResourcePackPanel';
 import { TextToggle } from './ui/TextToggle';
 import type { FocusPreferences } from './app-types';
@@ -28,6 +28,7 @@ import { BlueprintLibrary } from './BlueprintLibrary';
 import { AmbientAudioSettings } from './AmbientAudioSettings';
 import { SettingsDisclosure } from './ui/SettingsDisclosure';
 import { AnimatedDetails } from './ui/AnimatedDetails';
+import { Reveal } from './ui/Reveal';
 
 
 export function SettingsScreen({active,service,resourcePacks,state,run,refresh,preferences,onPreferencesChange,worldWeather,worldDebug,onWorldDebugChange,onConfigureEnvironment,onConfigureOutline,onReplayTutorial}:{active:boolean;service:ApplicationService;resourcePacks:ResourcePackRepository;state:ReturnType<ApplicationService['snapshot']>;run:(c:ApplicationCommand)=>Promise<unknown>;refresh:()=>void;preferences:FocusPreferences;onPreferencesChange:(value:FocusPreferences)=>void;worldWeather:WorldWeatherView;worldDebug?:WorldDebugSettings;onWorldDebugChange?:(value:WorldDebugSettings)=>void;onReplayTutorial?:()=>void;onConfigureOutline?:(visibility:FocusPreferences["constructionOutlineVisibility"])=>Promise<void>;onConfigureEnvironment?:(environment:typeof state.worldSettings.environmentStyle)=>Promise<unknown>}) {
@@ -40,10 +41,16 @@ export function SettingsScreen({active,service,resourcePacks,state,run,refresh,p
       <h2 id="settings-group-timing">{t("计时与专注")}</h2>
       <div className="settings-list">
         <MinimalModeSettingRow enabled={preferences.minimalMode === true} onChange={enabled => onPreferencesChange({...preferences, minimalMode: enabled})}/>
+        <SettingsDisclosure title={t("普通任务")} description={t('每轮专注时长')} value={t("{0} 分钟",preferences.focusMinutes)} className="focus-kind-setting">
         <div className="setting-row">
           <div className="setting-name"><span>{t("普通任务专注（分钟）")}</span></div>
           <label className="number-field"><DeferredNumberInput ariaLabel={t("普通任务专注分钟")} min={1} max={180} value={preferences.focusMinutes} onCommit={value=>update('focusMinutes',value)}/></label>
         </div>
+        </SettingsDisclosure>
+        <SettingsDisclosure title={t("习惯任务")} description={t('时长与轮数')} value={t("{0} 分钟 · {1} 轮/座",preferences.habitFocusMinutes,preferences.habitTargetRounds)} className="focus-kind-setting habit-setting">
+          <div className="setting-row"><div className="setting-name"><span>{t("习惯任务专注（分钟）")}</span></div><label className="number-field"><DeferredNumberInput ariaLabel={t("习惯任务专注分钟")} min={1} max={180} value={preferences.habitFocusMinutes} onCommit={value=>update('habitFocusMinutes',value)}/></label></div>
+          <div className="setting-row"><div className="setting-name"><span>{t("每座习惯建筑（轮）")}</span></div><label className="number-field"><DeferredNumberInput ariaLabel={t("每座习惯建筑轮数")} min={10} max={30} value={preferences.habitTargetRounds} onCommit={value=>update('habitTargetRounds',value)}/></label></div>
+        </SettingsDisclosure>
         <div className="setting-row">
           <div className="setting-name"><span>{t("每轮休息（分钟）")}</span><small>{t("0 表示不休息")}</small></div>
           <label className="number-field"><DeferredNumberInput ariaLabel={t("每轮休息分钟")} min={0} max={60} value={preferences.breakMinutes} onCommit={value=>update('breakMinutes',value)}/></label>
@@ -52,10 +59,6 @@ export function SettingsScreen({active,service,resourcePacks,state,run,refresh,p
           <div className="setting-name"><span>{t("自动连续专注")}</span><small>{t("休息结束自动开始下一轮，锁屏时也按计划继续")}</small></div>
           <label className="switch-control ios-switch"><input aria-label={t("自动连续专注")} type="checkbox" checked={preferences.autoContinueFocus} onChange={()=>onPreferencesChange({...preferences,autoContinueFocus:!preferences.autoContinueFocus})}/></label>
         </div>
-        <SettingsDisclosure title={t("习惯任务")} description={t('时长与轮数')} value={t("{0} 分钟 · {1} 轮/座",preferences.habitFocusMinutes,preferences.habitTargetRounds)} className="habit-setting">
-          <div className="setting-row"><div className="setting-name"><span>{t("习惯任务专注（分钟）")}</span></div><label className="number-field"><DeferredNumberInput ariaLabel={t("习惯任务专注分钟")} min={1} max={180} value={preferences.habitFocusMinutes} onCommit={value=>update('habitFocusMinutes',value)}/></label></div>
-          <div className="setting-row"><div className="setting-name"><span>{t("每座习惯建筑（轮）")}</span></div><label className="number-field"><DeferredNumberInput ariaLabel={t("每座习惯建筑轮数")} min={10} max={30} value={preferences.habitTargetRounds} onCommit={value=>update('habitTargetRounds',value)}/></label></div>
-        </SettingsDisclosure>
         <FocusIntegritySetting policy={state.focusIntegrityPolicy} run={run}>
           <PlannedFocusDaysSetting calendar={state.calendar} run={run}/>
           <BackgroundHealthSetting active={active}/>
@@ -98,7 +101,7 @@ export function SettingsScreen({active,service,resourcePacks,state,run,refresh,p
           <TextToggle ariaLabel={t("聚落环境")} value={state.worldSettings.environmentStyle} options={[{value:'classic-island',label:t("空岛")},{value:'natural-valley',label:t("山谷")},{value:'ocean-island',label:t("海岛")},{value:'mosaic-coast',label:t("海岸")}]} onChange={value=>onConfigureEnvironment?onConfigureEnvironment(value):run({type:'ConfigureWorldEnvironment',environmentStyle:value})}/>
         </div>
         <div className="setting-row">
-          <div className="setting-name"><span>{t("同步现实天气")}</span><small>{t("位置仅存本机；定位暂失时使用缓存，关闭即清除")}</small><WorldWeatherSettingsStatus enabled={preferences.realWeatherEnabled} view={worldWeather}/></div>
+          <div className="setting-name"><span>{t("同步现实天气")}</span><small>{t("同步所在地的天气与日月")}</small><WorldWeatherSettingsStatus enabled={preferences.realWeatherEnabled} view={worldWeather}/></div>
           <label className="switch-control ios-switch"><input aria-label={t("同步现实天气")} type="checkbox" checked={preferences.realWeatherEnabled} onChange={()=>onPreferencesChange({...preferences,realWeatherEnabled:!preferences.realWeatherEnabled})}/></label>
         </div>
         <div className="setting-row toggle-row">
@@ -121,12 +124,14 @@ export function SettingsScreen({active,service,resourcePacks,state,run,refresh,p
       </div>
     </section>
     <section className="settings-group" aria-labelledby="settings-group-addons"><h2 id="settings-group-addons">{t('附加功能')}</h2><div className="settings-list">
-      <AmbientAudioSettings embedded preferences={preferences} onChange={onPreferencesChange}/>
       <div className="setting-row"><div className="setting-name"><span>{t('简易便签')}</span><small>{t('任务页与极简面板共用清单')}</small></div><label className="switch-control ios-switch"><input type="checkbox" aria-label={t('简易便签')} checked={preferences.quickNotesEnabled===true} onChange={()=>onPreferencesChange({...preferences,quickNotesEnabled:!preferences.quickNotesEnabled})}/></label></div>
+      <AmbientAudioSettings embedded preferences={preferences} onChange={onPreferencesChange}/>
+      <BirthdaySetting birthday={state.birthday} run={run}/>
     </div></section>
     <section className="settings-group" aria-labelledby="settings-group-advanced">
       <h2 id="settings-group-advanced">{t("高级与备份")}</h2>
       <div className="settings-list">
+        {onReplayTutorial&&<div className="setting-row"><div className="setting-name"><span>{t("新手教程")}</span></div><button type="button" className="settings-text-action" onClick={onReplayTutorial}>{t("重新查看")}</button></div>}
         <div className="setting-row">
           <div className="setting-name"><span>{t("自动检查并下载")}</span><small>{t("启动时检查新版")}</small></div>
           <label className="switch-control ios-switch"><input aria-label={t("自动检查并下载")} type="checkbox" checked={preferences.autoCheckUpdates === true} onChange={()=>onPreferencesChange({...preferences,autoCheckUpdates:!preferences.autoCheckUpdates})}/></label>
@@ -135,7 +140,6 @@ export function SettingsScreen({active,service,resourcePacks,state,run,refresh,p
             <div className="setting-name"><span>{t("渐进启动")}</span><small>{t("先打开计时，世界稍后就绪；下次启动生效")}</small></div>
             <label className="switch-control ios-switch"><input aria-label={t("渐进启动")} type="checkbox" checked={preferences.progressiveStartup === true} onChange={()=>onPreferencesChange({...preferences,progressiveStartup:!preferences.progressiveStartup})}/></label>
           </div>
-        {onReplayTutorial&&<div className="setting-row"><div className="setting-name"><span>{t("新手教程")}</span></div><button type="button" className="settings-text-action" onClick={onReplayTutorial}>{t("重新查看")}</button></div>}
         <div className="setting-row">
           <div className="setting-name"><span>{t("显示世界坐标")}</span><small>{t("点按地形时显示 x、z 与高度，便于定位世界问题")}</small></div>
           <label className="switch-control ios-switch"><input aria-label={t("显示世界坐标")} type="checkbox" checked={preferences.showWorldCoordinates} onChange={()=>onPreferencesChange({...preferences,showWorldCoordinates:!preferences.showWorldCoordinates})}/></label>
@@ -145,6 +149,26 @@ export function SettingsScreen({active,service,resourcePacks,state,run,refresh,p
       </div>
     </section>
   </section>;
+}
+
+function BirthdaySetting({birthday,run}:{birthday:ReturnType<ApplicationService['snapshot']>['birthday'];run:(command:ApplicationCommand)=>Promise<unknown>}){
+  const [busy,setBusy]=useState(false),[error,setError]=useState('');
+  const [enabled,setEnabled]=useState(birthday.enabled);
+  useEffect(()=>setEnabled(birthday.enabled),[birthday.enabled]);
+  const [month,setMonth]=useState(birthday.month),[day,setDay]=useState(birthday.day);
+  useEffect(()=>{setMonth(birthday.month);setDay(birthday.day);},[birthday.month,birthday.day]);
+  const save=async(nextEnabled:boolean)=>{
+    if(busy)return;const previousEnabled=enabled;setBusy(true);setError('');setEnabled(nextEnabled);
+    if(!nextEnabled){setMonth(birthday.month);setDay(birthday.day);}
+    try{const result=await run({type:'ConfigureBirthday',enabled:nextEnabled,month:nextEnabled?month:birthday.month,day:nextEnabled?day:birthday.day});if(!result||typeof result!=='object'||!('ok'in result)||!result.ok){setEnabled(previousEnabled);setError(t('请检查生日日期。'));}}
+    catch{setEnabled(previousEnabled);setError(t('保存失败，请重试。'));}finally{setBusy(false);}
+  };
+  return <SettingsDisclosure title={t('生日祝福')} description={t('生日启动即送蛋糕，每年一次')} value={birthday.enabled?`${birthday.month} / ${birthday.day}`:t('关闭')} className="birthday-setting">
+    <div className="setting-row"><div className="setting-name"><span>{t('生日祝福')}</span><small>{t(enabled&&!birthday.enabled?'保存日期后生效':'仅保存月和日')}</small></div><label className="switch-control ios-switch"><input type="checkbox" aria-label={t('生日祝福')} checked={enabled} disabled={busy} onChange={()=>{if(enabled)void save(false);else{setError('');setEnabled(true);}}}/></label></div>
+    <Reveal open={enabled}><div className="settings-inner-group"><div className="setting-row"><div className="setting-name"><span>{t('公历月份')}</span></div><label className="number-field"><DeferredNumberInput ariaLabel={t('生日月份')} min={1} max={12} value={month} onCommit={setMonth}/></label></div>
+      <div className="setting-row"><div className="setting-name"><span>{t('公历日期')}</span><small>{t('2 月 29 日在平年按 2 月 28 日庆祝')}</small></div><label className="number-field"><DeferredNumberInput ariaLabel={t('生日日期')} min={1} max={31} value={day} onCommit={setDay}/></label></div>
+      <div className="setting-row"><span className="setting-name">{t('仅保存月和日')}</span><button type="button" className="settings-text-action" disabled={busy} aria-busy={busy} onClick={()=>void save(true)}>{t('保存日期')}</button></div>
+    </div></Reveal>{error&&<p role="alert" className="import-error">{error}</p>}</SettingsDisclosure>;
 }
 
 function NotificationHealthSetting({service}:{service:ApplicationService}) {
@@ -225,8 +249,6 @@ function normalizedIntegerDraft(draft:string,minimum:number,maximum:number):numb
 
 function BackupPanel({service,onChanged,changeToken}:{service:ApplicationService;onChanged:()=>void;changeToken:ReturnType<ApplicationService['snapshot']>}) {
   useI18n();
-  const [preview,setPreview]=useState<Awaited<ReturnType<ApplicationService['previewImport']>>|null>(null);
-  const [importText,setImportText]=useState<string|null>(null);
   const [rollbacks,setRollbacks]=useState<Awaited<ReturnType<ApplicationService['listRollbackBackups']>>>([]);
   const [restoreTarget,setRestoreTarget]=useState<Awaited<ReturnType<ApplicationService['listRollbackBackups']>>[number]|null>(null);
   const [daily, setDaily] = useState<Awaited<ReturnType<ApplicationService['listDailyBackups']>>>(null);
@@ -253,21 +275,13 @@ function BackupPanel({service,onChanged,changeToken}:{service:ApplicationService
   useEffect(()=>{void reloadRollbacks();},[reloadRollbacks,changeToken]);
   useEffect(() => { const changed = (event: Event) => { const detail = (event as CustomEvent<{error:string|null}>).detail; if(detail.error)setError(detail.error); void reloadRollbacks(); }; window.addEventListener(DAILY_BACKUP_CHANGED, changed); return () => window.removeEventListener(DAILY_BACKUP_CHANGED, changed); }, [reloadRollbacks]);
   const exportFile=async()=>{if(!beginAction('export'))return;try{const text=await service.exportBackup();const stamp=new Date().toISOString().replace(/[:.]/g,'-');await saveBackupFile(text,`blockcolc-backup-${stamp}.json`);}catch(cause){setError(errorMessage(cause));}finally{endAction();}};
-  const chooseFile=async(file:File|undefined)=>{if(!file||!beginAction('preview'))return;setPreview(null);setImportText(null);try{const text=await readBackupFileText(file);const next=await service.previewImport(text);setImportText(text);setPreview(next);}catch(cause){const code=typeof cause==='object'&&cause!==null&&'code' in cause?String((cause as {code:unknown}).code):'';setError(code==='BACKUP_TOO_LARGE'?t("备份文件不能超过 {0} MiB。", MAX_BACKUP_BYTES/(1024*1024)):t("无法读取备份：{0}", errorMessage(cause)));}finally{endAction();}};
-  const confirmImport=async()=>{if(!importText||!preview||!beginAction('import'))return;try{await service.replaceFromImport(importText);setPreview(null);setImportText(null);setNotice(t("导入完成，已创建回滚备份。"));onChanged();await reloadRollbacks();}catch(cause){setError(t("导入失败：{0}", errorMessage(cause)));}finally{endAction();}};
   const restore=async()=>{if(!restoreTarget||!beginAction('restore'))return;try{await service.restoreRollback(restoreTarget.id);setRestoreTarget(null);setNotice(t("已恢复备份，并创建恢复前回滚点。"));onChanged();await reloadRollbacks();}catch(cause){setError(t("恢复失败：{0}", errorMessage(cause)));}finally{endAction();}};
   const exportDaily = async (id:string) => { if(!beginAction(`daily-export:${id}`))return; try { await saveBackupFile(await service.exportDailyBackup(id), `blockcolc-daily-${id}.json`); } catch(cause) { setError(errorMessage(cause)); } finally { endAction(); } };
   const restoreDaily = async () => { if(!dailyTarget || !beginAction('daily-restore'))return; try { await service.restoreDailyBackup(dailyTarget.id); setDailyTarget(null); setNotice(t("留档已恢复，原数据保留为回滚点。")); onChanged(); await reloadRollbacks(); } catch(cause) { setError(t("恢复失败：{0}", errorMessage(cause))); } finally { endAction(); } };
   return <SettingsDisclosure title={t("本地备份")} description={t('导入导出、每日合并与回滚')} className="backup-setting">
     <AnimatedDetails className="backup-manual" summary={<>{t('导入与导出')}<ChevronDown/></>}>
     <div className="setting-row"><div className="setting-name"><span>{t('导出 JSON')}</span><small>{t('导出是完整备份，操作回滚另存。')}</small></div><button type="button" className="settings-text-action backup-file-action circle-busy" onClick={() => void exportFile()} disabled={busy} aria-busy={pendingAction === 'export'}><Download/>{pendingAction === 'export' ? t("正在导出…") : t("导出")}</button></div>
-    <div className="setting-row"><div className="setting-name"><span>{t('导入备份')}</span><small>{t("导入前留回滚点；完整替换，不合并。")}</small></div><label className="file-button settings-text-action backup-file-action" aria-busy={pendingAction === 'preview'} aria-disabled={busy}><FileUp/>{pendingAction === 'preview' ? t("正在读取…") : t("选择备份")}<input aria-label={t("选择备份 JSON 文件")} type="file" accept="application/json,.json" onChange={event => { const file = event.target.files?.[0]; event.currentTarget.value = ''; void chooseFile(file); }} disabled={busy}/></label></div>
-    {preview && <div className="import-preview"><h3>{t("导入预览")}</h3><dl>
-      <div><dt>{t("导出时间")}</dt><dd>{new Date(preview.exportedAt).toLocaleString(appLocale())}</dd></div>
-      <div><dt>{t("项目")}</dt><dd>{preview.summary.projectCount} {t("个")}{preview.summary.activeProjectTitle ? t(" · 当前：{0}", preview.summary.activeProjectTitle) : ''}</dd></div>
-      <div><dt>{t("专注记录")}</dt><dd>{preview.summary.completedFocusCount} {t("完成 /")}{' '}{preview.summary.interruptedFocusCount} {t("中断")}</dd></div>
-      <div><dt>{t("进度汇报")}</dt><dd>{preview.summary.progressReportCount} {t("条")}</dd></div>
-    </dl><button className="danger-action backup-confirm" type="button" onClick={() => void confirmImport()} disabled={busy} aria-busy={pendingAction === 'import'}><Upload/>{pendingAction === 'import' ? t("正在替换…") : t("确认替换本地数据")}</button></div>}
+    <BackupImport service={service} disabled={busy} onBegin={beginAction} onEnd={endAction} onError={setError} onRestored={()=>{setNotice(t('导入完成，已创建回滚备份。'));onChanged();void reloadRollbacks();}}/>
     </AnimatedDetails>
     <AnimatedDetails className="backup-rollback-history" summary={<>{t('操作回滚')}<span>{rollbacks.length} {t('份')}</span><ChevronDown/></>}>
     <div className="rollback-list"><div className="rollback-heading"><h3><History/>{t("可恢复备份")}</h3><button type="button" aria-label={t("刷新可恢复备份")} aria-busy={refreshingBackups} onClick={() => void reloadRollbacks()} disabled={busy || refreshingBackups}><span className="refresh-motion"><RefreshCw/></span>{t("刷新")}</button></div>

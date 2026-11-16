@@ -1,0 +1,34 @@
+plugins {
+    id 'com.android.application' version '8.7.2' apply false
+    id 'com.android.library' version '8.7.2' apply false
+    id 'com.android.test' version '8.7.2' apply false
+    id 'org.jetbrains.kotlin.android' version '2.0.21' apply false
+    id 'org.jetbrains.kotlin.jvm' version '2.0.21' apply false
+    id 'org.jetbrains.kotlin.plugin.compose' version '2.0.21' apply false
+}
+
+def jsonCoreProjects=['domain-core','state-store','focus-core','presentation-core','world-core']
+tasks.register('testAndroidJsonAbiChecker',Exec){
+    workingDir rootProject.projectDir
+    commandLine 'node','--test','tools/check-android-json-abi.test.mjs'
+}
+tasks.register('checkAndroidJsonAbi',Exec){
+    dependsOn jsonCoreProjects.collect{":${it}:classes"},'testAndroidJsonAbiChecker'
+    def report=layout.buildDirectory.file('reports/android-json-abi.json')
+    def sdkJar=providers.provider {
+        def android=project(':app').extensions.getByName('android')
+        new File(android.sdkDirectory,"platforms/${android.compileSdkVersion}/android.jar")
+    }
+    inputs.file 'tools/check-android-json-abi.mjs'
+    inputs.file sdkJar
+    def classes=jsonCoreProjects.collect{project(":$it").layout.buildDirectory.dir('classes/kotlin/main')}
+    inputs.files classes
+    outputs.file report
+    workingDir rootProject.projectDir
+    doFirst {
+        commandLine(['node','tools/check-android-json-abi.mjs',sdkJar.get().absolutePath,report.get().asFile.absolutePath]+classes.collect{it.get().asFile.absolutePath})
+    }
+}
+project(':app').plugins.withId('com.android.application') {
+    project(':app').tasks.matching{it.name=='preBuild'}.configureEach{dependsOn rootProject.tasks.named('checkAndroidJsonAbi')}
+}

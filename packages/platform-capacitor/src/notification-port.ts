@@ -8,6 +8,7 @@ import { breakNotificationKey, cancelBreakLiveUpdate, cancelFocusLiveUpdate, sho
 export const FOCUS_NOTIFICATION_ID = 42001;
 export const BREAK_NOTIFICATION_ID = 42002;
 export const BREAK_COMPLETION_NOTIFICATION_ID = 42003;
+export const PLAN_COMPLETION_NOTIFICATION_ID = 42005;
 const EXACT_ALARM_PROMPT_KEY = 'blockcolc-exact-alarm-prompted-v1';
 
 export function isCapacitorNative(): boolean { return Capacitor.isNativePlatform(); }
@@ -22,6 +23,8 @@ export class CapacitorNotificationPort implements NotificationPort {
   private scheduledBreakDeadlineReached = false;
   /** Serialize native/local replacement so a stale schedule cannot win a cancel race. */
   private breakNotificationTail: Promise<void> = Promise.resolve();
+  private planNotificationTail: Promise<void> = Promise.resolve();
+  private scheduledPlanKey: string | null = null;
 
   async requestPermission(): Promise<NotificationCapability> {
     if (!isCapacitorNative()) return unavailable();
@@ -49,10 +52,10 @@ export class CapacitorNotificationPort implements NotificationPort {
     // The ongoing notification is updated in place by its stable session key,
     // avoiding the cancel/repost flash on lifecycle recovery.
     await LocalNotifications.cancel({ notifications: [{ id: FOCUS_NOTIFICATION_ID }] });
-    await LocalNotifications.schedule({ notifications: [{
+    if (notification.marathon !== true) await LocalNotifications.schedule({ notifications: [{
       id: FOCUS_NOTIFICATION_ID,
       title: ui('专注完成','Focus complete'),
-      body: ui('回来记录这次小任务的实际进度。','Return to report your progress.'),
+      body: notification.requiresReport === false ? ui('本轮已计入习惯建筑。','This round has been added to your habit building.') : ui('回来记录这次小任务的实际进度。','Return to report your progress.'),
       schedule: { at: new Date(notification.endsAt), allowWhileIdle: true },
       extra: { kind: 'focus-completed', sessionId: notification.sessionId, endsAt: notification.endsAt },
     }] });
@@ -73,6 +76,34 @@ export class CapacitorNotificationPort implements NotificationPort {
       console.warn('Android focus Live Update could not be cancelled', error);
     }
     await LocalNotifications.cancel({ notifications: [{ id: FOCUS_NOTIFICATION_ID }] });
+  }
+
+  schedulePlanCompletion(notification: import('@blockcolc/application').PlanCompletionNotification): Promise<void> {
+    if (!isCapacitorNative()) return Promise.resolve();
+    const key = JSON.stringify(notification);
+    return this.planOperation(async () => {
+      if (key === this.scheduledPlanKey) return;
+      await LocalNotifications.cancel({ notifications: [{ id: PLAN_COMPLETION_NOTIFICATION_ID }] });
+      await LocalNotifications.schedule({ notifications: [{
+        id: PLAN_COMPLETION_NOTIFICATION_ID,
+        title: ui('本次计划已完成', 'Focus plan complete'),
+        body: notification.requiresReport ? ui('所有轮次已结束，回来汇报本次推进。', 'All rounds are complete. Return to report your progress.') : ui('本次专注已计入习惯建筑。', 'Your focus has been added to your habit building.'),
+        schedule: { at: new Date(notification.endsAt), allowWhileIdle: true },
+        extra: { kind: 'plan-completed', planKey: notification.planKey, endsAt: notification.endsAt },
+      }] });
+      this.scheduledPlanKey = key;
+    });
+  }
+  cancelPlanCompletion(): Promise<void> {
+    if (!isCapacitorNative()) return Promise.resolve();
+    return this.planOperation(async () => {
+      await LocalNotifications.cancel({ notifications: [{ id: PLAN_COMPLETION_NOTIFICATION_ID }] });
+      this.scheduledPlanKey = null;
+    });
+  }
+  private planOperation(operation: () => Promise<void>): Promise<void> {
+    const next = this.planNotificationTail.then(operation, operation);
+    this.planNotificationTail = next.then(() => undefined, () => undefined); return next;
   }
 
   async scheduleBreakCompletion(notification: BreakCompletionNotification): Promise<void> {

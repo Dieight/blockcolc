@@ -1,0 +1,66 @@
+package com.blockcolc.domain
+
+import org.json.JSONArray
+import org.json.JSONObject
+import org.junit.Assert.*
+import org.junit.Test
+
+class StartedFocusSpliceTest {
+    private val now=DomainTime.millis("2026-10-24T08:00:00.000Z")
+    private fun large(active:String="work"):DomainDocument {
+        var state=DomainEngine.initial("UTC")
+        for(command in listOf(
+            DomainEngine.command("CreateProject","projectId" to "work","title" to "写作😀","blueprintId" to "glaze","subtasks" to JSONArray().put(JSONObject().put("id","first").put("title","第一章"))),
+            DomainEngine.command("CreateHabitProject","projectId" to "habit","title" to "阅读","blueprintId" to "glaze","targetRounds" to 10),
+            DomainEngine.command("SwitchActiveProject","projectId" to active))){
+            val result=DomainEngine.execute(state,command,now);check(result.ok);state=result.state
+        }
+        val root=state.json()
+        val voxels=JSONArray()
+        for(x in 0..63)for(y in 0..7)for(z in 0..7)voxels.put(JSONObject().put("x",x).put("y",y).put("z",z).put("materialId","glass").put("stage","foundation").put("buildOrder",0))
+        val body=JSONObject().put("schemaVersion",1).put("id","glaze").put("title","窗台😀")
+            .put("bounds",JSONObject().put("minX",0).put("maxX",63).put("minY",0).put("maxY",7).put("minZ",0).put("maxZ",7)).put("voxels",voxels)
+        root.getJSONArray("buildingBlueprintResources").put(JSONObject().put("id","glaze").put("displayName","窗台😀").put("blueprint",body).put("importedAt",DomainTime.format(now)))
+        root.getJSONArray("projects").getJSONObject(0).put("importedBlueprint",body)
+        return DomainDocument.fromOwnedJson(root).also{assertTrue(it.canSpliceStartedFocus)}
+    }
+    private fun command(project:String="work",task:Any= "first",deferred:Boolean=false)=DomainEngine.command("StartFocus","sessionId" to "session","projectId" to project,"subtaskId" to task,"plannedDurationMs" to 60000L).also{
+        if(deferred)it.put("marathon",true).put("deferredSettlement",true)
+    }
+    /** Independent old whole-tree execution uses the same business command,
+     * then checks every shape, reference and canonical blueprint body. */
+    private fun whole(state:DomainDocument,command:JSONObject):DomainOutcome=try{
+        val mutation=DomainMutation(state.json(),StrictJson.copy(command) as JSONObject,DomainTime.format(now))
+        check(FocusCommands.run(mutation));DomainOutcome(true,DomainDocument.adopt(mutation.s),mutation.events.map(StrictJson::render))
+    }catch(error:CommandFailure){DomainOutcome(false,state,error=error.code)}
+    catch(error:Exception){DomainOutcome(false,state,error="INVALID_INPUT")}
+    @Test fun normalHabitAndDeferredStartsMatchWholeValidationAndKeepExactBlueprintSpans(){
+        for((active,cmd) in listOf("work" to command(),"habit" to command("habit",JSONObject.NULL),"work" to command(task=JSONObject.NULL,deferred=true))){
+            val before=large(active);val expected=whole(before,cmd);val actual=DomainEngine.execute(before,cmd,now)
+            assertTrue(actual.ok);assertEquals(expected,actual)
+            assertEquals(actual.state,DomainDocument.parse(actual.state.canonical))
+            for((section,id) in listOf("projects" to "work","buildingBlueprintResources" to "glaze"))assertEquals(before.blueprintCanonical(section,id),actual.state.blueprintCanonical(section,id))
+            assertEquals(before.projectionJson().getJSONArray("projects").toString(),actual.state.projectionJson().getJSONArray("projects").toString())
+            assertEquals("session",actual.state.activeFocusSession()!!.getString("id"))
+            val exported=actual.state.json();exported.getJSONArray("projects").getJSONObject(0).getJSONObject("importedBlueprint").getJSONArray("voxels").getJSONObject(0).put("x",999)
+            assertEquals(actual.state,DomainDocument.parse(actual.state.canonical))
+            val finished=DomainEngine.execute(actual.state,DomainEngine.command("CompleteFocus"),now+60000)
+            assertTrue(finished.error,finished.ok);assertEquals(finished.state,DomainDocument.parse(finished.state.canonical))
+        }
+    }
+    @Test fun invalidSessionsAndReferenceFailuresRetainTheWholeExecutionResult(){
+        val state=large()
+        for(cmd in listOf(command("missing"),command(task="missing"),command().put("plannedDurationMs",0),command().put("deadlineAt",DomainTime.format(now)),command("habit",JSONObject.NULL))){
+            val expected=whole(state,cmd);assertFalse(expected.ok);assertEquals(expected,DomainEngine.execute(state,cmd,now))
+        }
+        val started=DomainEngine.execute(state,command(),now).state
+        assertEquals(whole(started,command()),DomainEngine.execute(started,command(),now))
+    }
+    @Test fun anotherFieldChangeFallsBackAndAnInvalidActiveSessionCannotInheritValidation(){
+        val state=large();val view=state.projectionJson();val before=StrictJson.render(view)
+        view.put("activeFocusSession",JSONObject().put("id","broken"))
+        assertThrows(StateInputException::class.java){state.startedFocus(view,before)}
+        view.getJSONArray("quickNotes").put(JSONObject().put("id","extra"))
+        assertNull(state.startedFocus(view,before));assertNull(state.activeFocusSession())
+    }
+}

@@ -1,0 +1,234 @@
+{
+  "schema": 1,
+  "scope": "Reviewed operations only; pending is not supported. Exact patched GLSL and defines are part of the identity.",
+  "programs": [
+    {
+        "type": "MeshStandardMaterial",
+        "defines": {
+            "STANDARD": ""
+        },
+        "cacheKey": "blockcolc-atlas-v6-fluid-opaque-animated|bc-night-field-v6:false:false|blockcolc-material-effects-v1",
+        "vertexSha256": "af41a3a1031481a9edebe636258ac60b03cd26bafa9e4ace19fc47d7f770c227",
+        "fragmentSha256": "454b6f23de271af004bd737da0a614fa2e08900d01acb580a0113b9db17e5048",
+        "faceEdges": true,
+        "fluidSurface": true,
+        "weatherWater": false,
+        "noNight": false,
+        "atlas": true,
+        "atlasShape": false,
+        "pending": []
+    },
+    {
+        "type": "MeshStandardMaterial",
+        "defines": {
+            "STANDARD": ""
+        },
+        "cacheKey": "blockcolc-atlas-v6-fluid-translucent-animated|bc-night-field-v6:false:false|blockcolc-material-effects-v1",
+        "vertexSha256": "af41a3a1031481a9edebe636258ac60b03cd26bafa9e4ace19fc47d7f770c227",
+        "fragmentSha256": "454b6f23de271af004bd737da0a614fa2e08900d01acb580a0113b9db17e5048",
+        "faceEdges": true,
+        "fluidSurface": true,
+        "weatherWater": false,
+        "noNight": false,
+        "atlas": true,
+        "atlasShape": false,
+        "pending": []
+    },
+    {
+        "type": "MeshStandardMaterial",
+        "defines": {
+            "STANDARD": ""
+        },
+        "cacheKey": "blockcolc-atlas-v6-fluid-cutout-animated|bc-night-field-v6:false:false|blockcolc-material-effects-v1",
+        "vertexSha256": "af41a3a1031481a9edebe636258ac60b03cd26bafa9e4ace19fc47d7f770c227",
+        "fragmentSha256": "454b6f23de271af004bd737da0a614fa2e08900d01acb580a0113b9db17e5048",
+        "faceEdges": true,
+        "fluidSurface": true,
+        "weatherWater": false,
+        "noNight": false,
+        "atlas": true,
+        "atlasShape": false,
+        "pending": []
+    },
+    {
+        "type": "MeshStandardMaterial",
+        "defines": {
+            "STANDARD": ""
+        },
+        "cacheKey": "blockcolc-atlas-geometry-v3-opaque-animated|bc-night-field-v6:false:false|blockcolc-material-effects-v1",
+        "vertexSha256": "80b839e229ed4473f25882d4f758621618623f8b6b1b642862fa65f612001e0a",
+        "fragmentSha256": "454b6f23de271af004bd737da0a614fa2e08900d01acb580a0113b9db17e5048",
+        "faceEdges": true,
+        "fluidSurface": false,
+        "weatherWater": false,
+        "noNight": false,
+        "atlas": true,
+        "atlasShape": true,
+        "pending": []
+    },
+    {
+        "type": "MeshStandardMaterial",
+        "defines": {
+            "STANDARD": ""
+        },
+        "cacheKey": "blockcolc-atlas-geometry-v3-cutout-animated|bc-night-field-v6:false:false|blockcolc-material-effects-v1",
+        "vertexSha256": "80b839e229ed4473f25882d4f758621618623f8b6b1b642862fa65f612001e0a",
+        "fragmentSha256": "454b6f23de271af004bd737da0a614fa2e08900d01acb580a0113b9db17e5048",
+        "faceEdges": true,
+        "fluidSurface": false,
+        "weatherWater": false,
+        "noNight": false,
+        "atlas": true,
+        "atlasShape": true,
+        "pending": []
+    },
+    {
+        "type": "MeshStandardMaterial",
+        "defines": {
+            "STANDARD": ""
+        },
+        "cacheKey": "blockcolc-atlas-geometry-v3-translucent-animated|bc-night-field-v6:false:false|blockcolc-material-effects-v1",
+        "vertexSha256": "80b839e229ed4473f25882d4f758621618623f8b6b1b642862fa65f612001e0a",
+        "fragmentSha256": "454b6f23de271af004bd737da0a614fa2e08900d01acb580a0113b9db17e5048",
+        "faceEdges": true,
+        "fluidSurface": false,
+        "weatherWater": false,
+        "noNight": false,
+        "atlas": true,
+        "atlasShape": true,
+        "pending": []
+    },
+    {
+        "type": "MeshStandardMaterial",
+        "defines": {
+            "STANDARD": ""
+        },
+        "cacheKey": "blockcolc-atlas-v6-fluid-translucent-animated|weather-water-v1",
+        "vertexSha256": "47fc980701b7135eae978940f863686b2e4f0ea6a87efe7e754712526755fc38",
+        "fragmentSha256": "fd0888452aa70704ea33a02917637d43c481a9ae4667338a9d1a471cbeb4f41a",
+        "faceEdges": false,
+        "fluidSurface": true,
+        "weatherWater": true,
+        "noNight": true,
+        "atlas": true,
+        "atlasShape": false,
+        "pending": []
+    },
+    {
+        "type": "MeshStandardMaterial",
+        "defines": {
+            "STANDARD": ""
+        },
+        "cacheKey": "blockcolc-valley-cascade-1",
+        "vertexSha256": "7f2f32bafcd09d047a616632ac0ba0a50d06a9608945f7c6618eddb535fe296f",
+        "fragmentSha256": "d8aea13c3791413d5be5b85bc1f230e54ba4b931875bb8e176d65337a7b25814",
+        "operation": "cascade",
+        "pending": []
+    },
+    {
+        "type": "MeshBasicMaterial",
+        "defines": {},
+        "cacheKey": "onBeforeCompile() {\n  }|bc-night-field-v6:true:true",
+        "vertexSha256": "dc390b9d4c7376b3aca3af03ae57b64efe8d44805e604e5afad39ab11c2f8afd",
+        "fragmentSha256": "1664cbcdf6e95d45648e0e0d9e97ebca6021265419921ba0552b9e6f8f6eef38",
+        "operation": "sky",
+        "floatingSky": true,
+        "pending": []
+    },
+    {
+      "type": "MeshBasicMaterial",
+      "defines": {},
+      "cacheKey": "blockcolc-precipitation-rain-v3-ground-field",
+      "vertexSha256": "42747335bf60af924b93b9a7b54eeb43dd51cc98fd356e9bc41e8a840d6ab914",
+      "fragmentSha256": "dffb0590521202bc3aee87ec745f0e58571f733ed03d5cdcfa80ae0554e4e2ab",
+      "operation": "precipitation",
+      "snow": false,
+      "pending": []
+    },
+    {
+      "type": "MeshBasicMaterial",
+      "defines": {},
+      "cacheKey": "blockcolc-precipitation-snow-v3-ground-field",
+      "vertexSha256": "1d759ba7f474945b9bdc8fc308caa6ba27402156859bfc13f0fd3d0692c21ffb",
+      "fragmentSha256": "dffb0590521202bc3aee87ec745f0e58571f733ed03d5cdcfa80ae0554e4e2ab",
+      "operation": "precipitation",
+      "snow": true,
+      "pending": []
+    },
+    {
+      "type": "MeshLambertMaterial",
+      "defines": {},
+      "cacheKey": "blockcolc-cloud-advection-v1",
+      "vertexSha256": "fa94e61815f25904752c90ce4ccb9f00ed76968550f04876e665c963be4956b9",
+      "fragmentSha256": "e476b2e1642407327b58b1492160bfd086f2205986da394fba3577e1643cf711",
+      "operation": "cloud",
+      "pending": []
+    },
+    {
+      "type": "MeshStandardMaterial",
+      "defines": {
+        "STANDARD": ""
+      },
+      "cacheKey": "onBeforeCompile() {\n  }|bc-night-field-v6:false:false|blockcolc-material-effects-v1",
+      "vertexSha256": "93bea0a2e23c153ba8a60401761d9346ae4246c83ebf1a07b0db5e3846321a9e",
+      "fragmentSha256": "727f574b2ebfb47f81f0a96d531ae5045b58398629dedd8d5a920eea5eb3a653",
+      "faceEdges": true,
+      "pending": []
+    },
+    {
+      "type": "MeshStandardMaterial",
+      "defines": {
+        "STANDARD": ""
+      },
+      "cacheKey": "onBeforeCompile() {\n  }|bc-night-field-v6:false:false|animal-water-visibility-24-60-v1|blockcolc-material-effects-v1",
+      "vertexSha256": "93bea0a2e23c153ba8a60401761d9346ae4246c83ebf1a07b0db5e3846321a9e",
+      "fragmentSha256": "1b69e9beea000d06700d490dc91a2878661a62fb895abeff116b609da2fe65b1",
+      "faceEdges": true,
+      "distanceOpacity": true,
+      "pending": []
+    },
+    {
+      "type": "MeshStandardMaterial",
+      "defines": {
+        "STANDARD": ""
+      },
+      "cacheKey": "onBeforeCompile() {\n  }|bc-night-field-v6:false:false|blockcolc-material-effects-v1|blockcolc-fluid-surface-v1|weather-water-v1",
+      "vertexSha256": "601eb6851ec19773c88cf2d6bb853eab36e6ecdd9e2420ce52499ce7f26eb3a6",
+      "fragmentSha256": "5b722e736856eb086d4d605e9dd4fe4f82a5834627db425bf4a678f84dac9227",
+      "faceEdges": true,
+      "fluidSurface": true,
+      "weatherWater": true,
+      "pending": []
+    },
+    {
+      "type": "MeshStandardMaterial",
+      "defines": {
+        "STANDARD": ""
+      },
+      "cacheKey": "onBeforeCompile() {\n  }|bc-night-field-v6:false:false",
+      "vertexSha256": "450d2dcdf6f5b3d14a537401596fdfc030f40d0a33002f386b8f66a44d8ef126",
+      "fragmentSha256": "97068e3eeeb799c7b81e38d31ac94119412f499d978c87c7f79c5d6dcc444670",
+      "faceEdges": false,
+      "pending": []
+    },
+    {
+      "type": "MeshBasicMaterial",
+      "defines": {},
+      "cacheKey": "onBeforeCompile() {\n  }|bc-night-field-v6:true:false",
+      "vertexSha256": "dc390b9d4c7376b3aca3af03ae57b64efe8d44805e604e5afad39ab11c2f8afd",
+      "fragmentSha256": "228c9509020bad84681aee0bf67d341817aeb14806bb0615721ac1e4c76c1190",
+      "operation": "sky",
+      "floatingSky": false,
+      "pending": []
+    },
+    {
+      "type": "SpriteMaterial",
+      "defines": {},
+      "cacheKeySha256": "626ab7aff8c56637747f5fabb0479d4c5a407e3a00f998687c092cf42191a6e7",
+      "vertexSha256": "0942d59518e1fff453d0e5f996bb3f3f8a12c4057866f3f3312bc5b64651427c",
+      "fragmentSha256": "e7e36fe7c498077655822dfd8f6f0ff5f508ebaf7abaf72bba401dbaa3966067",
+      "operation": "moon",
+      "pending": []
+    }
+  ]
+}

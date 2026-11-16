@@ -6,10 +6,10 @@ export interface CameraZoomBounds {
 }
 
 export const CAMERA_ZOOM_DISTANCE_RATIOS = {
-  settlementMinimum: 0.45,
+  settlementMinimum: 0.1,
   previewMinimum: 0.65,
   focusedMinimum: 0.9,
-  settlementMaximum: 1.14,
+  settlementMaximum: 0.9,
   closeViewMaximum: 1.35,
 } as const;
 
@@ -23,9 +23,15 @@ export function cameraZoomBounds(fittedDistance: number, mode: CameraZoomMode, e
     ? environment === 'natural-valley' ? 0.9 : CAMERA_ZOOM_DISTANCE_RATIOS.settlementMaximum
     : CAMERA_ZOOM_DISTANCE_RATIOS.closeViewMaximum;
   return {
-    minimum: fittedDistance * minimumRatio,
+    // A one-building settlement must not place its camera inside the roof.
+    minimum: mode==='settlement'?Math.min(fittedDistance*maximumRatio,Math.max(12,fittedDistance*minimumRatio)):fittedDistance*minimumRatio,
     maximum: fittedDistance * maximumRatio,
   };
+}
+
+/** Keep launch composition separate from the additional close-inspection range. */
+export function settlementOpeningDistance(fittedDistance:number,minimum:number,maximum:number):number{
+  return clampCameraDistance(fittedDistance*.45,minimum,maximum);
 }
 
 export function clampCameraDistance(distance: number, minimum: number, maximum: number): number {

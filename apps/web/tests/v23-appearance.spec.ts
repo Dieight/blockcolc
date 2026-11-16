@@ -1,3 +1,4 @@
+import {openSecondarySetting} from "./settings-controls";
 import { expect, test } from "@playwright/test";
 import { expandGlassSetting } from './expand-glass-setting';
 import { selectLastCalendarDays } from './select-calendar-days';
@@ -202,6 +203,7 @@ test("clicking a calendar day updates summaries and preserves keyboard date sele
   await createDefaultProject(page);
   // 1-minute round, no break, so one round completes quickly.
   await page.getByRole("button", { name: "设置" }).click();
+  await openSecondarySetting(page,'普通任务');
   const focusMinutes = page.getByLabel("普通任务专注分钟");
   await focusMinutes.fill("1");
   await focusMinutes.press("Enter");

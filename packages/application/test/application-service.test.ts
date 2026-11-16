@@ -208,6 +208,18 @@ async function createProject(service: ApplicationService, subtasks = ["Foundatio
 }
 
 describe("initialization and command persistence", () => {
+  it('delivers birthday/completion presentation only after save, not on recovery or failed writes',async()=>{
+    const f=await fixture();await createProject(f.service);
+    await f.service.dispatch({type:'ConfigureBirthday',enabled:true,month:7,day:20});
+    const observed:string[]=[];f.service.subscribeEvents(events=>observed.push(...events.map(event=>event.type)));
+    f.repository.failNextSave=true;
+    await expect(f.service.dispatch({type:'ObserveBirthday'})).rejects.toThrow();
+    expect(observed).toEqual([]);expect(f.service.snapshot().birthdayRewards).toEqual([]);
+    await Promise.all([f.service.dispatch({type:'ObserveBirthday'}),f.service.dispatch({type:'ObserveBirthday'})]);
+    expect(observed).toEqual(['BirthdayRewardGranted']);expect(f.service.snapshot().birthdayRewards).toHaveLength(1);
+    const saves=f.repository.saves;await f.service.dispatch({type:'ObserveBirthday'});expect(f.repository.saves).toBe(saves);
+    await f.service.resume();expect(observed).toEqual(['BirthdayRewardGranted']);
+  });
   it("starts a reserved round at its absolute instant and makes deadline recovery retries idempotent", async () => {
     const f = await fixture();
     f.clock.set("2026-07-20T08:30:00.000Z");
@@ -460,6 +472,7 @@ describe("initialization and command persistence", () => {
       projectTitle: "晚间阅读",
       taskTitle: "第 1 座习惯建筑",
       marathon: true,
+      requiresReport: false,
     });
   });
 
@@ -1265,6 +1278,17 @@ async function waitUntil(predicate: () => boolean): Promise<void> {
 
 
 describe('quick notes keep derived world stable', () => {
+  it('projects a plan reminder without changing facts and rejects stale replacement work',async()=>{
+    const f=await fixture();await createProject(f.service);
+    const projected:(Parameters<ApplicationService['setPlanCompletionNotification']>[0])[]=[];
+    Object.assign(f.notifications,{schedulePlanCompletion:async(n:NonNullable<typeof projected[number]>)=>{projected.push(n);},cancelPlanCompletion:async()=>{projected.push(null);}});
+    const notice={planKey:'plan:first',endsAt:new Date(f.clock.now().getTime()+240_000).toISOString(),requiresReport:true};
+    const before=f.service.snapshot(),saves=f.repository.saves,generation=f.service.stateReplacementRevision();
+    expect(await f.service.setPlanCompletionNotification(notice,generation)).toEqual([]);
+    expect(projected).toEqual([notice]);expect(f.service.snapshot()).toBe(before);expect(f.repository.saves).toBe(saves);
+    await f.service.setPlanCompletionNotification(null,generation+1);expect(projected).toEqual([notice]);
+    await f.service.setPlanCompletionNotification(null,generation);expect(projected).toEqual([notice,null]);
+  });
   it('adopts only durable notes and reuses unchanged projections', async () => {
     const f = await fixture(); await createProject(f.service);
     const world = f.service.worldProjection(), active = f.service.activeProjectProjection(), achievements = f.service.achievementsProjection();

@@ -33,7 +33,8 @@ async function fixture(kind: 'finite' | 'habit' = 'finite', separateEditor = fal
   const project = service.activeProjectProjection()!.project;
   let plan: RoundPlan | null = null;
   const preferences = { ...defaultFocusPreferences(), focusMinutes: 1, habitFocusMinutes: 2, breakMinutes: 5 };
-  const draft:FocusPlanDraft = { rounds: 2, mode: 'rounds', endAt: '12:00', selectedId: project.subtasks[0]?.id ?? null };
+  const endDraft=new Date(now+15*60_000);
+  const draft:FocusPlanDraft = { rounds: 2, mode: 'rounds', endAt: `${String(endDraft.getHours()).padStart(2,'0')}:${String(endDraft.getMinutes()).padStart(2,'0')}`, selectedId: project.subtasks[0]?.id ?? null };
   const editingDraft = separateEditor ? { ...draft } : draft;
   const commitDraft = vi.fn((next: FocusPlanDraft) => Object.assign(draft, next));
   const dispatch = vi.fn((command: ApplicationCommand) => service.dispatch(command));
@@ -129,7 +130,7 @@ describe('focus flow orchestration', () => {
     f.editingDraft.mode = 'marathon'; f.editingDraft.endAt = 'invalid';
     await f.flow.confirmPlan();
     expect(f.commitDraft).not.toHaveBeenCalled(); expect(f.closePlan).not.toHaveBeenCalled();
-    f.editingDraft.endAt = '12:00';
+    f.editingDraft.endAt = f.draft.endAt;
     f.writePlan.mockImplementation(() => { throw Error('quota'); });
     await expect(f.flow.confirmPlan()).rejects.toThrow('quota');
     expect(f.draft.mode).toBe('rounds'); expect(f.plan()).toBeNull();

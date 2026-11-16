@@ -1,12 +1,26 @@
 import {describe,it,expect} from 'vitest';
-import {createValleyBench,valleyBench,islandHill,isletHeight,islandSurface,type Sample} from '../src/terrain-landforms';
+import {createValleyBench,valleyBench,createValleyCascades,valleyCascade,islandHill,isletHeight,islandSurface,type Sample} from '../src/terrain-landforms';
 describe('valley and island landforms',()=>{
   const base:Sample={height:40,material:'grass',supportInfluence:0,moisture:.5,waterKind:'none'};
+  it('plants cascades outside the core, grades their banks and keeps foundations dry',()=>{
+    const sites=createValleyCascades(100,1234,()=>7);
+    expect(sites).toEqual(createValleyCascades(100,1234,()=>7));
+    for(const site of sites){
+      expect(Math.max(Math.abs(site.x),Math.abs(site.z))).toBeGreaterThan(140);
+      const at=(p:number,q=0,water=true)=>valleyCascade(base,
+        site.x+(site.axis==='x'?p*site.direction:q),site.z+(site.axis==='z'?p*site.direction:q),sites,water);
+      const high=at(-4),low=at(4);expect(high.material).toBe('water');expect(low.material).toBe('water');
+      expect(high.height-low.height).toBe(14);expect(at(-4,7).height).toBeGreaterThan(high.height);
+      expect(at(4,7).height).toBeGreaterThan(low.height);expect(at(4,0,false).waterKind).toBe('none');
+      const protectedLand={...base,supportInfluence:1};expect(valleyCascade(protectedLand,site.x,site.z,sites)).toBe(protectedLand);
+    }
+  });
   it('makes a wider, graded valley apron without lifting land or moving actual foundations',()=>{
     const bench=createValleyBench([{minX:-10,maxX:10,minZ:-10,maxZ:10,height:3}],[],()=>3),heights:number[]=[];
-    for(let x=10;x<=90;x+=2){const s=valleyBench(base,x,0,1234,bench);heights.push(s.height);expect(s.height).toBeLessThanOrEqual(40);expect(s.height).toBeGreaterThanOrEqual(3);}
+    for(let x=10;x<=150;x+=2){const s=valleyBench(base,x,0,1234,bench);heights.push(s.height);expect(s.height).toBeLessThanOrEqual(40);expect(s.height).toBeGreaterThanOrEqual(3);}
     expect(heights[0]).toBe(3);expect(heights.at(-1)).toBe(40);expect(Math.max(...heights.slice(1).map((h,i)=>Math.abs(h-heights[i]!)))).toBeLessThanOrEqual(3);
     const foundation={...base,height:3,supportInfluence:1};expect(valleyBench(foundation,0,0,1234,bench)).toBe(foundation);
+    expect(valleyBench(base,60,0,1234,bench).height).toBeLessThan(30);
   });
   it('preserves rivers, lakes, banks and out-of-range samples exactly',()=>{
     const bench=createValleyBench([{minX:-10,maxX:10,minZ:-10,maxZ:10,height:3}],[],()=>3);

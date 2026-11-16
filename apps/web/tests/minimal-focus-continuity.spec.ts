@@ -71,7 +71,16 @@ async function reloadRestoredWorld(page: Page) {
   await expect(page.locator('html')).toHaveAttribute('data-bootstrap-state', 'ready');
   // Restoring domain state precedes the cold world's light/weather preparation.
   // An orphan report deliberately has no active world to prepare.
-  if ((await snapshot(page)).activeProjectId) await waitForPreparedWorld(page);
+  if ((await snapshot(page)).activeProjectId) {
+    // fastForward leaves the clock paused. Async cold imports can schedule
+    // their first render after the fixed 32 ms flush; give those real frames
+    // clock time rather than waiting on a frame that cannot run.
+    await expect.poll(async()=>{
+      await page.clock.runFor(250);
+      return page.locator('.world-screen').getAttribute('data-world-ready');
+    },{timeout:30_000}).toBe('true');
+    await waitForPreparedWorld(page);
+  }
 }
 
 async function snapshot(page: Page): Promise<DomainState> {
@@ -91,6 +100,9 @@ async function snapshot(page: Page): Promise<DomainState> {
 
 for (const kind of ['finite', 'habit'] as const) {
   test(`deferred ${kind} rounds survive focus, rest, next start and one explicit final allocation`, async ({ page }) => {
+    // Four cold world restores share this functional case; each preparation
+    // retains its 30 s bound, rather than spending the whole test's 30 s there.
+    test.setTimeout(90_000);
     await page.clock.install({ time: new Date(startAt) });
     const data = fixture(kind);
     await seed(page, data.state, data.plan);

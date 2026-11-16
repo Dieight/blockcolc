@@ -3,6 +3,9 @@ import { readPersistedDomainState } from './persisted-domain-state';
 import {openSecondarySetting} from './settings-controls';
 
 test('opted-in habit rounds automatically resume after rest without a duplicate on reload', async ({ page }) => {
+  // This case owns timer/rest/reload facts, not animated software-WebGL weather.
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.addInitScript(() => localStorage.setItem('blockcolc-focus-preferences-v1', JSON.stringify({ focusMinutes: 45, breakMinutes: 5, lightingQuality: 'performance' })));
   await page.clock.install({ time: new Date('2026-09-23T08:00:00Z') });
   await page.goto('/');
   await page.getByRole('group', { name: '任务类型' }).getByRole('button', { name: '习惯任务' }).click();

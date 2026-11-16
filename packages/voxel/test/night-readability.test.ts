@@ -20,6 +20,8 @@ describe("shared night readability profile", () => {
     expect(Math.max((readable.hemisphereSkyColor >> 16) & 0xff,
       (readable.hemisphereSkyColor >> 8) & 0xff, readable.hemisphereSkyColor & 0xff)).toBeLessThan(220);
     expect(readable.nightFactor).toBe(1);
+    expect(readable.hemisphereIntensity).toBe(1.58);
+    expect(readable.exposure).toBe(1.43);
   });
 
   it("leaves full daylight unchanged and blends smoothly through twilight", () => {

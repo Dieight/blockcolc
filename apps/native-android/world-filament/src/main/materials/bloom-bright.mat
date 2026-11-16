@@ -1,0 +1,15 @@
+material {
+    name:"blockcolc-source-bright",shadingModel:unlit,vertexDomain:device,flipUV:false,
+    culling:none,depthCulling:false,depthWrite:false,requires:[uv0],
+    parameters:[{type:sampler2d,name:source,precision:high},{type:float,name:threshold,precision:high},{type:float,name:knee,precision:high}]
+}
+fragment {
+    precision highp float;
+    void material(inout MaterialInputs m){
+        prepareMaterial(m);
+        vec3 color=texture(materialParams_source,uvToRenderTargetUV(getUV0())).rgb;
+        float brightness=max(color.r,max(color.g,color.b));
+        float contribution=smoothstep(materialParams.threshold-materialParams.knee,materialParams.threshold+materialParams.knee,brightness);
+        m.baseColor=vec4(color*contribution,1.0);
+    }
+}

@@ -16,7 +16,7 @@ export type ApplicationCommand =
   | { type: "CreateHabitProject"; title: string; blueprintId: string; importedBlueprint?: Project["importedBlueprint"]; targetRounds: number }
   | { type: "SelectNextHabitBuilding"; blueprintId: string; importedBlueprint?: Project["importedBlueprint"]; targetRounds: number }
   | { type: "AddSubtask"; title: string }
-  | { type: "StartFocus"; subtaskId: string | null; plannedDurationMs: number; projectId?: string; marathon?: boolean; deferredSettlement?: true }
+  | Omit<Extract<DomainCommand,{type:'StartFocus'}>,'sessionId'>
   | { type: "ReportSubtaskProgress"; subtaskId: string; focusSessionIds: string[]; progressBasisPoints: number }
   | { type: "ReportMarathonFocus"; entries: Array<{ projectId: string; subtaskId: string; progressBasisPoints: number; rounds?: number }>; habitAllocations: Array<{ projectId: string; rounds: number }>; focusSessionIds: string[] }
   | { type: "CompleteFocusEarly" }
@@ -111,6 +111,13 @@ export function projectActiveState(state: DomainState): ActiveProjectProjection 
 }
 
 export function projectWorldState(state: DomainState, holidayBlueprint?: (id:string,title:string)=>NonNullable<Project['importedBlueprint']>): WorldProjection {
+  const plots = [...state.projects.filter(project=>project.status!=='deleted'&&!(project.kind==='habit'&&project.habit?.awaitingNextBuilding)).map(project=>project.settlementIndex),...state.habitBuildings.map(building=>building.settlementIndex)].sort((a,b)=>a-b);
+  const birthdayKeepsakes=(settlementIndex:number):ProjectWorldProjection['importedDecorations']=>holidayBlueprint?state.birthdayRewards.flatMap((reward,index)=>{
+    const anchor=reward.settlementIndex!==null&&plots.includes(reward.settlementIndex)?reward.settlementIndex:plots[0];
+    if(anchor!==settlementIndex)return [];
+    return [{rewardId:`birthday:${reward.year}`,resourceId:'builtin-birthday-cake-v1',date:reward.date,
+      blueprint:holidayBlueprint('birthday',`${reward.year} · 生日小蛋糕`),localPosition:{x:54+index*12,z:-54},rotationQuarterTurns:0}];
+  }):[];
   const seasonal=(settlementIndex:number):ProjectWorldProjection['importedDecorations']=>holidayBlueprint?state.holidayRewards.filter(r=>r.settlementIndex===settlementIndex).map(r=>{
     const holiday=holidaysForYear(r.year).find(h=>h.id===r.holidayId)!;
     return{rewardId:`holiday:${r.holidayId}:${r.year}`,resourceId:`builtin-holiday-${r.holidayId}-v1`,date:r.date,
@@ -129,7 +136,7 @@ export function projectWorldState(state: DomainState, holidayBlueprint?: (id:str
         completionBasisPoints: projectProgressBasisPoints(project),
         conditionBasisPoints: conditionFor(state, project.id).conditionBasisPoints,
       },
-      importedDecorations: [...seasonal(project.settlementIndex),...state.decorationRewards.flatMap((reward) => {
+      importedDecorations: [...birthdayKeepsakes(project.settlementIndex),...seasonal(project.settlementIndex),...state.decorationRewards.flatMap((reward) => {
         if (reward.projectId !== project.id) return [];
         const resource = state.decorationBlueprintResources.find((candidate) => candidate.id === reward.resourceId);
         return resource ? [{
@@ -155,7 +162,7 @@ export function projectWorldState(state: DomainState, holidayBlueprint?: (id:str
         completionBasisPoints: 10_000,
         conditionBasisPoints: 10_000,
       },
-      importedDecorations: seasonal(building.settlementIndex),
+      importedDecorations: [...birthdayKeepsakes(building.settlementIndex),...seasonal(building.settlementIndex)],
     });
   }
   return {

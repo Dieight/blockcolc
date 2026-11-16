@@ -1,0 +1,17 @@
+material {
+    name:"blockcolc-source-blur",shadingModel:unlit,vertexDomain:device,flipUV:false,
+    culling:none,depthCulling:false,depthWrite:false,requires:[uv0],
+    parameters:[{type:sampler2d,name:source,precision:high},{type:float2,name:stepUv,precision:high}]
+}
+fragment {
+    precision highp float;
+    void material(inout MaterialInputs m){
+        prepareMaterial(m);vec2 uv=uvToRenderTargetUV(getUV0()),stepUv=materialParams.stepUv;
+        vec3 color=texture(materialParams_source,uv).rgb*.227027;
+        color+=texture(materialParams_source,uv+stepUv*1.384615).rgb*.316216;
+        color+=texture(materialParams_source,uv-stepUv*1.384615).rgb*.316216;
+        color+=texture(materialParams_source,uv+stepUv*3.230769).rgb*.070270;
+        color+=texture(materialParams_source,uv-stepUv*3.230769).rgb*.070270;
+        m.baseColor=vec4(color,1.0);
+    }
+}

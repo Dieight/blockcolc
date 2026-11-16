@@ -87,6 +87,16 @@ test('rejects a derived asset pointing to a different approved source', (t) => {
   assert.ok(errors.some((error) => error.includes('does not point to the actual generation source')));
 });
 
+test('rejects retired assets, including qualified launch-screen overrides', (t) => {
+  const input = fixture(t);
+  input.manifest.retiredAssets = ['assets/icon.png'];
+  assert.ok(validateManifest(input).errors.some(error=>error.includes('Retired asset still packaged')));
+  input.manifest.retiredAssets = ['../outside.png'];
+  assert.ok(validateManifest(input).errors.some(error=>error.includes('escapes')));
+  input.manifest.retiredAssets = ['assets/absent-placeholder.png'];
+  assert.deepEqual(validateManifest(input).errors, []);
+});
+
 test('rejects a repository path whose junction resolves outside the repository', (t) => {
   const input = fixture(t);
   const outside = mkdtempSync(path.join(tmpdir(), 'blockcolc-ui-assets-outside-'));

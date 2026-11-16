@@ -65,6 +65,7 @@ test("marathon mode schedules from an end time and reports once after every roun
   await createDefaultProject(page);
   // 1-minute rounds with no breaks, so consecutive rounds auto-advance to ready.
   await page.getByRole("button", { name: "设置" }).click();
+  await openSecondarySetting(page,'普通任务');
   const focusMinutes = page.getByLabel("普通任务专注分钟");
   await focusMinutes.fill("1");
   await focusMinutes.press("Enter");
@@ -122,6 +123,7 @@ test("habit plans support an isolated end-time schedule without the finite-task 
   await page.clock.install({ time: new Date("2026-08-03T08:00:00Z") });
   await createDefaultProject(page);
   await page.getByRole("button", { name: "设置" }).click();
+  await openSecondarySetting(page,'普通任务');
   const focusMinutes = page.getByLabel("普通任务专注分钟");
   await focusMinutes.fill("2");
   await focusMinutes.press("Enter");
@@ -193,7 +195,9 @@ test("a locked habit end-time lane keeps its host after another project becomes 
   await fixBusinessDate(page, new Date("2026-08-03T09:55:00Z"));
   await createDefaultProject(page);
   await page.getByRole("button", { name: "设置" }).click();
+  await openSecondarySetting(page,'普通任务');
   await page.getByLabel("普通任务专注分钟").fill("1");
+  await openSecondarySetting(page,'普通任务');
   await page.getByLabel("普通任务专注分钟").press("Enter");
   await openSecondarySetting(page,'习惯任务');
   await page.getByLabel("习惯任务专注分钟").fill("1");
@@ -294,6 +298,7 @@ test("marathon rounds preserve the wider round count on the confirmed workbench"
   await page.clock.install({ time: new Date("2026-08-03T08:00:00Z") });
   await createDefaultProject(page);
   await page.getByRole("button", { name: "设置" }).click();
+  await openSecondarySetting(page,'普通任务');
   const focusMinutes = page.getByLabel("普通任务专注分钟");
   await focusMinutes.fill("1");
   await focusMinutes.press("Enter");

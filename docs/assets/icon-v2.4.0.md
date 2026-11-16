@@ -6,7 +6,13 @@
 
 Android 各密度与 PWA 图标共用这份母版。既有生成器只处理透明度、裁切和尺寸；半透明导出边缘不参与主体定位，不重绘图案。已审看 16–192px 缩略图和三种裁切，`check-ui-assets --check` 验证派生资源逐字节一致。复现命令见 [UI 资产](UI-ASSETS.md)。
 
-## 最终修改提示词
+## v2.9.0 启动页资源修复
+
+旧 Android 启动主题仍指向 Capacitor 蓝色占位图，与已经更新的桌面图标无关。13 份横竖屏／密度启动图及未使用占位矢量已移入 `artifacts/archive/native-launch-placeholders-20261023/`，可恢复；不再进入 APK。启动图改用统一的 XML 居中引用批准图标，浅深模式分别设背景；Android 12 及以上明确引用同一图标。未重绘母版，未清理用户数据或桌面缓存。资产检查同时验证引用和退役资源缺席，构建后检查实际 APK 的资源表。旧机实际启动待用户体验。
+
+依据：[Android 启动屏幕](https://developer.android.com/develop/ui/views/launch/splash-screen)、[图层资源](https://developer.android.com/guide/topics/resources/drawable-resource#LayerList)。
+
+## 最终修改提示词原文
 
 输入是保留的切面方向草案；明确只改左侧材质和表盘深度，不再改形状。此前候选提示词与未采用图保留在 `artifacts/v2.4.0/20261003-blueprint50/`，不属于应用资源。
 

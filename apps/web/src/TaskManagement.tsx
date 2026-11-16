@@ -236,7 +236,7 @@ export function TasksScreen({ active, state, run, onCreateProject, onViewProject
         <IconButton label={managingTasks?t("结束编辑施工清单"):t("编辑施工清单")} disabled={pending} onClick={()=>setManagingTasks(value=>!value)}>{managingTasks?<Check/>:<Pencil/>}</IconButton>
       </>}
     </div>
-    <PixelProgress className="task-building-progress" value={projectProgressBasisPoints(active.project)} max={10000} label={t("{0} 建造进度",active.project.title)}/>
+    {!isHabit && <PixelProgress className="task-building-progress" value={projectProgressBasisPoints(active.project)} max={10000} label={t("{0} 建造进度",active.project.title)}/>}
     <div className={managingTasks?'task-management-actions is-editing':'task-management-actions'}>
       {managingTasks&&<button type="button" className="task-inline-action" disabled={pending} onClick={()=>setEditingProject(true)}><Pencil/>{t("修改任务名称")}</button>}
       <button type="button" className="task-inline-action" disabled={pending} onClick={()=>onViewProject(active.project.id)}><MapPinned/>{isHabit&&habit?.awaitingNextBuilding?t("查看聚落"):t("查看建筑")}</button>

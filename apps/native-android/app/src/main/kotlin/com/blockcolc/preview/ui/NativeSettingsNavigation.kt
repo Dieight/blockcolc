@@ -1,0 +1,58 @@
+package com.blockcolc.preview.ui
+
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.dp
+import com.blockcolc.presentation.*
+import kotlinx.coroutines.delay
+
+internal class SettingsJump {
+    var target by mutableStateOf<SettingsEntry?>(null)
+    var serial by mutableIntStateOf(0)
+    fun go(entry:SettingsEntry){target=entry;serial++}
+    fun opens(key:String)=target?.let{it.id==key||key in it.parents}==true
+}
+internal val LocalSettingsJump=staticCompositionLocalOf<SettingsJump?>{null}
+
+@Composable internal fun NativeSettingsNavigation(jump:SettingsJump){
+    val ui=LocalNativeUi.current;val keyboard=LocalSoftwareKeyboardController.current;val focus=LocalFocusManager.current
+    var query by rememberNativePageState("settings/query"){""}
+    val results=remember(query){SettingsCatalog.search(query)}
+    fun go(entry:SettingsEntry){focus.clearFocus();keyboard?.hide();jump.go(entry);query=""}
+    OutlinedTextField(query,{query=it},Modifier.fillMaxWidth().testTag("settings-search"),singleLine=true,label={Text(ui.text("搜索设置"))},textStyle=MaterialTheme.typography.bodyLarge)
+    if(query.isNotBlank()){
+        if(results.isEmpty())Text(ui.text("没有找到设置"),style=MaterialTheme.typography.bodySmall)
+        for(entry in results)NativeAction("${ui.text(SettingsCatalog.group(entry.group).title)} · ${ui.text(entry.title)}",{go(entry)},Modifier.fillMaxWidth(),primary=false,icon="tasks")
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable internal fun NativeSettingAnchor(id:String,content:@Composable ()->Unit){
+    val jump=LocalSettingsJump.current;val requester=remember{BringIntoViewRequester()}
+    var measured by remember{mutableStateOf(IntSize.Zero)}
+    // Scale the revealed region with this app window. A fixed 220dp clips the
+    // third option after large-font segments switch to their vertical layout.
+    val cap=with(LocalDensity.current){(LocalConfiguration.current.screenHeightDp.dp*.6f).toPx()}
+    val serial=jump?.serial?:0
+    LaunchedEffect(serial){if(jump?.target?.id==id){delay(300);withFrameNanos{}
+        // Reveal the control itself, not a one-pixel header at the bottom edge.
+        // Bound large expanded libraries so a whole page isn't requested.
+        requester.bringIntoView(Rect(0f,0f,measured.width.toFloat(),minOf(measured.height.toFloat(),cap)))
+    }}
+    Column(Modifier.fillMaxWidth().testTag("setting-$id").bringIntoViewRequester(requester).onSizeChanged{measured=it}){
+        content()
+    }
+}

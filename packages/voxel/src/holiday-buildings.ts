@@ -1,6 +1,7 @@
 import type { BlueprintVoxel, MaterialId } from './blueprint-model';
 /** Self-authored block keepsakes; downloaded textures are optional. */
 export function holidayBuildingBlueprint(id:string,title:string) {
+ if(id==='birthday')return birthdayBuildingBlueprint(title);
  const cells=new Map<string,BlueprintVoxel>();
  const put=(x:number,y:number,z:number,b:string,m:MaterialId='accent')=>cells.set(`${x}:${y}:${z}`,{x,y,z,materialId:m,buildOrder:0,sourceBlockId:`minecraft:${b}`,...(b==='lantern'?{sourceBlockState:{hanging:'true',waterlogged:'false'},emissiveKind:'lantern',emissiveLevel:15}:{})});
  const box=(x0:number,x1:number,y0:number,y1:number,z0:number,z1:number,b:string,m:MaterialId='accent')=>{for(let x=x0;x<=x1;x++)for(let y=y0;y<=y1;y++)for(let z=z0;z<=z1;z++)put(x,y,z,b,m);};
@@ -37,4 +38,17 @@ export function holidayBuildingBlueprint(id:string,title:string) {
  }
  const ordered=[...cells.values()].sort((a,b)=>a.y-b.y||a.x-b.x||a.z-b.z),maxY=Math.max(...ordered.map(v=>v.y));
  return{schemaVersion:1 as const,id:`builtin-holiday-${id}-v1`,title,bounds:{minX:-5,maxX:5,minY:0,maxY,minZ:-4,maxZ:4},voxels:ordered.map((v,i)=>({...v,buildOrder:Math.floor(i*10000/ordered.length),stage:'details' as const}))};
+}
+
+export function birthdayBuildingBlueprint(title='生日小蛋糕') {
+ const voxels:BlueprintVoxel[]=[];
+ const put=(x:number,y:number,z:number,block:string,materialId:MaterialId='accent')=>voxels.push({x,y,z,materialId,sourceBlockId:`minecraft:${block}`,buildOrder:10000});
+ for(let x=-3;x<=3;x++)for(let z=-3;z<=3;z++)put(x,0,z,'smooth_quartz','stone');
+ for(let x=-2;x<=2;x++)for(let z=-2;z<=2;z++){
+  put(x,1,z,'brown_terracotta');put(x,2,z,'white_wool');
+  if((Math.abs(x)===2||Math.abs(z)===2)&&(x+z)%3===0)put(x,3,z,'white_wool');
+ }
+ for(const [x,z]of [[-1,-1],[1,-1],[-1,1],[1,1]])put(x!,3,z!,'red_wool');
+ voxels.push({x:0,y:3,z:0,materialId:'accent',sourceBlockId:'minecraft:candle',sourceBlockState:{candles:'1',lit:'true',waterlogged:'false'},emissiveKind:'candle',emissiveLevel:3,buildOrder:10000});
+ return{schemaVersion:1 as const,id:'builtin-birthday-cake-v1',title,bounds:{minX:-3,maxX:3,minY:0,maxY:3,minZ:-3,maxZ:3},voxels:voxels.map(voxel=>({...voxel,stage:'details' as const}))};
 }

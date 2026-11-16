@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import {openSecondarySetting} from './settings-controls';
 import { readPersistedDomainState } from './persisted-domain-state';
 import { choosePlanEndTime } from './focus-plan-controls';
 import { waitForPreparedWorld } from './world-ready';
@@ -84,13 +85,14 @@ test('library previews native and hidden holiday blueprints, with reversible dis
 test('ambience is opt-in, accepts imported audio and removes it without touching domain data',async({page})=>{
   await page.goto('/');await page.getByRole('button',{name:'开始建造',exact:true}).click();await page.getByRole('button',{name:'设置',exact:true}).click();
   const before=(await readPersistedDomainState(page)).state;
+  await openSecondarySetting(page,'白噪音');
   const group=page.locator('.ambient-audio-settings');await expect(group.getByRole('checkbox',{name:'自然白噪音',exact:true})).not.toBeChecked();
   await group.getByRole('checkbox',{name:'自然白噪音',exact:true}).check();
-  await group.locator('input[type=file]').setInputFiles('../../apps/web/public/audio/morning-birdsong.wav');
-  await expect(group.getByRole('radio',{name:'morning-birdsong.wav',exact:true})).toBeChecked();
+  await group.locator('input[type=file]').setInputFiles('../../apps/web/public/audio/rain-light.ogg');
+  await expect(group.getByRole('radio',{name:'rain-light.ogg',exact:true})).toBeChecked();
   await expect(group.getByRole('radio',{name:'晚间湖畔',exact:true})).toHaveCount(0);
-  await group.getByRole('button',{name:'删除音频：morning-birdsong.wav',exact:true}).click();await expect(group.getByRole('radio',{name:'morning-birdsong.wav',exact:true})).toHaveCount(0);
+  await group.getByRole('button',{name:'删除音频：rain-light.ogg',exact:true}).click();await expect(group.getByRole('radio',{name:'rain-light.ogg',exact:true})).toHaveCount(0);
   await group.getByRole('checkbox',{name:'自然白噪音',exact:true}).uncheck();
-  const prefs=await page.evaluate(()=>JSON.parse(localStorage.getItem('blockcolc-focus-preferences-v1')!));expect(prefs.ambience).toMatchObject({enabled:false,primary:'morning-birdsong'});
+  const prefs=await page.evaluate(()=>JSON.parse(localStorage.getItem('blockcolc-focus-preferences-v1')!));expect(prefs.ambience).toMatchObject({enabled:false,primary:'forest-birds'});
   const after=(await readPersistedDomainState(page)).state;expect(after.projects).toEqual(before.projects);expect(after.focusHistory).toEqual(before.focusHistory);
 });

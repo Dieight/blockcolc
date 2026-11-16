@@ -1,0 +1,35 @@
+# Startup CPU samples: validate the saved document, then prepare and pick the world.
+# Keep source names here; AGP rewrites these rules with the optimized DEX.
+HSPLcom/blockcolc/storage/ExactReadDigest;->**(**)**
+HSPLcom/blockcolc/storage/RecordLayout$Companion;->**(**)**
+HSPLcom/blockcolc/storage/NativeStateStore;->**(**)**
+HSPLcom/blockcolc/storage/android/AndroidStateDatabase;->**(**)**
+HSPLcom/blockcolc/storage/android/AndroidStateDatabase$Session;->**(**)**
+HSPLcom/blockcolc/storage/android/AndroidDomainReadCache;->**(**)**
+HSPLcom/blockcolc/domain/DomainCheckpointCodec;->**(**)**
+HSPLcom/blockcolc/domain/CanonicalWire;->**(**)**
+HSPLcom/blockcolc/domain/StrictJson;->**(**)**
+HSPLcom/blockcolc/domain/StrictJson$Gate;->**(**)**
+HSPLcom/blockcolc/domain/DomainValidation$BlueprintVoxelChecks;->**(**)**
+HSPLcom/blockcolc/domain/DomainDocument$Companion;->fromBlueprintParts(**)**
+HSPLcom/blockcolc/domain/DomainDocument;->projectionJson(**)**
+HSPLcom/blockcolc/domain/DomainDocument;->focusControlJson(**)**
+HSPLcom/blockcolc/focus/FocusProjection;->attribution(**)**
+HSPLcom/blockcolc/presentation/WorkspaceProjection$Companion;->from(**)**
+HSPLcom/blockcolc/presentation/WorldMemoryProjection;->from(**)**
+HSPLcom/blockcolc/preview/world/NativeBlueprintSources;->**(**)**
+HSPLcom/blockcolc/preview/world/NativeWorldPacketCompiler;->**(**)**
+HSPLcom/blockcolc/preview/world/NativeWorldRootCompiler;->**(**)**
+HSPLcom/blockcolc/preview/world/WorldPacketPreparation$Batch;->**(**)**
+HSPLcom/blockcolc/preview/world/WorldAnimalPreparation;->**(**)**
+HSPLcom/blockcolc/world/generation/OriginalStructureCompiler;->**(**)**
+HSPLcom/blockcolc/world/generation/OriginalStructureCache;->**(**)**
+HSPLcom/blockcolc/world/generation/OriginalGeometryCompiler;->**(**)**
+HSPLcom/blockcolc/world/NativeOriginalPackets;->**(**)**
+HSPLcom/blockcolc/world/NativePacketBuilder;->**(**)**
+HSPLcom/blockcolc/world/PickTree;->**(**)**
+HSPLcom/blockcolc/world/NativeWorldPickCompiler;->**(**)**
+HSPLcom/blockcolc/world/NativeAnimalHabitatCompiler;->**(**)**
+HSPLcom/blockcolc/world/NativePrecipitationGround$Companion;->**(**)**
+HSPLcom/blockcolc/world/filament/NativeWorldView;->**(**)**
+HSPLcom/blockcolc/world/filament/PacketRenderer;->**(**)**

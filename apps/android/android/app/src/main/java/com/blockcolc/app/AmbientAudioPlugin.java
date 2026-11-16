@@ -20,9 +20,11 @@ public final class AmbientAudioPlugin extends Plugin {
     static final String PREFS="blockcolc_ambient_audio",KEY="imports";
     @PluginMethod public void configure(PluginCall call){
         JSArray sources=call.getArray("sources",new JSArray());
+        Double intensity=call.getDouble("rainIntensity",.3);
         Intent intent=new Intent(getContext(),AmbientAudioService.class).putExtra("sources",sources.toString())
-            .putExtra("volume",Math.max(0,Math.min(100,call.getInt("volume",30))));
-        try {if(sources.length()==0){getContext().stopService(intent);call.resolve();return;}
+            .putExtra("volume",Math.max(0,Math.min(100,call.getInt("volume",30))))
+            .putExtra("rainIntensity",AmbientRainMix.intensity(intensity==null?.3:intensity));
+        try {if(sources.length()==0){if(AmbientAudioService.active())getContext().startService(intent);call.resolve();return;}
             ContextCompat.startForegroundService(getContext(),intent);call.resolve();
         }catch(RuntimeException error){call.reject("Audio playback is unavailable","AUDIO_START_FAILED");}
     }

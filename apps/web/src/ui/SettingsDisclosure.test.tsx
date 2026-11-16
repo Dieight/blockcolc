@@ -12,4 +12,8 @@ describe('secondary setting semantics',()=>{
     const html=renderToStaticMarkup(<SettingsDisclosure title="更多"><input/></SettingsDisclosure>);
     expect(html).not.toContain('aria-describedby');expect(html).toContain('aria-controls=');
   });
+  it('can keep frequent settings initially visible without changing their level',()=>{
+    const html=renderToStaticMarkup(<SettingsDisclosure title="普通任务" defaultOpen><input/></SettingsDisclosure>);
+    expect(html).toContain('aria-expanded="true"');expect(html).not.toContain('inert=""');
+  });
 });

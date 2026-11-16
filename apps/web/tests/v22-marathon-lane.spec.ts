@@ -20,6 +20,7 @@ async function createDefaultProject(page: import("@playwright/test").Page) {
 
 async function configureOneMinuteRounds(page: import("@playwright/test").Page) {
   await page.getByRole("button", { name: "设置" }).click();
+  await openSecondarySetting(page,'普通任务');
   const focusMinutes = page.getByLabel("普通任务专注分钟");
   await focusMinutes.fill("1");
   await focusMinutes.press("Enter");
@@ -31,6 +32,7 @@ async function configureOneMinuteRounds(page: import("@playwright/test").Page) {
 
 async function configureDistinctNormalAndHabitRounds(page: import("@playwright/test").Page) {
   await page.getByRole("button", { name: "设置" }).click();
+  await openSecondarySetting(page,'普通任务');
   const focusMinutes = page.getByLabel("普通任务专注分钟");
   await focusMinutes.fill("45");
   await focusMinutes.press("Enter");

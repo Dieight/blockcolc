@@ -5,9 +5,9 @@ import { terrainGenerationProfile, type NaturalValleyTerrainProfile, type OceanI
 import { sampleMosaicTerrain } from './mosaic-terrain';
 import { TerrainLineIndex } from './terrain-line-index';
 import { blendNearTransition } from './terrain-transition';
-import { createValleyBench, valleyBench, islandHill, isletHeight, islandSurface } from './terrain-landforms';
+import { createValleyBench, valleyBench, createValleyCascades,valleyCascade,islandHill, isletHeight, islandSurface } from './terrain-landforms';
 
-export const TERRAIN_GENERATOR_REVISION = 3;
+export const TERRAIN_GENERATOR_REVISION = 5;
 
 export const TERRAIN_MATERIALS = ['grass','dirt','stone','water','sand','snow','ice','terracotta'] as const;
 export type TerrainMaterial = typeof TERRAIN_MATERIALS[number];
@@ -332,10 +332,11 @@ function createRegionalTerrainData(
   const withDistantRelief = (sample: TerrainSample, x: number, z: number): TerrainSample => {
     if (mosaic || sample.waterKind !== 'none' || (sample.mountainSignal ?? 0) <= .02) return sample;
     const distance = Math.max(Math.abs(x), Math.abs(z));
-    const envelope = smoothstep(middleExtent, farExtent * .8, distance);
-    const lift = envelope * smoothstep(.05, .5, sample.mountainSignal ?? 0) * 22;
-    return lift > .001 ? { ...sample, height: Math.round(Math.min(48, sample.height + lift)) } : sample;
+    const envelope = smoothstep(coreRadius+48, Math.max(middleExtent,coreRadius+208), distance);
+    const lift = envelope * smoothstep(.05, .65, sample.mountainSignal ?? 0) * 32;
+    return lift > .001 ? { ...sample, height: Math.round(Math.min(68, sample.height + lift)) } : sample;
   };
+  const cascadeSites=mosaic?[]:createValleyCascades(coreRadius,seedHash,(x,z)=>withDistantRelief(sampleNaturalTerrain(x,z,seedHash,support,hydrology!,false),x,z).height);
 
   const sampleMosaic = (x:number,z:number):TerrainSample => {
     const generated=sampleMosaicTerrain(x,z,seedHash,coreRadius);
@@ -353,7 +354,7 @@ function createRegionalTerrainData(
     const cached = sampleCache.get(key);
     if (cached) return cached;
     const raw = mosaic ? sampleMosaic(x,z) : sampleNaturalTerrain(x, z, seedHash, support, hydrology!);
-    const sample = withDistantRelief(raw, x, z);
+    const sample = valleyCascade(withDistantRelief(raw, x, z),x,z,cascadeSites);
     sampleCache.set(key, sample);
     return sample;
   };
@@ -362,7 +363,7 @@ function createRegionalTerrainData(
     const key = `${x}:${z}`;
     const cached = landSampleCache.get(key);
     if (cached) return cached;
-    const sample = mosaic ? sampleMosaic(x,z) : withDistantRelief(sampleNaturalTerrain(x, z, seedHash, support, hydrology!, false), x, z);
+    const sample = mosaic ? sampleMosaic(x,z) : valleyCascade(withDistantRelief(sampleNaturalTerrain(x, z, seedHash, support, hydrology!, false), x, z),x,z,cascadeSites,false);
     landSampleCache.set(key, sample);
     return sample;
   };
@@ -374,7 +375,7 @@ function createRegionalTerrainData(
     // Far LOD cells sample the broad terrain so mountains and
     // water read as coherent big blocks instead of aliased pillars.
     const broad0 = mosaic ? sampleMosaic(x,z) : sampleNaturalTerrain(x, z, seedHash, support, hydrology!, true, true);
-    let broad = withDistantRelief(broad0, x, z);
+    let broad = valleyCascade(withDistantRelief(broad0, x, z),x,z,cascadeSites);
     if (mosaic && broad.waterKind === 'none' && broad.supportInfluence < .18) {
       // Area-sample the same relief field at far resolution. Adjacent rings
       // converge to this datum in the existing boundary band.
@@ -839,12 +840,21 @@ function createOceanIslandTerrainData(
     }
   };
 
-  // Background rings skip exact rectangular patches. All patch boundaries
-  // are shared multiples of 32, so the 2-, 4- and 32-unit grids meet on the
-  // same edges. Overlapping islet patches emit each fine cell only once.
-  addLodSquare(nearExtent, 0, 2, (x, z) => { if (!inIsletPatch(x, z)) addCell(x, z, 2, "near"); });
-  addLodSquare(middleExtent, nearExtent, 4, (x, z) => { if (!inIsletPatch(x, z)) addCell(x, z, 4, "middle"); });
-  addLodSquare(farExtent, middleExtent, farCellSize, (x, z) => { if (!inIsletPatch(x, z)) addCell(x, z, farCellSize, "far"); });
+  // Far-grid origins need not align with the ring or islet-patch edges.
+  // Split only intersecting boundary cells so every surface has one owner.
+  const backgroundCell = (x:number,z:number,size:number,lod:keyof typeof lodCellCounts,inner:number):void => {
+    const half=size/2,x0=x-half,x1=x+half,z0=z-half,z1=z+half;
+    if(inner>0&&x0>=-inner&&x1<=inner&&z0>=-inner&&z1<=inner)return;
+    if(isletPatches.some(p=>x0>=p.minX&&x1<=p.maxX&&z0>=p.minZ&&z1<=p.maxZ))return;
+    const crossesInner=inner>0&&x0<inner&&x1>-inner&&z0<inner&&z1>-inner;
+    const crossesPatch=isletPatches.some(p=>x0<p.maxX&&x1>p.minX&&z0<p.maxZ&&z1>p.minZ);
+    if(size>2&&(crossesInner||crossesPatch)){
+      for(const dx of [-size/4,size/4])for(const dz of [-size/4,size/4])backgroundCell(x+dx,z+dz,size/2,lod,inner);
+    }else if(!inIsletPatch(x,z))addCell(x,z,size,lod);
+  };
+  addLodSquare(nearExtent,0,2,(x,z)=>backgroundCell(x,z,2,'near',0));
+  addLodSquare(middleExtent,0,4,(x,z)=>backgroundCell(x,z,4,'middle',nearExtent));
+  addLodSquare(farExtent,0,farCellSize,(x,z)=>backgroundCell(x,z,farCellSize,'far',middleExtent));
   const emittedFineCells = new Set<string>();
   for (const patch of isletPatches) {
     for (let x = patch.minX + 1; x < patch.maxX; x += 2) {
@@ -1202,15 +1212,16 @@ function sampleNaturalTerrain(
     : Math.round(Math.min(macro.height, maximumSupportedHeight));
   let material: TerrainMaterial = macro.rocky && supported.influence < 0.2 ? "stone" : "grass";
   let waterKind: TerrainSample["waterKind"] = "none";
+  const land = {height,material,supportInfluence:supported.influence,moisture:macro.moisture,waterKind,mountainSignal:macro.mountainSignal};
+  const shaped = support.bench ? valleyBench(land,x,z,seedHash,support.bench) : land;
+  height=shaped.height;
   const water = includeWater && supported.influence < .28 ? sampleHydrology(x, z, height, hydrology) : null;
   if (water && water.kind !== 'none') {
     height = water.height; material = water.material; waterKind = water.kind;
-  }
-  const sample = { height, material, supportInfluence: supported.influence, moisture: macro.moisture, waterKind, mountainSignal: macro.mountainSignal };
-  const shaped = support.bench ? valleyBench(sample, x, z, seedHash, support.bench) : sample;
+  }else if(water?.material==='dirt')height=water.height;
   // Keep the dry-bank grade, but retain the surrounding grass/rock surface.
   // Painting every bank dirt made the river network dominate the landscape.
-  return water?.material === 'dirt' ? { ...shaped, height: water.height } : shaped;
+  return { ...shaped,height,material:water?.material==='dirt'?shaped.material:material,waterKind };
 }
 
 function sampleMacroTerrain(
@@ -1433,14 +1444,14 @@ function createHydrology(farExtent: number, seedHash: number, support: SupportCo
   const lakes: DrainageLake[] = [];
   const lakeByCell = new Map<string, DrainageLake>();
   for (const component of lakeComponents) {
-    if (lakes.length >= ((2))) break;
+    if (lakes.length >= 1) break;
     if (lakes.some((lake) => Math.hypot(lake.centerX - component.centerX, lake.centerZ - component.centerZ) < 72)) continue;
     const lake: DrainageLake = { ...component, id: lakes.length };
     lakes.push(lake);
     for (const key of lake.cells) lakeByCell.set(key, lake);
   }
 
-  const minimumAccumulation = (32);
+  const minimumAccumulation = 80;
   const channelCells = new Set([...cells.values()].filter((cell) => (
     cell.accumulation >= minimumAccumulation
     && cell.protectedInfluence < 0.08
@@ -1462,7 +1473,7 @@ function createHydrology(farExtent: number, seedHash: number, support: SupportCo
     .filter(([, members]) => members.length >= ((4)))
     .sort((left, right) => Math.max(...right[1].map((cell) => cell.accumulation)) - Math.max(...left[1].map((cell) => cell.accumulation))
       || left[0].localeCompare(right[0]))
-    .slice(0, (4));
+    .slice(0, 2);
   const segments: RiverSegment[] = [];
   selectedNetworks.forEach(([, members], chainId) => {
     const memberKeys = new Set(members.map((cell) => cell.key));
@@ -1641,7 +1652,7 @@ function riverSegment(
 }
 
 function riverWidth(accumulation: number, minimumAccumulation: number): number {
-  return Math.max(1.45, Math.min(6.4, 1.35 + Math.log2(1 + accumulation / minimumAccumulation) * 0.82));
+  return Math.max(1.3, Math.min(4.5, 1.15 + Math.log2(1 + accumulation / minimumAccumulation) * 0.65));
 }
 
 function jitteredRiverPoint(cell: DrainageCell, seedHash: number): { x: number; z: number } {
@@ -1751,7 +1762,7 @@ function sampleHydrology(
     if (nearest && distance.distance >= nearest.distance) continue;
     nearest = {
       distance: distance.distance,
-      waterLevel: segment.waterLevel1 + (segment.waterLevel2 - segment.waterLevel1) * distance.alpha,
+      waterLevel: segment.waterLevel1 + (segment.waterLevel2 - segment.waterLevel1)*distance.alpha,
       width: segment.width1 + (segment.width2 - segment.width1) * distance.alpha,
     };
   }

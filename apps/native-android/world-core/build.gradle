@@ -1,0 +1,560 @@
+plugins { id 'org.jetbrains.kotlin.jvm' }
+
+tasks.register('exportNativeLitematicOracle',Exec){
+    workingDir rootProject.projectDir
+    commandLine 'node','tools/export-native-litematic-oracle.mjs',layout.buildDirectory.dir('generated/native-litematic-oracle').get().asFile.absolutePath
+    inputs.file '../tools/export-native-litematic-oracle.mjs'
+    inputs.files fileTree('../../../packages/litematic'){include 'src/*.ts','test/nbt-fixture.ts','test/litematic.test.ts'}
+    inputs.files '../../../packages/voxel/src/blueprint-model.ts','../../../package-lock.json'
+    outputs.dir layout.buildDirectory.dir('generated/native-litematic-oracle')
+}
+sourceSets.test.resources.srcDir layout.buildDirectory.dir('generated/native-litematic-oracle')
+tasks.named('processTestResources').configure{dependsOn 'exportNativeLitematicOracle'}
+// A host-side dense 60-cubed parse includes the source comparison's canonical
+// text; this heap setting does not change the Android application's heap limit.
+tasks.register('blueprintImportTest',Test){
+    testClassesDirs=sourceSets.test.output.classesDirs
+    classpath=sourceSets.test.runtimeClasspath
+    include '**/NativeLitematicOracleTest.class','**/NativeBlueprintPreviewSceneTest.class'
+    maxHeapSize='1g'
+}
+
+tasks.register('exportNativeResourceTerrainOracle',Exec){
+    workingDir rootProject.projectDir
+    commandLine 'node','tools/export-native-resource-terrain.mjs',layout.buildDirectory.dir('generated/native-resource-terrain-oracle').get().asFile.absolutePath
+    inputs.files '../tools/export-native-resource-terrain.mjs','../../../package-lock.json'
+    inputs.files fileTree('../../../packages/voxel/src'){include '**/*.ts'}
+    inputs.files fileTree('../../../packages/resource-pack/src'){include '**/*.ts'}
+    outputs.dir layout.buildDirectory.dir('generated/native-resource-terrain-oracle')
+}
+sourceSets.test.resources.srcDir layout.buildDirectory.dir('generated/native-resource-terrain-oracle')
+tasks.named('processTestResources').configure{dependsOn 'exportNativeResourceTerrainOracle'}
+
+tasks.register('exportNativeResourceGeometryOracle',Exec){
+    workingDir rootProject.projectDir
+    dependsOn 'exportNativeResourceBlocksOracle'
+    commandLine 'node','tools/export-native-resource-geometry.mjs',layout.buildDirectory.dir('generated/native-resource-geometry-oracle').get().asFile.absolutePath
+    inputs.files '../tools/export-native-resource-geometry.mjs','../tools/atlas-source.mjs','../../../package-lock.json'
+    inputs.files fileTree('../../../packages/voxel/src'){include '**/*.ts'}
+    inputs.files fileTree('../../../packages/resource-pack/src'){include '**/*.ts'}
+    inputs.file layout.buildDirectory.file('generated/native-resource-blocks-oracle/native-resource-blocks-oracle.json')
+    outputs.dir layout.buildDirectory.dir('generated/native-resource-geometry-oracle')
+}
+sourceSets.test.resources.srcDir layout.buildDirectory.dir('generated/native-resource-geometry-oracle')
+tasks.named('processTestResources').configure{dependsOn 'exportNativeResourceGeometryOracle'}
+
+tasks.register('exportNativeAtlasProgramsOracle',Exec){
+    workingDir rootProject.projectDir
+    dependsOn 'exportNativeResourceAtlasOracle'
+    commandLine 'node','tools/export-native-atlas-programs.mjs',layout.buildDirectory.dir('generated/native-atlas-programs-oracle').get().asFile.absolutePath
+    inputs.file '../tools/export-native-atlas-programs.mjs'
+    inputs.files fileTree('../../../packages/voxel/src'){include '**/*.ts'}
+    inputs.files fileTree('../../../packages/resource-pack/src'){include '**/*.ts'}
+    inputs.files '../../../package-lock.json','../../../node_modules/three/build/three.core.js','../../../node_modules/three/build/three.module.js'
+    inputs.file layout.buildDirectory.file('generated/native-resource-atlas-oracle/native-resource-atlas-oracle.json')
+    outputs.dir layout.buildDirectory.dir('generated/native-atlas-programs-oracle')
+}
+sourceSets.test.resources.srcDir layout.buildDirectory.dir('generated/native-atlas-programs-oracle')
+tasks.named('processTestResources').configure{dependsOn 'exportNativeAtlasProgramsOracle'}
+
+tasks.register('exportNativeResourceAtlasOracle',Exec){
+    workingDir rootProject.projectDir
+    commandLine 'node','tools/export-native-resource-atlas.mjs',layout.buildDirectory.dir('generated/native-resource-atlas-oracle').get().asFile.absolutePath
+    inputs.file '../tools/export-native-resource-atlas.mjs'
+    inputs.files fileTree('../../../packages/resource-pack/src'){include '**/*.ts'}
+    inputs.files '../../../node_modules/fflate/esm/index.mjs','../../../package-lock.json'
+    outputs.dir layout.buildDirectory.dir('generated/native-resource-atlas-oracle')
+}
+sourceSets.test.resources.srcDir layout.buildDirectory.dir('generated/native-resource-atlas-oracle')
+tasks.named('processTestResources').configure{dependsOn 'exportNativeResourceAtlasOracle'}
+
+tasks.register('exportNativeResourceStackOracle',Exec){
+    workingDir rootProject.projectDir
+    commandLine 'node','tools/export-native-resource-stack.mjs',layout.buildDirectory.dir('generated/native-resource-stack-oracle').get().asFile.absolutePath
+    inputs.file '../tools/export-native-resource-stack.mjs'
+    inputs.files fileTree('../../../packages/resource-pack/src'){include '**/*.ts'}
+    inputs.files '../../../node_modules/fflate/esm/index.mjs','../../../package-lock.json'
+    outputs.dir layout.buildDirectory.dir('generated/native-resource-stack-oracle')
+}
+sourceSets.test.resources.srcDir layout.buildDirectory.dir('generated/native-resource-stack-oracle')
+tasks.named('processTestResources').configure{dependsOn 'exportNativeResourceStackOracle'}
+
+tasks.register('exportNativeResourceBlocksOracle',Exec){
+    workingDir rootProject.projectDir
+    commandLine 'node','tools/export-native-resource-blocks.mjs',layout.buildDirectory.dir('generated/native-resource-blocks-oracle').get().asFile.absolutePath
+    inputs.file '../tools/export-native-resource-blocks.mjs'
+    inputs.files fileTree('../../../packages/resource-pack/src'){include '**/*.ts'}
+    inputs.files '../../../node_modules/fflate/esm/index.mjs','../../../package-lock.json'
+    outputs.dir layout.buildDirectory.dir('generated/native-resource-blocks-oracle')
+}
+sourceSets.test.resources.srcDir layout.buildDirectory.dir('generated/native-resource-blocks-oracle')
+tasks.named('processTestResources').configure{dependsOn 'exportNativeResourceBlocksOracle'}
+
+tasks.register('exportNativeAnimalModelsOracle',Exec){
+    workingDir rootProject.projectDir
+    commandLine 'node','tools/export-native-animal-models.mjs',layout.buildDirectory.dir('generated/native-animal-models-oracle').get().asFile.absolutePath
+    inputs.file '../tools/export-native-animal-models.mjs'
+    inputs.file '../../../packages/voxel/src/animal-models.ts'
+    inputs.files '../../../node_modules/three/build/three.core.js','../../../node_modules/three/build/three.module.js'
+    inputs.files fileTree('../../../node_modules/three/src'){include '**/*.js'}
+    inputs.file '../../../package-lock.json'
+    outputs.dir layout.buildDirectory.dir('generated/native-animal-models-oracle')
+}
+sourceSets.test.resources.srcDir layout.buildDirectory.dir('generated/native-animal-models-oracle')
+tasks.named('processTestResources').configure {dependsOn 'exportNativeAnimalModelsOracle'}
+
+tasks.register('exportNativeAnimalPreparationOracle',Exec){
+    workingDir rootProject.projectDir
+    commandLine 'node','tools/export-native-animal-preparation.mjs',layout.buildDirectory.dir('generated/native-animal-preparation-oracle').get().asFile.absolutePath
+    inputs.file '../tools/export-native-animal-preparation.mjs'
+    inputs.files fileTree('../../../packages/voxel/src'){include '**/*.ts'}
+    inputs.file '../../../package-lock.json'
+    outputs.dir layout.buildDirectory.dir('generated/native-animal-preparation-oracle')
+}
+sourceSets.test.resources.srcDir layout.buildDirectory.dir('generated/native-animal-preparation-oracle')
+tasks.named('processTestResources').configure {dependsOn 'exportNativeAnimalPreparationOracle'}
+
+tasks.register('exportNativeBlockEntitiesOracle',Exec){
+    workingDir rootProject.projectDir
+    commandLine 'node','tools/export-native-block-entities.mjs',layout.buildDirectory.dir('generated/native-block-entities-oracle').get().asFile.absolutePath
+    inputs.files '../tools/export-native-block-entities.mjs','../../../packages/voxel/src/resource-special-block-entity.ts','../../../package-lock.json'
+    inputs.files fileTree('../../../node_modules/three/src'){include '**/*.js'}
+    outputs.dir layout.buildDirectory.dir('generated/native-block-entities-oracle')
+}
+sourceSets.test.resources.srcDir layout.buildDirectory.dir('generated/native-block-entities-oracle')
+tasks.named('processTestResources').configure {dependsOn 'exportNativeBlockEntitiesOracle'}
+
+tasks.register('exportNativeInteractionOracle',Exec){
+    workingDir rootProject.projectDir
+    commandLine 'node','tools/export-native-interaction.mjs',layout.buildDirectory.dir('generated/native-interaction-oracle').get().asFile.absolutePath
+    inputs.files '../tools/export-native-interaction.mjs','../../../packages/voxel/src/renderer.ts','../../../packages/voxel/src/camera-zoom.ts','../../../package-lock.json'
+    inputs.files fileTree('../../../node_modules/three/src'){include '**/*.js'}
+    inputs.file '../../../node_modules/three/build/three.module.js'
+    outputs.dir layout.buildDirectory.dir('generated/native-interaction-oracle')
+}
+sourceSets.test.resources.srcDir layout.buildDirectory.dir('generated/native-interaction-oracle')
+tasks.named('processTestResources').configure {dependsOn 'exportNativeInteractionOracle'}
+java { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
+kotlin { compilerOptions { jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17 } }
+dependencies {
+    compileOnly 'org.json:json:20240303'
+    testImplementation 'org.json:json:20240303'
+    testImplementation 'junit:junit:4.13.2'
+}
+
+tasks.register('exportNativeResourceArchiveOracle',Exec){
+    workingDir rootProject.projectDir
+    commandLine 'node','tools/export-native-resource-archive.mjs',layout.buildDirectory.dir('generated/native-resource-archive-oracle').get().asFile.absolutePath
+    inputs.file '../tools/export-native-resource-archive.mjs'
+    inputs.files fileTree('../../../packages/resource-pack/src'){include '**/*.ts'}
+    inputs.files '../../../package-lock.json','../../../node_modules/fflate/esm/index.mjs'
+    outputs.dir layout.buildDirectory.dir('generated/native-resource-archive-oracle')
+}
+sourceSets.test.resources.srcDir layout.buildDirectory.dir('generated/native-resource-archive-oracle')
+tasks.named('processTestResources').configure{dependsOn 'exportNativeResourceArchiveOracle'}
+
+sourceSets {
+    archiveIntegrationTest {
+        kotlin.srcDir 'src/archiveIntegrationTest/kotlin'
+        compileClasspath += sourceSets.main.output
+        runtimeClasspath += sourceSets.main.output
+    }
+}
+configurations.archiveIntegrationTestImplementation.extendsFrom configurations.testImplementation
+configurations.archiveIntegrationTestRuntimeOnly.extendsFrom configurations.testRuntimeOnly
+tasks.register('archiveIntegrationTest',Test){
+    testClassesDirs=sourceSets.archiveIntegrationTest.output.classesDirs
+    classpath=sourceSets.archiveIntegrationTest.runtimeClasspath
+    include '**/NativeResourceArchiveFilesTest.class'
+    doFirst{
+        systemProperty 'resourceArchiveFilesOracle',providers.gradleProperty('resourceArchiveFilesOracle').get()
+        systemProperty 'resourceArchiveResults',providers.gradleProperty('resourceArchiveResults').get()
+    }
+}
+
+tasks.register('exportNativeResourceTexturesOracle',Exec){
+    workingDir rootProject.projectDir
+    commandLine 'node','tools/export-native-resource-textures.mjs',layout.buildDirectory.dir('generated/native-resource-textures-oracle').get().asFile.absolutePath
+    inputs.file '../tools/export-native-resource-textures.mjs'
+    inputs.files fileTree('../../../packages/resource-pack/src'){include '**/*.ts'}
+    inputs.files '../../../package-lock.json','../../../node_modules/fflate/esm/index.mjs'
+    outputs.dir layout.buildDirectory.dir('generated/native-resource-textures-oracle')
+}
+sourceSets.test.resources.srcDir layout.buildDirectory.dir('generated/native-resource-textures-oracle')
+tasks.named('processTestResources').configure{dependsOn 'exportNativeResourceTexturesOracle'}
+tasks.register('textureIntegrationTest',Test){
+    testClassesDirs=sourceSets.archiveIntegrationTest.output.classesDirs
+    classpath=sourceSets.archiveIntegrationTest.runtimeClasspath
+    include '**/NativeResourceTextureFilesTest.class'
+    doFirst{
+        systemProperty 'resourceTextureFilesOracle',providers.gradleProperty('resourceTextureFilesOracle').get()
+        systemProperty 'resourceTextureResults',providers.gradleProperty('resourceTextureResults').get()
+    }
+}
+
+tasks.register('blockIntegrationTest',Test){
+    testClassesDirs=sourceSets.archiveIntegrationTest.output.classesDirs
+    classpath=sourceSets.archiveIntegrationTest.runtimeClasspath
+    include '**/NativeResourceBlockFilesTest.class'
+    doFirst{
+        systemProperty 'resourceBlockFilesOracle',providers.gradleProperty('resourceBlockFilesOracle').get()
+        systemProperty 'resourceBlockResults',providers.gradleProperty('resourceBlockResults').get()
+    }
+}
+
+tasks.register('stackIntegrationTest',Test){
+    testClassesDirs=sourceSets.archiveIntegrationTest.output.classesDirs
+    classpath=sourceSets.archiveIntegrationTest.runtimeClasspath
+    include '**/NativeResourceStackFilesTest.class'
+    doFirst{
+        systemProperty 'resourceStackFilesOracle',providers.gradleProperty('resourceStackFilesOracle').get()
+        systemProperty 'resourceStackResults',providers.gradleProperty('resourceStackResults').get()
+    }
+}
+
+tasks.register('atlasIntegrationTest',Test){
+    testClassesDirs=sourceSets.archiveIntegrationTest.output.classesDirs
+    classpath=sourceSets.archiveIntegrationTest.runtimeClasspath
+    include '**/NativeResourceAtlasFilesTest.class'
+    doFirst{
+        systemProperty 'resourceAtlasFilesOracle',providers.gradleProperty('resourceAtlasFilesOracle').get()
+        systemProperty 'resourceAtlasResults',providers.gradleProperty('resourceAtlasResults').get()
+    }
+}
+
+tasks.register('geometryIntegrationTest',Test){
+    testClassesDirs=sourceSets.archiveIntegrationTest.output.classesDirs
+    classpath=sourceSets.archiveIntegrationTest.runtimeClasspath
+    include '**/NativeResourceGeometryFilesTest.class'
+    maxHeapSize='2g'
+    doFirst{
+        systemProperty 'resourceGeometryFilesOracle',providers.gradleProperty('resourceGeometryFilesOracle').get()
+        systemProperty 'resourceGeometryResults',providers.gradleProperty('resourceGeometryResults').get()
+    }
+}
+
+tasks.register('exportNativeConstructionOracle',Exec){
+    workingDir rootProject.projectDir
+    commandLine 'node','tools/export-native-construction-details.mjs',layout.buildDirectory.dir('generated/native-construction-oracle').get().asFile.absolutePath
+    inputs.file '../tools/export-native-construction-details.mjs'
+    inputs.files fileTree('../../../packages/voxel/src'){include '**/*.ts'}
+    inputs.file '../../../package-lock.json'
+    outputs.dir layout.buildDirectory.dir('generated/native-construction-oracle')
+}
+sourceSets.test.resources.srcDir layout.buildDirectory.dir('generated/native-construction-oracle')
+tasks.named('processTestResources').configure {dependsOn 'exportNativeConstructionOracle'}
+
+tasks.register('exportNativeEnvironmentAssets',Exec){
+    workingDir rootProject.projectDir
+    commandLine 'node','tools/export-native-environment.mjs',layout.buildDirectory.dir('generated/native-environment-assets').get().asFile.absolutePath,'--assets-only'
+    inputs.files '../tools/export-native-environment.mjs','../../../node_modules/suncalc/index.js','../../../node_modules/suncalc/LICENSE','../../../package-lock.json'
+    outputs.dir layout.buildDirectory.dir('generated/native-environment-assets/main')
+}
+sourceSets.main.resources.srcDir layout.buildDirectory.dir('generated/native-environment-assets/main')
+tasks.named('processResources').configure {dependsOn 'exportNativeEnvironmentAssets'}
+tasks.register('exportNativeEnvironmentOracle',Exec){
+    workingDir rootProject.projectDir
+    commandLine 'node','tools/export-native-environment.mjs',layout.buildDirectory.dir('generated/native-environment-oracle').get().asFile.absolutePath
+    inputs.file '../tools/export-native-environment.mjs'
+    inputs.files fileTree('../../../packages/voxel/src'){include '**/*.ts'}
+    inputs.files '../../../node_modules/suncalc/index.js','../../../node_modules/suncalc/LICENSE','../../../package-lock.json'
+    outputs.dir layout.buildDirectory.dir('generated/native-environment-oracle/test')
+}
+sourceSets.test.resources.srcDir layout.buildDirectory.dir('generated/native-environment-oracle/test')
+tasks.named('processTestResources').configure {dependsOn 'exportNativeEnvironmentOracle'}
+
+tasks.register('exportNativeDebugOracle',Exec){
+    workingDir rootProject.projectDir
+    commandLine 'node','tools/export-native-debug-oracle.mjs',layout.buildDirectory.dir('generated/native-debug-oracle').get().asFile.absolutePath
+    inputs.files '../tools/export-native-debug-oracle.mjs','../../../apps/web/src/world-debug.ts','../../../package-lock.json'
+    inputs.file '../../../packages/voxel/src/renderer.ts'
+    outputs.dir layout.buildDirectory.dir('generated/native-debug-oracle')
+}
+sourceSets.test.resources.srcDir layout.buildDirectory.dir('generated/native-debug-oracle')
+tasks.named('processTestResources').configure {dependsOn 'exportNativeDebugOracle'}
+
+tasks.register('exportNativeStormOracle',Exec){
+    workingDir rootProject.projectDir
+    commandLine 'node','tools/export-native-storm-oracle.mjs',layout.buildDirectory.dir('generated/native-storm-oracle').get().asFile.absolutePath
+    inputs.files '../tools/export-native-storm-oracle.mjs','../../../packages/voxel/src/renderer.ts','../../../packages/voxel/src/precipitation-field.ts','../../../package-lock.json'
+    inputs.files '../../../node_modules/three/src/renderers/shaders/ShaderChunk/lights_pars_begin.glsl.js','../../../node_modules/three/src/renderers/shaders/ShaderChunk/lights_lambert_pars_fragment.glsl.js'
+    outputs.dir layout.buildDirectory.dir('generated/native-storm-oracle')
+}
+sourceSets.test.resources.srcDir layout.buildDirectory.dir('generated/native-storm-oracle')
+tasks.named('processTestResources').configure {dependsOn 'exportNativeStormOracle'}
+
+tasks.register('exportGenerationOracle',Exec){
+    workingDir rootProject.projectDir
+    commandLine 'node','tools/export-generation-oracle.mjs',layout.buildDirectory.dir('generated/generation-oracle').get().asFile.absolutePath
+    inputs.files '../tools/export-generation-oracle.mjs','../../../packages/voxel/src/village.ts','../../../packages/voxel/src/blueprint.ts','../../../package-lock.json'
+    inputs.files fileTree('../../../packages/voxel/src') {include 'terrain*.ts','mosaic*.ts','landscape-fields.ts'}
+    outputs.dir layout.buildDirectory.dir('generated/generation-oracle')
+}
+sourceSets.test.resources.srcDir layout.buildDirectory.dir('generated/generation-oracle')
+tasks.named('processTestResources').configure {dependsOn 'exportGenerationOracle'}
+
+tasks.register('exportBundledBlueprints',Exec){
+    workingDir rootProject.projectDir
+    commandLine 'node','tools/export-bundled-blueprints.mjs',layout.buildDirectory.dir('generated/bundled-blueprints').get().asFile.absolutePath
+    inputs.file '../tools/export-bundled-blueprints.mjs'
+    inputs.files fileTree('../../../packages/voxel/src') {include 'blueprint*.ts','holiday-buildings.ts','local-blueprint-sources.ts','local-blueprints/**/*.json'}
+    inputs.files fileTree('../../../packages/domain/src') {include '**/*.ts'}
+    inputs.file '../../../package-lock.json'
+    outputs.dir layout.buildDirectory.dir('generated/bundled-blueprints')
+}
+sourceSets.main.resources.srcDir layout.buildDirectory.dir('generated/bundled-blueprints')
+tasks.named('processResources').configure {dependsOn 'exportBundledBlueprints'}
+
+tasks.register('exportTerrainGeneratorIdentity'){
+    def sources=fileTree('src/main/kotlin/com/blockcolc/world/generation'){include '**/*.kt'}
+    def output=layout.buildDirectory.file('generated/generator-identity/native-world-generator-id.txt')
+    inputs.files sources
+    inputs.files 'build.gradle','../build.gradle'
+    outputs.file output
+    doLast {
+        def digest=java.security.MessageDigest.getInstance('SHA-256')
+        def files=(sources.files+[file('build.gradle'),file('../build.gradle')]).sort{a,b->project.relativePath(a).replace('\\','/')<=>project.relativePath(b).replace('\\','/')}
+        for(source in files){digest.update(project.relativePath(source).replace('\\','/').getBytes('UTF-8'));digest.update((byte)0);digest.update(source.bytes);digest.update((byte)0)}
+        def target=output.get().asFile;target.parentFile.mkdirs();target.text=digest.digest().encodeHex().toString()
+    }
+}
+sourceSets.main.resources.srcDir layout.buildDirectory.dir('generated/generator-identity')
+tasks.named('processResources').configure {dependsOn 'exportTerrainGeneratorIdentity'}
+
+tasks.register('exportBuildingOracle',Exec){
+    workingDir rootProject.projectDir
+    commandLine 'node','tools/export-building-oracle.mjs',layout.buildDirectory.dir('generated/building-oracle').get().asFile.absolutePath
+    inputs.files '../tools/export-building-oracle.mjs','../../../packages/voxel/src/blueprint-model.ts','../../../packages/voxel/src/environment.ts','../../../packages/voxel/src/local-occlusion.ts','../../../packages/voxel/src/resource-special-piston.ts','../../../package-lock.json'
+    outputs.dir layout.buildDirectory.dir('generated/building-oracle')
+}
+sourceSets.test.resources.srcDir layout.buildDirectory.dir('generated/building-oracle')
+tasks.named('processTestResources').configure {dependsOn 'exportBuildingOracle'}
+
+tasks.register('exportTerrainOracle',Exec){
+    dependsOn 'exportGenerationOracle','exportBundledBlueprints'
+    workingDir rootProject.projectDir
+    commandLine 'node','tools/export-terrain-oracle.mjs',layout.buildDirectory.dir('generated/terrain-oracle').get().asFile.absolutePath
+    inputs.file '../tools/export-terrain-oracle.mjs'
+    inputs.files fileTree('../../../packages/voxel/src') {include '**/*.ts'}
+    inputs.file layout.buildDirectory.file('generated/generation-oracle/generation-oracle.json')
+    inputs.file layout.buildDirectory.file('generated/bundled-blueprints/native-blueprints/catalog.json')
+    inputs.file '../../../package-lock.json'
+    outputs.dir layout.buildDirectory.dir('generated/terrain-oracle')
+}
+sourceSets.test.resources.srcDir layout.buildDirectory.dir('generated/terrain-oracle')
+tasks.named('processTestResources').configure {dependsOn 'exportTerrainOracle'}
+
+tasks.register('exportSceneryOracle',Exec){
+    dependsOn 'exportTerrainOracle'
+    workingDir rootProject.projectDir
+    commandLine 'node','tools/export-scenery-oracle.mjs',layout.buildDirectory.dir('generated/scenery-oracle').get().asFile.absolutePath
+    inputs.file '../tools/export-scenery-oracle.mjs'
+    inputs.files fileTree('../../../packages/voxel/src') {include '**/*.ts'}
+    inputs.file '../../../package-lock.json'
+    inputs.file layout.buildDirectory.file('generated/terrain-oracle/terrain-oracle.json')
+    outputs.dir layout.buildDirectory.dir('generated/scenery-oracle')
+}
+sourceSets.test.resources.srcDir layout.buildDirectory.dir('generated/scenery-oracle')
+tasks.named('processTestResources').configure {dependsOn 'exportSceneryOracle'}
+
+tasks.register('exportOriginalShapeOracle',Exec){
+    workingDir rootProject.projectDir
+    commandLine 'node','tools/export-original-shape-oracle.mjs',layout.buildDirectory.dir('generated/original-shape-oracle').get().asFile.absolutePath
+    inputs.file '../tools/export-original-shape-oracle.mjs'
+    inputs.files fileTree('../../../packages/voxel/src') {include '**/*.ts'}
+    inputs.file '../../../package-lock.json'
+    outputs.dir layout.buildDirectory.dir('generated/original-shape-oracle')
+}
+sourceSets.test.resources.srcDir layout.buildDirectory.dir('generated/original-shape-oracle')
+tasks.named('processTestResources').configure {dependsOn 'exportOriginalShapeOracle'}
+
+tasks.register('exportOriginalShapeRegistry',Exec){
+    workingDir rootProject.projectDir
+    commandLine 'node','tools/export-original-shape-oracle.mjs',layout.buildDirectory.dir('generated/original-shape-registry').get().asFile.absolutePath,'--registry-only'
+    inputs.file '../tools/export-original-shape-oracle.mjs'
+    inputs.files fileTree('../../../packages/voxel/src') {include '**/*.ts'}
+    inputs.file '../../../package-lock.json'
+    outputs.dir layout.buildDirectory.dir('generated/original-shape-registry')
+}
+sourceSets.main.resources.srcDir layout.buildDirectory.dir('generated/original-shape-registry')
+tasks.named('processResources').configure {dependsOn 'exportOriginalShapeRegistry'}
+
+tasks.register('exportOriginalMaterials',Exec){
+    workingDir rootProject.projectDir
+    commandLine 'node','tools/export-original-materials.mjs',layout.buildDirectory.dir('generated/original-materials').get().asFile.absolutePath
+    inputs.file '../tools/export-original-materials.mjs'
+    inputs.files fileTree('../../../packages/voxel/src') {include '**/*.ts'}
+    inputs.file '../../../package-lock.json'
+    outputs.dir layout.buildDirectory.dir('generated/original-materials')
+}
+sourceSets.main.resources.srcDir layout.buildDirectory.dir('generated/original-materials')
+tasks.named('processResources').configure {dependsOn 'exportOriginalMaterials'}
+
+tasks.register('exportOriginalMaterialOracle',Exec){
+    dependsOn 'exportOriginalShapeOracle','exportBundledBlueprints'
+    workingDir rootProject.projectDir
+    commandLine 'node','tools/export-original-materials.mjs',layout.buildDirectory.dir('generated/original-material-oracle').get().asFile.absolutePath,'--oracle'
+    inputs.file '../tools/export-original-materials.mjs'
+    inputs.files fileTree('../../../packages/voxel/src') {include '**/*.ts'}
+    inputs.files layout.buildDirectory.file('generated/original-shape-oracle/original-shape-oracle.json'),layout.buildDirectory.file('generated/bundled-blueprints/native-blueprints/catalog.json')
+    inputs.file '../../../package-lock.json'
+    outputs.dir layout.buildDirectory.dir('generated/original-material-oracle')
+}
+sourceSets.test.resources.srcDir layout.buildDirectory.dir('generated/original-material-oracle')
+tasks.named('processTestResources').configure {dependsOn 'exportOriginalMaterialOracle'}
+
+tasks.register('exportOriginalCompilerOracle',Exec){
+    dependsOn 'exportOriginalShapeOracle'
+    workingDir rootProject.projectDir
+    commandLine 'node','tools/export-original-compiler-oracle.mjs',layout.buildDirectory.dir('generated/original-compiler-oracle').get().asFile.absolutePath
+    inputs.file '../tools/export-original-compiler-oracle.mjs'
+    inputs.files fileTree('../../../packages/voxel/src') {include '**/*.ts'}
+    inputs.file layout.buildDirectory.file('generated/original-shape-oracle/original-shape-oracle.json')
+    inputs.file '../../../package-lock.json'
+    outputs.dir layout.buildDirectory.dir('generated/original-compiler-oracle')
+}
+sourceSets.test.resources.srcDir layout.buildDirectory.dir('generated/original-compiler-oracle')
+tasks.named('processTestResources').configure {dependsOn 'exportOriginalCompilerOracle'}
+
+tasks.register('exportOriginalSupplementOracle',Exec){
+    workingDir rootProject.projectDir
+    commandLine 'node','tools/export-original-supplement-oracle.mjs',layout.buildDirectory.dir('generated/original-supplement-oracle').get().asFile.absolutePath
+    inputs.file '../tools/export-original-supplement-oracle.mjs'
+    inputs.files fileTree('../../../packages/voxel/src') {include '**/*.ts'}
+    inputs.file '../../../package-lock.json'
+    outputs.dir layout.buildDirectory.dir('generated/original-supplement-oracle')
+}
+sourceSets.test.resources.srcDir layout.buildDirectory.dir('generated/original-supplement-oracle')
+
+tasks.named('processTestResources').configure {dependsOn 'exportOriginalSupplementOracle'}
+
+tasks.register('exportFluidOracle',Exec){
+    dependsOn 'exportBundledBlueprints'
+    workingDir rootProject.projectDir
+    commandLine 'node','tools/export-fluid-oracle.mjs',layout.buildDirectory.dir('generated/fluid-oracle').get().asFile.absolutePath
+    inputs.file '../tools/export-fluid-oracle.mjs'
+    inputs.files fileTree('../../../packages/voxel/src') {include '**/*.ts'}
+    inputs.file layout.buildDirectory.file('generated/bundled-blueprints/native-blueprints/catalog.json')
+    inputs.file '../../../package-lock.json'
+    outputs.dir layout.buildDirectory.dir('generated/fluid-oracle')
+}
+sourceSets.test.resources.srcDir layout.buildDirectory.dir('generated/fluid-oracle')
+
+tasks.named('processTestResources').configure {dependsOn 'exportFluidOracle'}
+
+tasks.register('exportSceneryDeviceOracle'){
+    dependsOn 'exportSceneryOracle'
+    def input=layout.buildDirectory.file('generated/scenery-oracle/scenery-oracle.json')
+    def output=layout.buildDirectory.file('generated/scenery-device-oracle/scenery-device-oracle.json')
+    inputs.file input
+    outputs.file output
+    doLast {
+        def source=input.get().asFile
+        def oracle=new groovy.json.JsonSlurper().parse(source)
+        def cases=oracle.worlds.findAll {it.name.contains(':variant-0-count-1:world-default:auto:null')}
+        if(cases.size()!=4)throw new GradleException('Four formal scenery environments are required')
+        def result=[schema:1,producerSha:java.security.MessageDigest.getInstance('SHA-256').digest(source.bytes).encodeHex().toString(),cases:cases]
+        def target=output.get().asFile;target.parentFile.mkdirs();target.text=groovy.json.JsonOutput.toJson(result)
+    }
+}
+
+tasks.register('exportTerrainDeviceOracle'){
+    dependsOn 'exportTerrainOracle'
+    def input=layout.buildDirectory.file('generated/terrain-oracle/terrain-oracle.json')
+    def output=layout.buildDirectory.file('generated/terrain-device-oracle/terrain-device-oracle.json')
+    inputs.file input
+    outputs.file output
+    doLast {
+        def source=input.get().asFile
+        def oracle=new groovy.json.JsonSlurper().parse(source)
+        def cases=oracle.cases.findAll {it.name.contains(':variant-0-count-1:world-default:auto:null')}
+        if(cases.size()!=4)throw new GradleException('Four current terrain environment cases are required')
+        def result=[schema:1,producerSha:java.security.MessageDigest.getInstance('SHA-256').digest(source.bytes).encodeHex().toString(),cases:cases]
+        def target=output.get().asFile;target.parentFile.mkdirs();target.text=groovy.json.JsonOutput.toJson(result)
+    }
+}
+tasks.register('generateCodecFixture', Exec) {
+    workingDir rootProject.projectDir
+    commandLine 'node', 'tools/write-codec-fixture.mjs', layout.buildDirectory.dir('generated/codec-fixture').get().asFile.absolutePath
+    inputs.files('../tools/world-packets.mjs','../tools/material-program.mjs','../tools/write-codec-fixture.mjs')
+    inputs.files('../tools/surface-cases.mjs','../tools/fixtures/reviewed-program.json')
+    inputs.files('../tools/weather-oracle.mjs','../../../packages/voxel/src/precipitation-field.ts',
+        '../../../packages/voxel/src/precipitation-motion.ts','../../../packages/voxel/src/precipitation-density.ts')
+    inputs.files('../tools/animal-navigation-oracle.mjs','../../../packages/voxel/src/animal-navigation.ts')
+    inputs.files('../tools/animal-habitat-oracle.mjs','../tools/animal-runtime-input.mjs','../tools/animal-behavior-oracle.mjs')
+    inputs.file('../tools/animal-rig-oracle.mjs')
+    inputs.file('../tools/animal-camera-oracle.mjs')
+    inputs.files(fileTree('../../../packages/voxel/src') { include '**/*.ts' })
+    inputs.file('../tools/fixtures/reviewed-sky-programs.json')
+    inputs.file('../tools/fixtures/reviewed-environment-programs.json')
+    inputs.file('../tools/fixtures/reviewed-atlas-programs.json')
+    inputs.files('../tools/atlas-animation-oracle.mjs','../tools/atlas-runtime-input.mjs','../tools/atlas-source.mjs')
+    outputs.dir layout.buildDirectory.dir('generated/codec-fixture')
+}
+sourceSets.test.resources.srcDir layout.buildDirectory.dir('generated/codec-fixture')
+tasks.named('processTestResources').configure { dependsOn 'generateCodecFixture' }
+
+tasks.register('auditFrozenInputs',JavaExec) {
+    dependsOn 'testClasses'
+    classpath=sourceSets.test.runtimeClasspath
+    mainClass='com.blockcolc.world.FrozenInputAudit'
+    maxHeapSize='2g'
+    doFirst {
+        def input=providers.gradleProperty('p1AuditInput')
+        def report=providers.gradleProperty('p1AuditReport')
+        if(!input.isPresent()||!report.isPresent())throw new GradleException('Pass p1AuditInput and a new p1AuditReport path.')
+        args rootProject.file(input.get()).absolutePath,rootProject.file(report.get()).absolutePath
+    }
+}
+
+tasks.register('auditConstructionInputs',JavaExec) {
+    dependsOn 'testClasses'
+    classpath=sourceSets.test.runtimeClasspath
+    mainClass='com.blockcolc.world.ConstructionInputAudit'
+    maxHeapSize='2g'
+    doFirst {
+        def base=providers.gradleProperty('worldInputs')
+        def input=providers.gradleProperty('constructionInputs')
+        def report=providers.gradleProperty('p2ConstructionAuditReport')
+        if(!base.isPresent()||!input.isPresent()||!report.isPresent())throw new GradleException('Pass worldInputs, constructionInputs and a new p2ConstructionAuditReport.')
+        args rootProject.file(base.get()).absolutePath,rootProject.file(input.get()).absolutePath,
+            rootProject.file('../..').absolutePath,rootProject.file(report.get()).absolutePath
+    }
+}
+
+tasks.register('exportResourceFluidOracle',Exec){
+    dependsOn 'exportFluidOracle'
+    workingDir rootProject.projectDir
+    commandLine 'node','tools/export-resource-fluid-oracle.mjs',layout.buildDirectory.dir('generated/resource-fluid-oracle').get().asFile.absolutePath
+    inputs.file '../tools/export-resource-fluid-oracle.mjs'
+    inputs.files fileTree('../../../packages/voxel/src'){include '*.ts'}
+    inputs.files fileTree('../../../packages/resource-pack/src'){include '**/*.ts'}
+    inputs.file '../../../packages/voxel/src/resource-fluids.ts'
+    inputs.file layout.buildDirectory.file('generated/fluid-oracle/fluid-oracle.json')
+    outputs.dir layout.buildDirectory.dir('generated/resource-fluid-oracle')
+}
+sourceSets.test.resources.srcDir layout.buildDirectory.dir('generated/resource-fluid-oracle')
+tasks.named('processTestResources').configure {dependsOn 'exportResourceFluidOracle'}
+
+tasks.register('exportResourceSpecialModels',Exec){
+    workingDir rootProject.projectDir
+    commandLine 'node','tools/export-resource-special-models.mjs',layout.buildDirectory.dir('generated/resource-special-models').get().asFile.absolutePath
+    inputs.file '../tools/export-resource-special-models.mjs'
+    inputs.files fileTree('../../../packages/voxel/src'){include 'resource-special-*.ts'}
+    inputs.file '../../../package-lock.json'
+    outputs.dir layout.buildDirectory.dir('generated/resource-special-models')
+}
+sourceSets.main.resources.srcDir layout.buildDirectory.dir('generated/resource-special-models')
+tasks.named('processResources').configure {dependsOn 'exportResourceSpecialModels'}
+
+tasks.register('exportResourceSpecialOracle',Exec){
+    dependsOn 'exportResourceSpecialModels'
+    workingDir rootProject.projectDir
+    commandLine 'node','tools/export-resource-special-oracle.mjs',layout.buildDirectory.dir('generated/resource-special-oracle').get().asFile.absolutePath
+    inputs.files '../tools/export-resource-special-oracle.mjs','../tools/export-resource-special-models.mjs','../tools/atlas-source.mjs'
+    inputs.files fileTree('../../../packages/voxel/src'){include 'resource-special-*.ts','resource-fluids.ts','resource-textures.ts'}
+    inputs.files fileTree('../../../packages/resource-pack/src'){include '**/*.ts'}
+    outputs.dir layout.buildDirectory.dir('generated/resource-special-oracle')
+}
+sourceSets.test.resources.srcDir layout.buildDirectory.dir('generated/resource-special-oracle')
+tasks.named('processTestResources').configure {dependsOn 'exportResourceSpecialOracle'}

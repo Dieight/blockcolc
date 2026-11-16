@@ -1,0 +1,52 @@
+{
+  "schema": 1,
+  "source": "apps/web/public/audio/shore-waves.ogg",
+  "sourceSha256": "ad54369a217a52b2cbe253b97947555835c8bf006ed65baf14301b9d43ca3b1d",
+  "license": "CC0 1.0; source and attribution retained in docs/assets/ambient-audio.md",
+  "scope": "Four-second codec fixtures in instrumentation APK only; shipped full recordings are unchanged.",
+  "ffmpegVersion": "ffmpeg version 7.1-essentials_build-www.gyan.dev Copyright (c) 2000-2024 the FFmpeg developers",
+  "entries": [
+    {
+      "id": "pcm",
+      "file": "pcm.wav",
+      "mime": "audio/wav",
+      "bytes": 352844,
+      "sha256": "b19856fdcd5ca4265e3bb08f2e0906ca5a3035c5df2ff79e422e64a42b2fa876"
+    },
+    {
+      "id": "mp3",
+      "file": "mp3.mp3",
+      "mime": "audio/mpeg",
+      "bytes": 32619,
+      "sha256": "0fa75154710a1f8fb78baa48c515784d0fe73f1d3039224c04d306564ca28e47"
+    },
+    {
+      "id": "aac",
+      "file": "aac.m4a",
+      "mime": "audio/mp4",
+      "bytes": 33911,
+      "sha256": "c21ec5fd46def3e8b017409586cf1ec2218024cc1ab29d73b6c65f980aee74f3"
+    },
+    {
+      "id": "flac",
+      "file": "flac.flac",
+      "mime": "audio/flac",
+      "bytes": 161806,
+      "sha256": "c814b5956c7c9392a3eb508e302500fc411335df4fb56f56e7e42da106ddd75d"
+    },
+    {
+      "id": "vorbis",
+      "file": "vorbis.ogg",
+      "mime": "audio/ogg",
+      "bytes": 36719,
+      "sha256": "7f836f1fc8e5ec1f17957f97ad8ba2ae21c8f455ee5ddd440c861f6ab807e945"
+    },
+    {
+      "id": "opus",
+      "file": "opus.opus",
+      "mime": "audio/ogg",
+      "bytes": 22654,
+      "sha256": "547230e2d7ab35599bd00d4f133d37c10bd8da65414c31262421f3e83155ad92"
+    }
+  ]
+}

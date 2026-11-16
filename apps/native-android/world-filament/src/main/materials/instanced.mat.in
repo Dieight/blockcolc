@@ -1,0 +1,298 @@
+material {
+    name : "blockcolc-@NAME@",
+    shadingModel : @SHADING@,
+    blending : @BLENDING@,
+    vertexDomain : object,
+    flipUV : false,
+    instanced : true,
+    doubleSided : true,
+    postLightingBlending : multiply,
+    // Reflection is the source procedural field, not Filament SSR. The HDR
+    // terminal view does not request an SSR pass.
+    variantFilter : [ssr],
+    variables : [sourcePosition, sourceNormal, sourceAtlas],
+    requires : [uv0, color, custom0],
+    parameters : [
+        { type : sampler2d, name : instanceData, precision : high },
+        { type : sampler2d, name : runtimeData, precision : high },
+        { type : sampler2d, name : baseMap },
+        { type : sampler2d, name : atlasLookup, precision : high },
+        { type : sampler2d, name : atlasBlend, precision : high },
+        { type : float4, name : baseColor },
+        { type : float3, name : uvRowU },
+        { type : float3, name : uvRowV },
+        { type : float3, name : emissive },
+        { type : float, name : roughness },
+        { type : float, name : metallic },
+        { type : float, name : alphaCutoff },
+        { type : bool, name : flipV },
+        { type : bool, name : vertexColors },
+        { type : float3, name : effectDirection },
+        { type : float3, name : effectLightTint },
+        { type : float3, name : effectShadowTint },
+        { type : float, name : effectStrength },
+        { type : float, name : effectEdgeStrength },
+        { type : float, name : normalSign },
+        { type : bool, name : fluidSurface },
+        { type : bool, name : distanceOpacity },
+        { type : float, name : skyStars, precision : high },
+        { type : float, name : skyGalaxy, precision : high },
+        { type : float, name : skyAurora, precision : high },
+        { type : float, name : skyTime, precision : high },
+        { type : float, name : skyDensity, precision : high },
+        { type : float, name : skyMeteor, precision : high },
+        { type : float, name : skyGain, precision : high },
+        { type : float3, name : skyColdDirection, precision : high },
+        { type : float3, name : skyGalaxyNormal, precision : high },
+        { type : bool, name : fogEnabled },
+        { type : float3, name : fogColor, precision : high },
+        { type : float2, name : fogRange, precision : high }
+        ,{ type : bool, name : skyBackdrop }
+        ,{ type : bool, name : floatingSky }
+        ,{ type : int, name : billboardMode }
+        ,{ type : float, name : pointSize, precision : high }
+        ,{ type : float2, name : billboardCenter, precision : high }
+        ,{ type : float2, name : viewportSize, precision : high }
+        ,{ type : int, name : motionKind }
+        ,{ type : mat4, name : motionData, precision : high }
+        ,{ type : sampler2d, name : weatherGround, precision : high }
+        ,{ type : mat4, name : lambertHemisphere, precision : high }
+        ,{ type : float3, name : lambertDirection, precision : high }
+        ,{ type : float3, name : lambertDirect, precision : high }
+        ,{ type : float4, name : stormFlash, precision : high }
+        ,{ type : mat4, name : nativeSkyData, precision : high }
+    ]
+}
+vertex {
+    precision highp float;
+    void materialVertex(inout MaterialVertexInputs material) {
+        // The source patch intentionally shades object-space cube faces, not
+        // normals rotated by the per-instance model or camera origin.
+        material.sourcePosition = getPosition();
+        material.sourceAtlas = float4(0.0);
+        @SOURCE_NORMAL@
+        int row = int(getInstanceIndex());
+        mat4 transform = mat4(
+            texelFetch(materialParams_instanceData, ivec2(0, row), 0),
+            texelFetch(materialParams_instanceData, ivec2(1, row), 0),
+            texelFetch(materialParams_instanceData, ivec2(2, row), 0),
+            texelFetch(materialParams_instanceData, ivec2(3, row), 0));
+        // Apply the instance in model space BEFORE Filament's camera-relative origin.
+        // Rotating an already shifted worldPosition moves repeated buildings off-map.
+        float4 localPosition = getPosition();
+        float4 auxiliary = texelFetch(materialParams_instanceData, ivec2(5, row), 0);
+        if (materialParams.motionKind == 2 || materialParams.motionKind == 3) {
+            if (materialParams.motionKind == 3) localPosition.xyz *= materialParams.motionData[1].x * (0.65 + auxiliary.x * 0.9);
+            else localPosition.xz *= materialParams.motionData[1].x;
+        }
+        float2 fluid = float2(0.0);
+        if (materialParams.fluidSurface) {
+            fluid = texelFetch(materialParams_instanceData, ivec2(5, row), 0).xy;
+            float meta = fluid.x - 1000000.0;
+            if (meta >= 0.0 && localPosition.y > 0.0) {
+                float nw = mod(fluid.y, 64.0) / 63.0;
+                float ne = mod(floor(fluid.y / 64.0), 64.0) / 63.0;
+                float se = mod(floor(fluid.y / 4096.0), 64.0) / 63.0;
+                float sw = mod(floor(fluid.y / 262144.0), 64.0) / 63.0;
+                localPosition.y = (localPosition.z < 0.0
+                    ? (localPosition.x < 0.0 ? nw : ne) : (localPosition.x < 0.0 ? sw : se)) - 0.5;
+            }
+        }
+        material.worldPosition = getWorldFromModelMatrix() * transform * localPosition;
+        if (materialParams.motionKind == 4) {
+            material.sourcePosition.w = auxiliary.z;
+            if (auxiliary.z < 0.5) material.worldPosition = getWorldFromModelMatrix() * vec4(0.0,0.0,0.0,1.0);
+        }
+        if (materialParams.motionKind == 1) {
+            float4 cloud = auxiliary;
+            float elapsed = materialParams.motionData[0].x + texelFetch(materialParams_runtimeData, ivec2(0), 0).b;
+            float2 span = materialParams.motionData[0].yz;
+            float2 center = mod(cloud.xy + cloud.zw * elapsed + span * 0.5, span) - span * 0.5;
+            // Source model matrices are already frozen in world coordinates.
+            material.worldPosition.xz += center - cloud.xy;
+            material.sourceNormal = float4(normalize(getWorldFromModelNormalMatrix() * transpose(inverse(mat3(transform))) * getCustom0().xyz), 0.0);
+        }
+        if (materialParams.motionKind == 2 || materialParams.motionKind == 3) {
+            // Same per-vertex ground lookup as source. Instance base y is a
+            // seed pose, not the ground. Camera motion updates only this field.
+            float elapsed = materialParams.motionData[0].x + texelFetch(materialParams_runtimeData, ivec2(0), 0).a;
+            vec3 p = (transform * localPosition).xyz;
+            p.xz += materialParams.motionData[1].yz + auxiliary.yz * materialParams.motionData[2].xy - transform[3].xz;
+            if (materialParams.motionKind == 3) {
+                float drift = auxiliary.x * 6.28318530718 + elapsed * 0.00055;
+                p.x += sin(drift) * 1.35; p.z += cos(drift * 0.72) * 0.8;
+            }
+            vec2 groundUv = clamp((p.xz-materialParams.motionData[2].zw) / materialParams.motionData[3].xy,vec2(0.0),vec2(1.0));
+            float groundY = textureLod(materialParams_weatherGround,groundUv,0.0).r;
+            float fall = materialParams.motionKind == 3 ? 0.00022 : 0.00078 * materialParams.motionData[0].w;
+            p.y += groundY + materialParams.motionData[0].y + fract(auxiliary.x-elapsed*fall) * materialParams.motionData[0].z - transform[3].y;
+            material.sourcePosition.w = auxiliary.w < materialParams.motionData[3].z ? 1.0 : 0.0;
+            // At most the last partially active <=1024-instance packet has
+            // inactive vertices. Collapse them; don't draw the whole capacity.
+            if (material.sourcePosition.w < 0.5) p=vec3(0.0);
+            material.worldPosition = getWorldFromModelMatrix() * vec4(p,1.0);
+        }
+        if (materialParams.billboardMode != 0) {
+            mat4 model = getWorldFromModelMatrix() * transform;
+            vec3 center = model[3].xyz;
+            if (materialParams.nativeSkyData[0].w > 1.5) center =
+                (getWorldFromModelMatrix() * vec4(materialParams.nativeSkyData[3].xyz, 1.0)).xyz;
+            vec2 scale = vec2(length(model[0].xyz), length(model[1].xyz));
+            if (materialParams.billboardMode == 2) {
+                float depth = -(getViewFromWorldMatrix() * vec4(center,1.0)).z;
+                scale = vec2(max(0.0,depth) * 2.0 * materialParams.pointSize
+                    / (getClipFromViewMatrix()[1][1] * materialParams.viewportSize.y));
+            }
+            mat3 cameraAxes = transpose(mat3(getViewFromWorldMatrix()));
+            vec2 offset = (localPosition.xy + vec2(0.5) - materialParams.billboardCenter) * scale;
+            material.worldPosition = vec4(center + cameraAxes[0] * offset.x + cameraAxes[1] * offset.y, 1.0);
+        }
+        @NORMAL@
+        float4 vertexTint = materialParams.vertexColors ? material.color : float4(1.0);
+        if (materialParams.nativeSkyData[0].w > 0.5 && materialParams.nativeSkyData[0].w < 1.5) vertexTint.rgb =
+            material.color.r * materialParams.nativeSkyData[0].xyz + material.color.g * materialParams.nativeSkyData[1].xyz
+            + material.color.b * materialParams.nativeSkyData[2].xyz;
+        if (materialParams.motionKind == 6) {
+            // In the explicitly prepared atlas vertex layout RGB is the
+            // evaluated source tint / face shade, A is its occlusion face slot.
+            float level = auxiliary.x >= 1000000.0 ? 0.0
+                : mod(floor(auxiliary.x / pow(4.0, material.color.a)), 4.0) / 3.0;
+            vertexTint = float4(material.color.rgb * (1.0 - level * 0.28), 1.0);
+            material.sourceAtlas.w = materialParams.fluidSurface && auxiliary.x >= 1000000.0 ? 4.0 : auxiliary.y;
+        }
+        material.color = vertexTint * texelFetch(materialParams_instanceData, ivec2(4, row), 0);
+        float3 uv = float3(material.uv0, 1.0);
+        material.uv0 = float2(dot(materialParams.uvRowU, uv), dot(materialParams.uvRowV, uv));
+        if (materialParams.fluidSurface && materialParams.motionKind != 6 && fluid.x - 1000000.0 >= 0.0
+                && mod(floor((fluid.x - 1000000.0) / 32768.0), 2.0) > 0.5 && material.sourceNormal.y > 0.5) {
+            float angle = mod(fluid.x - 1000000.0, 32768.0) * 6.283185307179586 / 4096.0;
+            float s = 0.25 * sin(angle), c = 0.25 * cos(angle);
+            float x = material.sourcePosition.x, z = material.sourcePosition.z;
+            material.uv0 = z < 0.0 ? (x < 0.0 ? float2(0.5-c-s,0.5-c+s) : float2(0.5+c-s,0.5-c-s))
+                : (x < 0.0 ? float2(0.5-c+s,0.5+c+s) : float2(0.5+c+s,0.5+c-s));
+        }
+        if (materialParams.motionKind == 6) {
+            material.sourceAtlas.xy = material.uv0;
+            if (materialParams.motionData[1].w > -0.5) {
+            float2 atlasSize = materialParams.motionData[0].xy;
+            float columns = materialParams.motionData[0].z, cellSize = materialParams.motionData[0].w;
+            float2 cell = floor(material.uv0 * atlasSize / cellSize);
+            float tile = cell.x + cell.y * columns;
+            float2 lookupSize = materialParams.motionData[1].xy;
+            ivec2 at = ivec2(mod(tile, lookupSize.x), floor(tile / lookupSize.x));
+            float4 frames = floor(texelFetch(materialParams_atlasLookup, at, 0) * 255.0 + 0.5);
+            float current = frames.r + frames.g * 256.0, next = frames.b + frames.a * 256.0;
+            material.sourceAtlas.xy = material.uv0 + (float2(mod(next, columns), floor(next / columns)) - cell) * cellSize / atlasSize;
+            material.sourceAtlas.z = texelFetch(materialParams_atlasBlend, at, 0).r;
+            material.uv0 += (float2(mod(current, columns), floor(current / columns)) - cell) * cellSize / atlasSize;
+            }
+        }
+        if (materialParams.flipV) {material.uv0.y = 1.0 - material.uv0.y;material.sourceAtlas.y = 1.0 - material.sourceAtlas.y;}
+    }
+}
+fragment {
+    precision highp float;
+    // Pinned-engine adapter: evaluate the existing BRDF once before the source
+    // face multiplier / linear fog. Explicitly compile-check on engine upgrades.
+    vec4 evaluateMaterial(const MaterialInputs inputMaterial);
+    float sourceSkyTime() { return materialParams.skyTime + texelFetch(materialParams_runtimeData, ivec2(0), 0).r; }
+    float sourceSkyMeteor() {
+        float m=texelFetch(materialParams_runtimeData, ivec2(0), 0).g;
+        return m>=-1.0 ? m : materialParams.skyMeteor;
+    }
+    @NIGHT_FIELD@
+    @SOURCE_COLOR@
+    float3 sourceReflection(float roughness, float3 incident, float3 normal) {
+        float reflective = 1.0 - smoothstep(0.34, 0.6, roughness);
+        if (reflective <= 0.001) return float3(0.0);
+        float3 reflected = reflect(incident, normal);
+        float fresnel = 0.18 + 0.82 * pow(1.0 - abs(dot(-incident, normal)), 3.0);
+        return bcNightSky(reflected) * reflective * fresnel * 1.8 * materialParams.skyGain;
+    }
+    float3 sourceFinish(float3 premultiplied, float alpha, float fogFactor) {
+        float policy = materialParams.nativeSkyData[2].w;
+        if (policy > 0.5) {
+            float3 color = premultiplied / max(alpha, 0.000001);
+            if (policy < 1.5) color = bcSourceACES(color, materialParams.nativeSkyData[1].w);
+            color = bcSourceOETF(color);
+            // Three's refreshFogUniforms uses getUnlitUniformColorSpace:
+            // the default framebuffer receives encoded fog uniforms too.
+            // Offscreen rendering keeps both fragment and fog colour linear.
+            return mix(color, bcSourceOETF(materialParams.fogColor), fogFactor) * alpha;
+        }
+        return mix(premultiplied, materialParams.fogColor * alpha, fogFactor);
+    }
+    void material(inout MaterialInputs material) {
+        prepareMaterial(material);
+        if (materialParams.motionKind >= 2 && materialParams.motionKind <= 4 && variable_sourcePosition.w < 0.5) discard;
+        float4 sampledBase = texture(materialParams_baseMap, getUV0());
+        if (materialParams.motionKind == 6) sampledBase = mix(sampledBase, texture(materialParams_baseMap, variable_sourceAtlas.xy), variable_sourceAtlas.z);
+        float4 base = materialParams.baseColor * getColor() * sampledBase;
+        if (materialParams.motionKind == 5) {
+            // Exact source valley curtain patch. Its UV is the original
+            // across / height pair, and visible time has its own 250ms cap.
+            float elapsed = materialParams.motionData[0].x + texelFetch(materialParams_runtimeData, ivec2(1, 0), 0).r;
+            float2 cell = floor(float2(getUV0().x * 5.0, (getUV0().y + elapsed * 3.8) * 3.0));
+            float streak = fract(sin(dot(cell, float2(12.9898,78.233))) * 43758.5453);
+            base.rgb *= mix(0.72, 1.42, step(0.68, streak));
+        }
+        if (materialParams.distanceOpacity) {
+            float cameraDistance = length((getViewFromWorldMatrix() * float4(getWorldPosition(), 1.0)).xyz);
+            base.a = mix(base.a, 1.0, smoothstep(24.0, 60.0, cameraDistance));
+        }
+        if (base.a < materialParams.alphaCutoff) discard;
+        @ALPHA@
+        if (materialParams.motionKind == 1) {
+            float3 n=normalize(variable_sourceNormal.xyz);
+            float3 light=materialParams.lambertHemisphere[0].xyz + materialParams.lambertHemisphere[3].xyz*n.x
+                + materialParams.lambertHemisphere[1].xyz*n.y + materialParams.lambertHemisphere[2].xyz*n.z
+                + materialParams.lambertDirect*max(0.0,dot(n,materialParams.lambertDirection));
+            // The storm is a moving point light, separate from the static
+            // source lights whose finite support was reviewed at packing.
+            // Filament uses a camera-relative origin; never compare that
+            // position directly with an application world-space uniform.
+            if (materialParams.stormFlash.w > 0.0) {
+                float3 userPosition=(getUserWorldFromWorldMatrix()*float4(getWorldPosition(),1.0)).xyz;
+                float3 userNormal=normalize(mat3(getUserWorldFromWorldMatrix())*n);
+                float3 toFlash=materialParams.stormFlash.xyz-userPosition;
+                float squared=dot(toFlash,toFlash);
+                float window=max(0.0,1.0-pow(squared/(28.0*28.0),2.0));
+                float attenuation=window*window/max(squared,0.01);
+                float facing=max(0.0,dot(userNormal,toFlash*inversesqrt(max(squared,0.00000001))));
+                light += @STORM_COLOR@ * (materialParams.stormFlash.w*attenuation*facing/3.141592653589793);
+            }
+            base.rgb *= light;
+        }
+        material.baseColor = base;
+        if (materialParams.skyBackdrop) {
+            material.baseColor.rgb += materialParams.floatingSky
+                ? bcFloatingNightSky(variable_sourcePosition.xyz) : bcNightSky(variable_sourcePosition.xyz);
+        }
+        @LIGHTING@
+        float facing = smoothstep(-0.45, 0.75,
+            dot(normalize(variable_sourceNormal.xyz), materialParams.effectDirection));
+        float3 tint = mix(materialParams.effectShadowTint, materialParams.effectLightTint, facing);
+        float brightness = mix(0.84, 1.05, facing);
+        float3 axis = abs(variable_sourcePosition.xyz);
+        float secondAxis = axis.x + axis.y + axis.z
+            - min(axis.x, min(axis.y, axis.z)) - max(axis.x, max(axis.y, axis.z));
+        float edge = smoothstep(0.39, 0.475, secondAxis);
+        float3 multiplier = mix(float3(1.0), tint * brightness, materialParams.effectStrength)
+            * (1.0 - edge * materialParams.effectEdgeStrength);
+        material.postLightingColor = float4(multiplier, 1.0);
+        float fogDepth = -(getViewFromWorldMatrix() * float4(getWorldPosition(), 1.0)).z;
+        float4 projection = texelFetch(materialParams_runtimeData, ivec2(1, 0), 0);
+        float2 fogRange = projection.a > 0.5 ? projection.gb : materialParams.fogRange;
+        float fogFactor = materialParams.fogEnabled
+            ? smoothstep(fogRange.x, fogRange.y, fogDepth) : 0.0;
+        // Engine depth/picking variants have no BRDF evaluator. They need only
+        // the original alpha, not scene color or fog. Ambient-only lit color
+        // is explicitly refused by the current source capability check.
+        @FOG_VARIANT_BEGIN@
+        if (fogFactor > 0.0 || materialParams.nativeSkyData[2].w > 0.5) {
+            @FOG_EVALUATION@
+            material.postLightingColor = float4(1.0);
+        }
+        @FOG_VARIANT_END@
+    }
+}

@@ -115,6 +115,11 @@ export function validateManifest({ root, manifest, generatedFiles = new Map(), c
     }
   }
 
+  for (const retired of manifest.retiredAssets ?? []) {
+    try {
+      if (existsSync(safeRepositoryPath(root, retired))) errors.push(`Retired asset still packaged: ${retired}`);
+    } catch (error) { errors.push(error.message); }
+  }
   for (const consumer of manifest.consumers ?? []) {
     try {
       const consumerPath = safeRepositoryPath(root, consumer.path);

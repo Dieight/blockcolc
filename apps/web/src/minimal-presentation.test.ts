@@ -26,4 +26,10 @@ describe('minimal presentation priority',()=>{
   if(!result.ok)throw Error(result.message);
   expect(canPresentMinimalFocus(result.state,null,true,false)).toBe(false);
  });
+ it('keeps a sealed workspace minimal without reopening the ordinary task chooser',()=>{
+  const sealed={...state,activeProjectId:null,projects:state.projects.map(project=>({...project,status:'monument' as const}))};
+  expect(canPresentMinimalFocus(sealed,null,true,false)).toBe(true);
+  expect(canPresentMinimalFocus(sealed,null,false,false)).toBe(false);
+  expect(canPresentMinimalFocus(sealed,null,true,true)).toBe(false);
+ });
 });

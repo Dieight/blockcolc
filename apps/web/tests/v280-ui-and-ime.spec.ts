@@ -150,6 +150,7 @@ test('settings use four existing-sized groups, working secondary rows and unclip
   const notification=settings.getByRole('button',{name:'刷新通知状态',exact:true});
   const height=await notification.evaluate(el=>el.parentElement!.parentElement!.getBoundingClientRect().height);await notification.click();
   await expect(notification).toBeEnabled();expect(await notification.evaluate(el=>el.parentElement!.parentElement!.getBoundingClientRect().height)).toBe(height);
+  await settings.getByRole('button',{name:'白噪音',exact:true}).click();
   await settings.getByLabel('自然白噪音',{exact:true}).check();
   const volume=settings.locator('.ambient-volume-setting .physical-slider');await expect(volume).toBeHidden();
   await settings.getByRole('button',{name:'白噪音音量',exact:true}).click();await volume.scrollIntoViewIfNeeded();

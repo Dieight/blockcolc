@@ -4,7 +4,7 @@ import {buildingCpuKey,prepareBuildingCpuRecipe,captureCpuGeometry,restoreCpuGeo
 import {validateBlueprint} from '../src/blueprint-model';
 function blueprint(){return validateBlueprint({schemaVersion:1,id:'building-cache',title:'Cache',bounds:{minX:0,maxX:1,minY:0,maxY:0,minZ:0,maxZ:0},voxels:[{x:0,y:0,z:0,materialId:'stone',stage:'foundation',buildOrder:5000},{x:1,y:0,z:0,materialId:'wood',stage:'details',buildOrder:10000}]});}
 function recipe(){const b=blueprint();return prepareBuildingCpuRecipe(buildingCpuKey(b,'p',10000,10000),b,'p',10000,10000);}
-const entry=():BuildingCpuCache=>({revision:1,recipes:[recipe()]});
+const entry=():BuildingCpuCache=>({revision:2,recipes:[recipe()]});
 describe('derived CPU building cache',()=>{
   it('restores structured-cloned local geometry and AO',()=>{
     const before=entry(),cache=createBuildingCpuCache();expect(cache.restore(structuredClone(before))).toBe(true);
@@ -25,7 +25,7 @@ describe('derived CPU building cache',()=>{
     expect(restoreBuildingCpuCache({...entry(),revision:999})).toBeNull();const corrupt=entry();corrupt.recipes[0]!.occlusion[0]=NaN;expect(restoreBuildingCpuCache(corrupt)).toBeNull();
     const original=new THREE.BoxGeometry(1,1,1),geometry=captureCpuGeometry(original);original.dispose();geometry.index![0]=1_000_000;
     const invalid=entry();invalid.recipes[0]!.originals.set('0',{batches:[{topologyKey:'cube',materialId:'stone',emissiveKind:'',emissiveLevel:0,indices:Uint32Array.of(0),matrices:new Float32Array(16),geometry}],handled:Uint32Array.of(0),topologies:1,topologyOverflow:0,materialGroups:1,materialOverflow:0,fallbackCount:0});
-    expect(restoreBuildingCpuCache(invalid)).toBeNull();expect(restoreBuildingCpuCache({revision:1,recipes:[]})).not.toBeNull();
+    expect(restoreBuildingCpuCache(invalid)).toBeNull();expect(restoreBuildingCpuCache({revision:2,recipes:[]})).not.toBeNull();
   });
   it('round trips scenery surface buffers and rejects unsafe vertex ownership',()=>{
     const value=entry(),geometry=new THREE.BoxGeometry(1,1,1),cpu=captureCpuGeometry(geometry);geometry.dispose();

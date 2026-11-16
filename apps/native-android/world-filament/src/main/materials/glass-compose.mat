@@ -1,0 +1,48 @@
+material {
+    name:"blockcolc-glass-compose", shadingModel:unlit, vertexDomain:device, flipUV:false,
+    culling:none, depthCulling:false, depthWrite:false, requires:[uv0],
+    parameters:[{type:sampler2d,name:blurred,precision:high},{ type:sampler2d, name:source, precision:high },
+        { type:float4, name:rect0 }, { type:float4, name:rect1 }, { type:float4, name:rect2 }, { type:float4, name:rect3 },
+        { type:float4, name:style0 }, { type:float4, name:style1 }, { type:float4, name:style2 }, { type:float4, name:style3 },
+        { type:float4, name:ceilings }, { type:float4, name:floors }, { type:float2, name:axis }]
+}
+fragment {
+    precision highp float;
+    // Panel membership is evaluated before backend render-target UV conversion.
+    int panel(vec2 uv) {
+        if(uv.x>=materialParams.rect3.x && uv.y>=materialParams.rect3.y && uv.x<=materialParams.rect3.z && uv.y<=materialParams.rect3.w)return 3;
+        if(uv.x>=materialParams.rect2.x && uv.y>=materialParams.rect2.y && uv.x<=materialParams.rect2.z && uv.y<=materialParams.rect2.w)return 2;
+        if(uv.x>=materialParams.rect1.x && uv.y>=materialParams.rect1.y && uv.x<=materialParams.rect1.z && uv.y<=materialParams.rect1.w)return 1;
+        if(uv.x>=materialParams.rect0.x && uv.y>=materialParams.rect0.y && uv.x<=materialParams.rect0.z && uv.y<=materialParams.rect0.w)return 0;
+        return -1;
+    }
+    vec4 rectangle(int i) {return i==0?materialParams.rect0:i==1?materialParams.rect1:i==2?materialParams.rect2:materialParams.rect3;}
+    vec4 style(int i) {return i==0?materialParams.style0:i==1?materialParams.style1:i==2?materialParams.style2:materialParams.style3;}
+
+    void material(inout MaterialInputs m) {
+        prepareMaterial(m);
+        vec2 uv=getUV0(); int i=panel(uv);
+        vec3 rgb=texture(materialParams_source,uvToRenderTargetUV(uv)).rgb;
+        if(i>=0) {
+            vec4 r=rectangle(i),s=style(i);
+            vec2 stepUv=materialParams.axis*s.xy/3.0;
+            rgb=vec3(0.0);float weights=0.0;
+            // Vertical scattering and finish happen directly at native output
+            // resolution, matching the source compositor without another copy.
+            for(int k=-6;k<=6;k++){
+                float weight=exp(-float(k*k)/8.0);
+                vec2 p=clamp(uv+float(k)*stepUv,r.xy+vec2(0.00001),r.zw-vec2(0.00001));
+                rgb+=texture(materialParams_blurred,uvToRenderTargetUV(p)).rgb*weight;weights+=weight;
+            }
+            rgb/=weights;
+            float y=dot(rgb,vec3(0.2126,0.7152,0.0722));
+            rgb=mix(vec3(y),rgb,s.z)*s.w;
+            float ceiling=i==0?materialParams.ceilings.x:i==1?materialParams.ceilings.y:i==2?materialParams.ceilings.z:materialParams.ceilings.w;
+            float peak=max(rgb.r,max(rgb.g,rgb.b)); rgb*=min(1.0,ceiling/max(0.001,peak));
+            float readingFloor=i==0?materialParams.floors.x:i==1?materialParams.floors.y:i==2?materialParams.floors.z:materialParams.floors.w;
+            rgb=mix(clamp(rgb,0.0,1.0),vec3(1.0),readingFloor);
+            rgb=min(rgb,vec3(ceiling));
+        }
+        m.baseColor=vec4(clamp(rgb,0.0,1.0),1.0);
+    }
+}

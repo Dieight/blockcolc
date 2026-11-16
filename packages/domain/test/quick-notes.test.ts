@@ -3,9 +3,9 @@ import {createInitialState,execute,parseDomainState,type DomainCommand} from '..
 const clock={now:()=>new Date('2026-10-11T00:00:00Z')};
 describe('durable quick notes',()=>{
   it('migrates a real schema-13 record without changing any old facts',()=>{
-    const {quickNotes:_notes,...legacy}=createInitialState('UTC');
+    const {quickNotes:_notes,birthday:_birthday,birthdayRewards:_rewards,...legacy}=createInitialState('UTC');
     const upgraded=parseDomainState({...legacy,schemaVersion:13});
-    expect(upgraded).toEqual({...legacy,schemaVersion:14,quickNotes:[]});
+    expect(upgraded).toEqual({...legacy,schemaVersion:15,quickNotes:[],birthday:{enabled:false,month:1,day:1},birthdayRewards:[]});
   });
   it('adds, strikes and deletes without touching focus or project facts',()=>{
     let state=createInitialState('UTC');const before=structuredClone(state);

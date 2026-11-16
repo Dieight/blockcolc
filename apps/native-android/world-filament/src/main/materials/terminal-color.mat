@@ -1,0 +1,40 @@
+// ACES fit and sRGB OETF from Three.js (MIT; assets/licenses/three.txt).
+// Apply exactly once to the linear HDR scene. Filament's built-in ACES is not
+// the same operator as the production Three ACESFilmicToneMapping.
+material {
+    name : "blockcolc-terminal-color",
+    shadingModel : unlit,
+    vertexDomain : device,
+    flipUV : false,
+    culling : none,
+    depthCulling : false,
+    depthWrite : false,
+    requires : [uv0],
+    parameters : [
+        { type : sampler2d, name : source, precision : high },
+        { type : sampler2d, name : bloom, precision : high },
+        { type : float, name : bloomStrength, precision : high },
+        { type : float3, name : worldColor, precision : high },
+        { type : bool, name : gradeEnabled },
+        { type : bool, name : sourceEncoded },
+        { type : float, name : exposure }
+    ]
+}
+fragment {
+    @SOURCE_COLOR@
+    void material(inout MaterialInputs material) {
+        prepareMaterial(material);
+        float3 linear = texture(materialParams_source, uvToRenderTargetUV(getUV0())).rgb;
+        linear += texture(materialParams_bloom, uvToRenderTargetUV(getUV0())).rgb * materialParams.bloomStrength;
+        float3 rgb = materialParams.sourceEncoded ? linear : bcSourceOETF(bcSourceACES(linear, materialParams.exposure));
+        if (materialParams.gradeEnabled) {
+            // Formal WorldColorCompositor samples the finished RGBA8 frame.
+            rgb = floor(clamp(rgb, 0.0, 1.0) * 255.0 + 0.5) / 255.0;
+            float y = dot(rgb, float3(0.2126,0.7152,0.0722));
+            rgb = mix(float3(y), rgb, materialParams.worldColor.x);
+            rgb = (rgb - 0.5) * materialParams.worldColor.z + 0.5;
+            rgb = clamp(rgb * materialParams.worldColor.y, 0.0, 1.0);
+        }
+        material.baseColor = float4(rgb, 1.0);
+    }
+}

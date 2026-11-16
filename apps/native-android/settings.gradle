@@ -1,0 +1,17 @@
+pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
+dependencyResolutionManagement { repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS); repositories { google(); mavenCentral() } }
+rootProject.name = 'blockcolc-native'
+include ':app', ':world-core', ':world-filament', ':domain-core', ':state-store', ':state-store-android'
+include ':focus-core'
+include ':presentation-core'
+include ':platform-audio'
+include ':platform-weather'
+include ':platform-updates'
+include ':platform-cloud'
+
+include ':export-core'
+// External UI measurement runs in its own process against the optimized,
+// non-debuggable preview. It is never a dependency of an application APK.
+if(providers.gradleProperty('nativePerformanceChecks').getOrElse('false')=='true')include ':performance-checks'
+// Native clients use the same optional account service. The legacy uploader
+// remains in the old application until rollout; it is not a native dependency.

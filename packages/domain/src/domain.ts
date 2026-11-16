@@ -1,4 +1,5 @@
 import { holidaysOnDate } from './holidays.js';
+import { birthdayOnDate, DEFAULT_BIRTHDAY, isBirthdayDateValid } from './birthday.js';
 import { copyDomainState } from './state-copy.js';
 import {
   assertISODate,
@@ -26,7 +27,9 @@ import type {
 export function createInitialState(timeZone = "UTC", restWeekdays: number[] = [0, 6]): DomainState {
   assertCalendar(timeZone, restWeekdays);
   return {
-    schemaVersion: 14,
+    schemaVersion: 15,
+    birthday: { ...DEFAULT_BIRTHDAY },
+    birthdayRewards: [],
     quickNotes: [],
     projects: [],
     habitBuildings: [],
@@ -55,6 +58,12 @@ export function createInitialState(timeZone = "UTC", restWeekdays: number[] = [0
 
 export function execute(state: DomainState, command: DomainCommand, clock: Clock): CommandResult {
   try {
+    // Checking an already-observed birthday must not copy/save the world or
+    // advance a revision. The application still serializes the real grant.
+    if (command.type === 'ObserveBirthday') {
+      const date = localDateOf(validNow(clock), state.calendar.timeZone);
+      if (!birthdayOnDate(state.birthday, date) || state.birthdayRewards.some(reward => reward.year === Number(date.slice(0, 4)))) return ok(state, []);
+    }
     // These exact lifecycle states perform no mutation. Validate the clock
     // even on this path, and complete an elapsed session before deduplicating.
     if (command.type === 'RecordFocusBackgrounded' || command.type === 'RecordFocusForegrounded' || command.type === 'GrantFocusLifecycleExemption') {
@@ -105,6 +114,19 @@ export function completedPomodorosOn(state: DomainState, date: string): number {
 function handle(state: DomainState, command: DomainCommand, clock: Clock): CommandResult {
   const now = validNow(clock).toISOString();
   switch (command.type) {
+    case 'ConfigureBirthday': {
+      if (typeof command.enabled !== 'boolean' || !isBirthdayDateValid(command.month, command.day)) return fail(state, 'INVALID_INPUT', 'Invalid birthday month/day');
+      state.birthday = { enabled: command.enabled, month: command.month, day: command.day };
+      return ok(state, [{ type: 'BirthdayConfigured' }]);
+    }
+    case 'ObserveBirthday': {
+      const date = localDateOf(new Date(now), state.calendar.timeZone), year = Number(date.slice(0, 4));
+      if (!birthdayOnDate(state.birthday, date) || state.birthdayRewards.some(reward => reward.year === year)) return ok(state, []);
+      const owner = state.projects.find(project => project.id === state.activeProjectId && project.status !== 'deleted')
+        ?? state.projects.find(project => project.status !== 'deleted');
+      state.birthdayRewards.push({ year, date, awardedAt: now, settlementIndex: owner?.settlementIndex ?? null });
+      return ok(state, [{ type: 'BirthdayRewardGranted', year, date }]);
+    }
     case 'AddQuickNote': {
       requireNonBlank(command.noteId, 'noteId');
       requireNonBlank(command.text, 'text');
@@ -354,14 +376,17 @@ function handle(state: DomainState, command: DomainCommand, clock: Clock): Comma
         return fail(state, "SUBTASK_NOT_FOUND", "Subtask does not exist");
       }
       if (!Number.isInteger(command.plannedDurationMs) || command.plannedDurationMs <= 0) throw new Error("plannedDurationMs must be a positive integer");
-      const endsAt = new Date(Date.parse(now) + command.plannedDurationMs).toISOString();
+      const deadline = command.deadlineAt === undefined ? Infinity : Date.parse(command.deadlineAt);
+      if (command.deadlineAt !== undefined && (!Number.isFinite(deadline) || deadline <= Date.parse(now))) return fail(state, "FOCUS_DEADLINE_PASSED", "The chosen end time has passed");
+      const plannedDurationMs = Math.min(command.plannedDurationMs, deadline - Date.parse(now));
+      const endsAt = new Date(Date.parse(now) + plannedDurationMs).toISOString();
       state.activeFocusSession = {
         id: command.sessionId,
         projectId: project.id,
         subtaskId: command.subtaskId,
         startedAt: now,
         endsAt,
-        plannedDurationMs: command.plannedDurationMs,
+        plannedDurationMs,
         timeZoneAtStart: state.calendar.timeZone,
         ...(command.marathon === true ? { marathon: true } : {}),
         ...(command.deferredSettlement === true ? { deferredSettlement: true as const } : {}),

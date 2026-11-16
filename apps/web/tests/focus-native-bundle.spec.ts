@@ -18,7 +18,9 @@ async function createFirstProject(page: Page): Promise<void> {
 
 async function setShortRounds(page: Page): Promise<void> {
   await page.getByRole('button', { name: '设置', exact: true }).click();
+  await openSecondarySetting(page,'普通任务');
   await page.getByLabel('普通任务专注分钟').fill('1');
+  await openSecondarySetting(page,'普通任务');
   await page.getByLabel('普通任务专注分钟').press('Enter');
   await page.getByLabel('每轮休息分钟').fill('1');
   await page.getByLabel('每轮休息分钟').press('Enter');

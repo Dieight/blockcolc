@@ -1,0 +1,244 @@
+plugins { id 'com.android.application'; id 'org.jetbrains.kotlin.android'; id 'org.jetbrains.kotlin.plugin.compose' }
+def diagnostics=providers.gradleProperty('nativeDiagnostics').getOrElse('false')=='true'
+def largeHeap=providers.gradleProperty('nativeLargeHeap').getOrElse('false')
+if(!(largeHeap in ['true','false']))throw new GradleException('nativeLargeHeap must be true or false')
+def diagnosticVersion=providers.gradleProperty('nativePreviewVersionCode')
+if(diagnosticVersion.isPresent()&&(!diagnostics||!(diagnosticVersion.get()==~ /[1-9][0-9]{0,8}/)))throw new GradleException('nativePreviewVersionCode is a positive diagnostic-only version override')
+// An internal benchmark can retain the installed preview's version code so
+// its byte-identical original APK can be restored without an uninstall.
+def benchmarkVersion=providers.gradleProperty('nativeBenchmarkVersionCode')
+if(benchmarkVersion.isPresent()) {
+    if(diagnostics||!(benchmarkVersion.get()==~ /[1-9][0-9]{0,8}/))throw new GradleException('Invalid benchmark version override')
+    gradle.taskGraph.whenReady { graph ->
+        if(!graph.hasTask(':app:recordBenchmarkPreview')||graph.allTasks.any{it.name in ['assembleRelease','assembleDebug','recordPrivatePreview','recordStandardPreview']})
+            throw new GradleException('Version override is restricted to recordBenchmarkPreview')
+    }
+}
+android {
+    namespace 'com.blockcolc.preview'
+    compileSdk 35
+    defaultConfig { applicationId 'com.blockcolc.preview'; minSdk 23; targetSdk 35; versionCode(diagnostics?diagnosticVersion.getOrElse('2').toInteger():benchmarkVersion.getOrElse('12').toInteger()); versionName(diagnostics?'0.3-p3-diagnostic':'3.0.0-p3-preview'); testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner' }
+    defaultConfig { buildConfigField 'boolean','NATIVE_DIAGNOSTICS',diagnostics.toString() }
+    defaultConfig { manifestPlaceholders = [nativeLargeHeap:largeHeap] }
+    buildTypes {
+        debug { minifyEnabled !diagnostics; proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'),'user-preview.pro' }
+        release { signingConfig signingConfigs.debug; debuggable false; minifyEnabled !diagnostics; proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'),'user-preview.pro' }
+        // Same isolated identity and signing as the user preview, with the
+        // production optimizer and runtime flags. Never benchmark Debug as if
+        // it were the release application.
+        benchmark {
+            initWith release
+            matchingFallbacks = ['release']
+            signingConfig signingConfigs.debug
+            debuggable false
+        }
+    }
+    sourceSets.main.java.srcDir diagnostics?'src/diagnostic/kotlin':'src/userPreview/kotlin'
+    if(diagnostics)sourceSets.test.java.srcDir 'src/diagnosticTest/kotlin'
+    if(diagnostics) { sourceSets.main.res.srcDir 'src/diagnostic/res' }
+    buildFeatures { compose true }
+    buildFeatures { buildConfig true }
+    defaultConfig { buildConfigField 'String','PUBLIC_RELEASE_VERSION',groovy.json.JsonOutput.toJson(new groovy.json.JsonSlurper().parse(rootProject.file('../../version.json')).versionName) }
+    compileOptions { coreLibraryDesugaringEnabled true; sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+    kotlinOptions { jvmTarget = '17' }
+    if(diagnostics) sourceSets.main.assets.srcDir layout.buildDirectory.dir('generated/world-inputs')
+    if(diagnostics) sourceSets.main.assets.srcDir layout.buildDirectory.dir('generated/web-reference')
+    if(diagnostics) sourceSets.main.assets.srcDir layout.buildDirectory.dir('generated/p2-fixture')
+    sourceSets.main.res.srcDir project(':presentation-core').layout.buildDirectory.dir('generated/native-ui/res')
+    aaptOptions { noCompress 'bin','filamat','f32','ogg' }
+}
+
+// Instrumentation belongs to the diagnostic variant. Disabling the component
+// also keeps ordinary user-package lint from traversing diagnostic test roots.
+androidComponents.beforeVariants(androidComponents.selector().all()){variant->
+    if(diagnostics && variant.buildType=='benchmark')variant.enable=false
+    variant.enableAndroidTest=diagnostics
+}
+
+// Reuse the approved product artwork and legacy splash across both Android
+// implementations. The native preview keeps its separate name and identity.
+def launcherResources=layout.buildDirectory.dir('generated/native-launcher/res')
+tasks.register('prepareNativeLauncherResources',Sync){
+    from(rootProject.file('../android/android/app/src/main/res')){
+        include 'mipmap-*/ic_launcher*.png','mipmap-anydpi-v26/ic_launcher*.xml',
+            'values/ic_launcher_background.xml','values/splash.xml','values-night/splash.xml','drawable/splash.xml'
+    }
+    into launcherResources
+}
+android.sourceSets.main.res.srcDir launcherResources
+tasks.named('preBuild').configure{dependsOn 'prepareNativeLauncherResources'}
+dependencies {
+    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.3'
+    implementation project(':focus-core')
+    implementation project(':presentation-core')
+    implementation project(':platform-audio')
+    implementation project(':platform-weather')
+    implementation project(':platform-updates')
+    implementation project(':platform-cloud')
+    implementation project(':state-store-android')
+    implementation project(':world-core')
+    implementation project(':world-filament')
+    implementation platform('androidx.compose:compose-bom:2024.10.01')
+    implementation 'androidx.activity:activity-compose:1.9.3'
+    // The Activity transitive version (1.3.1) rejects ART on API 35+.
+    implementation 'androidx.profileinstaller:profileinstaller:1.4.1'
+    implementation 'androidx.compose.material3:material3'
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.json:json:20240303'
+    androidTestImplementation 'androidx.test:runner:1.6.2'
+    androidTestImplementation 'androidx.test.ext:junit:1.2.1'
+    androidTestImplementation 'androidx.test:rules:1.6.1'
+    androidTestImplementation 'androidx.test.uiautomator:uiautomator:2.3.0'
+    androidTestImplementation platform('androidx.compose:compose-bom:2024.10.01')
+    androidTestImplementation 'androidx.compose.ui:ui-test-junit4'
+    if(diagnostics) debugImplementation 'androidx.compose.ui:ui-test-manifest'
+}
+tasks.register('prepareWorldInputs', Sync) {
+    def input = providers.gradleProperty('worldInputs')
+    inputs.file(input.map { new File(rootProject.file(it),'manifest.json') })
+    from(input.map { rootProject.file(it) }) { include '*.bin','*.world.json','resource-pack.json','images/*.png','images/*.f32' }
+    into layout.buildDirectory.dir('generated/world-inputs')
+    doFirst {
+        if(!input.isPresent())throw new GradleException('Pass -PworldInputs=<frozen P1 input directory>; no placeholder world is used.')
+        def manifest=new File(rootProject.file(input.get()),'manifest.json')
+        if(!manifest.isFile())throw new GradleException('P1 input export is unfinished: manifest.json is missing.')
+        def source=new groovy.json.JsonSlurper().parse(manifest)
+        if(source.inventoryOnly==true)throw new GradleException('Source inventory is not a complete frozen native input.')
+        def fixtures=source.reports*.name
+        if(source.errors!=[] || !(source.producerFingerprint instanceof String) || !(source.producerFingerprint==~ /[a-f0-9]{64}/) || !(fixtures in [['ocean','coast'],['ocean','coast','valley','floating']]))
+            throw new GradleException('P1 input export did not pass its final source/fixture checks.')
+        if(source.assets=='mc263'&&!new File(rootProject.file(input.get()),'resource-pack.json').isFile())throw new GradleException('MC source reference is missing its normalized resource pack; do not substitute original assets.')
+        for(name in fixtures)for(world in [name,name+'-update'])for(ext in ['bin','world.json'])if(!new File(rootProject.file(input.get()),world+'.'+ext).isFile())throw new GradleException('Missing P1 input: '+world+'.'+ext)
+    }
+}
+if(diagnostics) tasks.named('preBuild').configure { dependsOn 'prepareWorldInputs' }
+tasks.named('preBuild').configure { dependsOn ':presentation-core:exportNativeUiAssets' }
+tasks.register('buildSourceReference',Exec) {
+    workingDir rootProject.projectDir
+    commandLine 'node','../../node_modules/vite/bin/vite.js','build','--config','tools/reference-vite.config.ts'
+    inputs.files(fileTree('../../../packages/voxel/src'),fileTree('../tools'),fileTree('../../../spikes/world-closeup') {include 'vite.config.ts'})
+    outputs.dir layout.buildDirectory.dir('generated/web-reference')
+}
+if(diagnostics) tasks.named('preBuild').configure { dependsOn 'buildSourceReference' }
+tasks.register('prepareP2Fixture',Exec) {
+    def input=providers.gradleProperty('worldInputs')
+    workingDir rootProject.projectDir
+    doFirst { if(!input.isPresent())throw new GradleException('worldInputs required for the explicit P2 synthetic fixture') }
+    commandLine 'node','tools/export-p2-fixture.mjs',input.getOrElse('missing'),layout.buildDirectory.dir('generated/p2-fixture').get().asFile.absolutePath
+    inputs.file input.map { new File(rootProject.file(it),'manifest.json') }
+    inputs.file '../tools/export-p2-fixture.mjs'
+    inputs.files fileTree('../../../packages/domain/src') { include '**/*.ts' }
+    outputs.dir layout.buildDirectory.dir('generated/p2-fixture')
+}
+if(diagnostics) tasks.named('preBuild').configure { dependsOn 'prepareP2Fixture' }
+tasks.register('prepareConstructionInputs',Sync) {
+    def input=providers.gradleProperty('constructionInputs')
+    if(input.isPresent()) {
+        from(input.map { rootProject.file(it) }) {
+            include 'p2-construction.json','construction/*.p2pack','images/*.png','images/*.f32'
+            eachFile { details ->
+                if(details.relativePath.segments[0]=='images') {
+                    def base=new File(rootProject.file(providers.gradleProperty('worldInputs').get()),details.relativePath.pathString)
+                    if(base.isFile()) {
+                        def digest={ f -> java.security.MessageDigest.getInstance('SHA-256').digest(f.bytes).encodeHex().toString() }
+                        if(digest(base)!=digest(details.file))throw new GradleException('Construction texture conflicts with world asset: '+details.path)
+                        details.exclude()
+                    }
+                }
+            }
+        }
+        inputs.file input.map { new File(rootProject.file(it),'p2-construction.json') }
+    }
+    into layout.buildDirectory.dir('generated/construction-inputs')
+    doFirst {
+        if(input.isPresent()) {
+            def index=new groovy.json.JsonSlurper().parse(new File(rootProject.file(input.get()),'p2-construction.json'))
+            if(index.completed!=true||index.schema!=1)throw new GradleException('Construction export is incomplete')
+        }
+    }
+}
+if(diagnostics) android.sourceSets.main.assets.srcDir layout.buildDirectory.dir('generated/construction-inputs')
+
+// Integration oracles are test resources only, never application assets.
+android.sourceSets.test.resources.srcDir project(':presentation-core').layout.buildDirectory.dir('generated/world-projection-oracle')
+android.sourceSets.test.resources.srcDir project(':domain-core').layout.buildDirectory.dir('generated/command-oracle')
+android.sourceSets.androidTest.resources.srcDir project(':world-core').layout.buildDirectory.dir('generated/terrain-device-oracle')
+android.sourceSets.androidTest.resources.srcDir project(':world-core').layout.buildDirectory.dir('generated/scenery-device-oracle')
+android.sourceSets.androidTest.resources.srcDir project(':world-core').layout.buildDirectory.dir('generated/native-resource-archive-oracle')
+android.sourceSets.androidTest.resources.srcDir project(':world-core').layout.buildDirectory.dir('generated/native-resource-textures-oracle')
+android.sourceSets.androidTest.resources.srcDir project(':world-core').layout.buildDirectory.dir('generated/native-resource-blocks-oracle')
+android.sourceSets.androidTest.resources.srcDir project(':world-core').layout.buildDirectory.dir('generated/native-resource-stack-oracle')
+android.sourceSets.androidTest.resources.srcDir project(':world-core').layout.buildDirectory.dir('generated/native-resource-atlas-oracle')
+android.sourceSets.androidTest.resources.srcDir project(':world-core').layout.buildDirectory.dir('generated/native-atlas-programs-oracle')
+android.sourceSets.test.resources.srcDir project(':world-core').layout.buildDirectory.dir('generated/native-resource-blocks-oracle')
+android.sourceSets.test.resources.srcDir project(':world-core').layout.buildDirectory.dir('generated/native-resource-terrain-oracle')
+android.sourceSets.test.resources.srcDir project(':presentation-core').layout.buildDirectory.dir('generated/reward-presentation-oracle')
+android.sourceSets.androidTest.resources.srcDir project(':world-core').layout.buildDirectory.dir('generated/native-resource-geometry-oracle')
+android.sourceSets.androidTest.resources.srcDir project(':world-core').layout.buildDirectory.dir('generated/native-resource-terrain-oracle')
+tasks.configureEach {
+    if(name.startsWith('process')&&name.endsWith('UnitTestJavaRes'))
+        dependsOn ':presentation-core:exportWorldProjectionOracle',':domain-core:exportCommandOracle',':world-core:exportNativeResourceBlocksOracle',':world-core:exportNativeResourceTerrainOracle',':presentation-core:exportRewardPresentationOracle'
+    if(name.startsWith('process')&&name.endsWith('AndroidTestJavaRes'))dependsOn ':world-core:exportTerrainDeviceOracle',':world-core:exportSceneryDeviceOracle',':world-core:exportNativeResourceArchiveOracle',':world-core:exportNativeResourceTexturesOracle',':world-core:exportNativeResourceBlocksOracle',':world-core:exportNativeResourceStackOracle',':world-core:exportNativeResourceAtlasOracle',':world-core:exportNativeAtlasProgramsOracle',':world-core:exportNativeResourceGeometryOracle',':world-core:exportNativeResourceTerrainOracle'
+}
+if(diagnostics) tasks.named('preBuild').configure { dependsOn 'prepareConstructionInputs' }
+
+// AndroidTest packaging alone can leave the target APK from a previous source
+// revision. Device instrumentation uses only a recorded, current pair.
+tasks.register('assembleP3DebugPair',Exec){
+    dependsOn 'assembleDebug','assembleDebugAndroidTest'
+    workingDir rootProject.projectDir
+    commandLine 'node','tools/preview-apk-pair.mjs','--record'
+}
+
+dependencies { implementation project(':export-core') }
+
+if(diagnostics){
+    def combined=layout.buildDirectory.file('generated/diagnostic-manifest/AndroidManifest.xml')
+    android.sourceSets.main.manifest.srcFile combined
+    tasks.register('prepareDiagnosticManifest'){
+        inputs.files 'src/main/AndroidManifest.xml','src/diagnostic/AndroidManifest.xml'
+        outputs.file combined
+        doLast{
+            def main=file('src/main/AndroidManifest.xml').getText('UTF-8')
+            def entries=file('src/diagnostic/AndroidManifest.xml').getText('UTF-8').split('<application>')[1].split('</application>')[0]
+            def out=combined.get().asFile;out.parentFile.mkdirs();out.setText(main.replace('</application>',entries+'\n</application>'),'UTF-8')
+        }
+    }
+    tasks.named('preBuild').configure {dependsOn 'prepareDiagnosticManifest'}
+}
+def identity=layout.buildDirectory.file('generated/native-build/native-build.json')
+tasks.register('prepareNativeBuildIdentity'){
+    inputs.property 'diagnostics',diagnostics
+    inputs.property 'privateRelay',false
+    inputs.property 'largeHeap',largeHeap
+    outputs.file identity
+    doLast{def out=identity.get().asFile;out.parentFile.mkdirs();out.text=groovy.json.JsonOutput.toJson([schema:1,mode:diagnostics?'diagnostic':'user-preview',privateRelay:false,accountBased:true,cloudProtocol:1,applicationId:'com.blockcolc.preview',largeHeap:largeHeap=='true'])}
+}
+android.sourceSets.main.assets.srcDir layout.buildDirectory.dir('generated/native-build')
+tasks.named('preBuild').configure {dependsOn 'prepareNativeBuildIdentity'}
+tasks.register('requireNativeDiagnostics'){doLast{if(!diagnostics)throw new GradleException('Instrumentation requires -PnativeDiagnostics=true; user preview has no diagnostic APIs/assets')}}
+tasks.configureEach {if(name=='assembleP3DebugPair'||name.contains('AndroidTest')&&name!='requireNativeDiagnostics')dependsOn 'requireNativeDiagnostics'}
+
+tasks.register('recordUserPreview',Exec){
+    dependsOn 'verifyUserPreviewPackage'
+    workingDir rootProject.projectDir
+    doFirst{if(diagnostics)throw new GradleException('recordUserPreview requires diagnostics disabled')}
+    commandLine 'node','tools/preview-apk-pair.mjs','--record','--user-preview'
+}
+
+tasks.register('verifyUserPreviewPackage',Exec){
+    dependsOn 'assembleRelease'
+    workingDir rootProject.projectDir
+    commandLine 'node','tools/check-user-preview-package.mjs',project.layout.buildDirectory.file('outputs/apk/release/app-release.apk').get().asFile.absolutePath
+}
+
+tasks.register('recordBenchmarkPreview',Exec){
+    dependsOn 'assembleBenchmark'
+    workingDir rootProject.projectDir
+    doFirst{if(diagnostics)throw new GradleException('Benchmark requires diagnostics disabled')}
+    commandLine 'node','tools/preview-apk-pair.mjs','--record','--benchmark'
+}
+
+// Synthetic external material checks are instrumentation-only, never user assets.
+android.sourceSets.androidTest.resources.srcDir project(':world-core').layout.buildDirectory.dir('generated/resource-special-oracle')
+tasks.configureEach {if(name.startsWith('process')&&name.endsWith('AndroidTestJavaRes'))dependsOn ':world-core:exportResourceSpecialOracle'}

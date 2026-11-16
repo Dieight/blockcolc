@@ -1,0 +1,47 @@
+plugins { id 'com.android.library'; id 'org.jetbrains.kotlin.android' }
+android {
+    namespace 'com.blockcolc.weather'
+    compileSdk 35
+    defaultConfig { minSdk 23 }
+    buildFeatures { buildConfig true }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+    kotlinOptions { jvmTarget = '17' }
+    sourceSets.main.java.srcDir layout.buildDirectory.dir('generated/source/weather')
+    sourceSets.main.assets.srcDir layout.buildDirectory.dir('generated/weather/assets')
+    sourceSets.test.java.srcDir layout.buildDirectory.dir('generated/test/weather')
+    sourceSets.test.resources.srcDir layout.buildDirectory.dir('generated/weather/assets')
+}
+dependencies {
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.json:json:20240303'
+}
+
+// Same ignored machine-local credential format as the current Android app.
+// Neither source inventories nor diagnostics include these values.
+def configFile=new File(rootProject.projectDir,'../../weather_api.txt')
+def apiHost='';def apiKey=''
+if(configFile.isFile()) {
+    def lines=configFile.readLines('UTF-8')
+    def hosts=lines.findAll{(it=~/(?i)^\s*API\s+HOST\b/).find()}
+    def keys=lines.findAll{(it=~/(?i)^\s*API\s+KEY\b/).find()}
+    def hostValues=hosts.size()==1?(hosts[0]=~/(?i)((?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+qweatherapi\.com)/).collect{it[1]}:[]
+    def keyValues=keys.size()==1?(keys[0]=~/(?i)(?<![0-9a-f])([0-9a-f]{32})(?![0-9a-f])/).collect{it[1]}:[]
+    if(hostValues.size()!=1||keyValues.size()!=1)throw new GradleException('The local weather configuration is missing or invalid.')
+    apiHost=hostValues[0].toLowerCase(Locale.ROOT);apiKey=keyValues[0]
+}
+android.defaultConfig {
+    buildConfigField 'String','QWEATHER_HOST',groovy.json.JsonOutput.toJson(apiHost)
+    buildConfigField 'String','QWEATHER_KEY',groovy.json.JsonOutput.toJson(apiKey)
+}
+
+tasks.register('prepareWeatherRuntime',Exec) {
+    workingDir rootProject.projectDir
+    commandLine 'node','tools/prepare-native-weather.mjs',layout.buildDirectory.dir('generated').get().asFile.absolutePath
+    inputs.file '../tools/prepare-native-weather.mjs'
+    for(name in ['WeatherPlugin','QWeatherAstronomy']){
+        inputs.file new File(rootProject.projectDir,"../android/android/app/src/main/java/com/blockcolc/app/${name}.java")
+        inputs.file new File(rootProject.projectDir,"../android/android/app/src/test/java/com/blockcolc/app/${name}Test.java")
+    }
+    outputs.dir layout.buildDirectory.dir('generated')
+}
+tasks.named('preBuild').configure {dependsOn 'prepareWeatherRuntime'}

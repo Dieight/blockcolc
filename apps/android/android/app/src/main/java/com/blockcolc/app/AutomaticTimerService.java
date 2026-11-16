@@ -77,7 +77,7 @@ public final class AutomaticTimerService extends Service {
             if (Build.VERSION.SDK_INT >= 26) {
                 manager.createNotificationChannel(new NotificationChannel(CHANNEL,
                     PresentationLanguage.text(this, "连续专注计时", "Continuous focus timer"),
-                    NotificationManager.IMPORTANCE_LOW));
+                    NotificationManager.IMPORTANCE_MIN));
             }
             PendingIntent open = PendingIntent.getActivity(this, ID, new Intent(this, MainActivity.class),
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
@@ -86,7 +86,7 @@ public final class AutomaticTimerService extends Service {
                 .setContentTitle("blockcolc")
                 .setContentText(PresentationLanguage.text(this, "连续专注计划进行中", "Continuous focus plan is running"))
                 .setContentIntent(open).setOngoing(true).setSilent(true)
-                .setPriority(NotificationCompat.PRIORITY_LOW).setCategory(NotificationCompat.CATEGORY_SERVICE).build();
+                .setPriority(NotificationCompat.PRIORITY_MIN).setCategory(NotificationCompat.CATEGORY_SERVICE).build();
             ServiceCompat.startForeground(this, ID, notification,
                 Build.VERSION.SDK_INT >= 34 ? ServiceInfo.FOREGROUND_SERVICE_TYPE_SYSTEM_EXEMPTED : 0);
             requestAdvance();

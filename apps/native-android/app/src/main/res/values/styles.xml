@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="BlockcolcNativeBase" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowBackground">@drawable/splash</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:colorAccent">#276749</item>
+    </style>
+    <style name="BlockcolcNative" parent="BlockcolcNativeBase" />
+</resources>

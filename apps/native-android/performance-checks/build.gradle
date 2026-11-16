@@ -1,0 +1,25 @@
+plugins { id 'com.android.test'; id 'org.jetbrains.kotlin.android' }
+
+android {
+    namespace 'com.blockcolc.performance'
+    compileSdk 35
+    defaultConfig { minSdk 23; targetSdk 35; testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner' }
+    targetProjectPath = ':app'
+    experimentalProperties['android.experimental.self-instrumenting'] = true
+    buildTypes {
+        benchmark {
+            debuggable true
+            signingConfig signingConfigs.debug
+            matchingFallbacks = ['release']
+        }
+    }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+    kotlinOptions { jvmTarget = '17' }
+}
+androidComponents.beforeVariants(androidComponents.selector().all()){variant->if(variant.buildType!='benchmark')variant.enable=false}
+
+dependencies {
+    implementation 'androidx.test:runner:1.6.2'
+    implementation 'androidx.test.ext:junit:1.2.1'
+    implementation 'androidx.test.uiautomator:uiautomator:2.3.0'
+}

@@ -1,12 +1,13 @@
 import { t, useI18n } from '../i18n';
 import { useEffect, useId, useRef, useState, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
-import { holidayEmblemsOnDate } from '@blockcolc/domain';
+import { birthdayOnDate, holidayEmblemsOnDate, type BirthdaySettings } from '@blockcolc/domain';
 import { useBackLayer } from '../back-layer';
 import {PixelClose} from './PixelIcon';
 
 // Original, integer-grid sprites. No emoji font or downloaded festival artwork.
 const SPRITES:Record<string,string[]>={
+ cake:['....a.a....','....b.b....','..bbbbbbb..','.bbbcbbbbb.','.ccccccccc.','.ccacccacc.','.ccccccccc.','.aaaaaaaaa.','bbbbbbbbbbb'],
  star:['.....a.....','.....a.....','...aaaaa...','aaaaaaaaaaa','..aaaaaaa..','...aaaaa...','..aaa.aaa..','..aa...aa..'],
  fire:['.....a.....','..b..a..b..','...b.a.b...','aaaa.c.aaaa','...b.a.b...','..b..a..b..','.....a.....','.....c.....','.....c.....'],
  gift:['..aa..aa..','..abbaaa..','...aaaa...','bbbbcbbbbb','bbbbcbbbbb','...cc.....','bbbccbbbbb','bbbccbbbbb','bbbccbbbbb'],
@@ -50,6 +51,7 @@ const SPRITES:Record<string,string[]>={
  drum:['..bbbbbb..','.baaaaaab.','..cccccc..','..caaaac..','..caaaac..','..cccccc..','..bbbbbb..'],
 };
 const SYMBOLS:Record<string,[string,string,string,string]>={
+ '生日蛋糕':['cake','#c96750','#e5ba57','#f2e5ce'],
  '烟花':['fire','#f4b638','#e65b47','#80947e'],'礼盒':['gift','#e16457','#edc950','#578571'],'星星':['star','#edc950','#fff1c4','#e58f38'],
  '灯笼':['lantern','#df5948','#f4c35e','#7c6249'],'结绳':['knot','#dc554a','#f4bf5b','#665541'],'爆竹':['cracker','#de5747','#f4c654','#596f52'],
  '心形':['heart','#df6376','#f5acaa','#bf455f'],'玫瑰':['flower','#d9566b','#f2a293','#508264'],'信封':['mail','#eee3ce','#e9a887','#ba756d'],
@@ -72,24 +74,32 @@ export function HolidayPixelGlyph({emblem}:{emblem:string}){
  return <svg viewBox="0 0 12 12" className="holiday-pixel" aria-hidden="true" shapeRendering="crispEdges">{rows.flatMap((row,y)=>[...row].flatMap((cell,x)=>cell==='.'?[]:<rect key={`${x}:${y}`} x={x+.5} y={y+(12-rows.length)/2} width="1" height="1" fill={{a,b,c}[cell as 'a'|'b'|'c']}/>))}</svg>;
 }
 
-export function HolidayEmblem({date,slot}:{date:string;slot:0|1|2}){
+export function HolidayEmblem({date,slot,birthday}:{date:string;slot:0|1|2;birthday?:BirthdaySettings}){
   useI18n();
- const entry=holidayEmblemsOnDate(date)[slot];const [open,setOpen]=useState(false);
+ const holiday=holidayEmblemsOnDate(date)[slot];
+ const cake=slot===0&&birthday&&birthdayOnDate(birthday,date)
+  ?{emblem:'生日蛋糕',holiday:{id:'birthday',name:'生日快乐',description:'今天属于你。小蛋糕留在聚落，祝你新的一岁自在生长。'}}:null;
+ if(holiday&&cake)return <span className="holiday-emblem-group"><OccasionEmblem entry={holiday} date={date}/><OccasionEmblem entry={cake} date={date}/></span>;
+ const entry=holiday??cake;
+ return entry?<OccasionEmblem entry={entry} date={date}/>:null;
+}
+function OccasionEmblem({date,entry}:{date:string;entry:{emblem:string;holiday:{id:string;name:string;description:string}}}){
+ useI18n();
+ const [open,setOpen]=useState(false);
  const button=useRef<HTMLButtonElement>(null),popover=useRef<HTMLDivElement>(null);const id=useId();
  const [position,setPosition]=useState<CSSProperties>({});
  const close=()=>{setOpen(false);button.current?.focus({preventScroll:true});};
  useBackLayer(open,()=>{close();return true;});
- useEffect(()=>setOpen(false),[date,entry?.holiday.id]);
+ useEffect(()=>setOpen(false),[date,entry.holiday.id]);
  useEffect(()=>{
   if(!open)return;
   const rect=button.current!.getBoundingClientRect(),width=Math.min(290,innerWidth-24);
   setPosition({width,left:Math.max(12,Math.min(innerWidth-width-12,rect.right-width)),top:rect.bottom+120>innerHeight?Math.max(12,rect.top-112):rect.bottom+8});
-  const outside=(e:PointerEvent)=>{if(!button.current?.contains(e.target as Node)&&!popover.current?.contains(e.target as Node))setOpen(false);};
+  const outside=(e:Event)=>{if(!button.current?.contains(e.target as Node)&&!popover.current?.contains(e.target as Node))setOpen(false);};
   const key=(e:KeyboardEvent)=>{if(e.key==='Escape'){e.preventDefault();e.stopImmediatePropagation();close();}};
-  document.addEventListener('pointerdown',outside);window.addEventListener('keydown',key,true);
-  return()=>{document.removeEventListener('pointerdown',outside);window.removeEventListener('keydown',key,true);};
+  document.addEventListener('pointerdown',outside,true);document.addEventListener('focusin',outside);window.addEventListener('keydown',key,true);
+  return()=>{document.removeEventListener('pointerdown',outside,true);document.removeEventListener('focusin',outside);window.removeEventListener('keydown',key,true);};
  },[open]);
- if(!entry)return null;
  return <span className="holiday-emblem" data-holiday={entry.holiday.id} onPointerDown={e=>e.stopPropagation()} onPointerUp={e=>e.stopPropagation()}>
   <button ref={button} type="button" className="holiday-emblem-button" aria-label={`${t(entry.holiday.name)} · ${t(entry.emblem)}`} aria-expanded={open} aria-controls={open?id:undefined} onClick={()=>setOpen(v=>!v)}><HolidayPixelGlyph emblem={entry.emblem}/></button>
   {open&&createPortal(<div ref={popover} id={id} className="holiday-intro" role="dialog" aria-label={t("{0}介绍", t(entry.holiday.name))} style={position}><div><strong>{t(entry.holiday.name)}</strong><button type="button" aria-label={t("关闭节日介绍")} onClick={close}><PixelClose size={16}/></button></div><p>{t(entry.holiday.description)}</p></div>,document.body)}

@@ -34,13 +34,16 @@ node tools/check-ui-assets.mjs --write
 - `blockcolc-four-periods-no-clock-draft.png`：未批准草案，不进入生成链。
 - `ic_stat_tomato_outline.xml`：按原单色镂空番茄钟的椭圆果皮、叶柄与表盘位置做阶梯像素化，不重新设计轮廓，有原生通知代码引用。
 - `ic_stat_blockcolc.xml`：当前全仓代码未发现引用；作为候选清理项记录，未在本轮删除。
-- `res/drawable*` 下的启动画面 PNG：完整摘要已记录，但生成来源仍未确认；不声称它们由应用图标母版派生。
+- `ic_ambient_play/pause/stop.xml`：本项目绘制的播放、暂停和停止像素矢量，用于同一条白噪音媒体通知，不替换品牌图标。
+- 启动页改为 `res/drawable/splash.xml` 引用批准的前景图标，按系统浅深模式设置背景，Android 12+ 使用同一前景图标。旧 Capacitor 横竖屏／密度 PNG 及占位矢量已归档，manifest 的退役列表阻止重新入包；见[启动页修复](icon-v2.4.0.md#v290-启动页资源修复)。
 - 自适应图标 XML/背景色资源：引用与摘要已登记；它们是静态 Android 资源，不是 Python 生成器输出。
 
 导航和常用建造操作使用 `apps/web/src/ui/PixelIcon.tsx` 的共用 12 格 SVG 字形，沿用 demo 的像素方向。品牌另用 16 格彩色字形，红色果皮包住凹入的浅色表盘，与批准的启动图标方向一致，SVG 外围透明、不嵌入带底色的 PNG；不改原生桌面图标。刷新统一为双向像素箭头，通用忙碌指示是三枚像素圆的共享 SVG mask。它们不依赖外部素材或 Canvas 重绘。导入、警告等功能图标保留 `lucide-react`。世界材质为程序生成；用户导入资源包与用户蓝图按产品文档的来源和许可边界处理。
 
 v2.5.6 字体试版使用可离线分发的缝合像素字体，来源、原件摘要和 OFL-1.1 许可见[字体记录](pixel-font-v2.5.6.md)。字体与完整许可随包提供，未覆盖字形回退到系统字体。
 
+v3.0.0 独立原生预览复用这些字形、品牌和词条；Android 字体容器转换、矢量生成及许可副本见[原生资源记录](native-ui-v3.0.0.md)，不另立一套视觉基线。
+
 节日挂件由 `HolidayEmblem.tsx` 的整数 SVG 网格原创绘制，二十种小建筑由 `holiday-buildings.ts` 生成，不下载或封装 MC 节日资产。历法使用 lunar-typescript 1.8.6，完整 MIT 声明在 `apps/web/public/licenses/lunar-typescript/LICENSE.txt`；天空星河与极光为本项目方向场 shader，未移植 Voxy 代码。
 
-内置声音改用用户提供的湖畔、鸟鸣录音和公有领域雨声，来源、许可、处理方法与摘要见[环境录音](ambient-audio.md)。两通道使用同一份工作区成品；旧四份合成音频已归档，不再封装。用户导入音频不纳入项目资产或公开发布。
+内置声音为完整林中鸟鸣、贴岸小浪与已批准的轻／重雨双层，来源、许可、处理方法与摘要见[环境录音](ambient-audio.md)。两通道使用同一份工作区成品；旧合成音频、湖畔、晨间鸟鸣、平静海浪和单层雨声已归档，不再封装。用户导入音频不纳入项目资产或公开发布。

@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   changeExact: vi.fn(),
   showBreak: vi.fn(),
   cancelBreak: vi.fn(),
+  showFocus: vi.fn(),
 }));
 
 vi.mock('@capacitor/core', () => ({
@@ -43,10 +44,10 @@ vi.mock('../src/break-live-update', () => ({
   showBreakLiveUpdate: mocks.showBreak,
   cancelBreakLiveUpdate: mocks.cancelBreak,
   cancelFocusLiveUpdate: vi.fn(),
-  showFocusLiveUpdate: vi.fn(),
+  showFocusLiveUpdate: mocks.showFocus,
 }));
 
-import { BREAK_COMPLETION_NOTIFICATION_ID, CapacitorNotificationPort } from '../src/notification-port';
+import { BREAK_COMPLETION_NOTIFICATION_ID, FOCUS_NOTIFICATION_ID, PLAN_COMPLETION_NOTIFICATION_ID, CapacitorNotificationPort } from '../src/notification-port';
 
 function wait(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -72,6 +73,31 @@ describe('Capacitor break notification deadline ownership', () => {
     mocks.checkExact.mockResolvedValue({ exact_alarm: 'granted' });
     mocks.showBreak.mockResolvedValue({ deadlineAlarmScheduled: true });
     mocks.cancelBreak.mockResolvedValue(undefined);
+  });
+
+  it('does not schedule a report reminder for every minimal/marathon round',async()=>{
+    await new CapacitorNotificationPort().scheduleFocusCompletion({sessionId:'batch-1',endsAt:new Date(Date.now()+60_000).toISOString(),marathon:true});
+    expect(mocks.scheduleLocal).not.toHaveBeenCalled();expect(mocks.showFocus).toHaveBeenCalledOnce();
+    expect(mocks.cancelLocal).toHaveBeenCalledWith({notifications:[{id:FOCUS_NOTIFICATION_ID}]});
+  });
+  it('keeps ordinary per-round reporting, but habits do not ask for a report',async()=>{
+    const port=new CapacitorNotificationPort(),endsAt=new Date(Date.now()+60_000).toISOString();
+    await port.scheduleFocusCompletion({sessionId:'ordinary',endsAt});
+    expect(mocks.scheduleLocal.mock.calls[0]![0].notifications[0].body).toMatch(/记录.*进度|report/i);
+    await port.scheduleFocusCompletion({sessionId:'habit',endsAt,requiresReport:false});
+    expect(mocks.scheduleLocal.mock.calls[1]![0].notifications[0].body).not.toMatch(/汇报|report/i);
+  });
+  it('uses one whole-plan record, not an alarm that per-round cleanup removes',async()=>{
+    const port=new CapacitorNotificationPort();
+    const notice={planKey:'batch:first',endsAt:new Date(Date.now()+240_000).toISOString(),requiresReport:true};
+    await port.schedulePlanCompletion(notice);await port.schedulePlanCompletion({...notice});
+    expect(mocks.scheduleLocal).toHaveBeenCalledOnce();
+    expect(mocks.scheduleLocal.mock.calls[0]![0].notifications[0]).toMatchObject({id:PLAN_COMPLETION_NOTIFICATION_ID,extra:{kind:'plan-completed',planKey:'batch:first'}});
+    mocks.cancelLocal.mockClear();await port.cancelFocusCompletion('first');
+    expect(mocks.cancelLocal).toHaveBeenCalledWith({notifications:[{id:FOCUS_NOTIFICATION_ID}]});
+    expect(mocks.cancelLocal).not.toHaveBeenCalledWith({notifications:[{id:PLAN_COMPLETION_NOTIFICATION_ID}]});
+    await port.cancelPlanCompletion();await port.schedulePlanCompletion(notice);
+    expect(mocks.scheduleLocal).toHaveBeenCalledTimes(2);
   });
 
   afterEach(() => {

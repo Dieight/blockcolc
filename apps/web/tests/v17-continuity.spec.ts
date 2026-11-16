@@ -1,3 +1,4 @@
+import {openSecondarySetting} from "./settings-controls";
 import { expect, test } from '@playwright/test';
 import { selectLastCalendarDays } from './select-calendar-days';
 
@@ -61,7 +62,9 @@ test('explains interrupted time in recent rhythm, project allocation, building m
   await page.clock.install({ time: new Date('2026-08-12T08:00:00+08:00') });
   await createDefaultProject(page);
   await page.getByRole('button', { name: '设置' }).click();
+  await openSecondarySetting(page,'普通任务');
   await page.getByLabel('普通任务专注分钟').fill('120');
+  await openSecondarySetting(page,'普通任务');
   await page.getByLabel('普通任务专注分钟').press('Enter');
   await page.getByRole('button', { name: '计时' }).click();
   await page.getByRole('button', { name: '开始 1 轮' }).click();

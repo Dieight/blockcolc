@@ -30,8 +30,10 @@ export interface RoundPlan {
   mode?: 'rounds' | 'marathon';
   /** Minimal mode defers both finite and habit work to one final report. */
   deferredSettlement?: true;
-  /** Chosen marathon end instant (ISO); informational, survives reloads. */
+  /** Chosen marathon end instant (ISO); legacy plans keep their original rules. */
   endAt?: string;
+  /** New end-time plans include a short final focus or a terminal short rest. */
+  deadlinePolicy?: 'exact';
   /** User-supplied cancellation reason retained until any earned rounds are reported. */
   cancellationReason?: FocusInterruptionCategory | null;
   /** Short user-entered context; stays local to a canceled plan until its report commits. */
@@ -75,10 +77,9 @@ export interface MarathonSchedule {
 }
 
 /**
- * Derives focus/break rounds from a raw duration and the normal per-round
- * settings: blocks are [focus][break][focus]…[focus], so for duration D,
- * focus rounds n = floor((D + break) / (focus + break)). Returns null when even
- * one round does not fit.
+ * End-time plans consume the entire selected window. A partial focus is a
+ * round; if the remainder is only a rest, finish that rest without inventing
+ * another round. Fixed-round plans and existing persisted plans are unchanged.
  */
 export function planRoundsForDuration(
   durationMs: number,
@@ -99,14 +100,27 @@ export function planRoundsForDuration(
   const focusMs = focusMinutes * 60_000;
   const breakMs = breakMinutes * 60_000;
   const cycleMs = focusMs + breakMs;
-  const rounds = breakMs === 0 ? Math.floor(durationMs / focusMs) : Math.floor((durationMs + breakMs) / cycleMs);
+  const rounds = Math.ceil(durationMs / cycleMs);
   if (rounds < 1) return null;
   const capped = Math.min(rounds, maxRounds);
   return {
     rounds: capped,
-    breaks: breakMs > 0 ? Math.max(0, capped - 1) : 0,
-    usableMs: capped * focusMs + Math.max(0, capped - 1) * breakMs,
+    breaks: breakMs > 0 ? Math.max(0, capped - 1) + (durationMs > capped * focusMs + (capped - 1) * breakMs ? 1 : 0) : 0,
+    usableMs: Math.min(durationMs, capped * cycleMs),
   };
+}
+
+export function exactPlanEndMs(plan:Pick<RoundPlan,'mode'|'endAt'|'deadlinePolicy'>):number|null {
+  return plan.mode==='marathon'&&plan.deadlinePolicy==='exact'&&plan.endAt&&Number.isFinite(Date.parse(plan.endAt))?Date.parse(plan.endAt):null;
+}
+export function planRoundDurationMs(plan:Pick<RoundPlan,'mode'|'endAt'|'deadlinePolicy'>,nominalMs:number,startMs:number):number {
+  const end=exactPlanEndMs(plan);return end===null?nominalMs:Math.max(0,Math.min(nominalMs,end-startMs));
+}
+/** Complete a terminal rest without discarding unreported earned focus. */
+export function finishExactPlan(plan:RoundPlan,state:DomainState):RoundPlan|null {
+  const project=state.projects.find(item=>item.id===plan.projectId);
+  if(project?.kind==='habit'&&plan.deferredSettlement!==true||!unsettledMarathonSessions(state,plan.projectId).length)return null;
+  return {...plan,status:'report',currentSessionId:undefined,breakStartedAt:undefined,breakEndsAt:undefined,endAfterBreak:undefined,automaticContinuation:undefined};
 }
 
 export function plannedDurationMs(focusMinutes: number, breakMinutes: number, rounds: number): number {
@@ -150,6 +164,7 @@ export function parseRoundPlan(value: unknown, projectId: string): RoundPlan | n
     : [];
   const mode = candidate.mode === 'marathon' ? 'marathon' : candidate.mode === 'rounds' ? 'rounds' : undefined;
   const endAt = typeof candidate.endAt === 'string' && Number.isFinite(Date.parse(candidate.endAt)) ? candidate.endAt : undefined;
+  if(candidate.deadlinePolicy!==undefined&&(candidate.deadlinePolicy!=='exact'||!isMarathon||!endAt))return null;
   const cancellationReason = parseCancellationReason(candidate.cancellationReason);
   if (candidate.cancellationReason !== undefined && cancellationReason === undefined) return null;
   if (candidate.cancellationRequested !== undefined && candidate.cancellationRequested !== true) return null;
@@ -173,6 +188,7 @@ export function parseRoundPlan(value: unknown, projectId: string): RoundPlan | n
     ...(mode ? { mode } : {}),
     ...(candidate.deferredSettlement === true ? { deferredSettlement: true } : {}),
     ...(endAt ? { endAt } : {}),
+    ...(candidate.deadlinePolicy==='exact'?{deadlinePolicy:'exact' as const}:{}),
     ...(candidate.cancellationReason !== undefined ? { cancellationReason } : {}),
     ...(cancellationNote ? { cancellationNote } : {}),
     ...(candidate.cancellationRequested === true ? { cancellationRequested: true } : {}),
@@ -279,8 +295,10 @@ export function reserveAutomaticContinuation(
 
   const lastScheduledAt = automaticContinuationStartAt(plan, state);
   if (!lastScheduledAt || !Number.isFinite(Date.parse(lastScheduledAt)) || Date.parse(lastScheduledAt) > nowMs) return null;
-  if (plan.mode === 'marathon' && plan.endAt
+  if (exactPlanEndMs(plan)===null && plan.mode === 'marathon' && plan.endAt
     && Date.parse(lastScheduledAt) + automatic.focusDurationMs > Date.parse(plan.endAt)) return null;
+  const durationMs=planRoundDurationMs(plan,automatic.focusDurationMs,Date.parse(lastScheduledAt));
+  if(durationMs<=0)return null;
 
   const round = plan.completedRounds + 1;
   const sessionId = automatic.reservation?.sessionId ?? automaticContinuationSessionId(automatic.authorizationId, round);
@@ -296,7 +314,7 @@ export function reserveAutomaticContinuation(
     plan: { ...plan, automaticContinuation: reservedAutomatic },
     sessionId,
     scheduledAt,
-    plannedDurationMs: automatic.focusDurationMs,
+    plannedDurationMs: durationMs,
   };
 }
 
@@ -459,7 +477,7 @@ export function reconcileRoundPlan(
     if (plan.deferredSettlement === true && unsettledMarathonSessions(state, plan.projectId).length === 0) return null;
     return project?.kind === 'habit' && plan.deferredSettlement !== true ? null : plan;
   }
-  if (plan.completedRounds >= plan.totalRounds) return null;
+  if (plan.completedRounds >= plan.totalRounds && !(plan.status==='break'&&plan.endAfterBreak&&exactPlanEndMs(plan)!==null)) return null;
 
   const isMarathon = plan.mode === 'marathon';
 
@@ -491,12 +509,20 @@ export function reconcileRoundPlan(
 
   if (plan.status === 'break') {
     if (!plan.breakEndsAt || Date.parse(plan.breakEndsAt) > nowMs) return plan;
-    if (plan.endAfterBreak) return null;
+    if (plan.endAfterBreak) return exactPlanEndMs(plan)!==null?finishExactPlan(plan,state):null;
     const { breakStartedAt: _breakStartedAt, breakEndsAt: _breakEndsAt, endAfterBreak: _endAfterBreak, ...withoutBreak } = plan;
     return { ...withoutBreak, status: 'ready',
       ...(plan.automaticContinuation
         ? { automaticContinuation: { ...plan.automaticContinuation, nextRoundStartsAt: plan.breakEndsAt, reservation: undefined } }
         : {}) };
+  }
+
+  const exactEnd=exactPlanEndMs(plan);
+  // An automatic chain may be catching up authorized historical starts. Manual
+  // waiting never manufactures those sessions after the selected deadline.
+  if(plan.status==='ready'&&exactEnd!==null&&nowMs>=exactEnd){
+    const scheduled=plan.automaticContinuation?automaticContinuationStartAt(plan,state):undefined;
+    if(!scheduled||Date.parse(scheduled)>=exactEnd)return finishExactPlan(plan,state);
   }
 
   if (plan.status !== 'focus') return plan;
@@ -555,10 +581,27 @@ export function reconcileRoundPlan(
         && report.focusSessionIds.includes(latest.id))?.reportedAt
     : undefined;
   const completionInstant = explicitReportAt
-    ?? (plan.automaticContinuation && latest.status === 'completed' ? latest.endsAt : latest.completedAt);
+    ?? ((plan.automaticContinuation||exactEnd!==null) && latest.status === 'completed' ? latest.endsAt : latest.completedAt);
   const autoBreakMs = plan.automaticContinuation?.breakDurationMs;
   if (isMarathon) {
+    if(exactEnd!==null&&latest.status==='completed'&&Date.parse(latest.endsAt)>=exactEnd)
+      return finishExactPlan({...plan,completedRounds:nextCompletedRounds,reportedSessionIds},state);
+    // Saving/starting a full round can consume the tiny prospective final
+    // focus. If only rest still fits, it is terminal even when the original
+    // preview counted another round. Never leave an expired auto-plan ready.
+    const remainingRest=exactEnd===null?0:exactEnd-Date.parse(latest.endsAt);
+    const allowedRest=autoBreakMs??(project?.kind==='habit'?habitBreakDurationMs:finiteBreakDurationMs);
+    if(exactEnd!==null&&remainingRest>0&&remainingRest<=allowedRest){
+      const terminal={...plan,completedRounds:nextCompletedRounds,reportedSessionIds,status:'break' as const,
+        breakStartedAt:latest.endsAt,breakEndsAt:new Date(exactEnd).toISOString(),endAfterBreak:true,currentSessionId:undefined,automaticContinuation:undefined};
+      return nowMs<exactEnd?terminal:finishExactPlan(terminal,state);
+    }
     if (nextCompletedRounds >= plan.totalRounds) {
+      if(exactEnd!==null&&Date.parse(latest.endsAt)<exactEnd){
+        const terminal={...plan,completedRounds:nextCompletedRounds,reportedSessionIds,status:'break' as const,
+          breakStartedAt:latest.endsAt,breakEndsAt:new Date(exactEnd).toISOString(),endAfterBreak:true,currentSessionId:undefined,automaticContinuation:undefined};
+        return nowMs<exactEnd?terminal:finishExactPlan(terminal,state);
+      }
       if (project?.kind === 'habit' && plan.deferredSettlement !== true) return null;
       return {
         ...plan,
@@ -576,7 +619,7 @@ export function reconcileRoundPlan(
     }
     const breakMs = autoBreakMs ?? (project?.kind === 'habit' ? habitBreakDurationMs : finiteBreakDurationMs);
     if (breakMs > 0) {
-      const breakEndsAt = new Date(Date.parse(completionInstant) + breakMs).toISOString();
+      const breakEndsAt = new Date(Math.min(exactEnd??Infinity,Date.parse(completionInstant) + breakMs)).toISOString();
       if (Date.parse(breakEndsAt) > nowMs) {
         return {
           ...plan,
@@ -652,7 +695,7 @@ function reservedSessionMatches(
     && session.projectId === plan.projectId
     && session.subtaskId === plan.subtaskId
     && session.startedAt === reservation.scheduledAt
-    && session.plannedDurationMs === automatic.focusDurationMs
+    && session.plannedDurationMs === planRoundDurationMs(plan,automatic.focusDurationMs,Date.parse(reservation.scheduledAt))
     && (session.marathon === true) === (plan.mode === 'marathon')
     && (session.deferredSettlement === true) === (plan.deferredSettlement === true);
 }
@@ -674,6 +717,7 @@ export function roundPlansEqual(left: RoundPlan | null, right: RoundPlan | null)
     && (left.mode ?? 'rounds') === (right.mode ?? 'rounds')
     && left.deferredSettlement === right.deferredSettlement
     && left.endAt === right.endAt
+    && left.deadlinePolicy === right.deadlinePolicy
     && left.cancellationReason === right.cancellationReason
     && left.cancellationNote === right.cancellationNote
     && left.cancellationRequested === right.cancellationRequested
@@ -692,7 +736,8 @@ function automaticContinuationEqual(left?: AutomaticContinuationSchedule, right?
 }
 
 /** Remaining focus plus only the breaks that still occur between rounds. */
-export function remainingPlanDurationMs(plan: Pick<RoundPlan, 'totalRounds' | 'completedRounds'>, focusMinutes: number, breakMinutes: number): number {
+export function remainingPlanDurationMs(plan: Pick<RoundPlan, 'totalRounds' | 'completedRounds'|'mode'|'endAt'|'deadlinePolicy'>, focusMinutes: number, breakMinutes: number,nowMs=Date.now()): number {
+  const exactEnd=exactPlanEndMs(plan);if(exactEnd!==null)return Math.max(0,exactEnd-nowMs);
   const remainingRounds = Math.max(0, plan.totalRounds - plan.completedRounds);
   return remainingRounds * focusMinutes * 60_000
     + Math.max(0, remainingRounds - 1) * breakMinutes * 60_000;

@@ -20,6 +20,13 @@ const unlocked = (id: string, isUnlocked = true): AchievementEntry => ({
 });
 
 describe('achievement display receipts', () => {
+  it('reuses an unchanged receipt instead of scheduling a duplicate page render',()=>{
+    const empty:AchievementEntry[]=[];
+    expect(reconcileAchievementBatch(empty,[],new Set(),new Set())).toBe(empty);
+    const current=[unlocked('kept')];
+    expect(reconcileAchievementBatch(current,current,new Set(),new Set())).toBe(current);
+    expect(reconcileAchievementBatch(current,[{...current[0]!,unlockedAt:'2026-10-23T00:00:00Z'}],new Set(),new Set())).not.toBe(current);
+  });
   it('treats corrupt JSON as recoverable and starts a fresh receipt set', () => {
     const value = readAchievementReceipt(storage('{not-json'));
     expect(value.corrupt).toBe(true);

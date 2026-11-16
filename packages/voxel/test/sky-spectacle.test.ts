@@ -71,6 +71,15 @@ describe('shared solar/weather sky field',()=>{
   expect(water.uniforms).toMatchObject({bcSkyReflectionGain:{value:1}});
   expect(sky.uniforms).not.toHaveProperty('bcSkyReflectionGain');
  });
+ it('gives the floating sky a full backdrop without changing physical reflections',()=>{
+  const s=new SkySpectacle(true),floating=new THREE.MeshBasicMaterial(),ordinary=new THREE.MeshBasicMaterial(),water=new THREE.MeshStandardMaterial();
+  expect(s.uniforms.bcSkyGalaxyNormal.value.toArray()).toEqual([-.27,.925,-.27]);
+  s.patchSky(floating,true);s.patchSky(ordinary);s.patchReflection(water);
+  const shader=()=>({uniforms:{},vertexShader:'#include <common>\n#include <project_vertex>',fragmentShader:'#include <common>\n#include <opaque_fragment>'});
+  const a=shader(),b=shader(),c=shader();floating.onBeforeCompile(a as never,{} as never);ordinary.onBeforeCompile(b as never,{} as never);water.onBeforeCompile(c as never,{} as never);
+  expect(a.fragmentShader).toContain('outgoingLight += bcFloatingNightSky(vBcSkyDirection)');expect(b.fragmentShader).toContain('outgoingLight += bcNightSky(vBcSkyDirection)');expect(c.fragmentShader).toContain('bcNightSky(bcReflected)');
+  expect(floating.customProgramCacheKey()).not.toBe(ordinary.customProgramCacheKey());
+ });
 });
 describe('original yearly block keepsakes',()=>{
  it('provides twenty bounded, valid, deterministic and visibly distinct constructions',()=>{

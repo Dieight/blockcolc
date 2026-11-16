@@ -1,4 +1,4 @@
-import { expect, type Page } from '@playwright/test';
+import { expect, type Page,type Locator } from '@playwright/test';
 import { waitForPreparedWorld } from './world-ready';
 
 /** Tests of the whole settlement enter it through the actual map control. */
@@ -15,5 +15,14 @@ export async function showWorldOverview(page: Page): Promise<void> {
   if (Number(await canvas.getAttribute('data-camera-minimum-distance-ratio')) >= .9) await expect(map).toBeVisible();
   if (await map.isVisible()) await map.click();
   await expect(map).toBeHidden();
-  await expect(canvas).toHaveAttribute('data-camera-minimum-distance-ratio', '0.4500');
+  await expectSettlementZoomBounds(canvas);
+}
+
+/** Exact product bounds, including the physical guard for a tiny settlement. */
+export async function expectSettlementZoomBounds(canvas:Locator):Promise<void>{
+  const value=await canvas.evaluate(node=>({distance:Number(node.dataset.cameraDistance),ratio:Number(node.dataset.cameraDistanceRatio),
+    minimum:Number(node.dataset.cameraMinimumDistanceRatio),maximum:Number(node.dataset.cameraMaximumDistanceRatio)}));
+  const fitted=value.distance/value.ratio;
+  expect(value.minimum).toBeCloseTo(Math.min(.9,Math.max(.1,12/fitted)),3);
+  expect(value.maximum).toBe(.9);
 }

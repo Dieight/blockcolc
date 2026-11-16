@@ -1,0 +1,91 @@
+plugins { id 'org.jetbrains.kotlin.jvm' }
+java { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
+kotlin { compilerOptions { jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17 } }
+dependencies {
+    implementation project(':focus-core')
+    compileOnly 'org.json:json:20240303'
+    testImplementation 'org.json:json:20240303'
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.xerial:sqlite-jdbc:3.46.1.3'
+    testRuntimeOnly 'org.slf4j:slf4j-nop:2.0.16'
+}
+tasks.register('exportPresentationOracle',Exec) {
+    dependsOn ':domain-core:exportCommandOracle'
+    workingDir rootProject.projectDir
+    commandLine 'node','tools/export-presentation-oracle.mjs',layout.buildDirectory.dir('generated/presentation-oracle').get().asFile.absolutePath
+    inputs.files fileTree('../../../apps/web/src') { include 'focus-preferences.ts','ambient-preferences.ts','app-types.ts','round-plan.ts' }
+    inputs.files fileTree('../../../apps/web/src') { include 'focus-flow.ts','focus-performance.ts','i18n.ts','messages-en.ts','marathon-end-time.ts','marathon-settlement.ts' }
+    inputs.files fileTree('../../../packages/application/src') { include '**/*.ts' }
+    inputs.files fileTree('../../../packages/domain/src') { include '**/*.ts' }
+    inputs.file '../../../packages/voxel/src/world-color-adjustment.ts'
+    inputs.file '../tools/export-presentation-oracle.mjs'
+    inputs.file '../tools/presentation-flow-oracle.mjs'
+    inputs.file '../tools/presentation-state-oracle.mjs'
+    inputs.files '../../../apps/web/src/focus-stats.ts','../../../apps/web/src/ui/physical-slider.ts'
+    inputs.files '../../../apps/web/src/today-focus-timeline.ts','../tools/timeline-boundary-inputs.json'
+    inputs.files '../../../apps/web/src/MinimalPanelWeatherOverlay.tsx','../../../apps/web/src/styles/minimal-panel-weather.css'
+    inputs.file project(':domain-core').layout.buildDirectory.file('generated/command-oracle/command-oracle.json')
+    inputs.file '../../../package-lock.json'
+    outputs.dir layout.buildDirectory.dir('generated/presentation-oracle')
+}
+sourceSets.test.resources.srcDir layout.buildDirectory.dir('generated/presentation-oracle')
+sourceSets.test.resources.srcDir project(':domain-core').layout.buildDirectory.dir('generated/command-oracle')
+tasks.named('processTestResources').configure {dependsOn 'exportPresentationOracle'}
+
+tasks.register('prepareSqliteTestAdapter',Sync){
+    from('../state-store/src/test/kotlin'){include '**/JdbcStateDatabase.kt'}
+    into layout.buildDirectory.dir('generated/test-sqlite')
+}
+sourceSets.test.kotlin.srcDir layout.buildDirectory.dir('generated/test-sqlite')
+tasks.named('compileTestKotlin').configure {dependsOn 'prepareSqliteTestAdapter'}
+
+tasks.register('exportNativeUiAssets',Exec){
+    workingDir rootProject.projectDir
+    commandLine 'node','tools/export-native-ui-assets.mjs',layout.buildDirectory.dir('generated/native-ui').get().asFile.absolutePath
+    inputs.files '../../../apps/web/src/ui/button-icon-motion.ts','../../../apps/web/src/styles/navigation-motion.css','../../../apps/web/src/messages-en.ts','../../../apps/web/src/ui/PixelIcon.tsx','../../../package-lock.json','../tools/export-native-ui-assets.mjs'
+    outputs.dir layout.buildDirectory.dir('generated/native-ui')
+}
+sourceSets.main.resources.srcDir layout.buildDirectory.dir('generated/native-ui/assets')
+tasks.named('processResources').configure {dependsOn 'exportNativeUiAssets'}
+
+tasks.withType(Test).configureEach {
+    inputs.files(fileTree('../app/src/main/kotlin/com/blockcolc/preview') {include '**/*.kt'})
+}
+
+tasks.register('exportWorldProjectionOracle',Exec){
+    dependsOn ':domain-core:exportCommandOracle'
+    workingDir rootProject.projectDir
+    commandLine 'node','tools/export-world-projection-oracle.mjs',layout.buildDirectory.dir('generated/world-projection-oracle').get().asFile.absolutePath
+    inputs.files '../tools/export-world-projection-oracle.mjs','../../../packages/application/src/model.ts','../../../apps/web/src/world-projection.ts','../../../packages/voxel/src/holiday-buildings.ts','../../../package-lock.json'
+    inputs.files fileTree('../../../packages/domain/src') {include '**/*.ts'}
+    inputs.file project(':domain-core').layout.buildDirectory.file('generated/command-oracle/command-oracle.json')
+    inputs.file project(':domain-core').layout.buildDirectory.file('generated/state-oracle/state-oracle.json')
+    outputs.dir layout.buildDirectory.dir('generated/world-projection-oracle')
+}
+sourceSets.test.resources.srcDir layout.buildDirectory.dir('generated/world-projection-oracle')
+
+tasks.register('exportBuildingMemoryOracle',Exec){
+    dependsOn 'exportWorldProjectionOracle'
+    workingDir rootProject.projectDir
+    commandLine 'node','tools/export-building-memory-oracle.mjs',layout.buildDirectory.dir('generated/building-memory-oracle').get().asFile.absolutePath
+    inputs.files '../tools/export-building-memory-oracle.mjs','../../../apps/web/src/BuildingMemoryPanel.tsx','../../../apps/web/src/focus-stats.ts','../../../apps/web/src/i18n.ts','../../../apps/web/src/messages-en.ts','../../../package-lock.json'
+    inputs.files fileTree('../../../packages/application/src'){include '**/*.ts'}
+    inputs.files fileTree('../../../packages/domain/src'){include '**/*.ts'}
+    inputs.files fileTree('../../../apps/web/src/ui'){include 'PixelProgress.tsx','PixelIcon.tsx'}
+    inputs.file layout.buildDirectory.file('generated/world-projection-oracle/world-projection-oracle.json')
+    inputs.file project(':domain-core').layout.buildDirectory.file('generated/command-oracle/command-oracle.json')
+    outputs.dir layout.buildDirectory.dir('generated/building-memory-oracle')
+}
+sourceSets.test.resources.srcDir layout.buildDirectory.dir('generated/building-memory-oracle')
+tasks.named('processTestResources').configure {dependsOn 'exportBuildingMemoryOracle'}
+tasks.named('processTestResources').configure {dependsOn 'exportWorldProjectionOracle'}
+
+tasks.register('exportRewardPresentationOracle',Exec){
+    workingDir rootProject.projectDir
+    commandLine 'node','tools/export-reward-presentation-oracle.mjs',layout.buildDirectory.dir('generated/reward-presentation-oracle').get().asFile.absolutePath
+    inputs.files fileTree('../../../packages/domain/src'){include '**/*.ts'}
+    inputs.files '../../../apps/web/src/celebrations.ts','../../../apps/web/src/ui/HolidayEmblem.tsx','../../../package-lock.json','../tools/export-reward-presentation-oracle.mjs'
+    outputs.dir layout.buildDirectory.dir('generated/reward-presentation-oracle')
+}
+sourceSets.test.resources.srcDir layout.buildDirectory.dir('generated/reward-presentation-oracle')
+tasks.named('processTestResources').configure {dependsOn 'exportRewardPresentationOracle'}

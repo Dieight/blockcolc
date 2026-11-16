@@ -15,11 +15,11 @@ function fixture():WorldSceneCache {
 }
 describe('disposable CPU scene cache',()=>{
   it('rejects older appearance caches, including the reverted dirt banks, without touching domain records',()=>{
-    for(const revision of [3,4]){
+    for(const revision of [3,4,5]){
       const old=fixture();(old as {revision:number}).revision=revision;
       expect(restoreWorldSceneCache(old)).toBeNull();
     }
-    expect(JSON.parse(terrainGenerationInputKey([],[],[],undefined,{}))[0]).toBe(3);
+    expect(JSON.parse(terrainGenerationInputKey([],[],[],undefined,{}))[0]).toBe(4);
   });
   it('keeps shared surface sidecars out of persistent entries and rebuilds them on restore', () => {
     const source=fixture(), before=packWorldSceneCache(source), bytes=worldSceneCacheBytes(source);

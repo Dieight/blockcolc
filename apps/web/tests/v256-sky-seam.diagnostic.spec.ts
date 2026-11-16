@@ -28,6 +28,7 @@ void main(){
     gl.useProgram(program);gl.uniform1f(gl.getUniformLocation(program,'bcSkyGalaxy'),1);
     gl.uniform1f(gl.getUniformLocation(program,'bcSkyStars'),0);gl.uniform1f(gl.getUniformLocation(program,'bcSkyAurora'),0);
     gl.uniform1f(gl.getUniformLocation(program,'bcSkyMeteor'),-1);gl.uniform3f(gl.getUniformLocation(program,'bcSkyColdDirection'),0,0,-1);
+    gl.uniform3f(gl.getUniformLocation(program,'bcSkyGalaxyNormal'),.82,.22,-.52);
     gl.viewport(0,0,256,96);gl.drawArrays(gl.TRIANGLES,0,3);
     const bytes=new Uint8Array(256*96*4);gl.readPixels(0,0,256,96,gl.RGBA,gl.UNSIGNED_BYTE,bytes);
     let seamJump=0,maximum=0;

@@ -11,7 +11,7 @@ foreach($permission in @('FOREGROUND_SERVICE','FOREGROUND_SERVICE_MEDIA_PLAYBACK
 }
 $archive=[IO.Compression.ZipFile]::OpenRead((Resolve-Path -LiteralPath $ApkPath).Path)
 try {
-    foreach($name in @('morning-birdsong','rain')){if(-not $archive.GetEntry("assets/public/audio/$name.wav")){throw "Missing ambience: $name"}}
-    foreach($name in @('island','valley','ocean','coast','evening-lakeside')){if($archive.GetEntry("assets/public/audio/$name.wav")){throw "Obsolete ambience still packaged: $name"}}
+    foreach($file in @('rain-light.ogg','rain-heavy.ogg','forest-birds.ogg','shore-waves.ogg')){if(-not $archive.GetEntry("assets/public/audio/$file")){throw "Missing ambience: $file"}}
+    foreach($file in @('rain.wav','island.wav','valley.wav','ocean.wav','coast.wav','evening-lakeside.wav','morning-birdsong.wav','calm-ocean.ogg')){if($archive.GetEntry("assets/public/audio/$file")){throw "Obsolete ambience still packaged: $file"}}
 }finally{$archive.Dispose()}
-Write-Host 'Verified packaged mediaPlayback service, permissions and two field recordings; obsolete beds absent.'
+Write-Host 'Verified packaged mediaPlayback service, two full rain layers and two main recordings; retired audio absent.'

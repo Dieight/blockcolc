@@ -129,6 +129,8 @@ describe("backup safety", () => {
     const old = JSON.parse(await source.exportBackup());
     old.payload.schemaVersion = 11;
     delete old.payload.quickNotes;
+    delete old.payload.birthday;
+    delete old.payload.birthdayRewards;
     delete old.payload.holidayRewards;
     delete old.payload.focusIntegrityPolicy.excursionThresholdSeconds;
     const { checksum: _checksum, ...unsigned } = old;
@@ -153,7 +155,7 @@ describe("backup safety", () => {
     const destination = createRepository("minimal-destination");
     await destination.replaceFromImport(await source.exportBackup(), 0);
     const restored = await destination.load();
-    expect(restored.state?.schemaVersion).toBe(14);
+    expect(restored.state?.schemaVersion).toBe(15);
     expect(restored.state?.activeFocusSession).toEqual(started.state.activeFocusSession);
     clock.advance(60_000);
     const completed = execute(restored.state!, {type:"CompleteFocus"}, clock);
@@ -211,6 +213,8 @@ describe("backup safety", () => {
     const legacyEnvelope = JSON.parse(await source.exportBackup()) as any;
     legacyEnvelope.payload.schemaVersion = 10;
     delete legacyEnvelope.payload.quickNotes;
+    delete legacyEnvelope.payload.birthday;
+    delete legacyEnvelope.payload.birthdayRewards;
     delete legacyEnvelope.payload.holidayRewards;
     delete legacyEnvelope.payload.focusIntegrityPolicy.excursionThresholdSeconds;
     legacyEnvelope.payload.todayNextSteps = {
@@ -267,6 +271,8 @@ describe("backup safety", () => {
     const oldEnvelope = JSON.parse(await source.exportBackup()) as any;
     oldEnvelope.payload.schemaVersion = 1;
     delete oldEnvelope.payload.quickNotes;
+    delete oldEnvelope.payload.birthday;
+    delete oldEnvelope.payload.birthdayRewards;
     delete oldEnvelope.payload.holidayRewards;
     delete oldEnvelope.payload.focusIntegrityPolicy;
     delete oldEnvelope.payload.decorationBlueprintResources;
@@ -284,12 +290,12 @@ describe("backup safety", () => {
     const destination = createRepository("old-v1-destination");
     await expect(destination.previewImport(JSON.stringify(oldEnvelope))).resolves.toMatchObject({ schemaVersion: 1 });
     await destination.replaceFromImport(JSON.stringify(oldEnvelope), 0);
-    expect((await destination.load()).state?.schemaVersion).toBe(14);
+    expect((await destination.load()).state?.schemaVersion).toBe(15);
     expect((await destination.load()).state?.focusIntegrityPolicy).toEqual({ enabled: true, maxEffectiveExcursions: 3, excursionThresholdSeconds: 3 });
     expect((await destination.load()).state?.projects[0]!.importedBlueprint).toBeNull();
     const normalized = JSON.parse(await destination.exportBackup()) as any;
     expect(normalized.schemaVersion).toBe(1);
-    expect(normalized.payload.schemaVersion).toBe(14);
+    expect(normalized.payload.schemaVersion).toBe(15);
     expect(normalized.payload.worldSettings).toEqual({ worldSeed: "legacy-project-1", terrainGenerationVersion: 4, environmentStyle: "natural-valley" });
     expect(normalized.payload.projects[0]).toHaveProperty("importedBlueprint", null);
   });

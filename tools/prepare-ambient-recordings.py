@@ -1,7 +1,8 @@
 """Offline field-recording processing. Originals are never rewritten.
 
 Requires numpy, scipy and imageio-ffmpeg (install into an ignored tools folder).
-Only the derived PCM files are runtime dependencies; builds do not run this.
+Historical processing only; current builtins are full streaming recordings.
+Output stays in the archive so this tool cannot restore retired APK assets.
 """
 import argparse
 import hashlib
@@ -45,7 +46,8 @@ def main():
     parser.add_argument('--inspect', action='store_true')
     args = parser.parse_args()
     source = ROOT / 'artifacts' / 'sounds'
-    output = ROOT / 'apps' / 'web' / 'public' / 'audio'
+    output = ROOT / 'artifacts' / 'sounds' / 'legacy-processing'
+    output.mkdir(parents=True, exist_ok=True)
     report_dir = ROOT / 'artifacts' / 'sounds' / 'processed'
     report_dir.mkdir(parents=True, exist_ok=True)
     # Lakeside was retired after listening feedback. Its original and previous

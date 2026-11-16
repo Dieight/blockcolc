@@ -14,9 +14,6 @@ interface StagedVoxel {
   z: number;
   materialId: MaterialId;
   stage: ConstructionStageId;
-  sourceBlockId?: string;
-  emissiveKind?: string;
-  emissiveLevel?: number;
 }
 
 class BlueprintBuilder {
@@ -26,15 +23,6 @@ class BlueprintBuilder {
     const key = coordinateKey(x, y, z);
     if (this.#voxels.has(key)) throw new BlueprintValidationError(`Duplicate generated voxel coordinate ${key}`);
     this.#voxels.set(key, { x, y, z, materialId, stage });
-  }
-
-  addLight(x: number, y: number, z: number, stage: ConstructionStageId = "details"): void {
-    const key = coordinateKey(x, y, z);
-    if (this.#voxels.has(key)) throw new BlueprintValidationError(`Duplicate generated voxel coordinate ${key}`);
-    this.#voxels.set(key, {
-      x, y, z, materialId: "accent", stage,
-      sourceBlockId: "minecraft:torch", emissiveKind: "torch", emissiveLevel: 14,
-    });
   }
 
   build(id: string, title: string): BlueprintV1 {
@@ -118,8 +106,6 @@ function buildSmallWorkshop(): BlueprintV1 {
     builder.add(x, 4, -4, "glass", "details");
   }
   builder.add(-5, 3, 0, "glass", "details"); builder.add(5, 3, 0, "glass", "details");
-  builder.addLight(-3, 3, 5); builder.addLight(3, 3, 5);
-  builder.addLight(-3, 3, 3); builder.addLight(3, 3, 3);
   for (let x = -3; x <= -1; x += 1) builder.add(x, 2, -2, "wood", "details");
   return builder.build("builtin-small-workshop", "Small Workshop");
 }
@@ -159,8 +145,6 @@ function buildTimberHouse(): BlueprintV1 {
   for (const x of [-6, 6]) for (const z of [-2, 0, 2]) builder.add(x, 7, z, "glass", "details");
   for (const x of [-3, 3]) builder.add(x, 7, 4, "glass", "details");
   for (let y = 9; y <= 13; y += 1) builder.add(4, y, 0, "stone", "details");
-  builder.addLight(-3, 3, 4); builder.addLight(3, 3, 4);
-  builder.addLight(-3, 3, 2); builder.addLight(3, 3, 2);
   builder.add(-3, 2, -1, "accent", "details"); builder.add(-2, 2, -1, "plank", "details");
   builder.add(3, 6, -2, "accent", "details");
   return builder.build("builtin-timber-house", "Timber House");
@@ -227,9 +211,6 @@ function buildVillageChapel(): BlueprintV1 {
     builder.add(x, 9, 3, "glass", "details");
     builder.add(x, 9, 10, "glass", "details");
   }
-  builder.addLight(-2, 5, 11); builder.addLight(2, 5, 11);
-  builder.addLight(-2, 2, 8); builder.addLight(2, 2, 8);
-  builder.addLight(-3, 2, 0); builder.addLight(3, 2, 0);
   for (const z of [-6, -4, -2, 0]) {
     builder.add(-2, 2, z, "plank", "details");
     builder.add(2, 2, z, "plank", "details");

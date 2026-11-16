@@ -1,0 +1,36 @@
+plugins { id 'org.jetbrains.kotlin.jvm' }
+java { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
+kotlin { compilerOptions { jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17 } }
+dependencies {
+    api project(':domain-core')
+    compileOnly 'org.json:json:20240303'
+    testImplementation 'org.json:json:20240303'
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.xerial:sqlite-jdbc:3.46.1.3' // Test only, never packaged for Android.
+    testRuntimeOnly 'org.slf4j:slf4j-nop:2.0.16'
+}
+sourceSets.test.resources.srcDir project(':domain-core').layout.buildDirectory.dir('generated/state-oracle')
+tasks.named('processTestResources').configure { dependsOn ':domain-core:exportStateOracle' }
+tasks.withType(Test).configureEach { dependsOn ':domain-core:checkStateOracle' }
+tasks.register('exportBackupOracle', Exec) {
+    dependsOn ':domain-core:exportStateOracle'
+    workingDir rootProject.projectDir
+    commandLine 'node', 'tools/export-backup-oracle.mjs', layout.buildDirectory.dir('generated/backup-oracle').get().asFile.absolutePath
+    inputs.files(fileTree('../../../packages/storage-indexeddb/src') { include '*.ts' })
+    inputs.file('../tools/export-backup-oracle.mjs')
+    inputs.file(project(':domain-core').layout.buildDirectory.file('generated/state-oracle/state-oracle.json'))
+    outputs.dir layout.buildDirectory.dir('generated/backup-oracle')
+}
+sourceSets.test.resources.srcDir layout.buildDirectory.dir('generated/backup-oracle')
+tasks.named('processTestResources').configure { dependsOn 'exportBackupOracle' }
+tasks.register('checkBackupOracle') {
+    dependsOn 'exportBackupOracle'
+    doLast {
+        def oracle = new groovy.json.JsonSlurper().parse(layout.buildDirectory.file('generated/backup-oracle/backup-oracle.json').get().asFile)
+        oracle.sourceHashes.each { name, expected ->
+            def actual = java.security.MessageDigest.getInstance('SHA-256').digest(rootProject.file('../../' + name).bytes).encodeHex().toString()
+            if (actual != expected) throw new GradleException('Stale formal backup oracle: ' + name)
+        }
+    }
+}
+tasks.withType(Test).configureEach { dependsOn 'checkBackupOracle' }

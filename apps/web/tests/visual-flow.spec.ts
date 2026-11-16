@@ -257,6 +257,7 @@ test('renders a monument with the active building and restores both after deleti
   await replaceSubtasks(page, ['完成全部工作']);
   await submitProject(page);
   await page.getByRole('button', { name: '设置' }).click();
+  await openSecondarySetting(page,'普通任务');
   await page.getByLabel('普通任务专注分钟').fill('1');
   await page.getByRole('button', { name: '计时' }).click();
   await startFocus(page);
@@ -494,6 +495,7 @@ test('persists focus and break preferences and exposes period statistics', async
   await page.goto('/');
   await submitProject(page);
   await page.getByRole('button', { name: '设置' }).click();
+  await openSecondarySetting(page,'普通任务');
   await expect(page.getByLabel('普通任务专注分钟')).toHaveValue('45');
   await expect(page.getByLabel('开启专注完整性')).not.toBeChecked();
   await page.getByLabel('开启专注完整性').check();
@@ -509,10 +511,14 @@ test('persists focus and break preferences and exposes period statistics', async
   await expect(page.getByLabel('允许有效离开次数')).toHaveValue('4');
   await page.getByRole('heading', { name: '设置' }).click();
   await expect(page.getByLabel('允许有效离开次数')).toHaveValue('4');
+  await openSecondarySetting(page,'普通任务');
   await page.getByLabel('普通任务专注分钟').fill('');
+  await openSecondarySetting(page,'普通任务');
   await expect(page.getByLabel('普通任务专注分钟')).toHaveValue('');
   await page.getByRole('heading', { name: '设置' }).click();
+  await openSecondarySetting(page,'普通任务');
   await expect(page.getByLabel('普通任务专注分钟')).toHaveValue('45');
+  await openSecondarySetting(page,'普通任务');
   await page.getByLabel('普通任务专注分钟').fill('50');
   await page.getByLabel('每轮休息分钟').fill('10');
   await page.getByLabel('允许有效离开次数').fill('5');
@@ -524,6 +530,7 @@ test('persists focus and break preferences and exposes period statistics', async
   await expect(page.locator('.integrity-setting')).toHaveAttribute('aria-busy', 'false');
   await page.reload();
   await page.getByRole('button', { name: '设置' }).click();
+  await openSecondarySetting(page,'普通任务');
   await expect(page.getByLabel('普通任务专注分钟')).toHaveValue('50');
   await expect(page.getByLabel('每轮休息分钟')).toHaveValue('10');
   await expect(page.getByLabel('开启专注完整性')).not.toBeChecked();
@@ -543,6 +550,7 @@ test('runs a configured multi-round focus and break plan', async ({ page }) => {
   await page.goto('/');
   await submitProject(page);
   await page.getByRole('button', { name: '设置' }).click();
+  await openSecondarySetting(page,'普通任务');
   await page.getByLabel('普通任务专注分钟').fill('1');
   await page.getByLabel('每轮休息分钟').fill('1');
   await page.getByRole('button', { name: '计时' }).click();

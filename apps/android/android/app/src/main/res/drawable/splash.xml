@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- One density/orientation-independent launch drawable, using the approved icon. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@color/blockcolc_splash_background" />
+    <item android:width="144dp" android:height="144dp" android:gravity="center">
+        <bitmap android:src="@mipmap/ic_launcher_foreground" android:gravity="fill" android:filter="true" />
+    </item>
+</layer-list>

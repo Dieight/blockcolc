@@ -8,9 +8,9 @@ export interface NightReadabilityState {
 }
 
 const NIGHT_SKY_FILL = 0x9fb4cc;
-const NIGHT_GROUND_FILL = 0x586456;
+const NIGHT_GROUND_FILL = 0x65768b;
 const NIGHT_HEMISPHERE_INTENSITY = 1.58;
-const NIGHT_EXPOSURE = 1.48;
+const NIGHT_EXPOSURE = 1.43;
 
 /**
  * Lifts scene readability without changing the ephemeris, direct sun, or sky

@@ -1,0 +1,11 @@
+import {build} from 'esbuild';import {readFileSync} from 'node:fs';import {fileURLToPath} from 'node:url';import path from 'node:path';import assert from 'node:assert/strict';
+const root=fileURLToPath(new URL('../../../',import.meta.url));const built=await build({stdin:{contents:`export * from './packages/voxel/src/resource-fluids';export * from './packages/voxel/src/resource-textures';`,resolveDir:root},bundle:true,write:false,platform:'node',format:'esm'});
+const source=await import('data:text/javascript;base64,'+Buffer.from(built.outputFiles[0].text).toString('base64'));
+const voxels=[];for(let x=-1;x<=1;x++)for(let z=-1;z<=1;z++)voxels.push({x,y:0,z,materialId:'stone',buildOrder:0,sourceBlockId:'minecraft:lava',sourceBlockState:{level:'0'}});
+const entry=source.planResourceFluidBatches(voxels).fallbackEntries.find(e=>e.voxel.x===0&&e.voxel.z===0),meta=source.encodeFluidSurfaceMetadata(entry.fluidSurface)-1000000;
+assert.equal(meta,0);for(const height of entry.fluidSurface.cornerHeights)assert.ok(Math.abs(height-8/9)<1e-12);
+const shader=source.patchFluidSurfaceVertexShader('#include <common>\n#include <begin_vertex>\n#include <uv_vertex>');assert.ok(shader.includes('blockcolcPositionFluidMeta >= 0.0'));assert.ok(shader.includes('step(0.0, blockcolcUvFluidMeta)'));
+const native=readFileSync(path.join(root,'apps/native-android/world-filament/src/main/materials/instanced.mat.in'),'utf8');assert.ok(native.includes('meta >= 0.0 && localPosition.y'));assert.ok(native.includes('auxiliary.x >= 1000000.0'));
+const packed=source.encodeFluidCornerHeights(entry.fluidSurface.cornerHeights),height=(packed%64)/63;
+const oldY=meta>.5?height-.5:.5,newY=meta>=0?height-.5:.5;assert.equal(oldY,.5);assert.ok(Math.abs(newY-(8/9-.5))<1e-12);
+console.log(JSON.stringify({case:'static-lava-zero-metadata',oldTopY:oldY,newTopY:newY,ownHeight:8/9,packedCornerHeight:height,webAndNativeThresholdsVerified:true}));

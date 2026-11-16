@@ -1,0 +1,33 @@
+plugins { id 'com.android.library'; id 'org.jetbrains.kotlin.android' }
+android {
+    namespace 'com.blockcolc.audio'
+    compileSdk 35
+    defaultConfig { minSdk 23 }
+    buildFeatures { buildConfig true }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+    kotlinOptions { jvmTarget = '17' }
+    sourceSets.main.java.srcDir layout.buildDirectory.dir('generated/source/audio')
+    sourceSets.main.res.srcDir layout.buildDirectory.dir('generated/audio/res')
+    sourceSets.main.assets.srcDir layout.buildDirectory.dir('generated/audio/assets')
+    aaptOptions { noCompress 'ogg' }
+}
+dependencies {
+    implementation 'androidx.core:core:1.15.0'
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.json:json:20240303'
+}
+tasks.register('prepareAudioRuntime',Exec) {
+    workingDir rootProject.projectDir
+    commandLine 'node','tools/prepare-native-audio.mjs',layout.buildDirectory.dir('generated').get().asFile.absolutePath
+    inputs.file '../tools/prepare-native-audio.mjs'
+    inputs.files(['AmbientAudioService','AmbientPlaybackControl','AmbientPlaybackTiming','AmbientRainMix','AmbientRecordingLoop','AmbientSources'].collect {
+        new File(rootProject.projectDir,"../android/android/app/src/main/java/com/blockcolc/app/${it}.java")
+    })
+    inputs.files(['ic_stat_tomato_outline','ic_ambient_pause','ic_ambient_play','ic_ambient_stop'].collect {
+        new File(rootProject.projectDir,"../android/android/app/src/main/res/drawable/${it}.xml")
+    })
+    inputs.files(['forest-birds','shore-waves','rain-light','rain-heavy'].collect {new File(rootProject.projectDir,"../web/public/audio/${it}.ogg")})
+    inputs.file new File(rootProject.projectDir,'../web/public/licenses/ambient-audio.txt')
+    outputs.dir layout.buildDirectory.dir('generated')
+}
+tasks.named('preBuild').configure { dependsOn 'prepareAudioRuntime' }

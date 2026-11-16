@@ -10,12 +10,12 @@ describe('derived scene IndexedDB adapter',()=>{
     const schedule=(_key:string,job:()=>void|Promise<void>)=>{jobs.push(job);return()=>{};};
     const scene=createWorldSceneCachePort('ocean-island',()=>1,schedule,database);
     const buildings=createBuildingCpuCachePort('ocean-island',()=>1024,schedule,database);
-    scene.write(entry('terrain'));buildings.write({revision:1,recipes:[]});
+    scene.write(entry('terrain'));buildings.write({revision:2,recipes:[]});
     await jobs.shift()!();await jobs.shift()!();
-    expect(await scene.read()).toEqual(entry('terrain'));expect(await buildings.read()).toEqual({revision:1,recipes:[]});
+    expect(await scene.read()).toEqual(entry('terrain'));expect(await buildings.read()).toEqual({revision:2,recipes:[]});
     const tooLarge=createBuildingCpuCachePort('ocean-island',()=>33*1024*1024,schedule,database);
-    tooLarge.write({revision:1,recipes:[]});await jobs.shift()!();expect(jobs).toHaveLength(0);
-    expect(await buildings.read()).toEqual({revision:1,recipes:[]});
+    tooLarge.write({revision:2,recipes:[]});await jobs.shift()!();expect(jobs).toHaveLength(0);
+    expect(await buildings.read()).toEqual({revision:2,recipes:[]});
   });
   function fixture(){
     const database=new IDBFactory(),jobs:Array<()=>void|Promise<void>>=[];

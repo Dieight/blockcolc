@@ -52,18 +52,20 @@ describe('marathon scheduling from a chosen end time', () => {
   it('derives focus and break rounds from the raw duration', () => {
     // 3 blocks of [45 focus + 5 break] ending with a final 45 focus = 145 minutes.
     expect(planRoundsForDuration(145 * 60_000, 45, 5)).toEqual({ rounds: 3, breaks: 2, usableMs: 145 * 60_000 });
-    // 95 minutes fits 2 rounds + 1 break; 94 minutes only 1 round + no break.
+    // A non-full final focus is retained instead of truncating the window.
     expect(planRoundsForDuration(95 * 60_000, 45, 5)?.rounds).toBe(2);
-    expect(planRoundsForDuration(94 * 60_000, 45, 5)?.rounds).toBe(1);
-    // Without breaks, rounds are a straight floor division.
+    expect(planRoundsForDuration(94 * 60_000, 45, 5)?.rounds).toBe(2);
+    // Without breaks, any remaining focus creates a short final round.
     expect(planRoundsForDuration(100 * 60_000, 25, 0)).toEqual({ rounds: 4, breaks: 0, usableMs: 100 * 60_000 });
-    // Not enough for a single round.
-    expect(planRoundsForDuration(44 * 60_000, 45, 5)).toBeNull();
+    expect(planRoundsForDuration(44 * 60_000, 45, 5)).toEqual({rounds:1,breaks:0,usableMs:44*60_000});
+    expect(planRoundsForDuration(27*60_000,25,5)).toEqual({rounds:1,breaks:1,usableMs:27*60_000});
+    expect(planRoundsForDuration(31*60_000,25,5)).toEqual({rounds:2,breaks:1,usableMs:31*60_000});
+    expect(planRoundsForDuration(26*60_000,25,0)?.rounds).toBe(2);
   });
 
   it('caps marathon rounds and reports the usable schedule', () => {
     const capped = planRoundsForDuration(48 * 60 * 60_000, 45, 5, 8);
-    expect(capped).toEqual({ rounds: 8, breaks: 7, usableMs: 8 * 45 * 60_000 + 7 * 5 * 60_000 });
+    expect(capped).toEqual({ rounds: 8, breaks: 8, usableMs: 8 * (45+5) * 60_000 });
     expect(MAX_MARATHON_ROUNDS).toBe(24);
   });
 

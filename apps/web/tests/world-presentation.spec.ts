@@ -1,3 +1,4 @@
+import {openSecondarySetting} from "./settings-controls";
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { chooseDebugWeather, chooseDebugTime } from './world-debug-controls';
 import { waitForPreparedWorld } from './world-ready';
@@ -172,9 +173,9 @@ test('opening camera movement never opens memory and is not replayed by route ch
 });
 
 for (const [environment, label, expectedMaximum] of [
-  ['ocean-island', '海岛', 1.14],
+  ['ocean-island', '海岛', 0.9],
   ['natural-valley', '山谷', 0.9],
-] as const) test(`minimal cold opening travels from the maximum to minimum settlement zoom (${environment})`, async ({ page }) => {
+] as const) test(`minimal cold opening keeps its composition separate from close inspection (${environment})`, async ({ page }) => {
   test.setTimeout(90_000);
   await createProject(page);
   await page.getByRole('button', { name: '设置', exact: true }).click();
@@ -197,11 +198,11 @@ for (const [environment, label, expectedMaximum] of [
     canvas.getAttribute('data-camera-minimum-distance-ratio'), canvas.getAttribute('data-camera-maximum-distance-ratio'),
     canvas.getAttribute('data-camera-distance-ratio'),
   ]);
-  expect(Number(minimum)).toBe(0.45);
+  const fitted=Number(end)/.45;
+  expect(Number(minimum)).toBeCloseTo(Math.min(.9,Math.max(.1,12/fitted)),3);
   expect(Number(maximum)).toBe(expectedMaximum);
   expect(Number(start) / Number(end)).toBeCloseTo(expectedMaximum / 0.45, 2);
-  expect(Number(current)).toBeCloseTo(Number(minimum), 2);
-  expect(Number(start) / Number(end)).toBeCloseTo(Number(maximum) / Number(minimum), 2);
+  expect(Number(current)).toBeCloseTo(.45, 2);
   expect(await page.getByRole('button', { name: '关闭建筑记忆' }).count()).toBe(0);
 });
 
@@ -256,7 +257,9 @@ test('an exact five-minute selection starts a full round despite a sub-minute cl
   await page.clock.install({ time: new Date('2026-09-27T04:00:40Z') });
   await createProject(page);
   await page.getByRole('button', { name: '设置', exact: true }).click();
+  await openSecondarySetting(page,'普通任务');
   await page.getByLabel('普通任务专注分钟', { exact: true }).fill('25');
+  await openSecondarySetting(page,'普通任务');
   await page.getByLabel('普通任务专注分钟', { exact: true }).blur();
   await page.getByRole('checkbox', { name: '开启极简模式' }).check();
   await page.getByRole('button', { name: '计时', exact: true }).click();

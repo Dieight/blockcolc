@@ -1,7 +1,7 @@
 import {Capacitor,registerPlugin} from '@capacitor/core';
 export interface AmbientImport {id:string;name:string;bytes:number;durationMs:number}
 interface AmbientAudioPlugin {
-  configure(options:{sources:string[];volume:number}):Promise<void>;
+  configure(options:{sources:string[];volume:number;rainIntensity?:number}):Promise<void>;
   list():Promise<{items:AmbientImport[]}>;
   importAudio():Promise<{cancelled:boolean;item?:AmbientImport}>;
   remove(options:{id:string}):Promise<void>;

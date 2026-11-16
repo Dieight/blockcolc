@@ -1,3 +1,4 @@
+import {openSecondarySetting} from "./settings-controls";
 import {expect,test,type Locator,type Page} from '@playwright/test';
 import type {DomainState} from '@blockcolc/domain';
 import {waitForPreparedWorld} from './world-ready';
@@ -18,7 +19,9 @@ async function setup(page:Page){
  await page.goto('/');
  await page.getByRole('button',{name:'开始建造',exact:true}).click();
  await page.getByRole('button',{name:'设置',exact:true}).click();
+ await openSecondarySetting(page,'普通任务');
  await page.getByRole('spinbutton',{name:'普通任务专注分钟'}).fill('1');
+ await openSecondarySetting(page,'普通任务');
  await page.getByRole('spinbutton',{name:'普通任务专注分钟'}).blur();
  await page.getByRole('spinbutton',{name:'每轮休息分钟'}).fill('0');
  await page.getByRole('spinbutton',{name:'每轮休息分钟'}).blur();

@@ -62,8 +62,9 @@ export function BlueprintLibrary({ state, resourcePacks, run, embedded=false }: 
       { name: t('自添加图纸'), entries: state.buildingBlueprintResources.map(resource => ({ id: resource.id, displayName: resource.displayName, blueprint: resource.blueprint as BlueprintV1, description: t('本机导入的建筑图纸'), imported: true })) },
       { name: t('每日奖励'), entries: state.decorationBlueprintResources.map(resource => ({ id: resource.id, displayName: localBlueprintTitle(resource.id,resource.blueprint.title), blueprint: resource.blueprint as BlueprintV1, description: t(rewardMetadata.get(resource.id)?.description ?? '完成每日目标可获得') })) },
       { name: t('节日奖励'), entries: holidaysForYear(new Date().getFullYear()).map(holiday => ({ id: holiday.id, displayName: unlocked.has(holiday.id) ? t(holiday.buildingName) : '???', locked: !unlocked.has(holiday.id), description: unlocked.has(holiday.id) ? t(holiday.description) : t('也许在某些特定节日启动方块钟会发现它') })) },
+      { name: t('生日礼物'), entries: [{id:'birthday',displayName:state.birthdayRewards.length?t('生日小蛋糕'):'???',locked:!state.birthdayRewards.length,description:t('开启生日祝福，生日当天启动即可获得。')}] },
     ] as { name: string; entries: Entry[] }[];
-  }, [catalog, state.buildingBlueprintResources, state.decorationBlueprintResources, state.holidayRewards, language]);
+  }, [catalog, state.buildingBlueprintResources, state.decorationBlueprintResources, state.holidayRewards, state.birthdayRewards, language]);
   const perform = async (operation: () => Promise<void>) => {
     if (lane.current) return;
     lane.current = true; setBusy(true); setError('');

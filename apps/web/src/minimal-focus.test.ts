@@ -19,15 +19,15 @@ function fixture(kind: 'finite' | 'habit' = 'finite') {
 describe('minimal focus preparation', () => {
   it('does not add a grace round at an exact one-minute, zero-break boundary', () => {
     expect(roundsForMinimalEndTime(now + 5 * 60_000, now, 1, 0)).toEqual({ rounds: 5, endsAtMs: now + 5 * 60_000 });
-    expect(roundsForMinimalEndTime(now + 5 * 60_000 + 1, now, 1, 0)).toEqual({ rounds: 6, endsAtMs: now + 6 * 60_000 });
+    expect(roundsForMinimalEndTime(now + 5 * 60_000 + 1, now, 1, 0)).toEqual({ rounds: 6, endsAtMs: now + 5 * 60_000+1 });
   });
-  it('fills only a shortfall of at most 60 seconds to the next actual round end', () => {
+  it('keeps the selected end exact instead of filling the old 60-second grace', () => {
     const base = Date.parse('2026-09-27T10:00:00.000Z');
-    expect(roundsForMinimalEndTime(base + 9 * 60_000, base, 10, 5)).toEqual({ rounds: 1, endsAtMs: base + 10 * 60_000 });
-    expect(roundsForMinimalEndTime(base + 9 * 60_000 - 1, base, 10, 5)).toBeNull();
-    expect(roundsForMinimalEndTime(base + 24 * 60_000, base, 10, 5)).toEqual({ rounds: 2, endsAtMs: base + 25 * 60_000 });
-    expect(roundsForMinimalEndTime(base + 23 * 60_000, base, 10, 5)).toEqual({ rounds: 1, endsAtMs: base + 23 * 60_000 });
-    expect(roundsForMinimalEndTime(base + 22 * 60_000, base, 10, 5)).toEqual({ rounds: 1, endsAtMs: base + 22 * 60_000 });
+    expect(roundsForMinimalEndTime(base + 9 * 60_000, base, 10, 5)).toEqual({ rounds: 1, endsAtMs: base + 9 * 60_000 });
+    expect(roundsForMinimalEndTime(base + 9 * 60_000 - 1, base, 10, 5)).toEqual({rounds:1,endsAtMs:base+9*60_000-1});
+    expect(roundsForMinimalEndTime(base + 24 * 60_000, base, 10, 5)).toEqual({ rounds: 2, endsAtMs: base + 24 * 60_000 });
+    expect(roundsForMinimalEndTime(base + 23 * 60_000, base, 10, 5)).toEqual({ rounds: 2, endsAtMs: base + 23 * 60_000 });
+    expect(roundsForMinimalEndTime(base + 22 * 60_000, base, 10, 5)).toEqual({ rounds: 2, endsAtMs: base + 22 * 60_000 });
   });
 
   it('does not cross round thresholds for time values still inside the break gap', () => {
@@ -78,11 +78,9 @@ describe('minimal focus preparation', () => {
     const future = prepareMinimalFocus(fixture(), null, { hourDraft: '16', minuteDraft: '0', day: 'today' }, preferences, now);
     expect(future).toMatchObject({ ok: true, plan: { endAt: new Date(2026, 8, 6, 16, 0).toISOString() } });
   });
-  it('rejects too-short, too-many-round and invalid-setting schedules', () => {
-    // A selection exactly one minute short is intentionally rounded to the
-    // real round boundary; anything more than 60 seconds short is rejected.
-    expect(prepareMinimalFocus(fixture(), null, { ...draft, hourDraft: '14', minuteDraft: '44' }, preferences, now)).toMatchObject({ ok: true, plan: { endAt: new Date(2026, 8, 6, 14, 45).toISOString() } });
-    expect(prepareMinimalFocus(fixture(), null, { ...draft, hourDraft: '14', minuteDraft: '43' }, preferences, now)).toMatchObject({ ok: false, message: expect.stringContaining('过近') });
+  it('accepts short final rounds, rejects too-many-round and invalid-setting schedules', () => {
+    expect(prepareMinimalFocus(fixture(), null, { ...draft, hourDraft: '14', minuteDraft: '44' }, preferences, now)).toMatchObject({ ok: true, plan: { endAt: new Date(2026, 8, 6, 14, 44).toISOString() } });
+    expect(prepareMinimalFocus(fixture(), null, { ...draft, hourDraft: '14', minuteDraft: '43' }, preferences, now)).toMatchObject({ ok:true,command:{plannedDurationMs:43*60_000} });
     expect(prepareMinimalFocus(fixture(), null, draft, { focusMinutes: 1, breakMinutes: 0 }, now)).toMatchObject({ ok: false, message: expect.stringContaining('24') });
     expect(prepareMinimalFocus(fixture(), null, draft, { ...preferences, focusMinutes: 0 }, now)).toMatchObject({ ok: false, message: expect.stringContaining('时长无效') });
   });

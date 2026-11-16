@@ -4,8 +4,8 @@ import { conditionVisualForVoxels, type ConditionVisual } from './environment';
 import { blockOcclusionFor, createLocalOcclusionField } from './local-occlusion';
 import { planMovingPistonRenderVoxels } from './resource-special-piston';
 
-export const BUILDING_CPU_CACHE_REVISION=1;
-export const STATIC_RENDER_CPU_CACHE_REVISION=2;
+export const BUILDING_CPU_CACHE_REVISION=2;
+export const STATIC_RENDER_CPU_CACHE_REVISION=3;
 export const BUILDING_CPU_CACHE_MAX_BYTES=32*1024*1024;
 export interface CpuGeometry {
   attributes: Record<string,{array:Float32Array;itemSize:number}>;

@@ -274,7 +274,9 @@ export interface WorldSettings {
 export interface QuickNote { id: string; text: string; completed: boolean; createdAt: ISOInstant }
 
 export interface DomainState {
-  schemaVersion: 14;
+  schemaVersion: 15;
+  birthday: import('./birthday.js').BirthdaySettings;
+  birthdayRewards: import('./birthday.js').BirthdayReward[];
   quickNotes: QuickNote[];
   projects: Project[];
   habitBuildings: HabitBuildingMonument[];
@@ -296,6 +298,8 @@ export interface DomainState {
 }
 
 export type DomainCommand =
+  | { type: 'ConfigureBirthday'; enabled: boolean; month: number; day: number }
+  | { type: 'ObserveBirthday' }
   | { type: 'AddQuickNote'; noteId: string; text: string }
   | { type: 'SetQuickNoteCompleted'; noteId: string; completed: boolean }
   | { type: 'RenameQuickNote'; noteId: string; text: string }
@@ -310,7 +314,7 @@ export type DomainCommand =
   | { type: "RemoveSubtask"; subtaskId: string }
   | { type: "RenameSubtask"; subtaskId: string; title: string }
   | { type: "ReorderSubtasks"; orderedSubtaskIds: string[] }
-  | { type: "StartFocus"; sessionId: string; subtaskId: string | null; plannedDurationMs: number; projectId?: string; marathon?: boolean; deferredSettlement?: true }
+  | { type: "StartFocus"; sessionId: string; subtaskId: string | null; plannedDurationMs: number; projectId?: string; marathon?: boolean; deferredSettlement?: true; deadlineAt?: ISOInstant }
   | { type: "CompleteFocus" }
   | { type: "CompleteFocusEarly"; reportId: string }
   | { type: "CancelFocus"; interruptionCategory?: FocusInterruptionCategory | null; interruptionNote?: string }
@@ -338,6 +342,8 @@ export type DomainCommand =
   | { type: "DeleteBuildingBlueprint"; blueprintId: string };
 
 export type DomainEvent =
+  | { type: 'BirthdayConfigured' }
+  | { type: 'BirthdayRewardGranted'; year: number; date: string }
   | { type: 'QuickNotesChanged' }
   | { type: "ProjectCreated"; projectId: string }
   | { type: "HabitBuildingSelected"; projectId: string; cycleNumber: number; targetRounds: number }
@@ -392,6 +398,7 @@ export type DomainErrorCode =
   | "FOCUS_NOT_ACTIVE"
   | "FOCUS_NOT_ELAPSED"
   | "FOCUS_ALREADY_ELAPSED"
+  | "FOCUS_DEADLINE_PASSED"
   | "PROGRESS_CANNOT_DECREASE"
   | "PROGRESS_REQUIRES_COMPLETED_FOCUS"
   | "FOCUS_ALREADY_REPORTED"

@@ -104,26 +104,25 @@ for(const theme of ['light','dark'])test(`real touch swipes return from notes an
 test('nature tracks are exclusive, imported audio replaces the track and rain follows debug weather',async({page},info)=>{
   test.setTimeout(120000);
   await page.addInitScript(()=>{
-    const active=new Set<AudioBufferSourceNode>();
-    const start=AudioBufferSourceNode.prototype.start,stop=AudioBufferSourceNode.prototype.stop;
-    AudioBufferSourceNode.prototype.start=function(...args:Parameters<typeof start>){active.add(this);return start.apply(this,args);};
-    AudioBufferSourceNode.prototype.stop=function(...args:Parameters<typeof stop>){active.delete(this);return stop.apply(this,args);};
-    Object.defineProperty(window,'__testAudioLoops',{get:()=>active.size});
+    const active=new Set<HTMLMediaElement>(),play=HTMLMediaElement.prototype.play;
+    HTMLMediaElement.prototype.play=function(){active.add(this);return play.call(this);};
+    Object.defineProperty(window,'__testAudioLoops',{get:()=>[...active].filter(media=>media.loop&&!media.paused&&media.hasAttribute('src')).length});
   });
   await setup(page,{language:'en'});await page.getByRole('button',{name:'Settings',exact:true}).click();
+  await page.getByRole('button',{name:'Ambient audio',exact:true}).click();
   const group=page.locator('.ambient-audio-settings');await group.getByRole('checkbox',{name:'Nature sounds',exact:true}).check();
-  await group.getByRole('radio',{name:'Morning birdsong',exact:true}).check();await expect(group.getByRole('radio',{name:'Evening lakeside',exact:true})).toHaveCount(0);
-  await group.locator('input[type=file]').setInputFiles('../../apps/web/public/audio/morning-birdsong.wav');
-  await expect(group.getByRole('radio',{name:'morning-birdsong.wav',exact:true})).toBeChecked();await expect(group.getByRole('radio',{name:'Morning birdsong',exact:true})).not.toBeChecked();
+  await group.getByRole('radio',{name:'Morning forest birds',exact:true}).check();await expect(group.getByRole('radio',{name:'Evening lakeside',exact:true})).toHaveCount(0);
+  await group.locator('input[type=file]').setInputFiles('../../apps/web/public/audio/rain-light.ogg');
+  await expect(group.getByRole('radio',{name:'rain-light.ogg',exact:true})).toBeChecked();await expect(group.getByRole('radio',{name:'Morning forest birds',exact:true})).not.toBeChecked();
   await group.getByRole('checkbox',{name:'Rain with the weather',exact:true}).check();
   const debug=page.locator('.world-debug-settings');await debug.getByRole('checkbox',{name:'Temporary world preview',exact:true}).check();
   await debug.locator('.choice-menu-trigger').click();await page.getByRole('option',{name:'Light rain',exact:true}).click();
   await expect.poll(()=>page.evaluate(()=>JSON.parse(localStorage.getItem('blockcolc-focus-preferences-v1')!).ambience.rainEnabled)).toBe(true);
-  await expect.poll(()=>page.evaluate(()=>(window as typeof window&{__testAudioLoops:number}).__testAudioLoops)).toBe(1);
+  await expect.poll(()=>page.evaluate(()=>(window as typeof window&{__testAudioLoops:number}).__testAudioLoops)).toBe(2);
   await debug.locator('.choice-menu-trigger').click();await page.getByRole('option',{name:'Thunderstorm',exact:true}).click();
-  await expect.poll(()=>page.evaluate(()=>(window as typeof window&{__testAudioLoops:number}).__testAudioLoops)).toBe(1);
+  await expect.poll(()=>page.evaluate(()=>(window as typeof window&{__testAudioLoops:number}).__testAudioLoops)).toBe(2);
   await debug.locator('.choice-menu-trigger').click();await page.getByRole('option',{name:'Clear',exact:true}).click();
-  await expect.poll(()=>page.evaluate(()=>(window as typeof window&{__testAudioLoops:number}).__testAudioLoops)).toBe(0);
+  await expect.poll(()=>page.evaluate(()=>(window as typeof window&{__testAudioLoops:number}).__testAudioLoops),{timeout:15000}).toBe(0);
   await group.scrollIntoViewIfNeeded();await page.screenshot({path:info.outputPath('nature-audio-settings.png')});
 });
 

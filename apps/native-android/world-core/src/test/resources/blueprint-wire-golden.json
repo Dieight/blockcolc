@@ -1,0 +1,167 @@
+{
+  "producer": "Independent Node JSON.stringify, sorted UTF-16 keys; geometry envelope is [bounds, normalized cells].",
+  "cases": [
+    {
+      "input": {
+        "schemaVersion": 1,
+        "id": "plain",
+        "title": "Simple",
+        "bounds": {
+          "minX": 0,
+          "maxX": 0,
+          "minY": 0,
+          "maxY": 0,
+          "minZ": 0,
+          "maxZ": 0
+        },
+        "voxels": [
+          {
+            "x": 0,
+            "y": 0,
+            "z": 0,
+            "materialId": "stone",
+            "stage": "details",
+            "buildOrder": 0,
+            "sourceBlockId": "minecraft:stone"
+          }
+        ]
+      },
+      "canonical": "{\"bounds\":{\"maxX\":0,\"maxY\":0,\"maxZ\":0,\"minX\":0,\"minY\":0,\"minZ\":0},\"id\":\"plain\",\"schemaVersion\":1,\"title\":\"Simple\",\"voxels\":[{\"buildOrder\":0,\"materialId\":\"stone\",\"sourceBlockId\":\"minecraft:stone\",\"x\":0,\"y\":0,\"z\":0}]}",
+      "geometrySha": "c625b0d774a99133871af35ea77cc3c3c02334d908729cf9670a4dc3c53bcc5d"
+    },
+    {
+      "input": {
+        "schemaVersion": 1,
+        "id": "quote\"\\",
+        "title": "像素😀\n\t\r\b\f\u0001\ud800",
+        "bounds": {
+          "minX": 0,
+          "maxX": 0,
+          "minY": 0,
+          "maxY": 0,
+          "minZ": 0,
+          "maxZ": 0
+        },
+        "voxels": [
+          {
+            "x": 0,
+            "y": 0,
+            "z": 0,
+            "materialId": "stone",
+            "stage": "details",
+            "buildOrder": 0,
+            "sourceBlockId": "minecraft:oak_sign",
+            "sourceBlockState": {
+              "rotation": "4",
+              "waterlogged": "false"
+            },
+            "sign": {
+              "front": {
+                "lines": [
+                  "hello\"",
+                  "x\\y",
+                  "中文",
+                  "😀"
+                ],
+                "dyeColor": "red",
+                "glowing": true
+              },
+              "back": {
+                "lines": [],
+                "dyeColor": "black",
+                "glowing": false
+              }
+            }
+          }
+        ]
+      },
+      "canonical": "{\"bounds\":{\"maxX\":0,\"maxY\":0,\"maxZ\":0,\"minX\":0,\"minY\":0,\"minZ\":0},\"id\":\"quote\\\"\\\\\",\"schemaVersion\":1,\"title\":\"像素😀\\n\\t\\r\\b\\f\\u0001\\ud800\",\"voxels\":[{\"buildOrder\":0,\"materialId\":\"stone\",\"sign\":{\"back\":{\"dyeColor\":\"black\",\"glowing\":false,\"lines\":[]},\"front\":{\"dyeColor\":\"red\",\"glowing\":true,\"lines\":[\"hello\\\"\",\"x\\\\y\",\"中文\",\"😀\"]}},\"sourceBlockId\":\"minecraft:oak_sign\",\"sourceBlockState\":{\"rotation\":\"4\",\"waterlogged\":\"false\"},\"x\":0,\"y\":0,\"z\":0}]}",
+      "geometrySha": "0f4cefda4f8137515f57319917e40843adc5c6039e81623f5edb59a7c665bcfd"
+    },
+    {
+      "input": {
+        "schemaVersion": 1,
+        "id": "piston",
+        "title": "Moving",
+        "bounds": {
+          "minX": 0,
+          "maxX": 0,
+          "minY": 0,
+          "maxY": 0,
+          "minZ": 0,
+          "maxZ": 0
+        },
+        "voxels": [
+          {
+            "x": 0,
+            "y": 0,
+            "z": 0,
+            "materialId": "stone",
+            "stage": "details",
+            "buildOrder": 0,
+            "sourceBlockId": "minecraft:moving_piston",
+            "movingPistonMovedState": {
+              "blockId": "minecraft:stone",
+              "properties": {
+                "axis": "y"
+              }
+            },
+            "movingPistonPose": {
+              "facing": "east",
+              "progress": 1e-7,
+              "extending": true,
+              "source": false
+            },
+            "emissiveKind": "test",
+            "emissiveLevel": 3
+          }
+        ]
+      },
+      "canonical": "{\"bounds\":{\"maxX\":0,\"maxY\":0,\"maxZ\":0,\"minX\":0,\"minY\":0,\"minZ\":0},\"id\":\"piston\",\"schemaVersion\":1,\"title\":\"Moving\",\"voxels\":[{\"buildOrder\":0,\"emissiveKind\":\"test\",\"emissiveLevel\":3,\"materialId\":\"stone\",\"movingPistonMovedState\":{\"blockId\":\"minecraft:stone\",\"properties\":{\"axis\":\"y\"}},\"movingPistonPose\":{\"extending\":true,\"facing\":\"east\",\"progress\":1e-7,\"source\":false},\"sourceBlockId\":\"minecraft:moving_piston\",\"x\":0,\"y\":0,\"z\":0}]}",
+      "geometrySha": "a09b2c57217d1908cc161bdcb1a85c38b6466709d975f52024f047d1832e2332"
+    },
+    {
+      "input": {
+        "schemaVersion": 1,
+        "id": "fire",
+        "title": "Campfire",
+        "bounds": {
+          "minX": 0,
+          "maxX": 0,
+          "minY": 0,
+          "maxY": 0,
+          "minZ": 0,
+          "maxZ": 0
+        },
+        "voxels": [
+          {
+            "x": 0,
+            "y": 0,
+            "z": 0,
+            "materialId": "stone",
+            "stage": "details",
+            "buildOrder": 0,
+            "sourceBlockId": "minecraft:campfire",
+            "sourceBlockState": {},
+            "campfire": {
+              "slots": [
+                {
+                  "slot": 3,
+                  "itemId": "minecraft:carrot",
+                  "count": 2
+                },
+                {
+                  "slot": 0,
+                  "itemId": "minecraft:potato",
+                  "count": 1
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "canonical": "{\"bounds\":{\"maxX\":0,\"maxY\":0,\"maxZ\":0,\"minX\":0,\"minY\":0,\"minZ\":0},\"id\":\"fire\",\"schemaVersion\":1,\"title\":\"Campfire\",\"voxels\":[{\"buildOrder\":0,\"campfire\":{\"slots\":[{\"count\":1,\"itemId\":\"minecraft:potato\",\"slot\":0},{\"count\":2,\"itemId\":\"minecraft:carrot\",\"slot\":3}]},\"materialId\":\"stone\",\"sourceBlockId\":\"minecraft:campfire\",\"x\":0,\"y\":0,\"z\":0}]}",
+      "geometrySha": "9c39054c7e9ac1a390a7e4a3671c590261e84d7d9044414abe4abfd0d9aac7fe"
+    }
+  ]
+}

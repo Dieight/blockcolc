@@ -121,9 +121,12 @@ export class IndexedDbStateRepository implements StateRepository, DailyBackupRep
       const store = tx.objectStore(APP_STATE_STORE);
       const current = await requestResult<CurrentStateRecord | undefined>(store.get(CURRENT_KEY));
       if ((current?.revision ?? 0) !== expectedRevision) throw new StorageConflictError(expectedRevision, current?.revision ?? 0);
-      if (!current?.state || current.state.schemaVersion !== 14) throw new Error('Reload before saving notes');
+      if (!current?.state) throw new Error('Reload before saving notes');
+      // load() exposes a migrated snapshot before a full save has necessarily
+      // rewritten the old record. The first bounded write must migrate too.
+      const currentState=current.state.schemaVersion===15?current.state:cloneAndParseState(current.state);
       const revision = current.revision + 1;
-      store.put({ ...current, revision, state: { ...current.state, quickNotes: safeNotes } } satisfies CurrentStateRecord);
+      store.put({ ...current, revision, state: { ...currentState, quickNotes: safeNotes } } satisfies CurrentStateRecord);
       await done;
       return revision;
     } catch (error) {

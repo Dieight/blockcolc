@@ -21,7 +21,8 @@ describe('world weather status and attribution', () => {
     const cached = renderToStaticMarkup(<WorldWeatherSettingsStatus enabled view={{ ...local,
       syncState: 'available', source: 'real', conditionText: '晴', locationSource: 'cached' }}/>);
 
-    expect(disabled).toContain('已关闭');
+    expect(disabled).toContain('本地天气与日月');
+    expect(disabled).not.toContain('weather-astronomy-status');
     expect(disabledWithCacheClearFailure).toContain('本机位置缓存未能清除');
     expect(notSynced).toContain('尚未同步');
     expect(current).toContain('当前显示 小雨');
@@ -57,11 +58,11 @@ describe('world weather status and attribution', () => {
     const unavailable = renderToStaticMarkup(<WorldWeatherSettingsStatus enabled view={{ ...local,
       astronomySyncState: 'unavailable', astronomyFailureReason: 'location_unavailable' }}/>);
 
-    expect(calendar).toContain('天文日历已同步');
+    expect(calendar).toContain('日月已同步');
     expect(calendar).toContain('数据来源：');
     expect(calendar).toContain('href="https://developer.qweather.com/attribution.html"');
-    expect(ephemeris).toContain('按已授权位置本地历算');
-    expect(ephemeris).not.toContain('天文日历已同步');
+    expect(ephemeris).toContain('日月按所在地计算');
+    expect(ephemeris).not.toContain('日月已同步');
     expect(unavailable).toContain('聚落继续使用本地光照');
   });
 
@@ -108,7 +109,7 @@ describe('world weather status and attribution', () => {
     expect(html.match(/合作数据仅供展示/g)).toHaveLength(1);
     expect(html).toContain('href="https://example.com/astronomy-attribution"');
     expect(html).toContain('当前显示 小雨');
-    expect(html).toContain('天文日历已同步');
+    expect(html).toContain('日月已同步');
     expect(html).not.toContain('javascript:alert');
     const disabled = renderToStaticMarkup(<WorldWeatherSettingsStatus enabled={false} view={{ ...local,
       source: 'real', attributions: [attribution], astronomySyncState: 'calendar' }}/>);

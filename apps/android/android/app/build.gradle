@@ -149,6 +149,8 @@ android {
             buildConfigField 'String', 'BLOCKCOLC_RELAY_ENROLLED_DATE', groovy.json.JsonOutput.toJson(privateRelayEnrolledDate)
         }
         aaptOptions {
+            // MediaPlayer reads full-duration Opus recordings by asset descriptor.
+            noCompress 'ogg', 'wav'
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
              // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
             ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'

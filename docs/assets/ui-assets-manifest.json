@@ -219,16 +219,22 @@
       "bytes": 361
     },
     {
-      "path": "apps/android/android/app/src/main/res/drawable-v24/ic_launcher_foreground.xml",
-      "role": "source-origin-unverified",
-      "sha256": "A8514094F754B099D3E55CE1D6E0B2DE79DB418B2EEACB0FC2A6BB0BFADEF221",
-      "bytes": 1880
+      "path": "apps/android/android/app/src/main/res/drawable/ic_ambient_play.xml",
+      "role": "original-code-native",
+      "sha256": "1B97E1A500E7CC1666878092EC0293BCC44870A4AF24A94533B7CEB5D1C876A5",
+      "bytes": 276
     },
     {
-      "path": "apps/android/android/app/src/main/res/drawable/ic_launcher_background.xml",
-      "role": "source-origin-unverified",
-      "sha256": "718BA51ADF166BB55C3E9936BB8199A0148457F7F0191AAA2F37A94F3159D6EC",
-      "bytes": 5606
+      "path": "apps/android/android/app/src/main/res/drawable/ic_ambient_pause.xml",
+      "role": "original-code-native",
+      "sha256": "64386EC0C7331A8E1481132FCF1301F8BEBF2384A3341420316A81F635045818",
+      "bytes": 264
+    },
+    {
+      "path": "apps/android/android/app/src/main/res/drawable/ic_ambient_stop.xml",
+      "role": "original-code-native",
+      "sha256": "6636221A12B5A6555685183B9014E07DE96ECA7F9A1C770E62BC696902EC3392",
+      "bytes": 251
     },
     {
       "path": "apps/android/android/app/src/main/res/values/ic_launcher_background.xml",
@@ -249,71 +255,28 @@
       "bytes": 265
     },
     {
-      "path": "apps/android/android/app/src/main/res/drawable/splash.png",
-      "role": "splash-source-origin-unverified",
-      "note": "Other orientation/density splash files remain unverified until their source/generation chain is documented.",
-      "sha256": "5CF98B4451BD99B20DF26F9E608A46946118BE6B0AE90762F9CA1786A30C76FF",
-      "bytes": 4040
+      "path": "apps/android/android/app/src/main/res/drawable/splash.xml",
+      "role": "native-launch-reference",
+      "sha256": "F0ED23B0083F8EE3820F9F9F7D51511DDB71A9BE8DDB795EF213C483D5D50D40",
+      "bytes": 481
     },
     {
-      "path": "apps/android/android/app/src/main/res/drawable-land-hdpi/splash.png",
-      "role": "splash-source-origin-unverified",
-      "sha256": "08CC34AD7713FE7ED58BCEAA37B2387B670C53CD60264B4BD6442DB3098E75DC",
-      "bytes": 7705
+      "path": "apps/android/android/app/src/main/res/values/splash.xml",
+      "role": "native-launch-reference",
+      "sha256": "99D2C17C14EA9A1A0BC6669F9ADC5C5DD2394F300910EC1B493303351F04C914",
+      "bytes": 126
     },
     {
-      "path": "apps/android/android/app/src/main/res/drawable-land-mdpi/splash.png",
-      "role": "splash-source-origin-unverified",
-      "sha256": "5CF98B4451BD99B20DF26F9E608A46946118BE6B0AE90762F9CA1786A30C76FF",
-      "bytes": 4040
+      "path": "apps/android/android/app/src/main/res/values-night/splash.xml",
+      "role": "native-launch-reference",
+      "sha256": "732B531483DB9A8747A84C38B7B5CE549398B0387C02ADC74BCB02C2CEF28896",
+      "bytes": 126
     },
     {
-      "path": "apps/android/android/app/src/main/res/drawable-land-xhdpi/splash.png",
-      "role": "splash-source-origin-unverified",
-      "sha256": "22F87E1E3BC89AA01A7DBC39C9A4DB058CD0BF4AD3FE9F55712BF69EB997F4BF",
-      "bytes": 9251
-    },
-    {
-      "path": "apps/android/android/app/src/main/res/drawable-land-xxhdpi/splash.png",
-      "role": "splash-source-origin-unverified",
-      "sha256": "42AA26392546FCDEE1B8D3AC6D4B41BFCCEB41DC6A4F3A3C30C24A8A8F4DB862",
-      "bytes": 13984
-    },
-    {
-      "path": "apps/android/android/app/src/main/res/drawable-land-xxxhdpi/splash.png",
-      "role": "splash-source-origin-unverified",
-      "sha256": "60393CE8636FD263E4E1FEA3FD4AB2DE948C6295E898FDA9B50AC4E5283BE809",
-      "bytes": 17683
-    },
-    {
-      "path": "apps/android/android/app/src/main/res/drawable-port-hdpi/splash.png",
-      "role": "splash-source-origin-unverified",
-      "sha256": "C5015F4BA3628392B538386C5E210F0B94F352A3160ADAB934FD0311972137CA",
-      "bytes": 7934
-    },
-    {
-      "path": "apps/android/android/app/src/main/res/drawable-port-mdpi/splash.png",
-      "role": "splash-source-origin-unverified",
-      "sha256": "07FA579E1C83E04BA7F9CBCBFCF41B68E15FE3638F2C44A04E58B809103E6B69",
-      "bytes": 4096
-    },
-    {
-      "path": "apps/android/android/app/src/main/res/drawable-port-xhdpi/splash.png",
-      "role": "splash-source-origin-unverified",
-      "sha256": "B73049CB37FE76D6C11B87A796766BF6AF0C85483B31EB6A921657B0D764A4B9",
-      "bytes": 9875
-    },
-    {
-      "path": "apps/android/android/app/src/main/res/drawable-port-xxhdpi/splash.png",
-      "role": "splash-source-origin-unverified",
-      "sha256": "0C7F1212F25B7B90E9A6E1D320013E4FF3D3E03E634CBB07B7B7981CAC51627F",
-      "bytes": 13346
-    },
-    {
-      "path": "apps/android/android/app/src/main/res/drawable-port-xxxhdpi/splash.png",
-      "role": "splash-source-origin-unverified",
-      "sha256": "3DB071A03B2F8FFE0DFD4170FC59842D53CD15BBA5E88AF59401D58EFABF7827",
-      "bytes": 17489
+      "path": "apps/android/android/app/src/main/res/values-v31/styles.xml",
+      "role": "native-launch-reference",
+      "sha256": "9CBF800A62005E9BCF2A36F62462CDCFF32052002DC25807AC33C7CAAD79DED9",
+      "bytes": 581
     }
   ],
   "consumers": [
@@ -352,12 +315,6 @@
       ]
     },
     {
-      "path": "apps/android/android/app/src/main/res/drawable-v24/ic_launcher_foreground.xml",
-      "includes": [
-        "<path"
-      ]
-    },
-    {
       "path": "apps/android/android/app/src/main/java/com/blockcolc/app/BreakLiveUpdatePlugin.java",
       "includes": [
         "R.drawable.ic_stat_tomato_outline"
@@ -368,6 +325,35 @@
       "includes": [
         "@drawable/splash"
       ]
+    },
+    {
+      "path": "apps/android/android/app/src/main/res/drawable/splash.xml",
+      "includes": [
+        "@mipmap/ic_launcher_foreground",
+        "@color/blockcolc_splash_background"
+      ]
+    },
+    {
+      "path": "apps/android/android/app/src/main/res/values-v31/styles.xml",
+      "includes": [
+        "@mipmap/ic_launcher_foreground",
+        "@color/blockcolc_splash_background"
+      ]
     }
+  ],
+  "retiredAssets": [
+    "apps/android/android/app/src/main/res/drawable/splash.png",
+    "apps/android/android/app/src/main/res/drawable-land-mdpi/splash.png",
+    "apps/android/android/app/src/main/res/drawable-land-hdpi/splash.png",
+    "apps/android/android/app/src/main/res/drawable-land-xhdpi/splash.png",
+    "apps/android/android/app/src/main/res/drawable-land-xxhdpi/splash.png",
+    "apps/android/android/app/src/main/res/drawable-land-xxxhdpi/splash.png",
+    "apps/android/android/app/src/main/res/drawable-port-mdpi/splash.png",
+    "apps/android/android/app/src/main/res/drawable-port-hdpi/splash.png",
+    "apps/android/android/app/src/main/res/drawable-port-xhdpi/splash.png",
+    "apps/android/android/app/src/main/res/drawable-port-xxhdpi/splash.png",
+    "apps/android/android/app/src/main/res/drawable-port-xxxhdpi/splash.png",
+    "apps/android/android/app/src/main/res/drawable/ic_launcher_background.xml",
+    "apps/android/android/app/src/main/res/drawable-v24/ic_launcher_foreground.xml"
   ]
 }

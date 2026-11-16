@@ -1,0 +1,14 @@
+plugins { id 'org.jetbrains.kotlin.jvm' }
+java { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
+kotlin { compilerOptions { jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17 } }
+dependencies { api project(':state-store'); compileOnly 'org.json:json:20240303'; testImplementation 'org.json:json:20240303'; testImplementation 'junit:junit:4.13.2' }
+
+ tasks.register('exportFocusOracle',Exec) {
+ workingDir rootProject.projectDir
+ commandLine 'node','tools/export-focus-oracle.mjs',layout.buildDirectory.dir('generated/focus-oracle').get().asFile.absolutePath
+ inputs.file '../../../packages/application/src/focus-export.ts'
+ inputs.file '../tools/export-focus-oracle.mjs'
+ outputs.dir layout.buildDirectory.dir('generated/focus-oracle')
+ }
+ sourceSets.test.resources.srcDir layout.buildDirectory.dir('generated/focus-oracle')
+ tasks.named('processTestResources').configure{dependsOn 'exportFocusOracle'}
