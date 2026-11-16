@@ -2,6 +2,8 @@
 
 主目录为 `C:/Codex/blockcolc`；`C:/Codex/tomato-clock` 是兼容旧路径的 junction，指向同一份代码。历史工作树统一放在 `C:/Codex/blockcolc-worktrees/`，私有模块独立留在 `C:/Codex/blockcolc-relay-private/`。已有独立工作树继续保留，整理前检查未提交改动。
 
+仓库中的 `artifacts/` 由 junction 指向 `D:/blockcolc-android/workspace-artifacts/blockcolc`，原引用照常使用。根 `node_modules/` 同样在 D 盘；其工作区包链接仍指向 C 盘的当前源码。归档时遇到 junction，当作链接单独处理，不能跟进去搬动目标目录。
+
 ## 文件位置
 
 | 位置 | 内容 |
@@ -33,13 +35,15 @@
 
 恢复时先解压到临时目录，再按清单挑选需要的文件，避免覆盖当前改动。
 
-原生设备实验的 APK 按 SHA-256 留一份不可改写的内容，证据目录通过硬链接保留原文件名，并附摘要回执。用 `apps/native-android/tools/Save-ExperimentApk.ps1` 保存，不与 Gradle 输出建立硬链接，也不覆盖旧证据。需要修改历史包的副本时，先复制到新文件再操作。已停用实验的构建中间文件可在确认无进程使用后清除，原输入、交付包和测试报告保留。
+实验过程 APK 只保留到该轮采样、报告回收和设备恢复核对结束；之后删掉同一包的过程副本和硬链接，保留源码快照、构建参数、摘要、原始输入和报告。需要重跑时按原快照重新构建，另记新产物摘要。已交付测试包、正式版本及仍用于恢复设备的原包单独保留。运行中的包用 `apps/native-android/tools/Save-ExperimentApk.ps1` 固定字节，不与 Gradle 输出建立硬链接。
 
 2026-09-27 归档清单位于 `artifacts/archive/2026-09-27/`，包括 `cleanup-manifest.json`、`mixed-screens-manifest.json` 和 `legacy-jpeg-and-trace.manifest.json`。相关记录见 [维护记录](maintenance/2026-09-27-workflow.md)和 [v2.0.0 归档](archive/v2.0.0/README.md)。
 
 2026-10-14 整理结果见 [本轮维护记录](maintenance/2026-10-14-workspace.md)。迁移清单、脏工作树 diff 和逐文件摘要位于 `artifacts/maintenance/2026-10-14/`；近期证据的旧路径保留 junction，历史引用仍可访问。旧工作树用 Git 正规迁移，当前路径以 `git worktree list` 为准。
 
 2026-11-01 迁移实验清理释放约 21.1 GiB，历史包去重和原文件复核见 [维护记录](maintenance/2026-11-01-experiment-cleanup.md)。
+
+2026-11-16 阶段提交、D 盘归档和过程 APK 清理见 [本轮记录](maintenance/2026-11-16-workspace-checkpoint.md)。
 
 ## 名称与旧文件
 
