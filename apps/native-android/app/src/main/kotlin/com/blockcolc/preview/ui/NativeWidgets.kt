@@ -58,7 +58,7 @@ import kotlin.math.sin
 
 @Composable fun NativeSeparator(){HorizontalDivider(color=MaterialTheme.colorScheme.outlineVariant)}
 
-@Composable fun NativeDisclosure(title:String,description:String?=null,expanded:Boolean,onExpandedChange:(Boolean)->Unit,valueLabel:String?=null,leading:(@Composable ()->Unit)?=null,rowHeight:androidx.compose.ui.unit.Dp=52.dp,titleStyle:androidx.compose.ui.text.TextStyle=MaterialTheme.typography.bodyLarge,indicator:(@Composable ()->Unit)?=null,valueStyle:androidx.compose.ui.text.TextStyle=MaterialTheme.typography.bodyLarge,rowPadding:androidx.compose.ui.unit.Dp=8.dp,contentSpacing:androidx.compose.ui.unit.Dp=8.dp,indicatorSize:androidx.compose.ui.unit.Dp=24.dp,trailing:(@Composable ()->Unit)?=null,content:@Composable ColumnScope.()->Unit){
+@Composable fun NativeDisclosure(title:String,description:String?=null,expanded:Boolean,onExpandedChange:(Boolean)->Unit,valueLabel:String?=null,leading:(@Composable ()->Unit)?=null,rowHeight:androidx.compose.ui.unit.Dp=52.dp,titleStyle:androidx.compose.ui.text.TextStyle=MaterialTheme.typography.bodyLarge,indicator:(@Composable ()->Unit)?=null,valueStyle:androidx.compose.ui.text.TextStyle=MaterialTheme.typography.bodyLarge,rowPadding:androidx.compose.ui.unit.Dp=8.dp,contentSpacing:androidx.compose.ui.unit.Dp=8.dp,indicatorSize:androidx.compose.ui.unit.Dp=24.dp,trailing:(@Composable ()->Unit)?=null,descriptionStyle:androidx.compose.ui.text.TextStyle=MaterialTheme.typography.bodySmall,content:@Composable ColumnScope.()->Unit){
     val ui=LocalNativeUi.current;var turns by remember{mutableIntStateOf(if(expanded)1 else 0)}
     val visibility=remember{androidx.compose.animation.core.MutableTransitionState(expanded)}
     LaunchedEffect(expanded){visibility.targetState=expanded}
@@ -73,7 +73,7 @@ import kotlin.math.sin
             .semantics{stateDescription=ui.text(if(expanded)"收起" else "展开")}.padding(vertical=rowPadding),verticalAlignment=Alignment.CenterVertically){
             if(leading!=null){leading();Spacer(Modifier.width(10.dp))}
             Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(4.dp)){
-                Text(title,style=titleStyle);if(description!=null)Text(description,style=MaterialTheme.typography.bodySmall)
+                Text(title,style=titleStyle);if(description!=null)Text(description,style=descriptionStyle)
                 if(stackValue&&valueLabel!=null)Text(valueLabel,style=valueStyle)
             }
             if(trailing!=null)trailing()

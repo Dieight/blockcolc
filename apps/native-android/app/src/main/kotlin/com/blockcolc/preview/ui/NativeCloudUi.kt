@@ -23,18 +23,18 @@ import com.blockcolc.cloud.AccountPreferenceOutbox
 import org.json.JSONObject
 import java.util.concurrent.atomic.AtomicReference
 
-@Composable private fun cloudText(zh:String,en:String)=if(LocalNativeUi.current.language=="en")en else zh
-@Composable private fun CloudField(label:String,value:String,onChange:(String)->Unit,secret:Boolean=false){
+@Composable internal fun cloudText(zh:String,en:String)=if(LocalNativeUi.current.language=="en")en else zh
+@Composable internal fun CloudField(label:String,value:String,onChange:(String)->Unit,secret:Boolean=false,enabled:Boolean=true){
     var visible by remember{mutableStateOf(false)}
     LaunchedEffect(value.isEmpty()){if(value.isEmpty())visible=false}
     Column(Modifier.fillMaxWidth().padding(vertical=8.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
         Text(label,style=MaterialTheme.typography.bodySmall)
         Row(Modifier.fillMaxWidth(),verticalAlignment=androidx.compose.ui.Alignment.CenterVertically){
-            BasicTextField(value,onChange,Modifier.weight(1f).heightIn(min=40.dp).semantics{contentDescription=label},singleLine=true,
+            BasicTextField(value,onChange,Modifier.weight(1f).heightIn(min=40.dp).semantics{contentDescription=label},enabled=enabled,singleLine=true,
                 textStyle=MaterialTheme.typography.bodyLarge.copy(color=MaterialTheme.colorScheme.onSurface),
                 visualTransformation=if(secret&&!visible)PasswordVisualTransformation()else VisualTransformation.None,
                 keyboardOptions=KeyboardOptions(keyboardType=if(secret)KeyboardType.Password else KeyboardType.Text))
-            if(secret)NativeIconAction(if(visible)cloudText("隐藏密码","Hide password")else cloudText("显示密码","Show password"),if(visible)"eyeopen"else"eyeclosed",{visible=!visible})
+            if(secret)NativeIconAction(if(visible)cloudText("隐藏密码","Hide password")else cloudText("显示密码","Show password"),if(visible)"eyeopen"else"eyeclosed",{visible=!visible},enabled=enabled)
         }
         NativeSeparator()
     }
@@ -43,11 +43,15 @@ import java.util.concurrent.atomic.AtomicReference
     var expanded by rememberSaveable(title){mutableStateOf(false)}
     NativeDisclosure(title,description,expanded,{expanded=it},rowHeight=60.dp,contentSpacing=0.dp,content=content)
 }
-@Composable private fun CloudError(code:String?){if(code==null)return
+@Composable internal fun CloudError(code:String?){if(code==null)return
     val english=LocalNativeUi.current.language=="en"
     val message=when(code){
         "LOGIN_FAILED"->if(english)"Username or password is incorrect."else"用户名或密码不正确。"
         "PASSWORD_LENGTH"->if(english)"Use a password of 10–256 characters."else"密码需要 10–256 个字符。"
+        "CURRENT_PASSWORD_INVALID"->if(english)"The current password is incorrect."else"当前密码不正确。"
+        "PASSWORD_UNCHANGED"->if(english)"Choose a different password."else"请使用不同的新密码。"
+        "PASSWORD_MISMATCH"->if(english)"The new passwords do not match."else"两次输入的新密码不一致。"
+        "UNAUTHORIZED"->if(english)"Sign in again to continue."else"登录已失效，请重新登录。"
         "USERNAME_FORMAT"->if(english)"Use 3–32 letters, numbers or underscores."else"用户名使用 3–32 位字母、数字或下划线。"
         "USERNAME_TAKEN"->if(english)"This username is already taken."else"这个用户名已被使用。"
         "SYNC_CONFLICT","DOMAIN_CONFLICT","PLAN_CONFLICT"->if(english)"Both devices changed the same record. Your local data is retained; choose which workspace to use."else"两台设备修改了同一条记录。本机内容已保留，请选择要使用的工作区。"
@@ -71,7 +75,9 @@ import java.util.concurrent.atomic.AtomicReference
     val keyboard=LocalSoftwareKeyboardController.current
     fun tr(zh:String,en:String)=if(english)en else zh
     var username by rememberSaveable{mutableStateOf("")};var password by remember{mutableStateOf("")};var registration by rememberSaveable{mutableStateOf(false)}
-    var invite by rememberSaveable{mutableStateOf("")};var restoreConfirm by remember{mutableStateOf(false)};var logoutConfirm by remember{mutableStateOf(false)}
+    var restoreConfirm by remember{mutableStateOf(false)};var logoutConfirm by remember{mutableStateOf(false)}
+    var passwordOpen by remember{mutableStateOf(false)}
+    var passwordPending by remember{mutableStateOf(false)}
     val clipboard=LocalClipboardManager.current
     val commitAccount=remember{AtomicReference<()->Unit>({})}
     NativeSheet(Unit.takeIf{accountOpen},{tr("账户与云同步","Account & cloud")},onCloseAccount,onHidden={commitAccount.getAndSet({}).invoke()},initiallyExpanded=true){
@@ -91,6 +97,7 @@ import java.util.concurrent.atomic.AtomicReference
                 NativeAction(tr("立即同步","Sync now"),controller::refresh,Modifier.weight(1f),pending=view.busy,primary=false,icon="reset")
                 NativeAction(tr("退出登录","Sign out"),{logoutConfirm=true},Modifier.weight(1f),enabled=!view.busy,primary=false)
             }
+            NativeSettingLink(tr("修改密码","Change password")){passwordOpen=true}
             if(view.choiceRequired){
                 Text(tr("本机与云端都有内容，请选择一次。替换前保留本机回滚点；相同记录的冲突不会擅自覆盖。","Both workspaces have content. Choose once. A local rollback is kept before replacement; conflicting records are not overwritten."),style=MaterialTheme.typography.bodySmall)
                 NativeAction(tr("合并独立改动","Merge independent changes"),{controller.choose("merge")},Modifier.fillMaxWidth(),enabled=!view.busy,primary=false)
@@ -131,39 +138,41 @@ import java.util.concurrent.atomic.AtomicReference
         }
         CloudError(view.error)
     }
+    val passwordAccount=view.account?.optString("id")?.takeIf{accountOpen&&passwordOpen&&it.isNotEmpty()}
+    NativeSheet(passwordAccount,{tr("修改密码","Change password")},{passwordOpen=false},
+        dismissible=!passwordPending){accountId->
+        var current by remember{mutableStateOf("")}
+        var next by remember{mutableStateOf("")}
+        var confirmation by remember{mutableStateOf("")}
+        var passwordError by remember{mutableStateOf<String?>(null)}
+        var saved by remember{mutableStateOf(false)}
+        CloudField(tr("当前密码","Current password"),current,{current=it;saved=false;passwordError=null},true,!passwordPending)
+        CloudField(tr("新密码（10–256 位）","New password (10–256 characters)"),next,{next=it;saved=false;passwordError=null},true,!passwordPending)
+        CloudField(tr("确认新密码","Confirm new password"),confirmation,{confirmation=it;saved=false;passwordError=null},true,!passwordPending)
+        Text(tr("修改后，其他设备和浏览器需要重新登录。","Other devices and browsers will need to sign in again."),
+            style=MaterialTheme.typography.bodySmall)
+        NativeAction(tr("保存新密码","Save new password"),{
+            if(passwordPending)return@NativeAction
+            when{
+                next!=confirmation->passwordError="PASSWORD_MISMATCH"
+                current==next->passwordError="PASSWORD_UNCHANGED"
+                else->{
+                    focus.clearFocus();keyboard?.hide();passwordError=null;passwordPending=true
+                    controller.changePassword(accountId,current,next){error->
+                        passwordPending=false;passwordError=error
+                        if(error==null){current="";next="";confirmation="";saved=true}
+                    }
+                }
+            }
+        },Modifier.fillMaxWidth(),pending=passwordPending,enabled=current.isNotEmpty()&&next.length in 10..256&&confirmation.isNotEmpty())
+        if(saved)Text(tr("密码已更新。","Password updated."),style=MaterialTheme.typography.bodySmall)
+        CloudError(passwordError)
+    }
     NativeSheet(Unit.takeIf{friendsOpen},{tr("好友","Friends")},onCloseFriends,initiallyExpanded=true){
         when{
             view.account==null->Text(tr("请先在设置中登录并开启好友功能。","Sign in and enable friends in Settings first."))
             !view.account.optBoolean("friendsEnabled")->NativeAction(tr("开启好友功能","Enable friends"),{controller.account(JSONObject().put("friendsEnabled",true))},Modifier.fillMaxWidth(),pending=view.busy)
-            else->{
-                Text(tr("好友码：","Friend code: ")+view.account.optString("friendCode"),style=MaterialTheme.typography.bodySmall)
-                CloudField(tr("添加好友码","Add friend code"),invite,{invite=it})
-                NativeAction(tr("发送邀请","Send invite"),{controller.invite(invite);invite="";focus.clearFocus();keyboard?.hide()},Modifier.fillMaxWidth(),enabled=!view.busy&&invite.trim().length==18,primary=false,icon="plus")
-                if(view.friends.isEmpty())Text(tr("还没有好友","No friends yet"),style=MaterialTheme.typography.bodySmall)
-                view.friends.forEach{friend->
-                    NativeSeparator();Text(friend.optString("name"),style=MaterialTheme.typography.titleMedium)
-                    if(friend.optBoolean("readOnly"))Text(tr("Mutsumi Focus · 公开只读数据","Mutsumi Focus · public, read-only"),style=MaterialTheme.typography.bodySmall)
-                    if(friend.optString("status")=="pending"){
-                        if(friend.optBoolean("incoming"))NativeAction(tr("接受邀请","Accept invite"),{controller.respond(friend.getString("id"),"accept")},Modifier.fillMaxWidth(),enabled=!view.busy)
-                        else Text(tr("等待对方接受","Waiting for acceptance"),style=MaterialTheme.typography.bodySmall)
-                    }else{
-                        if(friend.has("currentName")&&!friend.isNull("currentName"))Text(friend.getString("currentName"))
-                        else if(friend.has("focusing"))Text(if(friend.optBoolean("focusing"))tr("专注中","Focusing")else tr("暂未专注","Not focusing"))
-                        if(friend.optString("focusState")=="paused")Text(tr("已暂停","Paused"),style=MaterialTheme.typography.bodySmall)
-                        if(friend.has("startedAt")&&!friend.isNull("startedAt")){
-                            val period=friend.optString("startedAt")+if(friend.has("endsAt")&&!friend.isNull("endsAt"))" → "+friend.optString("endsAt")else ""
-                            Text(period,style=MaterialTheme.typography.bodySmall)
-                        }
-                        val days=friend.optJSONArray("days");if(days!=null)for(i in 0 until minOf(days.length(),7)){val day=days.getJSONObject(i);Text(day.getString("date")+"  "+(day.getLong("actualFocusMs")/60000)+" min",style=MaterialTheme.typography.bodySmall)}
-                        if(friend.optBoolean("stale"))Text(tr("实时状态暂不可用","Live status unavailable"),style=MaterialTheme.typography.bodySmall)
-                        if(!friend.optBoolean("readOnly"))CloudGroup(LocalNativeUi.current.text("对 {0} 可见",friend.optString("name")),tr("单独设置，或使用默认","Override, or use your defaults")){
-                            CloudSharing(friend.optJSONObject("sharing")?:view.account.optJSONObject("sharing")?:JSONObject(),!view.busy){controller.sharing(friend.getString("id"),it)}
-                            NativeAction(tr("使用默认设置","Use defaults"),{controller.sharing(friend.getString("id"),null)},Modifier.fillMaxWidth(),enabled=!view.busy,primary=false)
-                        }
-                    }
-                    NativeAction(tr("移除","Remove"),{controller.respond(friend.getString("id"),"remove")},Modifier.fillMaxWidth(),enabled=!view.busy,primary=false)
-                }
-            }
+            else->NativeFriendsPanel(controller,view)
         }
         CloudError(view.error)
     }
@@ -177,7 +186,7 @@ import java.util.concurrent.atomic.AtomicReference
     }
 }
 
-@Composable private fun CloudSharing(value:JSONObject,enabled:Boolean,onChange:(JSONObject)->Unit){
+@Composable internal fun CloudSharing(value:JSONObject,enabled:Boolean,onChange:(JSONObject)->Unit){
     val labels=listOf("status" to cloudText("专注状态","Focus status"),"name" to cloudText("当前任务","Current task"),"time" to cloudText("开始与结束时间","Start and end times"),"daily" to cloudText("每日专注时长","Daily focus time"))
     for((key,label)in labels)NativeToggle(label,"",value.optBoolean(key),enabled){checked->
         onChange(JSONObject().also{out->labels.forEach{(k,_)->out.put(k,if(k==key)checked else value.optBoolean(k))}})

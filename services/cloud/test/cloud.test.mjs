@@ -7,7 +7,6 @@ import {CloudStore} from '../src/store.mjs';
 import {createCloudServer} from '../src/server.mjs';
 import {createInitialState,execute} from '../build/domain.mjs';
 import {canonical,sha,splitDomain} from '../src/wire.mjs';
-import {RelayForwarder} from '../src/forwarder.mjs';
 import {request as httpRequest} from 'node:http';
 
 function fixture(t){const directory=mkdtempSync(join(tmpdir(),'blockcolc-cloud-'));let now=Date.parse('2026-11-15T10:00:00Z');
@@ -105,120 +104,56 @@ test('friend consent and independent disclosure filters exclude hidden facts',as
   setNow('2026-11-15T10:21:00Z');assert.equal(store.friends(b)[0].currentName,undefined);
   store.updateAccount(a,{friendsEnabled:false});assert.equal(store.friends(b)[0].currentName,undefined);
 });
-test('private forwarding retries do not block commits, revisions persist and friend policies stay independent',async t=>{
-  const {store,directory,setNow}=fixture(t),{session}=await user(store);seed(store,session);
-  const config=join(directory,'synthetic-forwarding.json');writeFileSync(config,JSON.stringify({[session.user]:{url:'https://synthetic.invalid',token:'synthetic-token-for-tests-only-12345678',sourceEpoch:'synthetic_source_123456789'}}));
-  let failed=true;const sent=[];const fetcher=async(url,request)=>{sent.push({url,value:JSON.parse(request.body)});if(failed)throw new Error('offline');return new Response('{}');};
-  let forwarder=new RelayForwarder(store,{configuration:config,fetcher});
-  store.updateAccount(session,{friendsEnabled:true,sharing:{status:true,name:true,time:true,daily:true}});
-  const snapshot={currentName:'approved',startedAt:'2026-11-15T09:55:00.000Z',estimatedElapsedMs:300000,estimatedEndsAt:'2026-11-15T10:20:00.000Z',todayActualFocusMs:300000};
-  store.presence(session,snapshot,1);forwarder.offer(session,{snapshot});
-  const queued=store.db.prepare('SELECT value FROM forwarding').get().value;await forwarder.drain();assert.equal(store.db.prepare('SELECT count(*) n FROM forwarding').get().n,1);
-  const before=store.head(session.user).revision;push(store,session,store.entries(session.user),store.entries(session.user));assert.equal(store.head(session.user).revision,before+1);
-  setNow('2026-11-15T10:00:10Z');failed=false;await forwarder.drain();assert.equal(store.db.prepare('SELECT count(*) n FROM forwarding').get().n,0);assert.equal(JSON.stringify(sent[0].value),JSON.stringify(sent[1].value));
-  // The workspace commit invalidates its prior presence receipt. Renew the
-  // observed live state before testing an unrelated friends-policy change.
-  store.presence(session,snapshot,1);
-  const version=JSON.parse(queued).live.revision;forwarder=new RelayForwarder(store,{configuration:config,fetcher});forwarder.policyChanged(session);
-  const newer=JSON.parse(store.db.prepare('SELECT value FROM forwarding').get().value);assert.ok(newer.live.revision>version);
-  store.updateAccount(session,{friendsEnabled:false,sharing:{status:false,name:false,time:false,daily:false}});forwarder.policyChanged(session);await forwarder.drain();
-  const lastLive=sent.filter(x=>x.url.endsWith('/live')).at(-1).value;assert.equal(lastLive.snapshot.currentName,'approved');assert.equal(lastLive.snapshot.startedAt,snapshot.startedAt);assert.equal(lastLive.snapshot.todayActualFocusMs,300000);
-  assert.ok(sent.at(-1).value.days.every(day=>day.actualFocusMs===0));
+test('multiple friend summaries keep history behind separate per-friend disclosure',async t=>{
+  const {store}=fixture(t);
+  const {session:reader,login}=await user(store,'reader');
+  const {session:shared,login:sharedLogin}=await user(store,'shared');
+  const {session:privateFriend,login:privateLogin}=await user(store,'hidden');
+  const {session:pending,login:pendingLogin}=await user(store,'pending');
+  for(const session of [reader,shared,privateFriend,pending])store.updateAccount(session,{friendsEnabled:true});
+  for(const code of [sharedLogin,privateLogin,pendingLogin].map(value=>value.account.friendCode))store.invite(reader,code);
+  store.relation(shared,reader.user,'accept');
+  store.relation(privateFriend,reader.user,'accept');
+  store.updateAccount(shared,{sharing:{status:true,name:true,time:true,daily:true}});
+  seed(store,shared);
+  store.presence(shared,{currentName:'Shared task',startedAt:'2026-11-15T09:55:00.000Z',
+    estimatedElapsedMs:300000,estimatedEndsAt:'2026-11-15T10:20:00.000Z',todayActualFocusMs:0},1);
+  for(let i=0;i<370;i++){
+    const startedAt=new Date(Date.UTC(2026,10,15,8)-i*86400000).toISOString();
+    const wire=canonical({ordinal:i,value:{startedAt,actualDurationMs:60000}});
+    store.db.prepare('INSERT INTO entries VALUES(?,?,?,?)').run(shared.user,'focusHistory/day-'+i,wire,sha(wire));
+  }
+  const server=createCloudServer(store);
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  t.after(()=>new Promise(resolve=>server.close(resolve)));
+  const origin='http://127.0.0.1:'+server.address().port;
+  const get=path=>fetch(origin+'/v1/friends/'+path,{headers:{Authorization:'Bearer '+login.token}});
+  const overview=(await(await get('summary')).json()).friends;
+  assert.equal(overview.length,3);
+  const active=overview.find(friend=>friend.id===shared.user);
+  assert.equal(active.currentName,'Shared task');
+  assert.equal(active.startedAt,'2026-11-15T09:55:00.000Z');
+  assert.equal(active.endsAt,'2026-11-15T10:20:00.000Z');
+  assert.equal(typeof active.historyRevision,'string');
+  assert.ok(overview.every(friend=>!Object.hasOwn(friend,'days')));
+  assert.ok(overview.filter(friend=>friend.id!==shared.user).every(friend=>!Object.hasOwn(friend,'historyRevision')));
+  const all=await(await get('history/'+shared.user)).json();
+  assert.equal(all.today,'2026-11-15');
+  assert.equal(all.complete,true);
+  assert.equal(all.days.length,370);
+  assert.equal(all.days.at(-1).date,new Date(Date.UTC(2026,10,15)-369*86400000).toISOString().slice(0,10));
+  assert.equal(store.friends(reader).find(friend=>friend.id===shared.user).days.length,366);
+  assert.equal((await get('history/'+privateFriend.user)).status,403);
+  assert.equal((await get('history/'+pending.user)).status,404);
+  store.friendPolicy(shared,reader.user,{status:false,name:false,time:false,daily:false});
+  assert.equal((await get('history/'+shared.user)).status,403);
 });
+
 test('HTTP protocol rejects malformed/unauthorized bodies and survives',async t=>{
   const {store}=fixture(t),server=createCloudServer(store);await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>new Promise(resolve=>server.close(resolve)));
   const url='http://127.0.0.1:'+server.address().port;
   assert.equal((await fetch(url+'/v1/workspace')).status,401);assert.equal((await fetch(url+'/v1/login',{method:'POST',body:'{'})).status,400);
   assert.deepEqual(await(await fetch(url+'/healthz')).json(),{ok:true,protocol:1});
-});
-
-test('legacy dates respect enrollment and a bad queued range is replaced under a new version',async t=>{
-  const {store,directory}=fixture(t),{session}=await user(store);seed(store,session);
-  const config=join(directory,'legacy-dates.json'),target={url:'https://synthetic.invalid',token:'synthetic-token-for-tests-only-12345678',sourceEpoch:'synthetic_source_123456789'};
-  writeFileSync(config,JSON.stringify({[session.user]:target}));let sends=0;
-  const fetcher=async(url,request)=>{sends++;const body=JSON.parse(request.body);
-    if(url.endsWith('/days')&&body.days.some(day=>day.date<'2026-11-14'))return new Response('{}',{status:409});return new Response('{}');};
-  let relay=new RelayForwarder(store,{configuration:config,fetcher});
-  relay.offer(session,{snapshot:{currentName:null,startedAt:null,estimatedEndsAt:null,estimatedElapsedMs:0,todayActualFocusMs:120000}});
-  const old=JSON.parse(store.db.prepare('SELECT value FROM forwarding').get().value);assert.equal(old.days.days.length,366);
-  writeFileSync(config,JSON.stringify({[session.user]:{...target,enrolledDate:'2026-11-14'}}));relay=new RelayForwarder(store,{configuration:config,fetcher});
-  await relay.drain();assert.equal(sends,0);const replacement=JSON.parse(store.db.prepare('SELECT value FROM forwarding').get().value);
-  assert.ok(replacement.live.revision>old.live.revision);assert.equal(old.days.days.length,366);assert.deepEqual(replacement.days.days.map(day=>day.date),['2026-11-14','2026-11-15']);
-  await relay.drain();assert.equal(sends,2);assert.equal(store.db.prepare('SELECT count(*) n FROM forwarding').get().n,0);
-  assert.equal(store.db.prepare('SELECT status FROM forwarding_delivery').get().status,200);
-});
-
-test('private binding is not a public account option or a client-controlled API',async t=>{
-  const {store,directory}=fixture(t),{login,session}=await user(store),{session:other}=await user(store,'bob');
-  const config=join(directory,'owner-only.json');writeFileSync(config,JSON.stringify({[session.user]:{url:'https://synthetic.invalid',token:'synthetic-token-for-tests-only-12345678',enrolledDate:'2026-11-14'}}));
-  const relay=new RelayForwarder(store,{configuration:config,fetcher:async()=>new Response('{}')});
-  const snapshot={currentName:null,startedAt:null,estimatedEndsAt:null,estimatedElapsedMs:0,todayActualFocusMs:0};
-  relay.offer(other,{snapshot});assert.equal(store.db.prepare('SELECT count(*) n FROM forwarding').get().n,0);relay.offer(session,{snapshot});assert.equal(store.db.prepare('SELECT count(*) n FROM forwarding').get().n,1);
-  const server=createCloudServer(store,{forwarder:relay});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>new Promise(resolve=>server.close(resolve)));
-  const base='http://127.0.0.1:'+server.address().port,headers={Authorization:'Bearer '+login.token,'Content-Type':'application/json'};
-  const account=await(await fetch(base+'/v1/account',{headers})).json();assert.equal(account.externalForwardingAvailable,undefined);assert.equal(account.externalForwardingEnabled,undefined);
-  assert.equal((await fetch(base+'/v1/forwarding',{method:'POST',headers,body:'{"enabled":false}'})).status,404);
-});
-
-test('legacy handoff waits for the initial history and stays ready after an intentional deletion',async t=>{
-  const {store,directory}=fixture(t),{session}=await user(store);seed(store,session);
-  const config=join(directory,'handoff-ready.json'),target={url:'https://synthetic.invalid',token:'synthetic-token-for-tests-only-12345678',
-    sourceEpoch:'cloud_owner_source_123456789',previousSourceEpoch:'phone_owner_source_123456789',initialHistoryCount:2,enrolledDate:'2026-11-14'};
-  writeFileSync(config,JSON.stringify({[session.user]:target}));
-  const sent=[],fetcher=async(url,request)=>{sent.push({url,body:JSON.parse(request.body)});return new Response('{}');};
-  const snapshot={currentName:null,startedAt:null,estimatedEndsAt:null,estimatedElapsedMs:0,todayActualFocusMs:0};
-  let relay=new RelayForwarder(store,{configuration:config,fetcher});relay.offer(session,{snapshot});await relay.drain();
-  assert.equal(sent.length,0);assert.equal(store.db.prepare('SELECT part FROM forwarding_delivery').get().part,'awaiting-history');
-  // Minimal private history rows isolate the handoff/count transport rule.
-  for(let i=0;i<2;i++){const wire=canonical({ordinal:i,value:{startedAt:'2026-11-15T09:00:00Z',actualDurationMs:60000}});
-    store.db.prepare('INSERT INTO entries VALUES(?,?,?,?)').run(session.user,'focusHistory/synthetic-'+i,wire,sha(wire));}
-  relay.offer(session,{snapshot});await relay.drain();
-  assert.deepEqual(sent.map(x=>new URL(x.url).pathname),['/api/upload/epoch','/api/upload/live','/api/upload/days']);
-  assert.deepEqual(sent[0].body,{previousSourceEpoch:target.previousSourceEpoch,sourceEpoch:target.sourceEpoch});
-  assert.equal(sent[2].body.days.at(-1).actualFocusMs,120000);
-  store.db.prepare("DELETE FROM entries WHERE user=? AND key LIKE 'focusHistory/%'").run(session.user);
-  relay=new RelayForwarder(store,{configuration:config,fetcher});relay.offer(session,{snapshot});await relay.drain();
-  assert.equal(sent.filter(x=>x.url.endsWith('/epoch')).length,1);assert.equal(sent.at(-1).body.days.at(-1).actualFocusMs,0);
-});
-
-test('a lost epoch reply retries the same handoff before publishing and fences old queued frames',async t=>{
-  const {store,directory,setNow}=fixture(t),{session}=await user(store);seed(store,session);
-  const config=join(directory,'handoff-retry.json'),original={url:'https://synthetic.invalid',token:'synthetic-token-for-tests-only-12345678',sourceEpoch:'phone_owner_source_123456789'};
-  const snapshot={currentName:null,startedAt:null,estimatedEndsAt:null,estimatedElapsedMs:0,todayActualFocusMs:0};
-  writeFileSync(config,JSON.stringify({[session.user]:original}));new RelayForwarder(store,{configuration:config}).offer(session,{snapshot});
-  const old=store.db.prepare('SELECT value FROM forwarding').get().value;
-  writeFileSync(config,JSON.stringify({[session.user]:{...original,sourceEpoch:'cloud_owner_source_123456789',previousSourceEpoch:original.sourceEpoch}}));
-  const sent=[];let lost=true;const fetcher=async(url,request)=>{sent.push({url,body:request.body});if(lost)throw Error('Reply lost');return new Response('{}');};
-  let relay=new RelayForwarder(store,{configuration:config,fetcher});await relay.drain();
-  assert.equal(sent.length,0);assert.notEqual(store.db.prepare('SELECT value FROM forwarding').get().value,old);
-  await relay.drain();assert.equal(sent.length,1);assert.equal(store.db.prepare('SELECT part FROM forwarding_delivery').get().part,'handoff');
-  lost=false;setNow('2026-11-15T10:00:10Z');relay=new RelayForwarder(store,{configuration:config,fetcher});await relay.drain();
-  assert.equal(sent[0].body,sent[1].body);assert.equal(sent.length,4);assert.equal(store.db.prepare('SELECT count(*) n FROM forwarding').get().n,0);
-});
-
-test('delivery diagnostics identify a rejected section without retaining bodies or credentials',async t=>{
-  const {store,directory,setNow}=fixture(t),{session}=await user(store);const config=join(directory,'receipt.json');writeFileSync(config,JSON.stringify({[session.user]:{url:'https://synthetic.invalid',token:'synthetic-token-for-tests-only-12345678'}}));
-  let reject=true;const relay=new RelayForwarder(store,{configuration:config,fetcher:async url=>new Response('{}',{status:reject&&url.endsWith('/days')?409:200})});
-  relay.offer(session,{snapshot:{currentName:null,startedAt:null,estimatedEndsAt:null,estimatedElapsedMs:0,todayActualFocusMs:0}});await relay.drain();
-  let receipt=store.db.prepare('SELECT * FROM forwarding_delivery').get();assert.equal(receipt.status,409);assert.equal(receipt.part,'days');assert.equal(receipt.delivered,null);assert.ok(!JSON.stringify(receipt).includes('token'));
-  reject=false;setNow('2026-11-15T10:00:10Z');await relay.drain();receipt=store.db.prepare('SELECT * FROM forwarding_delivery').get();assert.equal(receipt.status,200);assert.equal(receipt.part,'complete');assert.equal(receipt.delivered,store.clock());
-});
-
-test('a delivered live projection is cleared after expiry even when its device goes offline',async t=>{
-  const {store,directory,setNow}=fixture(t),{session}=await user(store);seed(store,session);
-  const config=join(directory,'expiry-forwarding.json');writeFileSync(config,JSON.stringify({[session.user]:{url:'https://synthetic.invalid',token:'synthetic-token-for-tests-only-12345678'}}));
-  const sent=[];const fetcher=async(url,request)=>{sent.push({url,body:JSON.parse(request.body)});return new Response('{}');};
-  let relay=new RelayForwarder(store,{configuration:config,fetcher});
-  store.updateAccount(session,{friendsEnabled:true,sharing:{status:true,name:true,time:true,daily:false}});
-  const snapshot={currentName:'approved',startedAt:'2026-11-15T09:55:00.000Z',estimatedElapsedMs:300000,estimatedEndsAt:'2026-11-15T10:20:00.000Z',todayActualFocusMs:300000};
-  store.presence(session,snapshot,1);relay.offer(session,{snapshot});await relay.drain();
-  const first=sent.findLast(x=>x.url.endsWith('/live')).body;assert.equal(first.snapshot.currentName,'approved');
-  assert.equal(store.db.prepare('SELECT count(*) n FROM forwarding').get().n,0);
-  relay=new RelayForwarder(store,{configuration:config,fetcher});setNow('2026-11-15T10:01:31Z');await relay.drain();
-  const cleared=sent.findLast(x=>x.url.endsWith('/live')).body;assert.equal(cleared.snapshot.currentName,null);assert.ok(cleared.revision>first.revision);
-  assert.equal(store.db.prepare('SELECT count(*) n FROM forwarding_expiry').get().n,0);
-  const count=sent.length;await relay.drain();assert.equal(sent.length,count);
-  store.presence(session,snapshot,1);store.release(session,{generation:1});assert.equal(store.db.prepare('SELECT count(*) n FROM presence').get().n,0);
 });
 
 test('live plans must reference the same project, task, history and deadline as the domain',async t=>{

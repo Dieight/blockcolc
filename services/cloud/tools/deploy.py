@@ -1,4 +1,4 @@
-"""Deploy only blockcolc's isolated API; leave SSH, xray and port 443 alone.
+"""Deploy blockcolc's API and optional loopback viewer.
 Keys and upload bundles live in the ignored experiment directory, never Git.
 """
 import argparse, datetime, hashlib, json, pathlib, subprocess, tarfile, time
@@ -12,7 +12,10 @@ ROOT = pathlib.Path(__file__).resolve().parents[3]
 PRIVATE = ROOT / 'artifacts/experiments/v3.0.0/cloud-deployment-private'
 PRIVATE.mkdir(parents=True, exist_ok=True)
 KEY = pathlib.Path.home() / '.ssh/codex_vps_107_150_98_105'
-SSH = ['ssh', '-i', str(KEY), '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'ConnectTimeout=15', 'ubuntu@107.150.98.105']
+KNOWN_HOSTS = KEY.with_name(KEY.name + '_known_hosts')
+SSH = ['ssh', '-i', str(KEY), '-o', 'IdentitiesOnly=yes', '-o', f'UserKnownHostsFile={KNOWN_HOSTS}',
+       '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'ConnectTimeout=15', 'ubuntu@107.150.98.105']
+VIEWER_FILES = ['account.html', 'account.js', 'account.css', 'viewer.js', 'viewer.css']
 
 def certificates():
     now = datetime.datetime.now(datetime.timezone.utc)
@@ -42,15 +45,27 @@ def certificates():
     public.parent.mkdir(parents=True,exist_ok=True)
     public.write_bytes(ca.public_bytes(serialization.Encoding.PEM))
 
-def deploy():
-    certificates()
+def deploy(*, reuse_tls, viewer_web):
+    if not reuse_tls:
+        certificates()
+    if viewer_web is not None:
+        viewer_web = viewer_web.resolve(strict=True)
+        if not all((viewer_web / name).is_file() for name in VIEWER_FILES):
+            raise ValueError('Supply the complete account viewer web directory')
+    else:
+        subprocess.run(SSH + ['sudo -n test ! -s /etc/blockcolc-cloud/viewer.env'], check=True, timeout=30)
     subprocess.run(['node','tools/build.mjs'],cwd=ROOT/'services/cloud',check=True)
     label=time.strftime('%Y%m%d-%H%M%S')
     bundle=PRIVATE/('cloud-'+label+'.tar.gz')
     files=list((ROOT/'services/cloud/src').glob('*.mjs'))+[ROOT/'services/cloud/build/domain.mjs']
     with tarfile.open(bundle,'w:gz') as tar:
         for file in files: tar.add(file,arcname=file.relative_to(ROOT/'services/cloud'))
-        tar.add(PRIVATE/'server.key',arcname='tls/server.key');tar.add(PRIVATE/'server.pem',arcname='tls/server.pem')
+        if not reuse_tls:
+            tar.add(PRIVATE/'server.key',arcname='tls/server.key')
+            tar.add(PRIVATE/'server.pem',arcname='tls/server.pem')
+        if viewer_web:
+            for name in VIEWER_FILES:
+                tar.add(viewer_web / name, arcname='viewer/' + name)
     digest=hashlib.sha256(bundle.read_bytes()).hexdigest()
     remote='/tmp/blockcolc-cloud-'+label+'.tar.gz'
     with bundle.open('rb') as stream:
@@ -72,11 +87,39 @@ id blockcolc-cloud >/dev/null 2>&1 || sudo -n useradd --system --home /var/lib/b
 sudo -n install -d -m 755 /opt/blockcolc-cloud/releases/{label}
 sudo -n tar -xzf {remote} -C /opt/blockcolc-cloud/releases/{label}
 sudo -n install -d -m 750 -o root -g blockcolc-cloud /etc/blockcolc-cloud
-sudo -n install -m 640 -o root -g blockcolc-cloud /opt/blockcolc-cloud/releases/{label}/tls/server.key /etc/blockcolc-cloud/server.key
-sudo -n install -m 644 /opt/blockcolc-cloud/releases/{label}/tls/server.pem /etc/blockcolc-cloud/server.pem
-sudo -n rm /opt/blockcolc-cloud/releases/{label}/tls/server.key
-sudo -n ln -sfn /opt/blockcolc-cloud/releases/{label} /opt/blockcolc-cloud/current
-sudo -n tee /etc/systemd/system/blockcolc-cloud.service >/dev/null <<'UNIT'
+release=/opt/blockcolc-cloud/releases/{label}
+unit=/etc/systemd/system/blockcolc-cloud.service
+old=$(readlink -f /opt/blockcolc-cloud/current || true)
+if sudo -n test -f "$unit"; then sudo -n cp -- "$unit" "$release/previous.service"; fi
+if sudo -n test -s "$release/tls/server.key"; then
+  if sudo -n test -s /etc/blockcolc-cloud/server.key; then
+    sudo -n install -m 600 /etc/blockcolc-cloud/server.key "$release/previous.key"
+    sudo -n install -m 644 /etc/blockcolc-cloud/server.pem "$release/previous.pem"
+  fi
+  sudo -n install -m 640 -o root -g blockcolc-cloud "$release/tls/server.key" /etc/blockcolc-cloud/server.key
+  sudo -n install -m 644 -o root -g blockcolc-cloud "$release/tls/server.pem" /etc/blockcolc-cloud/server.pem
+  sudo -n rm -- "$release/tls/server.key"
+fi
+sudo -n test -s /etc/blockcolc-cloud/server.key
+sudo -n test -s /etc/blockcolc-cloud/server.pem
+restore() {{
+  result=$?
+  if [ "$result" -ne 0 ] && [ -n "$old" ] && [ -d "$old" ] && [ -f "$release/previous.service" ]; then
+    echo "Restoring previous API release" >&2
+    sudo -n ln -sfn -- "$old" /opt/blockcolc-cloud/current
+    sudo -n install -m 644 "$release/previous.service" "$unit"
+    if sudo -n test -s "$release/previous.key"; then
+      sudo -n install -m 640 -o root -g blockcolc-cloud "$release/previous.key" /etc/blockcolc-cloud/server.key
+      sudo -n install -m 644 "$release/previous.pem" /etc/blockcolc-cloud/server.pem
+    fi
+    sudo -n systemctl daemon-reload
+    sudo -n systemctl restart blockcolc-cloud
+  fi
+}}
+trap restore EXIT
+sudo -n ln -s -- "$release" "/opt/blockcolc-cloud/current-{label}.tmp"
+sudo -n mv -T -- "/opt/blockcolc-cloud/current-{label}.tmp" /opt/blockcolc-cloud/current
+sudo -n tee "$unit" >/dev/null <<'UNIT'
 [Unit]
 Description=blockcolc account and cloud API
 After=network-online.target
@@ -90,8 +133,8 @@ Environment=BLOCKCOLC_CLOUD_DATA=/var/lib/blockcolc-cloud
 Environment=BLOCKCOLC_CLOUD_PORT=8443
 Environment=BLOCKCOLC_TLS_KEY=/etc/blockcolc-cloud/server.key
 Environment=BLOCKCOLC_TLS_CERT=/etc/blockcolc-cloud/server.pem
-Environment=BLOCKCOLC_FORWARD_CONFIG=/etc/blockcolc-cloud/forwarding.json
 Environment=BLOCKCOLC_EXTERNAL_CONFIG=/etc/blockcolc-cloud/external-focus.json
+EnvironmentFile=-/etc/blockcolc-cloud/viewer.env
 StateDirectory=blockcolc-cloud
 StateDirectoryMode=0700
 Restart=on-failure
@@ -106,22 +149,29 @@ LimitNOFILE=4096
 [Install]
 WantedBy=multi-user.target
 UNIT
-if ! sudo -n test -f /etc/blockcolc-cloud/forwarding.json; then
-  printf '{{}}' | sudo -n tee /etc/blockcolc-cloud/forwarding.json >/dev/null
-  sudo -n chown root:blockcolc-cloud /etc/blockcolc-cloud/forwarding.json
-  sudo -n chmod 640 /etc/blockcolc-cloud/forwarding.json
-fi
 if ! sudo -n test -f /etc/blockcolc-cloud/external-focus.json; then
   printf '[]' | sudo -n tee /etc/blockcolc-cloud/external-focus.json >/dev/null
   sudo -n chown root:blockcolc-cloud /etc/blockcolc-cloud/external-focus.json
   sudo -n chmod 640 /etc/blockcolc-cloud/external-focus.json
 fi
 sudo -n systemctl daemon-reload
-sudo -n systemctl enable --now blockcolc-cloud
+sudo -n systemctl enable blockcolc-cloud
 sudo -n systemctl restart blockcolc-cloud
+attempts=0
+until sudo -n curl -fsS --max-time 2 --cacert /etc/blockcolc-cloud/server.pem \
+    --connect-to 107.150.98.105:8443:127.0.0.1:8443 https://107.150.98.105:8443/healthz; do
+  attempts=$((attempts+1))
+  test "$attempts" -lt 15
+  sleep 1
+done
+if sudo -n test -s /etc/blockcolc-cloud/viewer.env; then
+  sudo -n bash -eu -c '. /etc/blockcolc-cloud/viewer.env; curl -fsS --max-time 5 \
+    -H "Host: ${{BLOCKCOLC_VIEWER_ORIGIN#https://}}" "http://127.0.0.1:$BLOCKCOLC_VIEWER_PORT/healthz"'
+fi
 sudo -n systemctl is-active blockcolc-cloud
 sudo -n systemctl is-active xray-codex
 sudo -n ss -ltnp | awk 'NR==1 || /:443 |:8443 /'
+rm -- {remote}
 '''
     result=subprocess.run(SSH+['bash -s'],input=script.encode('utf-8'),capture_output=True,timeout=540)
     (PRIVATE/('deploy-'+label+'.log')).write_text(result.stdout.decode('utf-8',errors='replace')+'\n'+result.stderr.decode('utf-8',errors='replace'),encoding='utf-8')
@@ -129,5 +179,9 @@ sudo -n ss -ltnp | awk 'NR==1 || /:443 |:8443 /'
     if result.returncode: raise SystemExit(result.returncode)
 
 if __name__=='__main__':
-    parser=argparse.ArgumentParser();parser.add_argument('--prepare-only',action='store_true');args=parser.parse_args()
-    certificates() if args.prepare_only else deploy()
+    parser=argparse.ArgumentParser()
+    parser.add_argument('--prepare-only',action='store_true')
+    parser.add_argument('--reuse-tls',action='store_true', help='keep the installed App API certificate and key')
+    parser.add_argument('--viewer-web',type=pathlib.Path, help='private account viewer asset directory')
+    args=parser.parse_args()
+    certificates() if args.prepare_only else deploy(reuse_tls=args.reuse_tls,viewer_web=args.viewer_web)

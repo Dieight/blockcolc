@@ -1,5 +1,6 @@
 package com.blockcolc.preview
 
+import androidx.compose.foundation.layout.Column
 import androidx.compose.runtime.*
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -21,6 +22,7 @@ import java.net.Proxy
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.atomic.AtomicInteger
 import android.os.Handler
 import android.os.Looper
 import android.view.Choreographer
@@ -28,6 +30,42 @@ import android.view.Choreographer
 /** Actual account form -> TLS API -> native writer, with isolated app data. */
 class P3CloudUiTest {
     @get:Rule val compose=createComposeRule()
+    @Test fun friendSummariesOpenOnlyTheSelectedSharedHistory(){
+        val fetched=AtomicInteger()
+        val privateFetches=AtomicInteger()
+        val shared=JSONObject().put("name","Shared friend").put("currentName","Reading").put("focusing",true)
+            .put("startedAt","2026-11-15T08:55:00.000Z").put("endsAt","2026-11-15T09:35:00.000Z")
+            .put("historyRevision","revision-1")
+        val hidden=JSONObject().put("name","Private friend")
+        val waiting=JSONObject().put("name","Idle friend").put("focusing",false)
+        val data=JSONObject("""{"today":"2026-11-15","complete":false,"days":[{"date":"2025-08-11","actualFocusMs":120000},{"date":"2026-11-15","actualFocusMs":60000}]}""")
+        val resources=UiResources.load()
+        compose.setContent{
+            NativeTheme(ClientPreferences(language="en",themeMode="light",fontStyle="mixed"),resources,reduceMotion=true){
+                Column{
+                    NativeFriendCard(shared,JSONObject(),true,{fetched.incrementAndGet();data},{},{})
+                    NativeFriendCard(hidden,JSONObject(),true,{privateFetches.incrementAndGet();data},{},{})
+                    NativeFriendCard(waiting,JSONObject(),true,{privateFetches.incrementAndGet();data},{},{})
+                }
+            }
+        }
+        compose.onNodeWithText("Shared friend").assertIsDisplayed()
+        compose.onNodeWithText("Reading",substring=true).assertIsDisplayed()
+        compose.onNodeWithText("Private friend").assertIsDisplayed()
+        compose.onNodeWithText("Idle friend").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Focus heatmap").assertDoesNotExist()
+        assertEquals(0,fetched.get())
+        compose.onNodeWithText("Shared friend").performClick()
+        compose.waitUntil(5000){compose.onAllNodesWithContentDescription("Focus heatmap").fetchSemanticsNodes().isNotEmpty()}
+        compose.onNodeWithText("2025-08-11 – 2026-11-15").assertIsDisplayed()
+        assertEquals(1,fetched.get())
+        assertEquals(0,privateFetches.get())
+        compose.onNodeWithText("Shared friend").performClick()
+        compose.onNodeWithText("Private friend").performClick()
+        compose.onNodeWithContentDescription("Focus heatmap").assertDoesNotExist()
+        assertEquals(0,privateFetches.get())
+    }
+
     @Test fun accountFormRegistersAndFriendControlsRemainBilingual(){
         val instrumentation=InstrumentationRegistry.getInstrumentation();val context=instrumentation.targetContext
         val runtime=PreviewRuntime.get(context);val database=runtime.testDatabase(true,prepareAssets=false).get(30,TimeUnit.SECONDS)
@@ -104,7 +142,9 @@ class P3CloudUiTest {
                 assertNull(controller.snapshot().error)
                 val friend=controller.snapshot().friends.single()
                 assertTrue(friend.optBoolean("readOnly"));assertEquals("accepted",friend.getString("status"))
-                assertTrue(friend.getJSONArray("days").length()>0)
+                assertTrue(friend.has("historyRevision"))
+                assertFalse(friend.has("days"))
+                compose.onNodeWithText("Mutsumi Focus").performScrollTo().performClick()
                 compose.onNodeWithText("Mutsumi Focus · public, read-only").performScrollTo().assertIsDisplayed()
                 compose.onAllNodesWithText("Use defaults").assertCountEquals(0)
                 screenshot("p3-cloud-ui-external-en.png")

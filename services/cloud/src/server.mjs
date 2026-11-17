@@ -3,7 +3,7 @@ import { createServer as httpsServer } from 'node:https';
 import { readFileSync } from 'node:fs';
 import { ApiError,fail,hashPattern } from './wire.mjs';
 
-export function createCloudServer(store,{tls,forwarder,onError=()=>{}}={}){
+export function createCloudServer(store,{tls,onError=()=>{}}={}){
   const rate=new Map();let largeReads=0;
   const limit=(key,maximum,window)=>{const now=Date.now();let entry=rate.get(key);if(!entry||entry.until<now){entry={count:0,until:now+window};rate.set(key,entry);}fail(++entry.count<=maximum,'RATE_LIMIT',429);
     if(rate.size>10000)for(const [id,value]of rate)if(value.until<now)rate.delete(id);};
@@ -33,16 +33,15 @@ export function createCloudServer(store,{tls,forwarder,onError=()=>{}}={}){
       if(req.method==='GET'&&path==='/v1/account')result=store.account(session.user);
       else if(req.method==='PATCH'&&path==='/v1/account')result=store.updateAccount(session,await authorizedJson());
       else if(req.method==='POST'&&path==='/v1/password'){await store.changePassword(session,await authorizedJson());result={ok:true};}
-      else if(req.method==='POST'&&path==='/v1/logout'){store.logout(session);forwarder?.policyChanged(session);result={ok:true};}
+      else if(req.method==='POST'&&path==='/v1/logout'){store.logout(session);result={ok:true};}
       else if(req.method==='GET'&&path==='/v1/devices')result={devices:store.devices(session)};
-      else if(req.method==='POST'&&path==='/v1/devices/revoke'){store.revokeDevice(session,(await authorizedJson()).id);forwarder?.policyChanged(session);result={ok:true};}
+      else if(req.method==='POST'&&path==='/v1/devices/revoke'){store.revokeDevice(session,(await authorizedJson()).id);result={ok:true};}
       else if(req.method==='GET'&&path==='/v1/workspace')result=store.workspace(session);
       else if(req.method==='POST'&&['/v1/workspace/commit','/v1/workspace/replace'].includes(path)){
         fail(largeReads<2,'SERVER_BUSY',503);largeReads++;large=true;const input=await authorizedJson(100*1024*1024);
         result=path.endsWith('/commit')?store.commit(session,input):store.replace(session,input);
-        forwarder?.policyChanged(session);
-      }else if(req.method==='POST'&&path==='/v1/execution/claim'){result=store.claim(session,await authorizedJson());forwarder?.policyChanged(session);}
-      else if(req.method==='POST'&&path==='/v1/execution/release'){result=store.release(session,await authorizedJson());forwarder?.policyChanged(session);}
+      }else if(req.method==='POST'&&path==='/v1/execution/claim')result=store.claim(session,await authorizedJson());
+      else if(req.method==='POST'&&path==='/v1/execution/release')result=store.release(session,await authorizedJson());
       else if(req.method==='POST'&&path==='/v1/assets/status')result=store.assetStatus(session,(await authorizedJson()).keys);
       else if(path.startsWith('/v1/assets/')){
         const key=path.slice('/v1/assets/'.length);fail(hashPattern.test(key));
@@ -50,12 +49,14 @@ export function createCloudServer(store,{tls,forwarder,onError=()=>{}}={}){
         else if(req.method==='GET'){const wire=store.asset(session.user,key);res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'});res.end(wire);return;}
         else throw new ApiError(405,'METHOD_NOT_ALLOWED');
       }else if(req.method==='POST'&&path==='/v1/backup/capture')result=store.capture(session.user);
-      else if(req.method==='POST'&&path==='/v1/backup/restore'){result=store.restore(session,await authorizedJson());forwarder?.policyChanged(session);}
+      else if(req.method==='POST'&&path==='/v1/backup/restore')result=store.restore(session,await authorizedJson());
       else if(req.method==='GET'&&path==='/v1/friends')result={friends:store.friends(session)};
+      else if(req.method==='GET'&&path==='/v1/friends/summary')result={friends:store.friends(session,{summary:true})};
+      else if(req.method==='GET'&&/^\/v1\/friends\/history\/[a-f0-9-]{36}$/.test(path))result=store.friendHistory(session,path.slice('/v1/friends/history/'.length));
       else if(req.method==='POST'&&path==='/v1/friends/invite')result=store.invite(session,(await authorizedJson()).code);
       else if(req.method==='POST'&&path==='/v1/friends/respond'){const v=await authorizedJson();result=store.relation(session,v.id,v.action);}
       else if(req.method==='POST'&&path==='/v1/friends/sharing'){const v=await authorizedJson();result=store.friendPolicy(session,v.id,v.sharing);}
-      else if(req.method==='POST'&&path==='/v1/presence'){const v=await authorizedJson();result=store.presence(session,v.snapshot,v.execution);forwarder?.offer(session,v);}
+      else if(req.method==='POST'&&path==='/v1/presence'){const v=await authorizedJson();result=store.presence(session,v.snapshot,v.execution);}
       else throw new ApiError(404,'NOT_FOUND');
       send(result??{ok:true});
     }catch(error){

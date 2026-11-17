@@ -45,7 +45,7 @@ export function projectMutsumiDashboard(value,{now=Date.now(),timeZone='Asia/Sha
   }
   return {observedAt,timeZone,projection:{focusing:focusState==='focus',focusState,currentName,startedAt,
     // A planned duration on the other app is not a promised finish time.
-    endsAt:null,days:[...totals].sort(([a],[b])=>b.localeCompare(a)).slice(0,366).map(([date,actualFocusMs])=>({date,actualFocusMs}))}};
+    endsAt:null,days:[...totals].sort(([a],[b])=>b.localeCompare(a)).map(([date,actualFocusMs])=>({date,actualFocusMs}))}};
 }
 
 async function readBounded(response){

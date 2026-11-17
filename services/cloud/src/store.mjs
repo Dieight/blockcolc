@@ -24,7 +24,6 @@ export class CloudStore {
       CREATE TABLE IF NOT EXISTS friends(a TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,b TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,status TEXT NOT NULL,sender TEXT NOT NULL,PRIMARY KEY(a,b));
       CREATE TABLE IF NOT EXISTS friend_sharing(user TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,friend TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,value TEXT NOT NULL,PRIMARY KEY(user,friend));
       CREATE TABLE IF NOT EXISTS presence(user TEXT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,value TEXT NOT NULL,expires INTEGER NOT NULL);
-      CREATE TABLE IF NOT EXISTS forwarding(user TEXT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,version INTEGER NOT NULL,value TEXT NOT NULL,attempts INTEGER NOT NULL DEFAULT 0,after INTEGER NOT NULL DEFAULT 0);
       CREATE TABLE IF NOT EXISTS external_sources(id TEXT PRIMARY KEY,user TEXT UNIQUE NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,kind TEXT NOT NULL,origin TEXT NOT NULL,remote_account TEXT NOT NULL DEFAULT '',enabled INTEGER NOT NULL DEFAULT 1,projection TEXT,updated INTEGER,expires INTEGER NOT NULL DEFAULT 0,error TEXT);`);
     if(!this.db.prepare('PRAGMA table_info(external_sources)').all().some(c=>c.name==='remote_account'))this.db.exec("ALTER TABLE external_sources ADD COLUMN remote_account TEXT NOT NULL DEFAULT ''");
     this.authInFlight=0;
@@ -37,20 +36,31 @@ export class CloudStore {
     fail(this.authInFlight<3,'AUTH_BUSY',429);this.authInFlight++;
     try{return Buffer.from(await derive(password,salt,32,{N:16384,r:8,p:1,maxmem:32*1024*1024})).toString('hex');}finally{this.authInFlight--;}}
   async register({username,password,name,deviceId,deviceName,timeZone='UTC'}){
+    cleanDevice(deviceId,deviceName);
+    const {id}=await this.createAccount({username,password,name,timeZone});
+    return this.session(id,deviceId,deviceName);
+  }
+  async createAccount({username,password,name,timeZone='UTC'}){
     fail(typeof username==='string'&&/^[a-zA-Z0-9_]{3,32}$/.test(username),'USERNAME_FORMAT');username=username.toLowerCase();
-    fail(typeof name==='string'&&name.trim().length>0&&name.length<=64);cleanDevice(deviceId,deviceName);accountDate(this.clock(),timeZone);
+    fail(typeof name==='string'&&name.trim().length>0&&name.length<=64);accountDate(this.clock(),timeZone);
     const salt=random(),digest=await this.password(password,salt),id=randomUUID(),now=this.clock();
     this.transaction(()=>{fail(!this.db.prepare('SELECT id FROM accounts WHERE username=?').get(username),'USERNAME_TAKEN',409);
       this.db.prepare('INSERT INTO accounts VALUES(?,?,?,?,?,?,?,?,?,?)').run(id,username,name.trim(),salt,digest,randomBytes(9).toString('hex').toUpperCase(),timeZone,canonical(defaultSharing()),0,now);
       this.db.prepare('INSERT INTO heads(user,epoch,changed) VALUES(?,?,?)').run(id,randomUUID(),now);});
-    return this.session(id,deviceId,deviceName);
+    return {id,salt};
   }
   async login({username,password,deviceId,deviceName}){
-    cleanDevice(deviceId,deviceName);fail(typeof username==='string'&&username.length<=32,'LOGIN_FAILED',401);
+    cleanDevice(deviceId,deviceName);
+    const {id}=await this.verifyCredentials({username,password});
+    return this.session(id,deviceId,deviceName);
+  }
+  async verifyCredentials({username,password}){
+    fail(typeof username==='string'&&username.length<=32,'LOGIN_FAILED',401);
     const a=this.db.prepare('SELECT id,salt,password FROM accounts WHERE username=?').get(username.toLowerCase());
     const digest=await this.password(password,a?.salt??'blockcolc-nonexistent-user');
     fail(a&&!this.db.prepare('SELECT 1 FROM external_sources WHERE user=?').get(a.id)&&timingSafeEqual(Buffer.from(a.password,'hex'),Buffer.from(digest,'hex')),'LOGIN_FAILED',401);
-    fail(this.db.prepare('SELECT password FROM accounts WHERE id=?').get(a.id)?.password===a.password,'LOGIN_FAILED',401);return this.session(a.id,deviceId,deviceName);
+    fail(this.db.prepare('SELECT password FROM accounts WHERE id=?').get(a.id)?.password===a.password,'LOGIN_FAILED',401);
+    return {id:a.id,salt:a.salt};
   }
   session(user,device,name){const token=random(),now=this.clock();this.transaction(()=>{
     const exists=this.db.prepare('SELECT 1 FROM devices WHERE user=? AND id=?').get(user,device);
@@ -72,12 +82,32 @@ export class CloudStore {
     const name=input.name??current.name,zone=input.timeZone??current.timeZone,enabled=input.friendsEnabled??current.friendsEnabled;
     fail(typeof enabled==='boolean'&&typeof name==='string'&&name.trim().length>0&&name.length<=64);accountDate(this.clock(),zone);
     this.db.prepare('UPDATE accounts SET name=?,zone=?,sharing=?,friends_enabled=? WHERE id=?').run(name.trim(),zone,canonical(policy),enabled?1:0,s.user);
-    // Friends' access is filtered when reading. The short-lived execution
-    // receipt also serves the owner's explicitly configured private relay.
+    // Filter friends' access on read so permission changes apply immediately.
     return this.account(s.user);}
-  async changePassword(s,{currentPassword,password}){const a=this.db.prepare('SELECT salt,password FROM accounts WHERE id=?').get(s.user);
-    const actual=await this.password(currentPassword,a.salt);fail(timingSafeEqual(Buffer.from(actual,'hex'),Buffer.from(a.password,'hex')),'LOGIN_FAILED',401);
-    const salt=random(),digest=await this.password(password,salt);this.assertSession(s);this.transaction(()=>{this.db.prepare('UPDATE accounts SET salt=?,password=? WHERE id=?').run(salt,digest,s.user);this.db.prepare('DELETE FROM sessions WHERE user=? AND token<>?').run(s.user,s.token);});}
+  async changePassword(session,input){
+    await this.replacePassword(session.user,input,{
+      authorize:()=>this.assertSession(session),
+      keepAppToken:session.token,
+    });
+  }
+  async replacePassword(user,{currentPassword,password},{authorize,keepAppToken=null,renewViewer=()=>{}}){
+    authorize();
+    const previous=this.db.prepare('SELECT salt,password FROM accounts WHERE id=?').get(user);
+    fail(previous,'UNAUTHORIZED',401);
+    fail(typeof currentPassword==='string'&&currentPassword.length>=10&&currentPassword.length<=256,'CURRENT_PASSWORD_INVALID');
+    const actual=await this.password(currentPassword,previous.salt);
+    fail(timingSafeEqual(Buffer.from(actual,'hex'),Buffer.from(previous.password,'hex')),'CURRENT_PASSWORD_INVALID');
+    fail(currentPassword!==password,'PASSWORD_UNCHANGED');
+    const salt=random(),digest=await this.password(password,salt);
+    this.transaction(()=>{
+      authorize();
+      const updated=this.db.prepare('UPDATE accounts SET salt=?,password=? WHERE id=? AND salt=? AND password=?')
+        .run(salt,digest,user,previous.salt,previous.password);
+      fail(updated.changes===1,'CURRENT_PASSWORD_INVALID',409);
+      this.db.prepare('DELETE FROM sessions WHERE user=? AND token IS NOT ?').run(user,keepAppToken);
+      renewViewer(salt);
+    });
+  }
   entries(user){return Object.fromEntries(this.db.prepare('SELECT key,canonical FROM entries WHERE user=? ORDER BY key').all(user).map(r=>[r.key,r.canonical]));}
   head(user){const h=this.db.prepare('SELECT * FROM heads WHERE user=?').get(user);fail(h,'UNAUTHORIZED',401);return h;}
   assetPath(user,key){fail(hashPattern.test(key));return join(this.directory,'assets',user,key);}
@@ -213,18 +243,46 @@ export class CloudStore {
         totals[day]=(totals[day]??0)+next-cursor;cursor=next;}}
     return totals;
   }
-  friends(s){if(!this.account(s.user).friendsEnabled)return [];return this.db.prepare('SELECT * FROM friends WHERE a=? OR b=?').all(s.user,s.user).map(row=>{
+  visibleFriendPolicy(account,viewer){
+    const row=this.db.prepare('SELECT value FROM friend_sharing WHERE user=? AND friend=?').get(account.id,viewer);
+    return row?JSON.parse(row.value):account.sharing;
+  }
+  friendDayRows(account){
+    return Object.entries(this.dayTotals(account.id,account.timeZone)).sort(([a],[b])=>b.localeCompare(a))
+      .map(([date,actualFocusMs])=>({date,actualFocusMs}));
+  }
+  externalAvailable(source){
+    return source.enabled&&!source.error&&source.expires>this.clock()&&source.projection!=null;
+  }
+  friendHistory(s,id){
+    const [a,b]=this.pair(s.user,id);
+    fail(this.account(s.user).friendsEnabled&&this.db.prepare("SELECT 1 FROM friends WHERE a=? AND b=? AND status='accepted'").get(a,b),
+      'FRIEND_NOT_FOUND',404);
+    const account=this.account(id);
+    const external=this.db.prepare('SELECT * FROM external_sources WHERE user=?').get(id);
+    const today=accountDate(this.clock(),account.timeZone);
+    if(external){
+      fail(this.externalAvailable(external),'HISTORY_UNAVAILABLE',503);
+      return {days:JSON.parse(external.projection).days,today,complete:false};
+    }
+    fail(account.friendsEnabled&&this.visibleFriendPolicy(account,s.user).daily,'HISTORY_UNAVAILABLE',403);
+    return {days:this.friendDayRows(account),today,complete:true};
+  }
+  friends(s,{summary=false}={}){if(!this.account(s.user).friendsEnabled)return [];return this.db.prepare('SELECT * FROM friends WHERE a=? OR b=?').all(s.user,s.user).map(row=>{
     const id=row.a===s.user?row.b:row.a,account=this.account(id),base={id,name:account.name,status:row.status,incoming:row.sender!==s.user};
     const external=this.db.prepare('SELECT * FROM external_sources WHERE user=?').get(id);
     if(external){
       base.readOnly=true;base.source={kind:external.kind,name:'Mutsumi Focus',origin:external.origin};
       if(row.status!=='accepted')return base;
-      if(!external.enabled||external.error||external.expires<=this.clock()||!external.projection){base.stale=true;return base;}
-      return {...base,...JSON.parse(external.projection),updatedAt:new Date(external.updated).toISOString()};
+      if(!this.externalAvailable(external)){base.stale=true;return base;}
+      const {days,...live}=JSON.parse(external.projection);
+      if(summary)base.historyRevision=sha(canonical(days));
+      else base.days=days.slice(0,366);
+      return {...base,...live,updatedAt:new Date(external.updated).toISOString()};
     }
     const override=this.db.prepare('SELECT value FROM friend_sharing WHERE user=? AND friend=?').get(s.user,id);base.sharing=override?JSON.parse(override.value):null;
     if(row.status!=='accepted'||!account.friendsEnabled)return base;
-    const policy=JSON.parse(this.db.prepare('SELECT value FROM friend_sharing WHERE user=? AND friend=?').get(id,s.user)?.value??canonical(account.sharing));
+    const policy=this.visibleFriendPolicy(account,s.user);
     const live=this.db.prepare('SELECT value,expires FROM presence WHERE user=?').get(id),snapshot=live?JSON.parse(live.value):null;
     base.visible=policy;if(policy.time)base.updatedAt=snapshot?.updatedAt??null;
     if(live&&live.expires>this.clock()){
@@ -232,13 +290,12 @@ export class CloudStore {
       if(policy.name)base.currentName=snapshot.currentName;
       if(policy.time){base.startedAt=snapshot.startedAt;base.endsAt=snapshot.estimatedEndsAt;}
     }else if(policy.status||policy.name||policy.time)base.stale=true;
-    if(policy.daily){const history=this.db.prepare("SELECT canonical FROM entries WHERE user=? AND key LIKE 'focusHistory/%'").all(id),totals={};
-      for(const record of history){const value=JSON.parse(record.canonical).value;let cursor=Date.parse(value.startedAt),end=cursor+value.actualDurationMs;
-        while(cursor<end){const day=accountDate(cursor,account.timeZone);let next=end;
-          if(accountDate(end-1,account.timeZone)!==day){let low=cursor+1,high=Math.min(end,cursor+30*3600000);
-            while(low<high){const mid=Math.floor((low+high)/2);if(accountDate(mid,account.timeZone)===day)low=mid+1;else high=mid;}next=low;}
-          totals[day]=(totals[day]??0)+next-cursor;cursor=next;}}
-      base.days=Object.entries(totals).sort((a,b)=>b[0].localeCompare(a[0])).slice(0,366).map(([date,actualFocusMs])=>({date,actualFocusMs}));}
+    if(policy.daily){
+      if(summary){
+        const head=this.head(id);
+        base.historyRevision=[head.epoch,head.revision,account.timeZone,accountDate(this.clock(),account.timeZone)].join(':');
+      }else base.days=this.friendDayRows(account).slice(0,366);
+    }
     return base;
   });}
 }

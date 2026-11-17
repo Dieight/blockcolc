@@ -9,6 +9,7 @@ import com.blockcolc.domain.DomainTime
 import com.blockcolc.domain.StrictJson
 import com.blockcolc.presentation.ClientPreferences
 import com.blockcolc.storage.*
+import kotlinx.coroutines.suspendCancellableCoroutine
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -197,8 +198,7 @@ internal class NativeCloudController private constructor(private val context:Con
             }
         }
         publish(value.copy(choiceRequired=false,conflicts=emptyList(),error=null,lastSync=System.currentTimeMillis()))
-        // Approved live data goes to our server. Only the server holds any
-        // downstream credentials and applies that independent opt-in policy.
+        // The server applies the visibility rules for friends and the viewer.
         if(value.owned){val actual=runtime.cloudCapture(login.account).get();val now=System.currentTimeMillis()
             val live=com.blockcolc.export.FocusExport.project(StoredState(actual.token,actual.domain,actual.recovery),com.blockcolc.export.FocusExport.date(now),now).first.getJSONObject("value")
             api("presence","POST",JSONObject().put("execution",execution).put("snapshot",live))
@@ -207,7 +207,17 @@ internal class NativeCloudController private constructor(private val context:Con
     }
     private fun loadFriends(){
         if(value.account?.optBoolean("friendsEnabled")!=true){publish(value.copy(friends=emptyList()));return}
-        val rows=api("friends").getJSONArray("friends");publish(value.copy(friends=List(rows.length()){rows.getJSONObject(it)}))
+        val rows=api("friends/summary").getJSONArray("friends");publish(value.copy(friends=List(rows.length()){rows.getJSONObject(it)}))
+    }
+    fun refreshFriends()=worker.execute{perform(false){loadFriends()}}
+    suspend fun friendHistory(account:String,friend:String):JSONObject=suspendCancellableCoroutine{continuation->
+        val request=worker.submit{
+            if(continuation.isActive)continuation.resumeWith(runCatching{
+                if(session?.account!=account)throw CloudFailure("UNAUTHORIZED")
+                api("friends/history/"+friend)
+            })
+        }
+        continuation.invokeOnCancellation{request.cancel(false)}
     }
     private fun refreshAccount():JSONObject{
         val login=checkNotNull(session)
@@ -228,7 +238,19 @@ internal class NativeCloudController private constructor(private val context:Con
     fun restoreBackup()=worker.execute{perform{
         val head=api("workspace");api("backup/restore","POST",JSONObject().put("revision",head.getLong("revision")).put("requestId",UUID.randomUUID().toString()));sync("cloud")
     }}
-    fun password(current:String,next:String)=worker.execute{perform{api("password","POST",JSONObject().put("currentPassword",current).put("password",next))}}
+    fun changePassword(account:String,current:String,next:String,onResult:(String?)->Unit)=worker.execute{
+        val code=try{
+            if(session?.account!=account)throw CloudFailure("UNAUTHORIZED")
+            val response=api("password","POST",JSONObject().put("currentPassword",current).put("password",next))
+            check(response.optBoolean("ok"))
+            null
+        }catch(error:Exception){
+            val cloud=error as? CloudFailure
+            if(cloud?.code=="UNAUTHORIZED"&&session?.account==account)failure(cloud)
+            cloud?.code?:"NETWORK_UNAVAILABLE"
+        }
+        main.post{onResult(code)}
+    }
     internal fun testClose(){check(BuildConfig.NATIVE_DIAGNOSTICS);worker.shutdownNow();worker.awaitTermination(5,TimeUnit.SECONDS)}
     companion object {
         @Volatile private var instance:NativeCloudController?=null
