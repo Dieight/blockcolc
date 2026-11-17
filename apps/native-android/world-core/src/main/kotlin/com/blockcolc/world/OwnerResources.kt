@@ -73,5 +73,7 @@ class ResourcePool<K, V>(private val destroy: (V) -> Unit) {
         entry.references--
         if (entry.references == 0) { entries.remove(key); destroyed++; destroy(entry.value) }
     }
+    /** Borrow a live resource on the owning thread without changing its lifetime. */
+    operator fun get(key: K): V? = entries[key]?.value
     fun snapshot(): Map<K, Pair<V, Int>> = entries.mapValues { it.value.value to it.value.references }
 }

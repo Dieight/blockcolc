@@ -830,10 +830,10 @@ class NativeWorldView(context: Context, private val fixture: String, private val
             MotionEvent.ACTION_POINTER_DOWN->{multiTouch=true;if(event.pointerCount==2)pinchReference(event)}
             MotionEvent.ACTION_MOVE->{
                 if(event.pointerCount==2){val before=pinchDistance;val beforeCenter=pinchCenter;pinchReference(event);val current=pinchDistance;val delta=(pinchCenter-beforeCenter)/density
-                    if(before>0&&current>0)render.post{if(!closed){navigation?.pinch(before,current,delta);project();cameraDirty=true;requestFrame()}}}
+                    if(before>0&&current>0)render.post{moveCamera{pinch(before,current,delta)}}}
                 else if(event.pointerCount==1&&!multiTouch){val dx=(event.x-lastX)/density;val dy=(event.y-lastY)/density;lastX=event.x;lastY=event.y
                     if(hypot(event.x-downX,event.y-downY)>touchSlop)touchMoved=true
-                    if(touchMoved)render.post{if(!closed){navigation?.drag(dx,dy);project();cameraDirty=true;requestFrame()}}}
+                    if(touchMoved)render.post{moveCamera{drag(dx,dy)}}}
             }
             MotionEvent.ACTION_UP->{parent?.requestDisallowInterceptTouchEvent(false)
                 if(!touchMoved&&!multiTouch&&hypot(event.x-downX,event.y-downY)<=touchSlop){performClick();val x=event.x.toDouble();val y=event.y.toDouble()
@@ -843,6 +843,14 @@ class NativeWorldView(context: Context, private val fixture: String, private val
             MotionEvent.ACTION_CANCEL->{parent?.requestDisallowInterceptTouchEvent(false);multiTouch=false;touchMoved=false;pinchDistance=0.0}
         }
         return true
+    }
+    /** Apply every gesture delta in order, then update the GPU projection once
+     * in doFrame. Invalidate picks as soon as a newer gesture is accepted. */
+    private inline fun moveCamera(action:NativeWorldNavigation.()->Unit){
+        if(closed||failed)return
+        val current=navigation?:return
+        current.action()
+        invalidatePicks();cameraDirty=true;requestFrame()
     }
     private fun invalidatePicks(){pickGate.invalidate();pickFuture?.cancel(true);pickFuture=null}
     private fun queryPick(x:Double,y:Double){

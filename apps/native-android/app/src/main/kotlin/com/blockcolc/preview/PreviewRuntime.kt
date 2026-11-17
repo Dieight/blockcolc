@@ -644,8 +644,13 @@ class PreviewRuntime private constructor(private val context: Context):Workspace
         c.start(id(), automatic, now)
     }
     fun manual(early: Boolean, whole: Boolean = false,category:String?="other",note:String?=null,uiRequest:String?=null) = enqueue("manual",uiRequest) { it.manual(uiRequest?:id(), early, whole, category, note, System.currentTimeMillis()) }
-    override fun submitReport(draft:ReportDraft,uiRequest:String?)=enqueue("report-draft",uiRequest){c->
-        FocusActions(c,clientPreferences).report(uiRequest?:id(),draft,System.currentTimeMillis(),::id)
+    override fun submitReport(draft:ReportDraft,uiRequest:String?){
+        NativeStartupTrace.point("report-input-accepted")
+        enqueue("report-draft",uiRequest){c->
+            FocusActions(c,clientPreferences).report(uiRequest?:id(),draft,System.currentTimeMillis(),::id).also {
+                NativeStartupTrace.point("report-saved")
+            }
+        }
     }
     override fun finishTutorial(){val target=uiPrefs;actor.execute{
         val saved=target.edit().putBoolean("tutorialPending",false).commit()

@@ -425,16 +425,16 @@ class PacketRenderer(private val engine: Engine, private val scene: Scene, priva
         runtimeData=texture;setRuntime(0f,false,cloudSeconds=runtimeCloudSeconds,weatherElapsedMs=runtimeWeatherElapsedMs);return texture
     }
     fun setRuntime(seconds:Float,enabled:Boolean=true,cloudSeconds:Float=seconds,weatherElapsedMs:Float=seconds*1000f,cascadeSeconds:Float=seconds,atlasElapsedMs:Float=weatherElapsedMs,atlasMotion:Boolean=true){
-        require(listOf(seconds,cloudSeconds,weatherElapsedMs,cascadeSeconds).all{it.isFinite()&&it>=0f})
+        require(seconds in 0f..Float.MAX_VALUE&&cloudSeconds in 0f..Float.MAX_VALUE&&
+            weatherElapsedMs in 0f..Float.MAX_VALUE&&cascadeSeconds in 0f..Float.MAX_VALUE)
         runtimeCloudSeconds=cloudSeconds;runtimeWeatherElapsedMs=weatherElapsedMs
         val texture=runtimeData?:return
         runtimeUniforms.time(seconds,enabled,cloudSeconds,weatherElapsedMs,cascadeSeconds)
         texture.setImage(engine,0,Texture.PixelBufferDescriptor(runtimeUniforms.bytes(),Texture.Format.RGBA,Texture.Type.FLOAT));clockUploads++
-        val resident=textures.snapshot()
         for(a in atlasGpu){
             a.timeline.sample(floor(atlasElapsedMs.toDouble()/50)*50,freeze=!atlasMotion)
             if(!a.timeline.dirty)continue
-            val frames=resident[a.framesKey]?.first;val blend=resident[a.blendKey]?.first
+            val frames=textures[a.framesKey];val blend=textures[a.blendKey]
             if(frames==null||blend==null)continue
             if(!a.frames.available||!a.blends.available){atlasBackpressure++;continue}
             a.frames.upload(engine,frames,a.timeline.pixels);a.blends.upload(engine,blend,a.timeline.blendPixels)

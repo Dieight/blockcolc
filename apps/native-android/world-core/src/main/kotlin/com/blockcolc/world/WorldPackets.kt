@@ -148,30 +148,51 @@ class WorldPackets private constructor(geometries: List<Geometry>, materials: Li
                     for(i in 0 until count)require(indexBatch[i] in 0 until g.vertexCount){"Index outside geometry"}
                 }
             }
-            for (p in packets) finite(p.instances,"Non-finite instance")
-            for (p in packets) repeat(p.count) { i ->
-                p.aux?.let{aux->
-                    for(channel in 0..3){val packed=bytes.getFloat(aux.offset+i*16+channel*4)
-                        if(p.auxChannels==listOf("animalSlot")){
-                            require(packed.isFinite()&&when(channel){0->packed in 0f..1535f&&packed==packed.toInt().toFloat()
-                                1->packed in 0f..3f&&packed==packed.toInt().toFloat();2->packed==0f||packed==1f;else->packed==0f}){"Invalid animal rig slot"}
-                        }else if(p.auxChannels==listOf("weatherPhase","weatherOffset")){
-                            require(packed.isFinite()&&when(channel){0->packed in 0f..1f;1,2->packed in -0.5f..0.5f
-                                else->packed in 0f..49151f&&packed==packed.toInt().toFloat()}){"Invalid weather instance channel"}
-                        }else if(p.auxChannels==listOf("cloudCenter","cloudVelocity")){
-                            require(packed.isFinite()&&kotlin.math.abs(packed)<=if(channel<2)1e6f else 100f){"Invalid cloud instance channel"}
-                        }else{
-                            require(packed.isFinite()&&packed in 0f..16777215f&&packed==packed.toInt().toFloat()){"Invalid packed instance channel"}
-                            if(channel>=2||listOf("instanceFaceOcclusion","instanceMaterialResponse")[channel] !in p.auxChannels)require(packed==0f){"Nonzero reserved channel"}
+            for (packet in packets) {
+                // Validate transforms in the same pass as their finite-value
+                // check. A batch contains only complete 20-float rows.
+                val instances = section(packet.instances).asFloatBuffer()
+                while (instances.hasRemaining()) {
+                    val count = minOf(instances.remaining(), floatBatch.size / 20 * 20)
+                    instances.get(floatBatch, 0, count)
+                    for (i in 0 until count) require(floatBatch[i].isFinite()) { "Non-finite instance" }
+                    for (row in 0 until count step 20) {
+                        require(floatBatch[row+3]==0f&&floatBatch[row+7]==0f&&floatBatch[row+11]==0f&&floatBatch[row+15]==1f) { "Non-affine instance" }
+                        val a=floatBatch[row];val b=floatBatch[row+4];val c=floatBatch[row+8]
+                        val d=floatBatch[row+1];val e=floatBatch[row+5];val f=floatBatch[row+9]
+                        val g=floatBatch[row+2];val h=floatBatch[row+6];val j=floatBatch[row+10]
+                        require(kotlin.math.abs(a.toDouble()*(e*j-f*h)-b.toDouble()*(d*j-f*g)+c.toDouble()*(d*h-e*g))>1e-10) { "Singular instance" }
+                    }
+                }
+                val auxiliary = packet.aux ?: continue
+                val channels = packet.auxChannels
+                val hasOcclusion = "instanceFaceOcclusion" in channels
+                val hasMaterialResponse = "instanceMaterialResponse" in channels
+                val rows = section(auxiliary).asFloatBuffer()
+                while (rows.hasRemaining()) {
+                    val count = minOf(rows.remaining(), floatBatch.size)
+                    rows.get(floatBatch, 0, count)
+                    for (row in 0 until count step 4) {
+                        val x = floatBatch[row]; val y = floatBatch[row+1]
+                        val z = floatBatch[row+2]; val w = floatBatch[row+3]
+                        when (channels[0]) {
+                            "animalSlot" -> require(
+                                x in 0f..1535f && x==x.toInt().toFloat() &&
+                                    y in 0f..3f && y==y.toInt().toFloat() && (z==0f||z==1f) && w==0f
+                            ) { "Invalid animal rig slot" }
+                            "weatherPhase" -> require(
+                                x in 0f..1f && y in -0.5f..0.5f && z in -0.5f..0.5f && w in 0f..49151f && w==w.toInt().toFloat()
+                            ) { "Invalid weather instance channel" }
+                            "cloudCenter" -> require(
+                                x in -1e6f..1e6f && y in -1e6f..1e6f && z in -100f..100f && w in -100f..100f
+                            ) { "Invalid cloud instance channel" }
+                            else -> {
+                                require(x in 0f..16777215f&&x==x.toInt().toFloat()&&y in 0f..16777215f&&y==y.toInt().toFloat()) { "Invalid packed instance channel" }
+                                require((hasOcclusion||x==0f)&&(hasMaterialResponse||y==0f)&&z==0f&&w==0f) { "Nonzero reserved channel" }
+                            }
                         }
                     }
                 }
-                val at=p.instances.offset+i*80
-                require(bytes.getFloat(at+12)==0f && bytes.getFloat(at+28)==0f && bytes.getFloat(at+44)==0f && bytes.getFloat(at+60)==1f) { "Non-affine instance" }
-                val a=bytes.getFloat(at);val b=bytes.getFloat(at+16);val c=bytes.getFloat(at+32)
-                val d=bytes.getFloat(at+4);val e=bytes.getFloat(at+20);val f=bytes.getFloat(at+36)
-                val g=bytes.getFloat(at+8);val h=bytes.getFloat(at+24);val j=bytes.getFloat(at+40)
-                require(kotlin.math.abs(a.toDouble()*(e*j-f*h)-b.toDouble()*(d*j-f*g)+c.toDouble()*(d*h-e*g))>1e-10) { "Singular instance" }
             }
             return WorldPackets(geometry, materials, packets, bytes)
         }

@@ -79,7 +79,8 @@ class ReportButtonTest {
     }
     private fun tap(selector:BySelector){
         val bounds=find(selector).visibleBounds
-        assertTrue("The requested user control was not tapped",device.click(bounds.centerX(),bounds.centerY()))
+        assertFalse("The requested user control is offscreen",bounds.isEmpty)
+        shell("input tap ${bounds.centerX()} ${bounds.centerY()}")
         SystemClock.sleep(150) // Setup only; never included in the measured tap.
     }
     private fun scrollTo(selector:BySelector):UiObject2 {
@@ -91,6 +92,19 @@ class ReportButtonTest {
         }
         throw AssertionError("Control was not reachable in the report: $selector")
     }
+    private fun projectDisclosure(title:String,open:Boolean) {
+        val text=scrollTo(By.text(title))
+        val row=if(text.isClickable)text else checkNotNull(text.parent)
+        assertTrue("The project header must expose an enabled disclosure row",row.isClickable&&row.isEnabled)
+        val next=By.text(if(open)"收起" else "展开")
+        val bounds=row.visibleBounds
+        assertFalse("The project disclosure must be on screen",bounds.isEmpty)
+        shell("input tap ${bounds.centerX()} ${bounds.centerY()}")
+        // Read the new state before starting a drag. A missed tap on a
+        // moving panel must not be reported as a missing progress option.
+        find(next,2500)
+        SystemClock.sleep(250)
+    }
     private fun thermal():Int {
         val raw=shell("dumpsys battery")
         return Regex("(?m)^\\s*temperature:\\s*(\\d+)").find(raw)?.groupValues?.get(1)?.toInt()?:error("No battery temperature")
@@ -99,7 +113,10 @@ class ReportButtonTest {
         val deadline=SystemClock.elapsedRealtime()+180000
         while(SystemClock.elapsedRealtime()<deadline){
             assertFalse("The world failed before the sample; this is not a usable performance case",device.hasObject(By.text("世界暂未准备好")))
-            if(device.hasObject(By.text("把专注留在做过的事上"))&&!device.hasObject(By.text("正在建造世界")))return
+            if (device.hasObject(By.textContains("轮专注已结束"))) {
+                currentWorld(JSONObject())
+                return
+            }
             SystemClock.sleep(50)
         }
         throw AssertionError("The real report and world did not finish loading")
@@ -132,14 +149,15 @@ class ReportButtonTest {
             if(!functionalOnly)assertTrue("Outside the measured thermal range",before in 1 until 380)
             val launch=shell("am start -W -n $target/.MainActivity");assertFalse(launch.contains("Error:"))
             awaitVisibleReport();report.put("initialWorldReady",true)
-            scrollTo(By.text(title));tap(By.text(title))
+            SystemClock.sleep(1800) // Setup only, after the first frame and its opening motion.
+            projectDisclosure(title,true)
             val progress=By.text(Pattern.compile("推进至\\s*50%"))
             scrollTo(progress);tap(progress)
             repeat(3){tap(By.desc("增加轮数"))}
             // Collapse via the real control, then inspect the summary. Scrolling
             // a tall expanded row while it is still changing creates stale
             // accessibility objects and can inject gestures into its options.
-            scrollTo(By.text(title));tap(By.text(title))
+            projectDisclosure(title,false)
             scrollTo(By.text("一次提交本次推进"))
             val assigned=By.textStartsWith("已分配")
             val assignedText=scrollTo(assigned).text

@@ -130,6 +130,28 @@ class WorldPacketsTest {
         val projective=bytes();ByteBuffer.wrap(projective).order(ByteOrder.LITTLE_ENDIAN).putFloat(offset+12,.5f);rejected(data=projective)
         val singular=bytes();ByteBuffer.wrap(singular).order(ByteOrder.LITTLE_ENDIAN).putFloat(offset,0f);rejected(data=singular)
     }
+    @Test fun invalidTransformInTheTailOfALargePacketIsRejected() {
+        val json = JSONObject(source())
+        val packet = json.getJSONArray("packets").getJSONObject(0)
+        val instances = packet.getJSONObject("instances")
+        val start = instances.getInt("offset")
+        val count = 512
+        val row = bytes().copyOfRange(start, start + 80)
+        val expanded = bytes().copyOf(start + count * row.size)
+        val wire = ByteBuffer.wrap(expanded).order(ByteOrder.LITTLE_ENDIAN)
+        wire.putInt(8, expanded.size)
+        wire.position(start)
+        repeat(count) { wire.put(row) }
+        packet.put("count", count)
+        instances.put("bytes", count * row.size)
+        assertEquals(count, read(json.toString(), expanded).packets.single().count)
+        val last = start + (count - 1) * row.size
+        wire.putFloat(last + 12, 0.5f)
+        rejected(json.toString(), expanded)
+        wire.putFloat(last + 12, 0f)
+        wire.putFloat(last + 76, Float.NaN)
+        rejected(json.toString(), expanded)
+    }
     @Test fun malformedMaterialNumbersAndFlagsAreRejectedBeforeGpuAllocation() {
         fun materialChange(key:String,value:Any) {
             val json=JSONObject(source());json.getJSONArray("materials").getJSONObject(0).put(key,value);rejected(json.toString())

@@ -53,9 +53,12 @@ import java.util.concurrent.TimeUnit
 
 /** Stable composition-root host. It remains mounted behind non-world pages;
  * hidden pages neither regenerate a scene nor keep its frame pump running. */
+internal val LocalColdWorldCacheTag=staticCompositionLocalOf<String?>{null}
+
 @Composable fun NativeWorldHost(runtime:PreviewRuntime,visible:Boolean,quality:String,modifier:Modifier=Modifier,worldColor:SourceWorldColor=SourceWorldColor(),atmosphere:NativeAtmosphereFacts?,buildingCondition:Int?=null,outlineVisibility:String="current",interaction:NativeWorldInteractionState=remember{NativeWorldInteractionState()},labels:Map<String,String> = emptyMap(),resourceSelection:ResourceWorldSelection?=ResourceWorldSelection(),onReady:(Boolean)->Unit={},room:com.blockcolc.presentation.RoomPresentation?=null,retainSurface:Boolean=false) {
     val context=LocalContext.current;val ui=LocalNativeUi.current
-    val owner=remember(context,interaction){NativeWorldHostOwner(context,interaction)}
+    val cacheTag=LocalColdWorldCacheTag.current
+    val owner=remember(context,interaction,cacheTag){NativeWorldHostOwner(context,interaction,cacheTag)}
     val backdrop=LocalNativeBackdrop.current
     val nativeView=androidx.compose.ui.platform.LocalView.current
     var measuredBounds by remember{mutableStateOf(Rect.Zero)}
@@ -153,8 +156,10 @@ import java.util.concurrent.TimeUnit
 
 /** UI-thread controller; immutable facts cross to the worker, GPU ownership
  * stays in NativeWorldView. A failed build keeps the prior rendered world. */
-internal class NativeWorldHostOwner(context:Context,private val interaction:NativeWorldInteractionState=NativeWorldInteractionState()):AutoCloseable {
-    private val main=Handler(Looper.getMainLooper());private val session=NativeWorldSession(context,{main.post(it)})
+internal class NativeWorldHostOwner(context:Context,private val interaction:NativeWorldInteractionState=NativeWorldInteractionState(),coldCacheTag:String?=null):AutoCloseable {
+    private val main=Handler(Looper.getMainLooper())
+    private val session=NativeWorldSession(context,{main.post(it)},java.io.File(context.cacheDir,
+        if(coldCacheTag!=null)"p4-cold-"+coldCacheTag else "native-world"))
     private var view:NativeWorldView?=null;private var database:String?=null;private var spatial:String?=null
     private var closed=false;private var active=false;private var target:CommittedWorldInput?=null;private var quality="cinematic"
     private var preparationAllowed=true

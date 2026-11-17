@@ -6,6 +6,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.Configurator
 import androidx.test.uiautomator.UiDevice
+import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Test
@@ -38,7 +39,14 @@ class P4GestureTest {
         try {
             report.put("gestureStartBootNs",SystemClock.elapsedRealtimeNanos().toString())
             val left=box[0]+(box[2]-box[0])/3;val right=box[2]-(box[2]-box[0])/3;val y=box[1]+(box[3]-box[1])/3
-            repeat(6){i->assertTrue(device.swipe(if(i%2==0)left else right,y,if(i%2==0)right else left,y,45));SystemClock.sleep(250)}
+            val sweeps=JSONArray()
+            repeat(6){i->
+                val start=SystemClock.elapsedRealtimeNanos()
+                assertTrue(device.swipe(if(i%2==0)left else right,y,if(i%2==0)right else left,y,45))
+                sweeps.put(JSONObject().put("startBootNs",start.toString()).put("endBootNs",SystemClock.elapsedRealtimeNanos().toString()))
+                SystemClock.sleep(250)
+            }
+            report.put("swipes",sweeps)
             report.put("gestureEndBootNs",SystemClock.elapsedRealtimeNanos().toString()).put("completed",true)
         }finally{config.waitForIdleTimeout=idle;instrumentation.sendStatus(2,Bundle().apply{putString("p4Gesture",report.toString())})}
     }

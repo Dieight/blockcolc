@@ -65,7 +65,7 @@ private val NATIVE_UI_PROCESS=java.util.UUID.randomUUID().toString()
 
 /** The default native application. P1/P2 diagnostic routes remain explicit
  * Activity extras; no synthetic 25-building fixture is loaded into a workspace. */
-@Composable fun NativeApp(runtime:PreviewRuntime,loadingOverride:NativeLoadingChoice?=null,initialWorldDebug:NativeWorldDebug?=null){
+@Composable fun NativeApp(runtime:PreviewRuntime,loadingOverride:NativeLoadingChoice?=null,initialWorldDebug:NativeWorldDebug?=null,coldCacheTag:String?=null){
     var interactive by remember(runtime){mutableStateOf(false)}
     // This is the usable core workspace milestone. The world has its own
     // scene/GPU receipt and must never impersonate this milestone, or block it.
@@ -88,7 +88,7 @@ private val NATIVE_UI_PROCESS=java.util.UUID.randomUUID().toString()
     val importer=rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()){uri->if(uri!=null)runtime.import(uri)}
     val onImport={importer.launch(arrayOf("application/json","application/octet-stream","text/plain"))}
     NativeTheme(snapshot.preferences,resources){
-        CompositionLocalProvider(LocalNativeLoading provides loadingChoice){
+        CompositionLocalProvider(LocalNativeLoading provides loadingChoice,com.blockcolc.preview.world.LocalColdWorldCacheTag provides coldCacheTag){
             if(!snapshot.ready&&snapshot.error==null&&!snapshot.refreshRequired){
                 NativeLoadingScene(LocalNativeUi.current.text("正在读取本机记录"),Modifier.fillMaxSize(),stageKind="storage")
             }else if(snapshot.ready&&snapshot.setupRequired&&snapshot.error==null&&!snapshot.refreshRequired){

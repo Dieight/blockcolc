@@ -16,7 +16,7 @@ const forbidden=apk.names.filter(n=>/(\.world\.json$|p2-fixture|p3-audio-formats
 const dex=Buffer.concat(apk.names.filter(n=>/^classes[0-9]*\.dex$/.test(n)).map(n=>apk.read(n)));
 const classes=apk.names.filter(n=>/^classes[0-9]*\.dex$/.test(n)).flatMap(n=>dexClassNames(apk.read(n)));
 assert.ok(!classes.some(n=>n.includes('OrbitMeasurement')),'Orbit implementation retained');
-const banned=['P2CostActivity','ReferenceWorldView','P3DerivedCacheCheckActivity','P3AudioSourceProvider','P3BackupCaptureActivity','p1-orbit-','p1-retire-','p2-startup-','p2-fixture-domain.json','p2-construction.json','testMeasuredOperation','p3LoadingArt','p3LoadingAnimated','BlockcolcStartup'];
+const banned=['P2CostActivity','ReferenceWorldView','P3DerivedCacheCheckActivity','P3AudioSourceProvider','P3BackupCaptureActivity','p1-orbit-','p1-retire-','p2-startup-','p2-fixture-domain.json','p2-construction.json','testMeasuredOperation','p3LoadingArt','p3LoadingAnimated','p4VisualPreset','p4ColdCacheTag','BlockcolcStartup'];
 for(const marker of banned)assert.ok(!dex.includes(Buffer.from(marker)),'Diagnostic implementation retained: '+marker);
 if(!identity.privateRelay)for(const marker of ['PrivateRelayCache','NativePreviewRelay','PrivateRelaySync','BLOCKCOLC_RELAY_UPLOAD_TOKEN','relay.invalid'])assert.ok(!dex.includes(Buffer.from(marker)),'Private implementation retained in standard build');
 const manifest=apk.read('AndroidManifest.xml');for(const name of ['P2CostActivity','P3DerivedCacheCheckActivity','P3AudioSourceProvider'])assert.ok(!manifest.includes(Buffer.from(name))&&!manifest.includes(Buffer.from(name,'utf16le')),'Diagnostic component in manifest');

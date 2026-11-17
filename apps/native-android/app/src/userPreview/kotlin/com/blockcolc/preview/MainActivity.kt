@@ -19,7 +19,11 @@ class MainActivity:ComponentActivity(){
   // releases remove this branch and ignore the extra; business time is real.
   val debug=if(BuildConfig.BUILD_TYPE=="benchmark"&&intent.getStringExtra("p4VisualPreset")=="clear-afternoon")
    com.blockcolc.world.NativeWorldDebug(true,com.blockcolc.world.NativeDebugWeather.CLEAR,900,0.0)else null
-  setContent{NativeApp(runtime,loading,debug)};runtime.start()
+  // Use a new private derived-cache slot for each cold rebuild sample. The
+  // usual cache and the authoritative database retain their own identities.
+  val cacheTag=if(BuildConfig.BUILD_TYPE=="benchmark")intent.getStringExtra("p4ColdCacheTag")
+   ?.takeIf{it.matches(Regex("[a-f0-9]{16}"))} else null
+  setContent{NativeApp(runtime,loading,debug,cacheTag)};runtime.start()
  }
  override fun onResume(){super.onResume();PreviewRuntime.get(this).foreground(true)}
  override fun onStop(){PreviewRuntime.get(this).foreground(false,getSystemService(android.app.KeyguardManager::class.java).isKeyguardLocked);super.onStop()}

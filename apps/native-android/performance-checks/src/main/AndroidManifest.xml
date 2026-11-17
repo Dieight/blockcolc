@@ -1,4 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <queries><package android:name="com.blockcolc.preview" /></queries>
+    <queries>
+        <package android:name="com.blockcolc.preview" />
+        <package android:name="com.blockcolc.reference" />
+    </queries>
     <application android:label="blockcolc performance checks" android:allowBackup="false" />
 </manifest>

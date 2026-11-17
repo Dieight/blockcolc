@@ -156,6 +156,18 @@ data class PlanEditorModel(val token:String=UUID.randomUUID().toString(),val pro
 @OptIn(ExperimentalLayoutApi::class)
 @Composable fun NativeReportPanel(pool:ReportPool,pending:Boolean,delivered:Boolean,onSubmit:(ReportDraft)->Unit){
     val ui=LocalNativeUi.current
+    val feedbackDraw = if (BuildConfig.BUILD_TYPE == "benchmark" && (pending || delivered)) {
+        remember(pool.planId, pending, delivered) {
+            var recorded = false
+            Modifier.drawWithContent {
+                drawContent()
+                if (!recorded) {
+                    recorded = true
+                    NativeStartupTrace.point(if (delivered) "report-delivered-drawn" else "report-busy-drawn")
+                }
+            }
+        }
+    } else Modifier
     var draft by rememberNativePageState("report/${pool.planId}/draft",stateSaver=reportDraftSaver()){ReportDraft(pool.planId)}
     val ordinary=pool.mode==PlanMode.ROUNDS
     val valid=runCatching{draft.validate(pool)}.isSuccess
@@ -172,7 +184,7 @@ data class PlanEditorModel(val token:String=UUID.randomUUID().toString(),val pro
                 val label=if(selected==value&&delivered)ui.text("材料已送达！")else if(selected==value&&pending)ui.text("正在保存…")else if(value==target.progress)ui.text("保持 {0}%",value/100)else if(value==10000)ui.text("完成小任务")else ui.text("推进至 {0}%",value/100)
                 val enabled=!pending&&!delivered
                 val colors=MaterialTheme.colorScheme
-                Row(Modifier.fillMaxWidth().heightIn(min=48.dp).border(1.dp,if(value==10000)colors.primary else colors.outlineVariant).background(colors.surface.copy(alpha=.8f)).clickable(enabled=enabled,role=androidx.compose.ui.semantics.Role.Button,interactionSource=remember{MutableInteractionSource()},indication=null){selected=value;onSubmit(ReportDraft(pool.planId,listOf(TaskAllocation(target.projectId,target.taskId!!,value,1))))}.padding(12.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(8.dp,Alignment.CenterHorizontally)){
+                Row(Modifier.fillMaxWidth().heightIn(min=48.dp).border(1.dp,if(value==10000)colors.primary else colors.outlineVariant).background(colors.surface.copy(alpha=.8f)).clickable(enabled=enabled,role=androidx.compose.ui.semantics.Role.Button,interactionSource=remember{MutableInteractionSource()},indication=null){selected=value;onSubmit(ReportDraft(pool.planId,listOf(TaskAllocation(target.projectId,target.taskId!!,value,1))))}.padding(12.dp).then(if(selected==value)feedbackDraw else Modifier),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(8.dp,Alignment.CenterHorizontally)){
                     if(pending&&selected==value)NativeBusy()
                     Text(label,color=if(value==10000)colors.primary else colors.onSurface,style=MaterialTheme.typography.bodyLarge)
                 }
@@ -229,7 +241,7 @@ data class PlanEditorModel(val token:String=UUID.randomUUID().toString(),val pro
     if(!ordinary){
         NativeSeparator()
         Text("${ui.text("已分配")} ${draft.allocated} / ${pool.totalRounds} ${ui.text("轮")} · ${ui.text("未分配")} ${pool.totalRounds-draft.allocated}",style=MaterialTheme.typography.bodySmall)
-        FormalGlassAction(ui.text(if(delivered)"材料已送达！" else if(pending)"正在保存…" else "一次提交本次推进"),{onSubmit(draft)},modifier=Modifier.semantics{liveRegion=androidx.compose.ui.semantics.LiveRegionMode.Polite},pending=pending,enabled=valid&&!delivered)
+        FormalGlassAction(ui.text(if(delivered)"材料已送达！" else if(pending)"正在保存…" else "一次提交本次推进"),{onSubmit(draft)},modifier=feedbackDraw.semantics{liveRegion=androidx.compose.ui.semantics.LiveRegionMode.Polite},pending=pending,enabled=valid&&!delivered)
     }else if(delivered||pending)Text(ui.text(if(delivered)"材料已送达！" else "保存中…"),style=MaterialTheme.typography.bodyLarge)
 }
 
