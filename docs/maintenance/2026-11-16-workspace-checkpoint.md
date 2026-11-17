@@ -7,3 +7,5 @@
 - 第一次跨盘移动误跟进历史 npm junction。已从归档字节恢复 1,086 个文件，另与冻结清单核对，1,443 个源码输入完全相同；仅两份生成的测试状态文件未恢复。后续归档逐条处理链接和原文件，核对完成才移除原副本。
 
 本机清单在 `D:/blockcolc-android/maintenance/20261116/`：`artifacts-archive-resumed-manifest.json` 记录归档和链接映射，`source-recovery-verification.json` 记录源码核对，`process-apk-cleanup-result.json` 记录删除范围和保留的恢复原包。复验时选定所需源码快照和原输入，按对应构建回执重建本轮的包，无需恢复整批 APK。整理期间没有操作手机或发布。
+
+11 月 17 日完成首轮真实汇报、冷启失效重建和两次可见区绘制实验后，又清理 39 个过程 APK 路径，含隔离旧版副本、诊断和观察器包、硬链接以及这几轮的 Gradle APK 输出。核对测试中的原包和数据恢复后才删除。`retired-process-apks-through-r10.json`、`retired-process-apks-r11.json`、`retired-process-apks-r12.json` 保留路径与摘要。实验过程所需的源码输入、日志、截图和系统追踪仍可查阅。
