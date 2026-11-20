@@ -132,7 +132,7 @@ internal class AndroidBlueprintCache(
         override val maximumBytes=BlueprintSnapshotCodec.MAX_BYTES
         override fun isCandidate(key:String,header:ByteArray,length:Long)=BlueprintSnapshotCodec.isCandidateHeader(key,decoration,header,length)
         override fun encode(key:String,value:BlueprintSnapshot,allocate:(Int)->ByteBuffer,cancelled:()->Boolean)=
-            BlueprintSnapshotCodec.encodeBuffer(key,value,decoration,allocate,cancelled)
+            BlueprintSnapshotCodec.encodeBuffer(key,value,decoration,allocate,cancelled)?.let{listOf(it)}
         override fun decode(key:String,bytes:ByteBuffer,cancelled:()->Boolean)=
             BlueprintSnapshotCodec.decodeBuffer(key,bytes,decoration,cancelled)
     }

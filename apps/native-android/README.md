@@ -92,3 +92,9 @@ MC 图集的静态 UV／裁切／旋转／染色按可复用外观预求值，�
 - `audit-p2-correction.mjs <新检查点目录>`：核对新事务确认测点、受影响的设备返验、恢复和完整五组对照，冻结确切源码、APK 与旧证据的复用范围。两个审计工具都不运行实验或自动开始 P3；审图记录须由实际检查填写，文件非空或脚本退出 0 不代替审看。
 
 手机交回时确认原库指针、通知、精确提醒及原电池策略均已恢复；不得仅因点按成功就标恢复完成。完整流程仍按仓库 [TESTING](../../docs/TESTING.md)执行，不把这组定点称为发布全量。
+
+## Beta 通道
+
+用正式签名构建。原生 Gradle 构建参数为 `-PnativeUpgradeCandidate=true -PnativeBetaNumber=N -PnativeBetaVersionCode=CODE`，目标为 `:app:recordUpgradeCandidate`，同样需要指定 Filament 编译器。此任务先验证 APK，再记录源码与产物摘要。
+
+提交、推送、打标签和发布见 [Beta 发布](../../docs/TESTING.md#beta-发布)。后续正式包可用 `-PnativeReleaseVersionCode=CODE` 指定高于 Beta 的构建号。自动与手动检查共用所选通道，手动安装 Beta 后默认跟随 Beta 通道，已有通道设置会保留。下载后核对发布资产的 SHA-256，安装前核对包名、版本和签名。 [GitHub Releases API](https://docs.github.com/en/rest/releases/releases)

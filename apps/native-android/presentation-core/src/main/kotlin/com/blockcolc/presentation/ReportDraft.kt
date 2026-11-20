@@ -12,8 +12,10 @@ import org.json.JSONObject
 data class ReportSession(val id:String,val durationMs:Long)
 data class ReportTarget(val projectId:String,val projectTitle:String,val taskId:String?,val title:String,val progress:Int,val maxRounds:Int,
     val projectProgress:Int=0,val habitCycle:Int?=null,val habitCompleted:Int?=null,val habitTarget:Int?=null)
-data class ReportPool(val planId:String,val mode:PlanMode,val sessions:List<ReportSession>,val targets:List<ReportTarget>){
+data class ReportPool(val planId:String,val mode:PlanMode,val sessions:List<ReportSession>,val targets:List<ReportTarget>,
+    val partialExtensionMs:Long=0){
     val totalRounds get()=sessions.size
+    val totalDurationMs get()=sessions.sumOf{it.durationMs}+partialExtensionMs
     companion object {
         fun from(domain:DomainDocument,recovery:RecoveryContext):ReportPool? {
             if(recovery.plan?.phase!=PlanPhase.REPORT)return null
@@ -27,10 +29,16 @@ data class ReportPool(val planId:String,val mode:PlanMode,val sessions:List<Repo
             val used=(rows("progressReports").flatMap{ids(it,"focusSessionIds")}+
                 rows("habitBuildings").flatMap{ids(it,"focusSessionIds")}+
                 projects.flatMap{it.optJSONObject("habit")?.let{h->ids(h,"completedFocusSessionIds")}.orEmpty()}).toSet()
-            val sessions=rows("focusHistory").filter{it.getString("id") in plan.completedSessionIds&&it.getString("id") !in used&&
+            val history=rows("focusHistory")
+            val sessions=history.filter{plan.completed(it.getString("id"))&&it.getString("id") !in used&&
                 it.getString("status")!="interrupted"&&!it.has("settledAt")}
                 .sortedWith(compareBy<JSONObject>{DomainTime.millis(it.getString("completedAt"))}.thenBy{it.getString("id")})
                 .map{ReportSession(it.getString("id"),it.getLong("actualDurationMs"))}
+            val partialExtensionMs=plan.extensionStartedAt?.let{
+                val tailId=plan.extensionSessionId(plan.extensionRounds+1)
+                history.firstOrNull{row->row.getString("id")==tailId&&row.getString("status")=="interrupted"&&
+                    row.optString("interruptionReason")=="user-cancelled"}?.getLong("actualDurationMs")
+            }?:0L
             val targets=projects.filter{it.getString("status")!="deleted"}.flatMap{p->
                 val projectId=p.getString("id");val title=p.getString("title")
                 if(plan.mode==PlanMode.ROUNDS&&projectId!=plan.projectId)emptyList()
@@ -46,7 +54,7 @@ data class ReportPool(val planId:String,val mode:PlanMode,val sessions:List<Repo
                         .map{ReportTarget(projectId,title,it.getString("id"),it.getString("title"),it.getInt("progressBasisPoints"),sessions.size,projectProgress=progress)}
                 }
             }
-            return ReportPool(plan.id,plan.mode,sessions,targets)
+            return ReportPool(plan.id,plan.mode,sessions,targets,partialExtensionMs)
         }
     }
 }
@@ -70,7 +78,7 @@ data class ReportDraft(val planId:String,val tasks:List<TaskAllocation> = emptyL
             require(habit.rounds<=target.maxRounds){"The habit building cannot receive these rounds"}
         }
         if(pool.mode==PlanMode.ROUNDS){
-            require(tasks.size==1&&tasks.single().rounds==1&&habits.isEmpty()&&pool.totalRounds==1){"An ordinary report belongs to its single pending subtask"}
+            require(tasks.size==1&&tasks.single().rounds==pool.totalRounds&&habits.isEmpty()){"An ordinary report belongs to its pending subtask"}
         }
     }
     /** Rebuilt against saved state immediately before submit; caller supplies

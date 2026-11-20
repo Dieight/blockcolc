@@ -7,6 +7,7 @@ import java.util.concurrent.CancellationException
 import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.floor
+import kotlin.math.hypot
 
 enum class WorldEnvironment(val wireValue:String) {
     VALLEY("natural-valley"),FLOATING("classic-island"),OCEAN("ocean-island"),COAST("mosaic-coast");
@@ -43,6 +44,16 @@ object SettlementSupport {
     }
     private fun onPad(x:Double,z:Double,pad:TerrainPad)=abs(x-pad.x)<=pad.width/2+1&&abs(z-pad.z)<=pad.depth/2+1
     private fun onBuilding(x:Double,z:Double,p:VillagePlacement)=abs(x-p.worldPosition.x)<=p.footprint.width/2+1&&abs(z-p.worldPosition.z)<=p.footprint.depth/2+1
+
+    /** Mainland rewards can start far from their plot. On the floating island
+     * start the collision search near the host while preserving the bearing. */
+    fun floatingRewardOffset(host:VillagePlacement,reward:FootprintBounds,saved:Position2):Position2 {
+        val distance=hypot(saved.x,saved.z)
+        val reach=(hypot(host.footprint.width,host.footprint.depth)+hypot(reward.width.toDouble(),reward.depth.toDouble()))/2+8
+        if(distance<=reach)return saved
+        val scale=reach/distance
+        return Position2(saved.x*scale,saved.z*scale)
+    }
 
     fun groundHeightAt(x:Double,z:Double,environment:WorldEnvironment,placements:List<VillagePlacement> = emptyList(),pads:List<TerrainPad> = emptyList()):Double {
         var height=VillageLayout.terrainHeightAt(x,z)

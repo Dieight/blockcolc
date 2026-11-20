@@ -53,14 +53,18 @@ internal enum class NativeTextRole { CAPTION, BODY, SECTION, TITLE, NUMBER, CLOC
     }
 }
 /** The source uses this quieter glass action for immersed settlement/end. */
-@Composable internal fun FormalGlassAction(label:String,onClick:()->Unit,modifier:Modifier=Modifier,pending:Boolean=false,enabled:Boolean=true,danger:Boolean=false,reading:Boolean=false,selected:Boolean=false){
+@OptIn(ExperimentalFoundationApi::class)
+@Composable internal fun FormalGlassAction(label:String,onClick:()->Unit,modifier:Modifier=Modifier,pending:Boolean=false,enabled:Boolean=true,danger:Boolean=false,reading:Boolean=false,selected:Boolean=false,onDoubleClick:(()->Unit)?=null){
     val colors=MaterialTheme.colorScheme;val dark=colors.background.luminance()<.5f;val reduced=LocalNativeUi.current.reduceMotion
     val ink=if(reading)LocalContentColor.current else if(danger)colors.error else if(dark)Color(0xff7fd6a1)else Color(0xff276749)
     val tint=if(dark)Color(0xff1b2d23)else Color(0xffdeebe2)
     val interaction=remember{MutableInteractionSource()};val pressed by interaction.collectIsPressedAsState()
     val shift by androidx.compose.animation.core.animateFloatAsState(if(pressed&&enabled&&!pending)1f else 0f,androidx.compose.animation.core.tween(70),label="glass-press")
+    val touch=if(onDoubleClick!=null)Modifier.combinedClickable(enabled=enabled&&!pending,role=Role.Button,
+        interactionSource=interaction,indication=null,onClick=onClick,onDoubleClick=onDoubleClick)
+    else Modifier.clickable(enabled=enabled&&!pending,role=Role.Button,interactionSource=interaction,indication=null,onClick=onClick)
     Row(modifier.fillMaxWidth().heightIn(min=if(reading)44.dp else 48.dp).graphicsLayer{translationY=if(reduced)0f else shift*density}.border(1.dp,ink.copy(alpha=if(selected)1f else if(reading).12f else .35f)).background(if(reading)Color.Transparent else tint.copy(alpha=.96f))
-        .clickable(enabled=enabled&&!pending,role=Role.Button,interactionSource=interaction,indication=null,onClick=onClick).semantics{if(reading)this.selected=selected}.padding(if(reading)10.dp else 12.dp),
+        .then(touch).semantics{if(reading)this.selected=selected}.padding(if(reading)10.dp else 12.dp),
         verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(8.dp,Alignment.CenterHorizontally)){
         CompositionLocalProvider(LocalContentColor provides ink){if(pending)NativeBusy();NativeText(label,NativeTextRole.BODY,color=ink)}
     }

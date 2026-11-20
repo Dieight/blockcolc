@@ -7,6 +7,8 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 data class BackupRoot(val id: String, val kind: String, val createdAt: String, val date: String?, val sourceRevision: Long, val reason: String, val source: String?, val domainSha: String, val bytes: Long)
+data class BackupArchive(val id: String, val createdAt: String, val date: String?, val sourceRevision: Long,
+    val reason: String, val source: String?, val domain: DomainDocument)
 data class RollbackRequest(val createdAt: String, val reason: String, val source: String)
 data class DailyCapture(val root: BackupRoot?, val changed: Boolean, val overBudget: Boolean = false)
 internal data class PreparedSnapshot(val manifest: String, val manifestSha: String, val domainSha: String, val blocks: Map<String, String>) {

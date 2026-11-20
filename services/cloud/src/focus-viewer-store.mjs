@@ -134,13 +134,15 @@ export class FocusViewerStore {
     const observed = presence ? JSON.parse(presence.value) : null;
     const capturedAt = new Date(Math.min(now, Math.max(head.changed, Date.parse(observed?.updatedAt) || 0))).toISOString();
     const start = Date.parse(observed?.startedAt), end = Date.parse(observed?.estimatedEndsAt);
-    const active = observed?.currentName && presence.expires > now && start <= now && end > now;
+    const openEnded = observed?.estimatedEndsAt === null;
+    const active = observed?.currentName && presence.expires > now && start <= now && (openEnded || end > now);
     const snapshot = {
       currentName: active ? observed.currentName : null,
       startedAt: active ? observed.startedAt : null,
       estimatedEndsAt: active ? observed.estimatedEndsAt : null,
       estimatedElapsedMs: active ? Math.max(0, Date.parse(capturedAt) - start) : 0,
       todayActualFocusMs: Math.min(DAY, days.totals[days.date] ?? 0),
+      ...(active && openEnded ? { waitingForEnd: true } : {}),
     };
     return {
       live: { schemaVersion: 1, sourceEpoch: head.epoch, revision: head.revision, capturedAt, snapshot },

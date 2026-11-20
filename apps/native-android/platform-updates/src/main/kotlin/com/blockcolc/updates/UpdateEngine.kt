@@ -9,7 +9,7 @@ interface UpdateJobStore { fun read():DownloadRecord?; fun write(record:Download
 interface UpdateDownloads { fun enqueue(token:String,asset:UpdateAsset):Long; fun query(id:Long):TransferProgress; fun remove(id:Long) }
 interface UpdateFiles { fun verify(record:DownloadRecord,force:Boolean):AppIdentity; fun delete(token:String) }
 interface UpdateInstaller { fun allowed():Boolean; fun authorize(); fun install(token:String) }
-interface ReleaseSource { fun latest(cancel:UpdateCancellation):AppRelease }
+interface ReleaseSource { fun latest(cancel:UpdateCancellation):AppRelease? }
 class UpdateCancellation {
     @Volatile private var cancelled=false
     @Volatile private var disconnect:(()->Unit)?=null
@@ -23,9 +23,11 @@ class UpdateCancellation {
 class UpdateEngine(
     val installed:AppIdentity,private val currentVersion:String,private val jobs:UpdateJobStore,
     private val downloads:UpdateDownloads,private val files:UpdateFiles,private val installer:UpdateInstaller,
+    private val feed:UpdateFeed=UpdateFeed.STABLE,
     private val token:()->String={java.util.UUID.randomUUID().toString().replace("-","")},
 ) {
     val channel get()=UpdatePolicy.channel(installed)
+    fun accepts(asset:UpdateAsset)=feed==UpdateFeed.BETA||!UpdatePolicy.isBeta(asset.version)
     private fun record():DownloadRecord?=jobs.read()?.also{
         UpdatePolicy.validate(it.asset)
         if(it.id<=0||!it.token.matches(Regex("[a-f0-9]{32}")))throw UpdateFailure(UpdateProblem.STORAGE)
@@ -37,6 +39,7 @@ class UpdateEngine(
     }
     fun start(asset:UpdateAsset):UpdateStatus {
         UpdatePolicy.requireDownload(installed);UpdatePolicy.validate(asset)
+        if(!accepts(asset))throw UpdateFailure(UpdateProblem.CHANNEL)
         if(UpdatePolicy.compare(asset.version,currentVersion)<=0||(UpdatePolicy.isVersion(installed.version)&&UpdatePolicy.compare(asset.version,installed.version)<=0))throw UpdateFailure(UpdateProblem.NOT_NEWER)
         val old=record()
         if(old?.asset==asset&&old.failure==null)return status()
@@ -54,7 +57,7 @@ class UpdateEngine(
     }
     fun status():UpdateStatus {
         val record=record()?:return UpdateStatus(channel)
-        if(channel!=UpdateChannel.STANDARD||UpdatePolicy.compare(record.asset.version,currentVersion)<=0)return cancel()
+        if(channel!=UpdateChannel.STANDARD||!accepts(record.asset)||UpdatePolicy.compare(record.asset.version,currentVersion)<=0)return cancel()
         record.failure?.let{return UpdateStatus(channel,UpdatePhase.FAILED,record.asset,problem=it)}
         val transfer=downloads.query(record.id)
         if(transfer.received>record.asset.size||transfer.received<0||transfer.total?.let{it>0&&it!=record.asset.size}==true)return failed(record,UpdateProblem.INTEGRITY)

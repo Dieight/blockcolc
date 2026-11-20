@@ -53,4 +53,27 @@ class TimerPresentationTest {
         val original=JSONObject(context.canonical());original.getJSONObject("plan").put("hasStarted","true")
         assertTrue(runCatching{RecoveryContext.parse(original.toString(),doc)}.isFailure)
     }
+
+    @Test fun integrityNoticeShowsCommittedCountsAndTheRecentStoppedMode() {
+        val configured = DomainEngine.execute(active(PlanMode.MINIMAL), DomainEngine.command("ConfigureFocusIntegrity",
+            "enabled" to true, "maxEffectiveExcursions" to 2, "excursionThresholdSeconds" to 2), now)
+        assertTrue(configured.error, configured.ok)
+        fun view(domain: DomainDocument, at: Long) = TimerPresentation.from(domain, RecoveryContext(), ClientPreferences(), at)
+        assertEquals(0, view(configured.state, now).integrityNotice?.count)
+        val left = DomainEngine.execute(configured.state, DomainEngine.command("RecordFocusBackgrounded", "reason" to "app-switch"), now + 1000)
+        assertTrue(left.error, left.ok)
+        val returned = DomainEngine.execute(left.state, DomainEngine.command("RecordFocusForegrounded"), now + 4000)
+        assertTrue(returned.error, returned.ok)
+        assertEquals(1, view(returned.state, now + 4000).integrityNotice?.count)
+        val leftAgain = DomainEngine.execute(returned.state, DomainEngine.command("RecordFocusBackgrounded", "reason" to "app-switch"), now + 5000)
+        assertTrue(leftAgain.error, leftAgain.ok)
+        val ended = DomainEngine.execute(leftAgain.state, DomainEngine.command("RecordFocusForegrounded"), now + 8000)
+        assertTrue(ended.error, ended.ok)
+        val stopped = view(ended.state, now + 8000)
+        assertEquals(TimerSurface.IDLE, stopped.surface)
+        assertEquals(FocusIntegrityNotice("session:plan:1:nonce", 2, 2, stopped = true, returnsToMinimal = true), stopped.integrityNotice)
+        assertNull(view(ended.state, now + 17_000).integrityNotice)
+        val slowCommit = TimerPresentation.from(ended.state.json(), RecoveryContext(), ClientPreferences(), now + 17_000, ended.events)
+        assertEquals(stopped.integrityNotice, slowCommit.integrityNotice)
+    }
 }

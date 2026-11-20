@@ -71,6 +71,7 @@ internal val LocalNativeSystemBarPolicy=staticCompositionLocalOf<NativeSystemBar
     SideEffect{WindowCompat.getInsetsController(window,window.decorView).apply{
         isAppearanceLightStatusBars=darkInk;isAppearanceLightNavigationBars=darkInk
         if(dialogWindow!=null&&immersive!=null){
+            applyNativeCutoutPolicy(window,immersive)
             systemBarsBehavior=androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
             if(immersive)hide(androidx.core.view.WindowInsetsCompat.Type.systemBars())else show(androidx.core.view.WindowInsetsCompat.Type.systemBars())
         }
@@ -88,6 +89,7 @@ internal val LocalNativeSystemBarPolicy=staticCompositionLocalOf<NativeSystemBar
         val window=activity?.window
         if(window!=null){
             WindowCompat.setDecorFitsSystemWindows(window,false)
+            applyNativeCutoutPolicy(window,immersive)
             @Suppress("DEPRECATION")
             window.statusBarColor=android.graphics.Color.TRANSPARENT
             @Suppress("DEPRECATION")
@@ -99,5 +101,20 @@ internal val LocalNativeSystemBarPolicy=staticCompositionLocalOf<NativeSystemBar
             }
         }
         onDispose{if(window!=null)WindowCompat.getInsetsController(window,window.decorView).show(androidx.core.view.WindowInsetsCompat.Type.systemBars())}
+    }
+}
+
+private fun applyNativeCutoutPolicy(window:android.view.Window,immersive:Boolean){
+    val sdk=android.os.Build.VERSION.SDK_INT
+    if(sdk<28)return
+    val mode=when{
+        !immersive->android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT
+        sdk>=30->android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+        else->android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+    }
+    val layout=window.attributes
+    if(layout.layoutInDisplayCutoutMode!=mode){
+        layout.layoutInDisplayCutoutMode=mode
+        window.attributes=layout
     }
 }

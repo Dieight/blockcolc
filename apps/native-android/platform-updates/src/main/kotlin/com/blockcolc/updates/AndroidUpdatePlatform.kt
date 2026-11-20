@@ -19,10 +19,11 @@ import java.security.MessageDigest
 import javax.net.ssl.HttpsURLConnection
 
 /** No credentials, app data or writable domain state crosses these ports. */
-class PublicReleaseSource:ReleaseSource {
-    override fun latest(cancel:UpdateCancellation):AppRelease {
+class PublicReleaseSource(private val feed:UpdateFeed=UpdateFeed.STABLE):ReleaseSource {
+    override fun latest(cancel:UpdateCancellation):AppRelease? {
         cancel.check()
-        val connection=URL(UpdatePolicy.API).openConnection() as HttpsURLConnection
+        val maximumBytes=if(feed==UpdateFeed.BETA)4*1024*1024 else 1024*1024
+        val connection=URL(if(feed==UpdateFeed.BETA)UpdatePolicy.BETA_API else UpdatePolicy.API).openConnection() as HttpsURLConnection
         cancel.connection(connection::disconnect)
         // Read timeout is per socket read. A total deadline also covers a
         // slow trickle of bytes and time spent waiting for response headers.
@@ -32,12 +33,12 @@ class PublicReleaseSource:ReleaseSource {
             connection.setRequestProperty("Accept","application/vnd.github+json")
             connection.setRequestProperty("User-Agent","Blockcolc-Android")
             if(connection.responseCode!=200)throw UpdateFailure(UpdateProblem.CHECK)
-            if((connection.getHeaderField("Content-Length")?.toLongOrNull()?:0)>1024*1024)throw UpdateFailure(UpdateProblem.CHECK)
+            if((connection.getHeaderField("Content-Length")?.toLongOrNull()?:0)>maximumBytes)throw UpdateFailure(UpdateProblem.CHECK)
             val bytes=connection.inputStream.use{input->val out=java.io.ByteArrayOutputStream();val buffer=ByteArray(8192)
-                while(true){cancel.check();val n=input.read(buffer);if(n<0)break;if(out.size()+n>1024*1024)throw UpdateFailure(UpdateProblem.CHECK);out.write(buffer,0,n)};out.toByteArray()}
+                while(true){cancel.check();val n=input.read(buffer);if(n<0)break;if(out.size()+n>maximumBytes)throw UpdateFailure(UpdateProblem.CHECK);out.write(buffer,0,n)};out.toByteArray()}
             cancel.check()
             val body=Charsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT).onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(bytes)).toString()
-            return UpdatePolicy.release(body)
+            return if(feed==UpdateFeed.BETA)UpdatePolicy.betaFeed(body) else UpdatePolicy.release(body)
         }finally{timeout.cancel(false);cancel.connection(null);connection.disconnect()}
     }
     companion object {
@@ -141,6 +142,6 @@ class AndroidUpdateInstaller(private val context:Context):UpdateInstaller {
 }
 
 object AndroidUpdates {
-    fun engine(context:Context,currentVersion:String,language:()->String)=UpdateEngine(AndroidApkIdentity.installed(context),currentVersion,
-        AndroidUpdateJobStore(File(context.filesDir,"app-update/job.json")),AndroidUpdateDownloads(context,language),AndroidUpdateFiles(context),AndroidUpdateInstaller(context))
+    fun engine(context:Context,currentVersion:String,feed:UpdateFeed=UpdateFeed.STABLE,language:()->String)=UpdateEngine(AndroidApkIdentity.installed(context),currentVersion,
+        AndroidUpdateJobStore(File(context.filesDir,"app-update/job.json")),AndroidUpdateDownloads(context,language),AndroidUpdateFiles(context),AndroidUpdateInstaller(context),feed=feed)
 }

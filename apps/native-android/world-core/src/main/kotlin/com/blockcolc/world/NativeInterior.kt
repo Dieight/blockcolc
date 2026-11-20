@@ -25,7 +25,7 @@ class NativeInteriorCompiler {
     private val trim=wood.copy(color=LinearRgb.fromSrgb(0x3d3025),texture=materials.pattern(OriginalPattern.BARK))
     private val brass=NativeRenderMaterial(color=LinearRgb.fromSrgb(0xa98043),metalness=.45f,roughness=.5f,fog=false)
     private val light=NativeRenderMaterial(color=LinearRgb.fromSrgb(0xffe8ac),emission=LinearRgb.fromSrgb(0xffc56b),emissionStrength=2.5f,fog=false)
-    private fun colour(hex:Int,cloth:Boolean=false)=NativeRenderMaterial(color=LinearRgb.fromSrgb(hex),texture=materials.pattern(if(cloth)OriginalPattern.FABRIC else OriginalPattern.SMOOTH),
+    private fun colour(hex:Int,pattern:OriginalPattern=OriginalPattern.SMOOTH)=NativeRenderMaterial(color=LinearRgb.fromSrgb(hex),texture=materials.pattern(pattern),
         emission=LinearRgb.fromSrgb(hex),emissionStrength=.10f,fog=false)
     fun prepare(camera:NativeSceneCamera,targets:List<NativeOrbitTarget>,items:List<NativeInteriorItem>,resources:NativeResourceWorldAssets?=null,cancelled:()->Boolean={false},aspect:Double=camera.aspect):NativeInteriorScene {
         require(items.size<=20&&items.map{it.id}.distinct().size==items.size)
@@ -90,7 +90,9 @@ class NativeInteriorCompiler {
                     box(x+(if(side)if(x<0).05 else -.05 else 0.0),y+h/2,z+(if(side)0.0 else -.05),if(side).02 else w-.1,h-.1,if(side)w-.1 else .02,colour(if(item.id=="map")0x879c70 else 0xe6ddc0))
                     if(!side)box(x,y+h*.55,z-.07,.08,h*.35,.02,colour(0x344b38))
                 }
-                "reading-chair","armchair"->{box(x,y+.48,z,.9,.18,.9,colour(0x6b7d53,true));box(x,y+.95,z+.38,.9,.8,.16,wood);for(xx in listOf(-.34,.34))for(zz in listOf(-.34,.34))box(x+xx,y+.2,z+zz,.12,.4,.12,trim);if(item.id=="armchair")for(xx in listOf(-.5,.5))box(x+xx,y+.66,z,.18,.45,.9,wood)}
+                "reading-chair","armchair"->for(part in if(item.id=="reading-chair")OriginalChairs.reading else OriginalChairs.upholstered){
+                    box(x+part.x,y+part.y,z+part.z,part.width,part.height,part.depth,colour(part.colour,part.pattern))
+                }
                 "cabinet"->{box(x,y+.5,z,1.5,1.0,1.0,wood);for(xx in listOf(-.37,.37)){box(x+xx,y+.5,z-.52,.68,.9,.06,trim);box(x+xx,y+.5,z-.57,.07,.07,.04,brass)}}
                 "floor-lamp"->{box(x,y+.08,z,.5,.15,.5,brass);box(x,y+.9,z,.07,1.65,.07,brass);box(x,y+1.8,z,.5,.35,.5,light)}
                 "mug"->{box(x,y+.18,z,.28,.35,.28,colour(0xddddc7));box(x+.19,y+.2,z,.12,.22,.13,brass)}

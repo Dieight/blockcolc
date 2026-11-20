@@ -9,18 +9,18 @@ internal class WorldAnimalPreparation {
     private val habitats=NativeAnimalHabitatCompiler()
     private data class PopulationKey(val prepared:NativeAnimalPrepared,val style:WorldEnvironment,val seed:Long)
     private var population:Pair<PopulationKey,NativeAnimalScene>?=null
-    private class Packets(val bounds:BlockBox,val source:NativePacketSource,val picking:NativeAnimalPickTemplate)
+    private class Packets(val bounds:BlockBox,val paper:Boolean,val source:NativePacketSource,val picking:NativeAnimalPickTemplate)
     private var packets:Packets?=null
-    fun prepare(world:WorldTerrainPlan,cancelled:()->Boolean):Pair<NativeAnimalScene,NativePacketSource>? {
+    fun prepare(world:WorldTerrainPlan,paper:Boolean=false,cancelled:()->Boolean):Pair<NativeAnimalScene,NativePacketSource>? {
         val first=world.input.buildings.firstOrNull()?:return null
         val center=first.placement.worldPosition.let{AnimalPoint(it.x,it.y,it.z)}
         val bounds=world.terrain.bounds;val obstacles=ArrayList<NativeAnimalObstacle>()
         for(b in world.input.buildings){val p=b.placement;val v=p.worldPosition
-            obstacles+=NativeAnimalObstacle("building:${b.fact.id}",b.originalGeometry.inputKey,b.recipe.intact,BlockPoint(v.x,v.y,v.z),p.rotationY,p.blueprintOffset,
+            obstacles+=NativeAnimalObstacle("building:${b.fact.id}",b.recipe.key,b.recipe.intact,BlockPoint(v.x,v.y,v.z),p.rotationY,p.blueprintOffset,
                 AnimalBounds(v.x-p.footprint.width/2.0-1,v.x+p.footprint.width/2.0+1,v.z-p.footprint.depth/2.0-1,v.z+p.footprint.depth/2.0+1))
         }
         for(r in world.rewards){val p=r.support.placement;val v=p.worldPosition
-            obstacles+=NativeAnimalObstacle("reward:${r.source.fact.rewardId}","${r.source.originalGeometry.inputKey}:${world.cacheKey}:foundation",
+            obstacles+=NativeAnimalObstacle("reward:${r.source.fact.rewardId}","${r.source.recipe.key}:${world.cacheKey}:foundation",
                 r.support.foundation+r.source.recipe.intact,BlockPoint(v.x,v.y,v.z),p.rotationY,p.blueprintOffset)
         }
         for(o in world.scenery.objects)if(o.role!=SceneryRole.PATH&&o.role!=SceneryRole.GARDEN){
@@ -36,8 +36,9 @@ internal class WorldAnimalPreparation {
         // Flight can rise above the highest terrain/building; culling remains
         // disabled for these fixed-capacity, dynamically posed draw slots.
         val box=BlockBox(BlockPoint(bounds.minX,bounds.minY-2,bounds.minZ),BlockPoint(bounds.maxX,bounds.maxY+48,bounds.maxZ))
-        val packet=packets?.takeIf{it.bounds==box}?:NativeAnimalPackets.prepare(box,cancelled).let{Packets(box,it,NativeAnimalPickTemplate(it))}
-        val state=population?.takeIf{it.first==key}?.second?:NativeAnimalScene(prepared,prepared.populate(key.style,key.seed,cancelled),packet.picking)
+        val previous=packets
+        val packet=previous?.takeIf{it.bounds==box&&it.paper==paper}?:NativeAnimalPackets.prepare(box,paper,cancelled).let{Packets(box,paper,it,NativeAnimalPickTemplate(it))}
+        val state=population?.takeIf{it.first==key&&packet===previous}?.second?:NativeAnimalScene(prepared,prepared.populate(key.style,key.seed,cancelled),packet.picking)
         population=key to state;packets=packet;return state to packet.source
     }
     fun clear(){habitats.clear();population=null;packets=null}

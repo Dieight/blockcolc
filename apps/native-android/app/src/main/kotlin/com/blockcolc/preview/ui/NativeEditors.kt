@@ -141,14 +141,24 @@ private data class SubtaskDraft(val id:String,val value:TextFieldValue)
     val ui=LocalNativeUi.current;val request=rememberNativeRequest(s,onClose)
     var operation by rememberSaveable(s.planId){mutableStateOf<String?>(null)}
     val timer=s.timer;val resting=timer?.surface==TimerSurface.REST
+    val extending=timer?.extensionStartedAt!=null
     val deferred=timer?.mode in setOf(PlanMode.MINIMAL,PlanMode.MARATHON)
     val habit=s.choices.find{it.id==timer?.projectId}?.habit==true
     val options=listOf("external-interruption" to "外部打扰","task-blocked" to "任务受阻","fatigue" to "需要休息","priority-changed" to "优先级变化","device-or-app" to "设备或应用问题","other" to "其他")
-    NativeSheet(if(open)s.planId else null,{ui.text(when(operation){"interrupt"->"这次为什么中断？";"cancel"->"取消整个多轮计划？";else->if(resting)"结束休息"else"如何结束这次专注？"})},onClose,!request.busy){planId->
+    NativeSheet(if(open)s.planId else null,{ui.text(when{
+        extending->"加时专注"
+        operation=="interrupt"->"这次为什么中断？"
+        operation=="cancel"->"取消整个多轮计划？"
+        resting->"结束休息"
+        else->"如何结束这次专注？"
+    })},onClose,!request.busy){planId->
         var category by rememberSaveable(planId){mutableStateOf<String?>(null)}
         var note by rememberSaveable(planId,stateSaver=TextFieldValue.Saver){mutableStateOf(TextFieldValue())}
         val enabled=!request.busy&&!s.busy
-        if(operation==null){
+        if(extending){
+            FormalGlassAction(ui.text("结束并完成本次专注"),{request.submit{runtime.decideFocus(FocusDecision.FinishExtension,it)}},
+                pending=request.busy,enabled=enabled,reading=true)
+        }else if(operation==null){
             NativeText(timer?.taskTitle?:ui.text(if(habit)"习惯专注"else"本次专注"),NativeTextRole.BODY)
             if(!resting){
                 FormalEndChoice(ui.text("中断本轮"),ui.text("保留已有任务进度，不计完整轮次")+if(deferred)ui.text("；本轮计划继续")else"","stop",enabled){operation="interrupt"}

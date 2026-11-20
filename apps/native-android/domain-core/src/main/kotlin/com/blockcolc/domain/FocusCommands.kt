@@ -33,6 +33,23 @@ internal object FocusCommands {
                 val a = focus() ?: fail("FOCUS_NOT_ACTIVE"); if (DomainTime.millis(now) < DomainTime.millis(a.getString("endsAt"))) fail("FOCUS_NOT_ELAPSED")
                 complete(m, a)
             }
+            "FinishExtendedRound" -> {
+                val active=focus()?:fail("FOCUS_NOT_ACTIVE")
+                val elapsed=(DomainTime.millis(now)-DomainTime.millis(active.getString("startedAt"))).coerceAtLeast(0L)
+                val planned=active.getLong("plannedDurationMs")
+                require(elapsed in 0 until planned)
+                if(elapsed>=(planned+1)/2){
+                    val rounded=JSONObject(StrictJson.render(active)).put("endsAt",now).put("plannedDurationMs",elapsed)
+                    complete(m,rounded)
+                }else{
+                    s.put("activeFocusSession",JSONObject.NULL)
+                    if(elapsed>0){
+                        array("focusHistory").put(base(active).put("status","interrupted").put("interruptedAt",now)
+                            .put("interruptionReason","user-cancelled").put("interruptionCategory",JSONObject.NULL).put("actualDurationMs",elapsed))
+                        event("FocusInterrupted","sessionId" to active.getString("id"),"reason" to "user-cancelled","category" to null)
+                    }
+                }
+            }
             "CompleteFocusEarly" -> {
                 val a = focus() ?: fail("FOCUS_NOT_ACTIVE"); if (DomainTime.millis(now) >= DomainTime.millis(a.getString("endsAt"))) fail("FOCUS_ALREADY_ELAPSED")
                 val reportId = text("reportId"); val p = project(a.getString("projectId")) ?: fail("PROJECT_NOT_FOUND")

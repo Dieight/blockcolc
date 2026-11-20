@@ -32,7 +32,7 @@ class P4WorkspaceTest {
         require(preset==null||preset=="clear-afternoon")
         require(label.matches(Regex("[a-z0-9-]{1,80}")))
         require(expected.matches(Regex("[a-f0-9]{64}")))
-        require(action in setOf("cold","routes","gestures","resume"))
+        require(action in setOf("cold","routes","gestures","pinch","resume"))
         fun shell(command:String)=device.executeShellCommand(command).trim()
         val app=instrumentation.context.packageManager.getApplicationInfo(pkg,0)
         assertEquals("Performance samples require a non-debuggable App",0,app.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE)
@@ -130,6 +130,15 @@ class P4WorkspaceTest {
                 }
                 shell("log -p i -t BlockcolcP4 p4-gestures-end-$label")
                 report.put("gestureEndBootNs",SystemClock.elapsedRealtimeNanos().toString())
+            }else if(action=="pinch"){
+                val target=checkNotNull(device.findObject(By.desc("聚落世界")))
+                val bounds=target.visibleBounds
+                assertTrue(bounds.width()>100&&bounds.height()>100)
+                val began=SystemClock.elapsedRealtimeNanos()
+                target.pinchOpen(.55f,500)
+                val ended=SystemClock.elapsedRealtimeNanos()
+                assertEquals(bounds,device.findObject(By.desc("聚落世界"))?.visibleBounds)
+                report.put("pinchStartBootNs",began.toString()).put("pinchEndBootNs",ended.toString())
             }else if(action=="resume"){
                 val before=android.graphics.Rect();checkNotNull(world()).getBoundsInScreen(before)
                 device.pressHome();SystemClock.sleep(1200)
@@ -137,6 +146,29 @@ class P4WorkspaceTest {
                 val resumed=until(20000){world()?.stateDescription?.toString()=="世界已就绪"}
                 val after=android.graphics.Rect();checkNotNull(world()).getBoundsInScreen(after)
                 assertEquals(before,after);report.put("resumeWorldMs",(resumed-began)/1e6)
+                try {
+                    assertTrue(device.openNotification())
+                    until(5000){device.currentPackageName=="com.android.systemui"}
+                    val dismissed=SystemClock.elapsedRealtimeNanos()
+                    shell("cmd statusbar collapse")
+                    val available=until(10000){device.currentPackageName==pkg&&world()?.stateDescription?.toString()=="世界已就绪"}
+                    val again=android.graphics.Rect();checkNotNull(world()).getBoundsInScreen(again)
+                    report.put("shadeDismissBootNs",dismissed.toString()).put("shadeWorldMs",(available-dismissed)/1e6)
+                        .put("firstShadeBounds",again.toShortString())
+                    assertTrue(again.width()>100&&again.height()>100)
+                    val x=again.left+again.width()/3
+                    val y=again.top+again.height()/3
+                    val swiping=SystemClock.elapsedRealtimeNanos()
+                    assertTrue(device.swipe(x,y,again.right-again.width()/3,y,45))
+                    report.put("afterShadeSwipeStartBootNs",swiping.toString())
+                        .put("afterShadeSwipeEndBootNs",SystemClock.elapsedRealtimeNanos().toString())
+                    val settled=until(10000){
+                        val bounds=android.graphics.Rect()
+                        world()?.getBoundsInScreen(bounds)
+                        bounds==before
+                    }
+                    report.put("shadeBoundsConfirmedMs",(settled-dismissed)/1e6)
+                } finally {shell("cmd statusbar collapse")}
             }
             report.put("pid",shell("pidof $pkg")).put("completed",true)
         }catch(error:Throwable){report.put("failure",error.javaClass.simpleName+": "+error.message);throw error}

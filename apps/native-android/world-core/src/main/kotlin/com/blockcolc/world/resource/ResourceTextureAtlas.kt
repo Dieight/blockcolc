@@ -35,7 +35,11 @@ class ResourceAtlasPage internal constructor(val index:Int,val textureSize:Int,v
 class ResourceTextureAtlas internal constructor(val textureSize:Int,val gutter:Int,val safeMipLevels:Int,pages:List<ResourceAtlasPage>,entries:List<ResourceAtlasEntry>,memory:Map<String,Long>){
     val pages=resourceList(pages);val entries=resourceList(entries);val memoryEstimate=resourceMap(memory)
     private val byId=this.entries.associateBy{it.resourceId}
+    private val pagesByIndex=this.pages.associateBy{it.index}
+    private val entriesByTile=this.entries.groupBy{it.page}.mapValues{(_,entries)->entries.associateBy{it.pageTextureIndex}}
     fun entry(resourceId:String)=byId[resourceId]
+    internal fun page(index:Int)=pagesByIndex[index]
+    internal fun entryAt(page:Int,tile:Int)=entriesByTile[page]?.get(tile)
     fun json()=JSONObject().put("schemaVersion",1).put("textureSize",textureSize).put("gutter",gutter).put("safeMipLevels",safeMipLevels)
         .put("pages",jsonArray(pages.map{it.json()})).put("entries",jsonArray(entries.map{it.json()})).put("memoryEstimate",jsonMap(memoryEstimate))
 }
@@ -46,9 +50,9 @@ object NativeResourceAtlas {
     private class Plan(val texture:ResourceOwnedTexture,val layout:Layout){
         val frames=arrayOfNulls<Tile>(layout.count);var alpha="opaque"
     }
-    private class Tile(val plan:Plan,val sourceFrame:Int,val localIndex:Int){var globalIndex=0;var x=0;var y=0;var uv:ResourceAtlasUv?=null;var page=0}
+    private class Tile(val sourceFrame:Int,val localIndex:Int){var globalIndex=0;var x=0;var y=0;var uv:ResourceAtlasUv?=null;var page=0}
     private class Page(val index:Int,val size:Int,val cell:Int,val columns:Int,val rows:Int,val width:Int,val height:Int,
-        val tiles:List<Tile>,val plans:List<Plan>,val mipBytes:Long,val lookupBytes:Long){val rgbaBytes=width.toLong()*height*4}
+        val plans:List<Plan>,val mipBytes:Long,val lookupBytes:Long){val rgbaBytes=width.toLong()*height*4}
     private fun fail(code:String,id:String?=null):Nothing=throw ResourceAtlasException(code,id)
     private fun validate(l:ResourceAtlasLimits){
         if(listOf(l.maxTextures,l.maxPageSize,l.maxPages,l.gutter,l.maxPngBytes,l.maxSourcePixelsPerTexture).any{it<=0}||l.maxDecodedBytes<=0||l.reservedAtlasBytes<0||l.additionalWorkingSetBytes<0||
@@ -73,25 +77,30 @@ object NativeResourceAtlas {
         val output=ArrayList<Page>()
         for(size in plans.map{it.layout.width}.distinct().sorted()){
             checkpoint(cancelled);val cell=size+l.gutter*2;val perAxis=l.maxPageSize/cell;if(perAxis<1)fail("INVALID_LIMITS")
-            val capacity=perAxis*perAxis;var tiles=ArrayList<Tile>()
+            val capacity=perAxis*perAxis
+            var textures=ArrayList<Plan>()
+            var tileCount=0
             fun flush(){
-                if(tiles.isEmpty())return
-                val columns=minOf(perAxis,ceil(sqrt(tiles.size.toDouble())).toInt());val rows=(tiles.size+columns-1)/columns;val width=power(columns*cell);val height=power(rows*cell)
+                if(tileCount==0)return
+                val columns=minOf(perAxis,ceil(sqrt(tileCount.toDouble())).toInt());val rows=(tileCount+columns-1)/columns;val width=power(columns*cell);val height=power(rows*cell)
                 if(width>l.maxPageSize||height>l.maxPageSize)fail("ATLAS_TOO_LARGE")
-                val textures=tiles.map{it.plan}.distinct();var lookup=0L
+                var lookup=0L
                 if(textures.any{(it.texture.descriptor.animation?.frames?.size?:0)>1}){
                     var greatest=-1
                     for(p in textures){val a=p.texture.descriptor.animation;val referenced=if(a!=null&&a.frames.size>1)a.frames.map{it.index}else listOf(a?.frames?.firstOrNull()?.index?:0)
-                        for(source in referenced){val index=tiles.find{it.plan===p&&it.sourceFrame==source}?.localIndex;if(index!=null)greatest=maxOf(greatest,index)}}
+                        for(source in referenced){val index=p.frames.getOrNull(source)?.localIndex;if(index!=null)greatest=maxOf(greatest,index)}}
                     val count=greatest+1;if(count>0){val w=minOf(l.maxPageSize,count);lookup=w.toLong()*((count+w-1)/w)*8}
                 }
                 var mw=width;var mh=height;var mipBytes=0L;val levels=minOf(safeMips(l.gutter),31-Integer.numberOfLeadingZeros(minOf(width,height)))
                 repeat(levels){mw=maxOf(1,mw/2);mh=maxOf(1,mh/2);mipBytes+=mw.toLong()*mh*4}
-                output+=Page(output.size,size,cell,columns,rows,width,height,tiles,textures,mipBytes,lookup);tiles=ArrayList()
+                output+=Page(output.size,size,cell,columns,rows,width,height,textures,mipBytes,lookup)
+                textures=ArrayList()
+                tileCount=0
             }
             for(plan in plans)if(plan.layout.width==size){checkpoint(cancelled);if(plan.layout.count>capacity)fail("ATLAS_TOO_LARGE",plan.texture.resourceId)
-                if(tiles.isNotEmpty()&&tiles.size+plan.layout.count>capacity)flush()
-                repeat(plan.layout.count){tiles+=Tile(plan,it,tiles.size)}
+                if(tileCount+plan.layout.count>capacity)flush()
+                textures+=plan
+                repeat(plan.layout.count){frame->plan.frames[frame]=Tile(frame,tileCount++)}
             };flush()
         };return output
     }
@@ -128,13 +137,12 @@ object NativeResourceAtlas {
                 val pixels=image.rgba();var transparent=false;var translucent=false
                 for(at in 3 until pixels.remaining() step 4){if(at%65536==3)checkpoint(cancelled);val a=pixels.get(at).toInt()and 255;if(a in 1..254){translucent=true;break};if(a==0)transparent=true}
                 plan.alpha=if(translucent)"translucent"else if(transparent)"cutout"else "opaque"
-                for(tile in page.tiles)if(tile.plan===plan){checkpoint(cancelled);val x=tile.localIndex%page.columns*page.cell+limits.gutter;val y=tile.localIndex/page.columns*page.cell+limits.gutter
+                for(frame in plan.frames){val tile=checkNotNull(frame);checkpoint(cancelled);val x=tile.localIndex%page.columns*page.cell+limits.gutter;val y=tile.localIndex/page.columns*page.cell+limits.gutter
                     val startX=tile.sourceFrame%plan.layout.columns*plan.layout.width;val startY=tile.sourceFrame/plan.layout.columns*plan.layout.width
                     for(dy in -limits.gutter until plan.layout.width+limits.gutter){checkpoint(cancelled)
                         for(dx in -limits.gutter until plan.layout.width+limits.gutter){val source=((startY+dy.coerceIn(0,plan.layout.width-1))*d.width+startX+dx.coerceIn(0,plan.layout.width-1))*4
                             val target=((y+dy)*page.width+x+dx)*4;repeat(4){rgba[target+it]=pixels.get(source+it)}}}
                     tile.globalIndex=nextGlobal++;tile.x=x;tile.y=y;tile.page=page.index;tile.uv=ResourceAtlasUv(x.toDouble()/page.width,y.toDouble()/page.height,(x+page.size).toDouble()/page.width,(y+page.size).toDouble()/page.height)
-                    plan.frames[tile.sourceFrame]=tile
                 }
             }
             output+=ResourceAtlasPage(page.index,page.size,page.width,page.height,page.columns,page.rows,rgba)

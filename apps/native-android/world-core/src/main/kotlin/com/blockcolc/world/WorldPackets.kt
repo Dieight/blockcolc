@@ -4,6 +4,7 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import org.json.JSONArray
 import org.json.JSONObject
+import com.blockcolc.world.generation.PaperFaceGeometry
 
 data class BufferRange(val offset: Int, val bytes: Int)
 data class Point3(val x: Float, val y: Float, val z: Float) {
@@ -11,7 +12,11 @@ data class Point3(val x: Float, val y: Float, val z: Float) {
 }
 data class Bounds(val min: Point3, val max: Point3)
 data class Geometry(val id: Int, val vertex: BufferRange, val index: BufferRange,
-                    val vertexCount: Int, val indexCount: Int, val bounds: Bounds,val vertexPreparation:String?=null)
+                    val vertexCount: Int, val indexCount: Int, val bounds: Bounds,val vertexPreparation:String?=null) {
+    val paper get() = vertexPreparation == PaperFaceGeometry.LAYOUT
+    val vertexStride get() = if (paper) PaperFaceGeometry.STRIDE else 48
+    val gpuBytes get() = vertexCount * (if (paper) PaperFaceGeometry.STRIDE else 64).toLong() + indexCount * 4L
+}
 data class DrawPacket(val id: Int, val owner: String, val layer: String, val geometry: Int,
                       val material: Int, val count: Int, val instances: BufferRange,
                       val bounds: Bounds, val castShadow: Boolean, val receiveShadow: Boolean,
@@ -20,11 +25,13 @@ data class DrawPacket(val id: Int, val owner: String, val layer: String, val geo
 /** Validated descriptors and read-only buffer views. The reader transfers ownership of input;
  * callers must not mutate its original backing buffer after adoption. */
 class WorldPackets private constructor(geometries: List<Geometry>, materials: List<String>,
-                                      packets: List<DrawPacket>, private val payload: ByteBuffer) {
+                                      packets: List<DrawPacket>, private val payload: ByteBuffer,
+                                      internal val retainedManifest: String?) {
     val geometries: List<Geometry> = java.util.Collections.unmodifiableList(geometries)
     val materials: List<String> = java.util.Collections.unmodifiableList(materials)
     val packets: List<DrawPacket> = java.util.Collections.unmodifiableList(packets)
     val byteSize: Int get() = payload.remaining()
+    internal fun packedBytes(): ByteBuffer = payload.asReadOnlyBuffer()
     fun section(range: BufferRange): ByteBuffer = payload.asReadOnlyBuffer().order(ByteOrder.LITTLE_ENDIAN)
         .apply { position(range.offset); limit(range.offset + range.bytes) }.slice().order(ByteOrder.LITTLE_ENDIAN)
 
@@ -37,7 +44,11 @@ class WorldPackets private constructor(geometries: List<Geometry>, materials: Li
             require(number.isFinite() && number >= Int.MIN_VALUE && number <= Int.MAX_VALUE && number == number.toInt().toDouble()) { "Expected integer: $key" }
             return number.toInt()
         }
-        fun read(manifest: String, input: ByteBuffer): WorldPackets {
+        fun read(manifest: String, input: ByteBuffer, retainManifest: Boolean = false, cancelled: () -> Boolean = { false }): WorldPackets {
+            fun checkpoint() {
+                if (cancelled() || Thread.currentThread().isInterrupted) throw java.util.concurrent.CancellationException("World packet read superseded")
+            }
+            checkpoint()
             require(manifest.length <= 16 * 1024 * 1024) { "Manifest budget" }
             val bytes = input.asReadOnlyBuffer().slice().order(ByteOrder.LITTLE_ENDIAN)
             require(bytes.remaining() in 16..MAX_BYTES) { "World buffer budget" }
@@ -64,12 +75,16 @@ class WorldPackets private constructor(geometries: List<Geometry>, materials: Li
             }
             val rawGeometry = json.getJSONArray("geometries"); require(rawGeometry.length() in 1..10_000)
             val geometry = List(rawGeometry.length()) { i ->
+                if (i % 64 == 0) checkpoint()
                 val value = rawGeometry.getJSONObject(i); require(integer(value,"id") == i)
                 val vertices = integer(value,"vertexCount"); val indices = integer(value,"indexCount")
                 require(vertices in 1..4_000_000 && indices in 3..12_000_000 && indices % 3 == 0)
                 Geometry(i, range(value.getJSONObject("vertex")), range(value.getJSONObject("index")), vertices, indices,
-                    bounds(value.getJSONArray("bounds")),if(value.has("vertexPreparation"))value.getString("vertexPreparation").also{require(it=="atlas-static-v1")}else null).also {
-                    require(it.vertex.bytes.toLong() == vertices.toLong() * 48 && it.index.bytes.toLong() == indices.toLong() * 4)
+                    bounds(value.getJSONArray("bounds")),if(value.has("vertexPreparation"))value.getString("vertexPreparation").also{
+                        require(it == "atlas-static-v1" || it == PaperFaceGeometry.LAYOUT && version == 5)
+                    }else null).also {
+                    require(it.vertex.bytes.toLong() == vertices.toLong() * it.vertexStride && it.index.bytes.toLong() == indices.toLong() * 4)
+                    if (it.paper) require(vertices in 4..32768 && vertices % 4 == 0 && indices == vertices / 4 * 6)
                 }
             }
             val rawMaterials = json.getJSONArray("materials"); require(rawMaterials.length() in 1..8_192)
@@ -78,6 +93,7 @@ class WorldPackets private constructor(geometries: List<Geometry>, materials: Li
                 require(number.isFinite() && kotlin.math.abs(number)<=1e6);return number
             }
             val materials = List(rawMaterials.length()) { i -> rawMaterials.getJSONObject(i).also { m ->
+                if (i % 64 == 0) checkpoint()
                 require(integer(m,"id") == i)
                 for ((key,size) in listOf("color" to 3,"emissive" to 3,"uvTransform" to 9)) {
                     val values=m.getJSONArray(key);require(values.length()==size)
@@ -100,6 +116,7 @@ class WorldPackets private constructor(geometries: List<Geometry>, materials: Li
             val rawPackets = json.getJSONArray("packets"); require(rawPackets.length() in 1..30_000)
             var totalInstances = 0
             val packets = List(rawPackets.length()) { i ->
+                if (i % 64 == 0) checkpoint()
                 val value = rawPackets.getJSONObject(i); require(integer(value,"id") == i)
                 val owner = value.getString("owner"); val layer = value.getString("layer")
                 require(PacketOwners.valid(owner))
@@ -136,14 +153,22 @@ class WorldPackets private constructor(geometries: List<Geometry>, materials: Li
             fun finite(range:BufferRange,message:String){
                 val values=section(range).asFloatBuffer()
                 while(values.hasRemaining()){
+                    checkpoint()
                     val count=minOf(values.remaining(),floatBatch.size);values.get(floatBatch,0,count)
                     for(i in 0 until count)require(floatBatch[i].isFinite()){message}
                 }
             }
             for (g in geometry) {
-                finite(g.vertex,"Non-finite vertex")
+                if (g.paper) {
+                    val values = section(g.vertex)
+                    repeat(g.vertexCount) { i ->
+                        if (i % 1024 == 0) checkpoint()
+                        for (axis in 0..2) require(values.getFloat(i * g.vertexStride + axis * 4).isFinite())
+                    }
+                } else finite(g.vertex,"Non-finite vertex")
                 val indices=section(g.index).asIntBuffer()
                 while(indices.hasRemaining()){
+                    checkpoint()
                     val count=minOf(indices.remaining(),indexBatch.size);indices.get(indexBatch,0,count)
                     for(i in 0 until count)require(indexBatch[i] in 0 until g.vertexCount){"Index outside geometry"}
                 }
@@ -153,6 +178,7 @@ class WorldPackets private constructor(geometries: List<Geometry>, materials: Li
                 // check. A batch contains only complete 20-float rows.
                 val instances = section(packet.instances).asFloatBuffer()
                 while (instances.hasRemaining()) {
+                    checkpoint()
                     val count = minOf(instances.remaining(), floatBatch.size / 20 * 20)
                     instances.get(floatBatch, 0, count)
                     for (i in 0 until count) require(floatBatch[i].isFinite()) { "Non-finite instance" }
@@ -170,6 +196,7 @@ class WorldPackets private constructor(geometries: List<Geometry>, materials: Li
                 val hasMaterialResponse = "instanceMaterialResponse" in channels
                 val rows = section(auxiliary).asFloatBuffer()
                 while (rows.hasRemaining()) {
+                    checkpoint()
                     val count = minOf(rows.remaining(), floatBatch.size)
                     rows.get(floatBatch, 0, count)
                     for (row in 0 until count step 4) {
@@ -194,7 +221,8 @@ class WorldPackets private constructor(geometries: List<Geometry>, materials: Li
                     }
                 }
             }
-            return WorldPackets(geometry, materials, packets, bytes)
+            checkpoint()
+            return WorldPackets(geometry, materials, packets, bytes, manifest.takeIf { retainManifest })
         }
     }
 }

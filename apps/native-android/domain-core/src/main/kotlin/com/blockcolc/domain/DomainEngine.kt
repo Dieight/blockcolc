@@ -20,13 +20,25 @@ object DomainEngine {
         return DomainDocument.adopt(s)
     }
     fun execute(state: DomainDocument, command: JSONObject, nowMs: Long): DomainOutcome = PipelineCost.section("domain.execute") { try {
-        if(state.canSpliceStartedFocus&&command.opt("type")=="StartFocus"){
+        val type = command.opt("type")
+        if(state.canSpliceStartedFocus&&type=="StartFocus"){
             val view=state.projectionJson();val before=StrictJson.render(view)
             val mutation=DomainMutation(view,StrictJson.copy(command) as JSONObject,DomainTime.format(nowMs))
             check(FocusCommands.run(mutation))
             state.startedFocus(view,before)?.let{return@section DomainOutcome(true,it,mutation.events.map(StrictJson::render))}
             // A future command extension that changes another field must use
             // full adoption rather than silently discarding that change.
+        }
+        when(type) {
+            "SwitchActiveProject", "CompleteFocus", "CompleteFocusEarly", "ReportSubtaskProgress", "ReportMarathonFocus" -> {
+                var events = emptyList<String>()
+                val result = state.editRetainingBlueprints { view ->
+                    val mutation = DomainMutation(view, StrictJson.copy(command) as JSONObject, DomainTime.format(nowMs))
+                    check(if (type == "SwitchActiveProject") TaskCommands.run(mutation) else FocusCommands.run(mutation))
+                    events = mutation.events.map(StrictJson::render)
+                }
+                if (result != null) return@section DomainOutcome(true, if (result == state) state else result, events)
+            }
         }
         val mutation = DomainMutation(state.json(), StrictJson.copy(command) as JSONObject, DomainTime.format(nowMs))
         val handled = TaskCommands.run(mutation) || FocusCommands.run(mutation) || PolicyCommands.run(mutation)

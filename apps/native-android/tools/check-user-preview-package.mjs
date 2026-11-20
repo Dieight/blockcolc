@@ -3,16 +3,38 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {apkIdentity,dexClassNames} from './native-apk-identity.mjs';
-const {apk,identity}=apkIdentity(process.argv[2]);assert.equal(identity.mode,'user-preview');
+const upgrade=process.argv.includes('--upgrade-candidate');
+const {apk,identity}=apkIdentity(process.argv[2]);assert.equal(identity.mode,upgrade?'upgrade-candidate':'user-preview');
 const sdk=process.env.ANDROID_HOME||process.env.ANDROID_SDK_ROOT||(process.env.LOCALAPPDATA&&path.join(process.env.LOCALAPPDATA,'Android','Sdk'));
 assert.ok(sdk,'Android SDK required to verify the delivery configuration');
 const buildTools=path.join(sdk,'build-tools');const versions=fs.readdirSync(buildTools).filter(name=>fs.statSync(path.join(buildTools,name)).isDirectory()).sort((a,b)=>b.localeCompare(a,'en',{numeric:true}));
 const aapt=versions.map(version=>path.join(buildTools,version,process.platform==='win32'?'aapt2.exe':'aapt2')).find(file=>fs.existsSync(file));
 assert.ok(aapt,'aapt2 required to verify the delivery configuration');
 const badging=execFileSync(aapt,['dump','badging',path.resolve(process.argv[2])],{encoding:'utf8',maxBuffer:4*1024*1024});
+assert.equal(/^package: name='([^']+)'/m.exec(badging)?.[1],identity.applicationId);
+if(upgrade){
+ const version=JSON.parse(fs.readFileSync(new URL('../../../version.json',import.meta.url),'utf8'));
+ const beta=process.argv.find(arg=>arg.startsWith('--beta='))?.slice(7);
+ const manifestCode=Number(/^package: .* versionCode='([0-9]+)'/m.exec(badging)?.[1]);
+ const manifestName=/^package: .* versionName='([^']+)'/m.exec(badging)?.[1];
+ if(beta===undefined){
+  const code=Number(process.argv.find(arg=>arg.startsWith('--release-code='))?.slice(15)??version.versionCode+1);
+  assert.ok(Number.isSafeInteger(code)&&code>version.versionCode);
+  assert.equal(manifestCode,code);
+  assert.equal(manifestName,'3.0.0');
+ }else{
+  assert.match(beta,/^[1-9][0-9]{0,5}$/);
+  const code=Number(process.argv.find(arg=>arg.startsWith('--beta-code='))?.slice(12));
+  assert.ok(Number.isSafeInteger(code)&&code>version.versionCode);
+  assert.equal(manifestCode,code);
+  assert.equal(manifestName,`3.0.0-beta.${beta}`);
+ }
+}
 const debuggable=/^application-debuggable\s*$/m.test(badging);
-assert.ok(!debuggable||process.argv.includes('--allow-debuggable'),'User delivery must be optimized and non-debuggable; rebuild with :app:recordUserPreview');
-const forbidden=apk.names.filter(n=>/(\.world\.json$|p2-fixture|p3-audio-formats|^assets\/web\/|^assets\/construction\/|oracle|\.p2pack$|\.(jar|zip|js|mjs)$)/i.test(n));assert.deepEqual(forbidden,[],'Experimental or source assets in user preview');
+assert.ok(!debuggable||!upgrade&&process.argv.includes('--allow-debuggable'),'Delivery must be optimized and non-debuggable');
+const forbidden=apk.names.filter(n=>/(\.world\.json$|p2-fixture|p3-audio-formats|^assets\/web\/|^assets\/construction\/|oracle|\.p2pack$|\.(jar|zip|js|mjs)$)/i.test(n));
+assert.deepEqual(forbidden,[],'Experimental or source assets in delivery APK');
+assert.equal(apk.names.includes('assets/legacy-workspace.html'),upgrade,'Workspace reader must be scoped to the formal migration build');
 const dex=Buffer.concat(apk.names.filter(n=>/^classes[0-9]*\.dex$/.test(n)).map(n=>apk.read(n)));
 const classes=apk.names.filter(n=>/^classes[0-9]*\.dex$/.test(n)).flatMap(n=>dexClassNames(apk.read(n)));
 assert.ok(!classes.some(n=>n.includes('OrbitMeasurement')),'Orbit implementation retained');
@@ -37,4 +59,5 @@ if(!launcherNames.every(name=>apk.names.some(n=>new RegExp('^res/mipmap-[^/]+/'+
 const catalog=JSON.parse(apk.read('native-blueprints/catalog.json'));const entries=catalog.entries;assert.equal(entries.length,47,'Bundled catalog must remain intact');
 assert.ok(apk.names.some(n=>n.endsWith('.filamat')),'Runtime shaders missing');assert.ok(apk.names.includes('native-original-materials/materials.json'),'Original materials missing');assert.ok(apk.names.some(n=>n.includes('licenses/fusion-pixel/')),'Font licenses missing');assert.ok(apk.names.some(n=>n.endsWith('.ogg')),'Recordings missing');
 for(const marker of ['NativeWorldView','NativeApp'])assert.ok(dex.includes(Buffer.from(marker)),'Real application/runtime missing');
-console.log(JSON.stringify({userPreviewPackageVerified:true,configuration:identity,debuggable,deliveryEligible:!debuggable,bundledBlueprints:entries.length,entries:apk.names.length,diagnosticAssets:0,diagnosticImplementations:0}));
+assert.equal(dex.includes(Buffer.from('legacyWorkspaceSha')),upgrade,'Missing or unexpected first-start upgrade path');
+console.log(JSON.stringify({userPreviewPackageVerified:!upgrade,upgradeCandidateVerified:upgrade,configuration:identity,debuggable,deliveryEligible:!debuggable&&!upgrade,bundledBlueprints:entries.length,entries:apk.names.length,diagnosticAssets:0,diagnosticImplementations:0}));

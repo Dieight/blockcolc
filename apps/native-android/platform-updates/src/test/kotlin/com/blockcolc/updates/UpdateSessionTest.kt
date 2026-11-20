@@ -5,14 +5,14 @@ import org.junit.Test
 
 class UpdateSessionTest {
     private val asset=UpdateAsset("3.0.0","${UpdatePolicy.REPOSITORY}/releases/download/v3.0.0/Blockcolc-v3.0.0.apk",10,"a".repeat(64))
-    private class Fixture(privateBuild:Boolean=false,packageName:String="com.blockcolc.app") {
+    private class Fixture(privateBuild:Boolean=false,packageName:String="com.blockcolc.app",feed:UpdateFeed=UpdateFeed.STABLE) {
         var job:DownloadRecord?=null;var transfers=0;var requests=0;var failed=false;var release:AppRelease?=null;var duringRequest:((UpdateCancellation)->Unit)?=null
         val published=mutableListOf<UpdateView>()
         val session=UpdateSession(UpdateEngine(AppIdentity(packageName,"2.9.0",104,listOf("s"),privateBuild),"2.9.0",
             object:UpdateJobStore {override fun read()=job;override fun write(record:DownloadRecord?){job=record}},
             object:UpdateDownloads {override fun enqueue(token:String,asset:UpdateAsset):Long{transfers++;return transfers.toLong()};override fun query(id:Long)=TransferProgress(TransferPhase.DOWNLOADING);override fun remove(id:Long){}},
             object:UpdateFiles {override fun verify(record:DownloadRecord,force:Boolean)=error("unused");override fun delete(token:String){}},
-            object:UpdateInstaller {override fun allowed()=false;override fun authorize(){error("unused")};override fun install(token:String){error("unused")}}),
+            object:UpdateInstaller {override fun allowed()=false;override fun authorize(){error("unused")};override fun install(token:String){error("unused")}},feed=feed),
             object:ReleaseSource {override fun latest(cancel:UpdateCancellation):AppRelease{requests++;duringRequest?.invoke(cancel);if(failed)error("network");return checkNotNull(release)}},"2.9.0",{published+=it})
     }
     @Test fun defaultOffDoesNotRequestAndManualNeedsConfirmation(){
@@ -51,5 +51,26 @@ class UpdateSessionTest {
     @Test fun unverifiableAssetStillHasReleaseNotesButNeverDownloads(){
         val f=Fixture();f.release=AppRelease("3.0.0","notes",null);f.session.configure(true,true,true)
         assertEquals("notes",f.session.view.release!!.url);assertEquals(1L,f.session.view.notice);assertEquals(0,f.transfers)
+    }
+    @Test fun betaManualStillConfirmsAndAutomaticCanDownloadForTheFormalIdentity(){
+        val beta=asset.copy(version="3.0.0-beta.1",url="${UpdatePolicy.REPOSITORY}/releases/download/v3.0.0-beta.1/Blockcolc-v3.0.0-beta.1.apk")
+        val release=AppRelease(beta.version,"notes",beta)
+        val manual=Fixture(feed=UpdateFeed.BETA)
+        manual.release=release
+        manual.session.check()
+        assertEquals(0,manual.transfers)
+        manual.session.download(beta)
+        assertEquals(beta,manual.job?.asset)
+        val automatic=Fixture(feed=UpdateFeed.BETA)
+        automatic.release=release
+        automatic.session.configure(true,true,true)
+        assertEquals(beta,automatic.job?.asset)
+        val stable=Fixture()
+        stable.session.download(beta)
+        assertEquals(UpdateProblem.CHANNEL,stable.session.view.problem)
+        assertEquals(0,stable.transfers)
+        stable.job=manual.job
+        stable.session.refresh()
+        assertNull(stable.job)
     }
 }

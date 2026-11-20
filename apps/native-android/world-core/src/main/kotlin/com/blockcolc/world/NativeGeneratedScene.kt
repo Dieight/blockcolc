@@ -5,7 +5,8 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Collections
 
-class NativeSceneCamera(val target:BlockPoint,val position:BlockPoint,val fittedDistance:Double,val fov:Double,volume:SourceCamera,val aspect:Double=.75,val preview:Boolean=false) {
+class NativeSceneCamera(val target:BlockPoint,val position:BlockPoint,val fittedDistance:Double,val fov:Double,volume:SourceCamera,val aspect:Double=.75,val preview:Boolean=false,
+    val paper:Boolean=false) {
     private val canonicalVolume=JSONObject().put("schema",1).put("visibility",JSONArray(volume.visibility.map{JSONArray(it)}))
         .put("framingRadius",volume.framingRadius).put("skyBaseRadius",volume.skyBaseRadius).put("skyFarRatio",volume.skyFarRatio)
         .put("starRadiusRatio",volume.starRadiusRatio).put("starNearMargin",volume.starNearMargin).put("sourceSkyRadius",volume.sourceSkyRadius).toString()
@@ -72,7 +73,7 @@ class NativeSceneInventory private constructor(private val entries:Map<String,Ch
     companion object {
         private fun charge(source:NativePacketSource):Charge {
             val geometry=linkedMapOf<String,Long>();val images=linkedMapOf<String,Long>();val world=source.world
-            if(world!=null){for((i,g)in world.geometries.withIndex())geometry[source.geometryKeys[i]]=g.vertexCount*64L+g.indexCount*4L
+            if(world!=null){for((i,g)in world.geometries.withIndex())geometry[source.geometryKeys[i]]=g.gpuBytes
                 if(world.materials.any{JSONObject(it).isNull("texture")})images["white"]=4}
             for(texture in source.textures)images[texture.identity]=texture.gpuBytes
             source.precipitation?.input?.ground?.texture?.let{images[it.identity]=it.gpuBytes}

@@ -201,7 +201,8 @@ private val NATIVE_UI_PROCESS=java.util.UUID.randomUUID().toString()
     val resourceImporter=rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()){uri->if(uri!=null)resourcePacks.import(uri)}
     val blueprintImporter=rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()){uri->if(uri!=null)blueprintImport.import(uri)}
     val exporter=rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")){uri->if(uri!=null)runtime.export(uri)}
-    CompositionLocalProvider(LocalNativeBackdrop provides backdrop,LocalNativeAtmosphere provides atmosphere){
+    val countdown=rememberCountdownPreference()
+    CompositionLocalProvider(LocalNativeBackdrop provides backdrop,LocalNativeAtmosphere provides atmosphere,LocalDateCountdownPreference provides countdown){
         NativeWorkspace(snapshot,runtime,worldInteraction,updates,updateView,foreground,pageSelection,minimalSelection,onInteractive=onInteractive,
             onImport=onImport,
             onExport={exporter.launch("blockcolc-backup.json")},onConfirmImport=runtime::confirmImport,
@@ -249,8 +250,18 @@ private val NATIVE_UI_PROCESS=java.util.UUID.randomUUID().toString()
     LaunchedEffect(worldReady){if(worldReady)everReady=true}
     var pagesPrepared by remember{mutableStateOf(setOf("timer",pageSelection.value))}
     var page by pageSelection
-    val minimal=minimalSelection.value?:s.preferences.minimalMode
-    SideEffect{if(minimalSelection.value==null)minimalSelection.value=s.preferences.minimalMode}
+    val protectionNotice=s.timer?.integrityNotice
+    val interruption=protectionNotice?.takeIf{it.stopped}
+    var handledInterruption by rememberSaveable{mutableStateOf<String?>(null)}
+    val returning=interruption?.takeUnless{it.sessionId==handledInterruption}
+    val minimal=returning?.returnsToMinimal?:minimalSelection.value?:s.preferences.minimalMode
+    SideEffect{
+        if(returning!=null){
+            minimalSelection.value=minimal
+            handledInterruption=returning.sessionId
+            page="timer"
+        }else if(minimalSelection.value==null)minimalSelection.value=s.preferences.minimalMode
+    }
     var settledPage by rememberSaveable{mutableStateOf(page)}
     var motionPage by remember{mutableStateOf("timer")}
     val pageTravel=remember{Animatable(1f)}
@@ -280,6 +291,7 @@ private val NATIVE_UI_PROCESS=java.util.UUID.randomUUID().toString()
     var delivered by remember(s.generation){mutableStateOf(false)}
     val submit=rememberNativeRequest(s){delivered=true}
     LaunchedEffect(s.generation){editor=null;projectEditor=null;titleEditor=null;goal=false;manual=false}
+    LaunchedEffect(interruption?.sessionId){if(interruption!=null)manual=false}
     LaunchedEffect(delivered){if(delivered){delay(2000);heldReport=null;delivered=false}}
     val context=LocalContext.current
     val lifecycle=remember(context){generateSequence(context){(it as? android.content.ContextWrapper)?.baseContext}.filterIsInstance<androidx.lifecycle.LifecycleOwner>().firstOrNull()?.lifecycle}
@@ -524,7 +536,8 @@ private val NATIVE_UI_PROCESS=java.util.UUID.randomUUID().toString()
                     val timerActive=timerVisible&&(page=="timer"||immersive)&&startupOpen&&foreground&&!pageMoving
                     Box(Modifier.fillMaxSize().graphicsLayer{alpha=if(timerVisible)1f else 0f;translationX=routeX("timer")}.then(if(timerActive)Modifier else Modifier.clearAndSetSemantics{}).layout{measurable,constraints->val measured=measurable.measure(constraints);layout(measured.width,measured.height){if(timerVisible)measured.place(0,0)}}){key("$pageIdentity/timer"){NativePageActivation(timerActive){NativePageState("$pageIdentity/timer",timerScroll,timerMemory){NativeTimerPage(s,runtime,displayedMinimal,displayedImmersive,pool,submit.busy,delivered,submit.error,selectedTask,
                         onMinimal={minimalSelection.value=it},onAdjust={editor=it},onManual={manual=true},onCreate={projectEditor=ProjectEditor()},
-                        onSubmit={draft->if(!submit.busy&&!delivered){heldReport=pool;submit.submit{runtime.submitReport(draft,it)}}},onWorldHeight={if(!displayedImmersive&&!immersive)worldHeight=it},memory=worldInteraction.memory,onCloseMemory=worldInteraction::closeMemory,panelOpacity=panelAlpha.value,active=timerActive,onPanelTop={timerPanelTop=it},wide=wideTimer)}}}}
+                        onSubmit={draft->if(!submit.busy&&!delivered){heldReport=pool;submit.submit{runtime.submitReport(draft,it)}}},onWorldHeight={if(!displayedImmersive&&!immersive)worldHeight=it},memory=worldInteraction.memory,onCloseMemory=worldInteraction::closeMemory,panelOpacity=panelAlpha.value,active=timerActive,onPanelTop={timerPanelTop=it},wide=wideTimer,
+                        minimalFriends=if(cloudView.account?.optBoolean("friendsEnabled")==true)({shown->NativeMinimalFriends(cloudView,shown&&foreground&&!friendsOpen,cloud::refreshFriends){friendsOpen=true}}) else null)}}}}
                     for(preparedPage in pagesPrepared.filter{it!="timer"})key(preparedPage){
                         val activePage=projectEditor==null&&!immersive&&page==preparedPage&&startupOpen&&foreground&&!pageMoving
                         var held by remember{mutableStateOf(s)}
@@ -534,7 +547,12 @@ private val NATIVE_UI_PROCESS=java.util.UUID.randomUUID().toString()
                             key("$pageIdentity/$preparedPage"){NativePageActivation(activePage){NativePageState("$pageIdentity/$preparedPage",when(preparedPage){"tasks"->tasksScroll;"statistics"->statisticsScroll;else->settingsScroll},when(preparedPage){"tasks"->tasksMemory;"statistics"->statisticsMemory;else->settingsMemory}){when(preparedPage){
                                 "tasks"->NativeTasksPage(held,runtime,{projectEditor=ProjectEditor()},{goal=true},{titleEditor=it},{_,task->selectedTask=task;page="timer"},{projectEditor=ProjectEditor(nextHabit=true)},onView={worldInteraction.pick(it);page="timer"},onFriends={friendsOpen=true},friendsEnabled=cloudView.account?.optBoolean("friendsEnabled")==true)
                                 "statistics"->NativeStatisticsPage(held,runtime)
-                                "settings"->NativeSettingsPage(held,runtime,{tutorial=true},{about=true},onImport,onExport,audioSettings,weatherSettings,debugSettings,resourceSettings,notificationSettings,blueprintSettings,cloudSettings={NativeCloudSettings(cloudView){accountOpen=true}})
+                                "settings"->NativeSettingsPage(held,runtime,{tutorial=true},{about=true},onImport,onExport,audioSettings,weatherSettings,debugSettings,resourceSettings,notificationSettings,blueprintSettings,cloudSettings={NativeCloudSettings(cloudView){accountOpen=true}},updateSettings={
+                                    var beta by remember(updates){mutableStateOf(updates.betaEnabled())}
+                                    NativeToggle(ui.text("加入 Beta 测试"),value=beta,trailing={
+                                        NativeInfoAction(ui.text("加入 Beta 测试"),ui.text("检查更新时包含测试版。退出后只检查正式版，已安装的版本会保留。"))
+                                    }){beta=it;updates.selectBeta(it)}
+                                })
                             }}}}
                         }
                     }
@@ -568,6 +586,14 @@ private val NATIVE_UI_PROCESS=java.util.UUID.randomUUID().toString()
       }
     }
     NativeCelebrationOverlay(runtime.celebrations,foreground,worldReady&&(immersive||page=="timer")&&startupOpen)
+    val bannerGap=with(density){12.dp.roundToPx()}
+    val bannerInset=WindowInsets.safeDrawing.getTop(density)+bannerGap
+    val bannerAnchor=if(timerPanelTop>0&&!wideTimer)timerPanelTop else viewportHeight-navigationHeight
+    var bannerHeight by remember{mutableIntStateOf(0)}
+    val bannerVisible=foreground&&startupOpen&&page=="timer"&&!modeMotion&&displayedImmersive==immersive
+    NativeFocusIntegrityBanner(protectionNotice,bannerVisible,Modifier.align(Alignment.TopCenter)
+        .offset{IntOffset(0,(bannerAnchor-bannerHeight-bannerGap).coerceAtLeast(bannerInset))}
+        .padding(horizontal=20.dp).onSizeChanged{bannerHeight=it.height})
     }
     if(!startupOpen)return
     NativePlanEditor(editor,s,runtime){editor=null}
@@ -626,7 +652,7 @@ private data class BackupSheetContent(val summary:String?,val issue:BackupImport
         var index by rememberSaveable{mutableIntStateOf(0)}
         val pages=listOf("从一轮专注开始" to "选择小任务，确认计划后开始。计时按实际结束时间恢复。",
             "把任务建成世界" to "大任务对应建筑，小任务的推进决定施工；习惯任务按轮次积累。",
-            "专注、休息与汇报" to "专注时双击面板下方空白唤出结束按钮；休息后双击时间继续。提前完成或中止后，由你确认再开始。",
+            "专注、休息与汇报" to "专注时双击面板下方空白显示结束按钮，再双击可收起。休息后双击时间继续。提前完成或中止后，由你确认再开始。",
             "极简与便签" to "开启极简后左右滑动面板查看统计和便签；双击时间确认结束计划。",
             "世界的两种复位" to "复位视角仍围绕所选建筑；地图按钮返回整个聚落的总览。",
             "窗前的小书房" to "切换室内视角，从窗前看同一个聚落。成就解锁的摆设会自动放进书房。",

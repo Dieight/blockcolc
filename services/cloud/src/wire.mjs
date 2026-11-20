@@ -71,11 +71,12 @@ export function assetKeys(entries){
 export function validateExtra(key,wire){
   fail(wire.length<=65536);const object=JSON.parse(wire);fail(object&&typeof object==='object'&&!Array.isArray(object));
   if(key==='@preferences'){
-    const allowed=new Set('focusMinutes habitFocusMinutes habitTargetRounds breakMinutes lightingQuality constructionOutlineVisibility worldColorAdjustment showWorldCoordinates focusGlassTransparency themeMode fontStyle returnToFocusReminders autoContinueFocus autoCheckUpdates realWeatherEnabled minimalMode ambience language quickNotesEnabled resourceSelection'.split(' '));
+    const allowed=new Set('focusMinutes habitFocusMinutes habitTargetRounds breakMinutes lightingQuality constructionOutlineVisibility worldColorAdjustment showWorldCoordinates focusGlassTransparency themeMode fontStyle returnToFocusReminders autoContinueFocus autoCheckUpdates realWeatherEnabled minimalMode ambience language quickNotesEnabled resourceSelection autoExtendFocus'.split(' '));
     fail(Object.keys(object).every(name=>allowed.has(name)));
     const ranges={focusMinutes:[1,180],habitFocusMinutes:[1,180],habitTargetRounds:[10,30],breakMinutes:[0,60],focusGlassTransparency:[0,100]};
     for(const [name,[low,high]]of Object.entries(ranges))fail(Number.isInteger(object[name])&&object[name]>=low&&object[name]<=high);
     for(const name of 'showWorldCoordinates returnToFocusReminders autoContinueFocus autoCheckUpdates realWeatherEnabled minimalMode quickNotesEnabled'.split(' '))fail(typeof object[name]==='boolean');
+    if(Object.hasOwn(object,'autoExtendFocus'))fail(typeof object.autoExtendFocus==='boolean');
     const choices={lightingQuality:['auto','performance','balanced','cinematic'],constructionOutlineVisibility:['off','current','all'],themeMode:['system','light','dark'],fontStyle:['pixel','system','mixed'],language:['zh-CN','en']};
     for(const [name,values]of Object.entries(choices))fail(values.includes(object[name]));
     const sound=object.ambience;fail(sound&&typeof sound.enabled==='boolean'&&typeof sound.rainEnabled==='boolean'&&Number.isInteger(sound.volume)&&sound.volume>=0&&sound.volume<=100);
@@ -92,15 +93,21 @@ export function validateExtra(key,wire){
     fail(object.plan===null||typeof object.plan==='object'&&!Array.isArray(object.plan));fail(typeof object.automaticEnabled==='boolean');
     const p=object.plan;if(p==null){fail(!object.automaticEnabled);return;}
     const required='id projectId subtaskId mode totalRounds completedSessionIds phase focusDurationMs restDurationMs currentSessionId phaseEndsAt exactEndAt terminalRest cancelled cancellationCategory cancellationNote hasStarted'.split(' ');
-    fail(required.every(k=>Object.hasOwn(p,k))&&Object.keys(p).every(k=>required.includes(k)||k==='restStartedAt'));
+    const optional=['restStartedAt','extendAfterPlan','extensionStartedAt','extensionRounds'];
+    fail(required.every(k=>Object.hasOwn(p,k))&&Object.keys(p).every(k=>required.includes(k)||optional.includes(k)));
     fail(typeof p.id==='string'&&p.id.length>0&&p.id.length<=512&&typeof p.projectId==='string');
     fail(['ROUNDS','MINIMAL','MARATHON'].includes(p.mode)&&['READY','FOCUS','REST','REPORT'].includes(p.phase));
     fail(Number.isInteger(p.totalRounds)&&p.totalRounds>=1&&p.totalRounds<=24&&Array.isArray(p.completedSessionIds)&&p.completedSessionIds.length<=p.totalRounds&&new Set(p.completedSessionIds).size===p.completedSessionIds.length);
     fail(p.completedSessionIds.every(id=>typeof id==='string'&&id.length>0));
     fail(Number.isInteger(p.focusDurationMs)&&p.focusDurationMs>=1&&p.focusDurationMs<=10800000&&Number.isInteger(p.restDurationMs)&&p.restDurationMs>=0&&p.restDurationMs<=3600000);
     for(const name of ['terminalRest','cancelled','hasStarted'])fail(typeof p[name]==='boolean');
-    for(const name of ['phaseEndsAt','exactEndAt','restStartedAt'])if(p[name]!=null)fail(typeof p[name]==='string'&&Number.isFinite(Date.parse(p[name])));
-    if(p.phase==='FOCUS')fail(typeof p.currentSessionId==='string'&&p.phaseEndsAt!=null&&p.completedSessionIds.length<p.totalRounds);
+    if(Object.hasOwn(p,'extendAfterPlan'))fail(p.extendAfterPlan===true);
+    const extending=Object.hasOwn(p,'extensionStartedAt');
+    fail(extending===Object.hasOwn(p,'extensionRounds'));
+    if(extending)fail(typeof p.extensionStartedAt==='string'&&p.extendAfterPlan===true&&p.completedSessionIds.length===p.totalRounds&&
+      ['FOCUS','REPORT'].includes(p.phase)&&!object.automaticEnabled&&Number.isInteger(p.extensionRounds)&&p.extensionRounds>=0&&p.extensionRounds<2147483647);
+    for(const name of ['phaseEndsAt','exactEndAt','restStartedAt','extensionStartedAt'])if(p[name]!=null)fail(typeof p[name]==='string'&&Number.isFinite(Date.parse(p[name])));
+    if(p.phase==='FOCUS')fail(typeof p.currentSessionId==='string'&&p.phaseEndsAt!=null&&(extending||p.completedSessionIds.length<p.totalRounds));
     else fail(p.currentSessionId===null);
   }else fail(false);
 }
@@ -121,6 +128,15 @@ export function validatePlanDomain(entries,domain){
   const history=new Map(domain.focusHistory.map(session=>[session.id,session]));
   check(p.hasStarted||![...history.keys()].some(id=>id.startsWith('session:'+p.id+':')));
   for(const id of p.completedSessionIds){const session=history.get(id);check(session&&session.status!=='interrupted'&&session.projectId===p.projectId);}
+  if(p.extensionStartedAt!=null){
+    check(p.extensionRounds<=history.size);
+    const start=Date.parse(p.extensionStartedAt),prefix=`session:${p.id}:extension:${p.mode}:`;
+    for(let round=1;round<=p.extensionRounds;round++){
+      const session=history.get(prefix+round);
+      check(session?.status==='completed'&&session.projectId===p.projectId&&Date.parse(session.startedAt)>=start);
+    }
+    if(p.phase==='FOCUS')check(p.currentSessionId===prefix+(p.extensionRounds+1));
+  }
   check(p.hasStarted||p.phase==='READY'&&p.completedSessionIds.length===0);
   const active=domain.activeFocusSession;
   if(p.phase==='FOCUS')check(active&&active.id===p.currentSessionId&&active.projectId===p.projectId&&active.subtaskId===p.subtaskId&&active.endsAt===p.phaseEndsAt);

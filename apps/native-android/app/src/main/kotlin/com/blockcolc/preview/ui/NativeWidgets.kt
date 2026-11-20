@@ -58,7 +58,9 @@ import kotlin.math.sin
 
 @Composable fun NativeSeparator(){HorizontalDivider(color=MaterialTheme.colorScheme.outlineVariant)}
 
-@Composable fun NativeDisclosure(title:String,description:String?=null,expanded:Boolean,onExpandedChange:(Boolean)->Unit,valueLabel:String?=null,leading:(@Composable ()->Unit)?=null,rowHeight:androidx.compose.ui.unit.Dp=52.dp,titleStyle:androidx.compose.ui.text.TextStyle=MaterialTheme.typography.bodyLarge,indicator:(@Composable ()->Unit)?=null,valueStyle:androidx.compose.ui.text.TextStyle=MaterialTheme.typography.bodyLarge,rowPadding:androidx.compose.ui.unit.Dp=8.dp,contentSpacing:androidx.compose.ui.unit.Dp=8.dp,indicatorSize:androidx.compose.ui.unit.Dp=24.dp,trailing:(@Composable ()->Unit)?=null,descriptionStyle:androidx.compose.ui.text.TextStyle=MaterialTheme.typography.bodySmall,content:@Composable ColumnScope.()->Unit){
+internal val NativeSettingActionGap = 4.dp
+
+@Composable fun NativeDisclosure(title:String,description:String?=null,expanded:Boolean,onExpandedChange:(Boolean)->Unit,valueLabel:String?=null,leading:(@Composable ()->Unit)?=null,rowHeight:androidx.compose.ui.unit.Dp=52.dp,titleStyle:androidx.compose.ui.text.TextStyle=MaterialTheme.typography.bodyLarge,indicator:(@Composable ()->Unit)?=null,valueStyle:androidx.compose.ui.text.TextStyle=MaterialTheme.typography.bodyLarge,rowPadding:androidx.compose.ui.unit.Dp=8.dp,contentSpacing:androidx.compose.ui.unit.Dp=8.dp,indicatorSize:androidx.compose.ui.unit.Dp=24.dp,trailing:(@Composable ()->Unit)?=null,descriptionStyle:androidx.compose.ui.text.TextStyle=MaterialTheme.typography.bodySmall,enabled:Boolean=true,content:@Composable ColumnScope.()->Unit){
     val ui=LocalNativeUi.current;var turns by remember{mutableIntStateOf(if(expanded)1 else 0)}
     val visibility=remember{androidx.compose.animation.core.MutableTransitionState(expanded)}
     LaunchedEffect(expanded){visibility.targetState=expanded}
@@ -69,15 +71,19 @@ import kotlin.math.sin
       val density=LocalDensity.current;val measure=rememberTextMeasurer()
       val stackValue=valueLabel!=null&&measure.measure(valueLabel,valueStyle,softWrap=false,maxLines=1).size.width>with(density){maxWidth.toPx()}*.4f
       Column(Modifier.fillMaxWidth()){
-        Row(Modifier.fillMaxWidth().heightIn(min=rowHeight).clickable(interactionSource=remember{MutableInteractionSource()},indication=null){onExpandedChange(!expanded)}
+        Row(Modifier.fillMaxWidth().heightIn(min=rowHeight).clickable(enabled=enabled,interactionSource=remember{MutableInteractionSource()},indication=null){onExpandedChange(!expanded)}
             .semantics{stateDescription=ui.text(if(expanded)"收起" else "展开")}.padding(vertical=rowPadding),verticalAlignment=Alignment.CenterVertically){
             if(leading!=null){leading();Spacer(Modifier.width(10.dp))}
             Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(4.dp)){
                 Text(title,style=titleStyle);if(description!=null)Text(description,style=descriptionStyle)
                 if(stackValue&&valueLabel!=null)Text(valueLabel,style=valueStyle)
             }
-            if(trailing!=null)trailing()
+            if(trailing!=null)Row(
+                horizontalArrangement=Arrangement.spacedBy(NativeSettingActionGap),
+                verticalAlignment=Alignment.CenterVertically,
+            ){trailing()}
             if(valueLabel!=null&&!stackValue)Text(valueLabel,Modifier.padding(horizontal=8.dp),style=valueStyle)
+            if(trailing!=null&&valueLabel==null)Spacer(Modifier.width(NativeSettingActionGap))
             if(indicator!=null)indicator()else PixelGlyph("chevron",Modifier.size(indicatorSize).graphicsLayer{rotationZ=angle})
         }
         AnimatedVisibility(visibility,modifier=Modifier.graphicsLayer{clip=!visibility.isIdle||!visibility.currentState},
@@ -91,16 +97,21 @@ import kotlin.math.sin
     }
 }
 
-@Composable fun NativeToggle(title:String,description:String?=null,value:Boolean,enabled:Boolean=true,onChange:(Boolean)->Unit){
+@Composable fun NativeToggle(title:String,description:String?=null,value:Boolean,enabled:Boolean=true,trailing:(@Composable ()->Unit)?=null,onChange:(Boolean)->Unit){
     val interaction=remember{MutableInteractionSource()}
     val pressed by interaction.collectIsPressedAsState()
     val ui=LocalNativeUi.current;val colors=MaterialTheme.colorScheme
     val position by animateFloatAsState(if(value)1f else 0f,tween(if(ui.reduceMotion)0 else 180),label="pixel-switch")
     val track by animateColorAsState(if(value&&enabled)colors.primary else colors.surfaceVariant,tween(if(ui.reduceMotion)0 else 180),label="switch-fill")
-    Row(Modifier.fillMaxWidth().heightIn(min=60.dp).toggleable(value=value,enabled=enabled,role=Role.Switch,
+    Row(Modifier.fillMaxWidth().heightIn(min=if(trailing==null)60.dp else 64.dp).toggleable(value=value,enabled=enabled,role=Role.Switch,
         interactionSource=interaction,indication=null,onValueChange=onChange).padding(vertical=8.dp),verticalAlignment=Alignment.CenterVertically){
         Column(Modifier.weight(1f).padding(end=12.dp),verticalArrangement=Arrangement.spacedBy(4.dp)){Text(title,style=MaterialTheme.typography.bodyLarge);if(description!=null)Text(description,style=MaterialTheme.typography.bodySmall)}
-        Canvas(Modifier.size(44.dp,28.dp)){
+        if(trailing!=null)Row(
+            Modifier.padding(end=NativeSettingActionGap),
+            horizontalArrangement=Arrangement.spacedBy(NativeSettingActionGap),
+            verticalAlignment=Alignment.CenterVertically,
+        ){trailing()}
+        Canvas(Modifier.size(48.dp,28.dp)){
             val unit=minOf(size.width/22f,size.height/14f);val left=(size.width-22*unit)/2;val top=(size.height-12*unit)/2
             val outline=if(enabled)if(value)colors.primary else colors.outline else colors.outlineVariant
             fun shape(x:Float,y:Float,w:Float,h:Float,color:Color){
@@ -195,11 +206,14 @@ import kotlin.math.sin
     }
 }
 
-@Composable internal fun NativeSettingLink(title:String,onClick:()->Unit){
+@Composable internal fun NativeSettingLink(title:String,onClick:()->Unit,description:String?=null){
     val interaction=remember{MutableInteractionSource()};val pressed by interaction.collectIsPressedAsState()
     val reduce=LocalNativeUi.current.reduceMotion
     Row(Modifier.fillMaxWidth().heightIn(min=60.dp).graphicsLayer{translationY=if(pressed&&!reduce)1.dp.toPx()else 0f}.clickable(role=Role.Button,interactionSource=interaction,indication=null,onClick=onClick).padding(vertical=8.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)){
-        Text(title,Modifier.weight(1f),style=MaterialTheme.typography.bodyLarge)
+        Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(4.dp)){
+            Text(title,style=MaterialTheme.typography.bodyLarge)
+            if(description!=null)Text(description,style=MaterialTheme.typography.bodySmall)
+        }
         PixelGlyph("chevron",Modifier.size(20.dp).graphicsLayer{rotationZ=-90f},LocalContentColor.current)
     }
 }
@@ -207,11 +221,15 @@ import kotlin.math.sin
 /** Explanations stay out of the reading flow, but remain available by tap,
  * keyboard activation and accessibility focus; never a hover-only tooltip. */
 @Composable internal fun NativeInfoAction(title:String,explanation:String){
+    NativeInfoAction(title){
+        Text(explanation,Modifier.widthIn(max=300.dp).padding(horizontal=16.dp,vertical=8.dp),style=MaterialTheme.typography.bodySmall)
+    }
+}
+
+@Composable internal fun NativeInfoAction(title:String,content:@Composable ColumnScope.()->Unit){
     var open by remember{mutableStateOf(false)}
     Box{
         NativeIconAction(LocalNativeUi.current.text("{0}说明",title),"info",{open=!open})
-        DropdownMenu(open,{open=false}){
-            Text(explanation,Modifier.widthIn(max=300.dp).padding(horizontal=16.dp,vertical=8.dp),style=MaterialTheme.typography.bodySmall)
-        }
+        DropdownMenu(open,{open=false},content=content)
     }
 }

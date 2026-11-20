@@ -23,12 +23,13 @@ class PacketRenderer(private val engine: Engine, private val scene: Scene, priva
     private data class GeometryGpu(val vertex: VertexBuffer, val index: IndexBuffer)
     private var vertexUploadChunks=0L
     private var peakVertexUploadBytes=0
-    private data class PacketGpu(val packet: DrawPacket, val entity: Int, val data: Texture,
-                                 val material: MaterialInstance, val geometryKey: String, val textureKey: String,
+    private data class PacketGpu(val packet: DrawPacket, val entity: Int, val data: Texture?,
+                                 val material: MaterialInstance, val geometryKey: String, val textureKey: String?,
                                  val groundKey:String?=null,val weather:SourcePrecipitation?=null,val weatherMinimumIndex:Int=0,var attached:Boolean=false,
                                  val atlasKeys:List<String> = emptyList(),var coverage:SurfaceCoverage,val fog:Boolean,
                                  val environment:NativeMaterialBinding?=null,val emission:LinearRgb=LinearRgb.BLACK,val emissionStrength:Float=0f,
-                                 val roughness:Float=.9f,val metallic:Float=0f,val lit:Boolean=true,val cloudOriginSeconds:Float?=null,val weatherOriginMs:Float?=null,var skyVisible:Boolean=true,val toneMapped:Boolean=true)
+                                 val roughness:Float=.9f,val metallic:Float=0f,val lit:Boolean=true,val cloudOriginSeconds:Float?=null,val weatherOriginMs:Float?=null,var skyVisible:Boolean=true,val toneMapped:Boolean=true,
+                                 val paper:Boolean=false)
     private data class Source(val metadata: JSONObject, val world: WorldPackets, val geometryKeys: List<String>,
                               val surfaceCoverage: List<SurfaceCoverage>,val lighting:SourceLighting,val footprint:GpuFootprint,
                               val weather:SourceWeatherContext?,val groundImages:Map<Int,GroundHeights>,val animalInput:AnimalHabitatInput?,val animalInitial:AnimalInitialState?,val animalScale:Double,
@@ -59,6 +60,7 @@ class PacketRenderer(private val engine: Engine, private val scene: Scene, priva
     private var runtimeData:Texture?=null
     private val runtimeUniforms=WorldRuntimeUniforms()
     private var cameraDistance=1.0
+    private var cameraDepthOffset=0.0
     private var projectedFog:NativeFogRange?=null
     private var fogProjectionUploads=0
     private var clockUploads=0
@@ -89,6 +91,7 @@ class PacketRenderer(private val engine: Engine, private val scene: Scene, priva
     private var stormFlashPeak=0f
     private var cloudPackets=emptyList<PacketGpu>()
     private var stormPackets=emptyList<PacketGpu>()
+    private var paperPackets=emptyList<PacketGpu>()
     private val stormUploads=mutableMapOf<Int,InstanceRowUploads>()
     private var stormElapsedMs=0.0
     private var stormPose= -1L
@@ -297,6 +300,10 @@ class PacketRenderer(private val engine: Engine, private val scene: Scene, priva
         animalRuntime?.updateActivityScale(if(state.nightFactor>.55f).45 else if(state.clearSky==1f)1.0 else .7)
     }
     private fun applyGeneratedUniforms(draw:PacketGpu,uniforms:NativeSceneEnvironment){
+        if (draw.paper) {
+            paperUniforms(draw.material, uniforms.lighting, uniforms.surfaceState, uniforms.storm?.thunderstorm == true)
+            return
+        }
         val state=uniforms.surfaceState
         val projected=if(state!=null)draw.environment?.surface?.resolve(state)?:draw.coverage else draw.coverage
         val surface=projected.copy(optics=projected.optics.copy(atlas=draw.coverage.optics.atlas))
@@ -360,7 +367,7 @@ class PacketRenderer(private val engine: Engine, private val scene: Scene, priva
         val weather=sources.mapNotNull{it.weather};require(weather.size<=1)
         weatherContext=weather.singleOrNull();weatherState=weatherContext?.let{WeatherFieldState(it)}
         val animalSource=sources.filter{it.animalInitial!=null};require(animalSource.size<=1)
-        animalSource.singleOrNull()?.let{a->animalRuntime=NativeAnimalRuntime(requireNotNull(a.animalInput),checkNotNull(a.animalInitial),a.animalScale)}
+        animalSource.singleOrNull()?.let{a->animalRuntime=NativeAnimalRuntime(requireNotNull(a.animalInput),checkNotNull(a.animalInitial),a.animalScale,nativeEnvironment?.camera?.paper==true)}
         val eye=metadata.getJSONObject("camera").getJSONArray("position");for(i in 0..2)sourceEye[i]=eye.getDouble(i)
         sourceSkyRadius=SourceCamera.read(metadata.getJSONObject("cameraVolume")).sourceSkyRadius
         val staged=mutableListOf<PacketGpu>()
@@ -373,6 +380,7 @@ class PacketRenderer(private val engine: Engine, private val scene: Scene, priva
             skyPackets=staged.filter{it.packet.layer=="sky"}
             stormPackets=staged.filter{it.coverage.optics.lightning}
             cloudPackets=staged.filter{it.coverage.optics.cloud!=null}
+            paperPackets=staged.filter{it.paper}
             lodPackets=staged.filter{it.packet.lod!=null}.groupBy{it.packet.lod!!.id};lodSelector=ScenerySelector(sources.flatMap{it.world.packets})
             weatherPackets=staged.filter{it.weather!=null}
             animalPackets=staged.filter{it.entity in animalSlots}
@@ -443,20 +451,26 @@ class PacketRenderer(private val engine: Engine, private val scene: Scene, priva
     }
     /** One shared upload, independent of packet count. A sample that was
      * calculated before a gesture is always projected at the latest distance. */
-    fun projectFog(distance:Double){
-        require(distance.isFinite()&&distance>0);cameraDistance=distance
+    fun projectFog(distance:Double,depthOffset:Double=0.0){
+        require(distance.isFinite()&&distance>0&&depthOffset.isFinite()&&depthOffset>=0)
+        cameraDistance=distance;cameraDepthOffset=depthOffset
         applyProjectedFog(nativeEnvironment?.uniforms?.fogProjection)
     }
     private fun applyProjectedFog(projection:NativeFogProjection?){
-        val next=projection?.range(cameraDistance)
+        val next=projection?.range(cameraDistance)?.let{NativeFogRange(it.near+cameraDepthOffset,it.far+cameraDepthOffset)}
         if(next==projectedFog)return
         val previous=projectedFog
         try{
             runtimeUniforms.fog(next)
             runtimeData?.setImage(engine,0,Texture.PixelBufferDescriptor(runtimeUniforms.bytes(),Texture.Format.RGBA,Texture.Type.FLOAT))
+            for(draw in paperPackets)applyPaperFog(draw.material,next)
             projectedFog=next;fogProjectionUploads++
         }catch(error:Throwable){
-            try{runtimeUniforms.fog(previous);runtimeData?.setImage(engine,0,Texture.PixelBufferDescriptor(runtimeUniforms.bytes(),Texture.Format.RGBA,Texture.Type.FLOAT))}catch(rollback:Throwable){error.addSuppressed(rollback)}
+            try{
+                runtimeUniforms.fog(previous)
+                runtimeData?.setImage(engine,0,Texture.PixelBufferDescriptor(runtimeUniforms.bytes(),Texture.Format.RGBA,Texture.Type.FLOAT))
+                for(draw in paperPackets)applyPaperFog(draw.material,previous)
+            }catch(rollback:Throwable){error.addSuppressed(rollback)}
             throw error
         }
     }
@@ -477,14 +491,14 @@ class PacketRenderer(private val engine: Engine, private val scene: Scene, priva
             draw.material.setParameter("motionData",MaterialInstance.FloatElement.MAT4,data,0,1);attach(draw,draw.weatherMinimumIndex<frame.count)
         }
     }
-    fun advanceAnimals(nowNs:Long,eye:DoubleArray,target:DoubleArray,fov:Double,aspect:Double,near:Double,far:Double,motion:Boolean){
+    fun advanceAnimals(nowNs:Long,eye:DoubleArray,target:DoubleArray,fov:Double,aspect:Double,near:Double,far:Double,motion:Boolean,orthographic:Boolean=false){
         val runtime=animalRuntime?:return
-        if(runtime.advance(nowNs,AnimalCamera(eye,target,fov,aspect,near,far),motion))animalPending=true
+        if(runtime.advance(nowNs,AnimalCamera(eye,target,fov,aspect,near,far,orthographic),motion))animalPending=true
         if(!animalPending)return
         val targets=animalPackets.filter{draw->val (kind,slots)=animalSlots.getValue(draw.entity);slots.any{it<runtime.rig.counts[kind]}}
         if(targets.any{!animalUploads.getValue(it.entity).available}){animalBackpressure++;return}
         for(draw in animalPackets){
-            if(draw in targets){val(kind,slots)=animalSlots.getValue(draw.entity);animalUploads.getValue(draw.entity).upload(engine,draw.data,runtime.rig,kind,slots);attach(draw,true)}
+            if(draw in targets){val(kind,slots)=animalSlots.getValue(draw.entity);animalUploads.getValue(draw.entity).upload(engine,checkNotNull(draw.data),runtime.rig,kind,slots);attach(draw,true)}
             else attach(draw,false)
         }
         animalUploadFrames++;animalPending=false
@@ -501,7 +515,7 @@ class PacketRenderer(private val engine: Engine, private val scene: Scene, priva
         val scale=PrecipitationMath.crossSection(.11,distance,fov,cssHeight,2.6,32.0).first
         if(stormPose!=burst.index||stormScale!=scale){
             if(stormPackets.any{!stormUploads.getValue(it.entity).available}){for(draw in stormPackets)attach(draw,false);stormVisible=false;return}
-            for(draw in stormPackets)stormUploads.getValue(draw.entity).upload(engine,draw.data){NativeLightningRows.write(burst.vertices,scale,it)}
+            for(draw in stormPackets)stormUploads.getValue(draw.entity).upload(engine,checkNotNull(draw.data)){NativeLightningRows.write(burst.vertices,scale,it)}
             stormPose=burst.index;stormScale=scale
         }
         val opacity=frame.opacity.toFloat()
@@ -524,7 +538,7 @@ class PacketRenderer(private val engine: Engine, private val scene: Scene, priva
     fun pauseRuntime(){animalRuntime?.pause();stormRuntime?.update(stormElapsedMs,false);applyStormFlash(NativeStormFlash.NONE);for(draw in stormPackets)attach(draw,false);stormVisible=false}
     fun resize(width:Int,height:Int){
         require(width>0&&height>0)
-        for(draw in owners?.snapshot().orEmpty().values.flatten())draw.material.setParameter("viewportSize",width.toFloat(),height.toFloat())
+        for(draw in owners?.snapshot().orEmpty().values.flatten())if(!draw.paper)draw.material.setParameter("viewportSize",width.toFloat(),height.toFloat())
     }
     /** Diagnostic injection exercises genuine partial-upload cleanup. */
     fun replaceOwner(fixture:String,owner:String,expected:OwnerToken,failAfterPackets:Int?=null):OwnerUpdateResult{
@@ -596,6 +610,7 @@ class PacketRenderer(private val engine: Engine, private val scene: Scene, priva
         weatherPackets=draws.filter{it.weather!=null};skyPackets=draws.filter{it.packet.layer=="sky"}
         stormPackets=draws.filter{it.coverage.optics.lightning}
         cloudPackets=draws.filter{it.coverage.optics.cloud!=null}
+        paperPackets=draws.filter{it.paper}
         animalPackets=draws.filter{it.entity in animalSlots};animalPending=true
         hasAnimation=draws.any{it.coverage.optics.let{o->o.night.stars>0||o.cloud!=null||o.precipitation!=null||o.cascade!=null||o.atlas?.animated==true}||it.entity in animalSlots}||stormWeather?.thunderstorm==true
     }
@@ -704,7 +719,12 @@ class PacketRenderer(private val engine: Engine, private val scene: Scene, priva
             .put("textureCreated",textures.created).put("textureDestroyed",textures.destroyed).put("packets",loadedPackets)
     }
     private fun createGeometry(source:Source,g:Geometry):GeometryGpu{
-        val vb=VertexBuffer.Builder().vertexCount(g.vertexCount).bufferCount(1)
+        val layout=VertexBuffer.Builder().vertexCount(g.vertexCount).bufferCount(1)
+        val vb=if(g.paper)layout
+            .attribute(VertexBuffer.VertexAttribute.POSITION,0,VertexBuffer.AttributeType.FLOAT3,0,g.vertexStride)
+            .attribute(VertexBuffer.VertexAttribute.COLOR,0,VertexBuffer.AttributeType.UBYTE4,12,g.vertexStride)
+            .normalized(VertexBuffer.VertexAttribute.COLOR).build(engine)
+        else layout
             .attribute(VertexBuffer.VertexAttribute.POSITION,0,VertexBuffer.AttributeType.FLOAT3,0,64)
             .attribute(VertexBuffer.VertexAttribute.TANGENTS,0,VertexBuffer.AttributeType.FLOAT4,12,64)
             .attribute(VertexBuffer.VertexAttribute.UV0,0,VertexBuffer.AttributeType.FLOAT2,28,64)
@@ -713,7 +733,12 @@ class PacketRenderer(private val engine: Engine, private val scene: Scene, priva
         var ib:IndexBuffer?=null
         try{
             ib=IndexBuffer.Builder().indexCount(g.indexCount).bufferType(IndexBuffer.Builder.IndexType.UINT).build(engine)
-            NativeVertexUploads.each(source.world.section(g.vertex).asFloatBuffer(),g.vertexCount){offset,data->
+            if (g.paper) {
+                val vertices = source.world.section(g.vertex)
+                peakVertexUploadBytes = maxOf(peakVertexUploadBytes, vertices.remaining())
+                vertexUploadChunks++
+                vb.setBufferAt(engine,0,vertices)
+            } else NativeVertexUploads.each(source.world.section(g.vertex).asFloatBuffer(),g.vertexCount){offset,data->
                 peakVertexUploadBytes=maxOf(peakVertexUploadBytes,data.remaining());vertexUploadChunks++
                 vb.setBufferAt(engine,0,data,offset,data.remaining(),null,null)
                 // The same bounded staging buffer is reused by the next chunk.
@@ -811,6 +836,7 @@ class PacketRenderer(private val engine: Engine, private val scene: Scene, priva
     private fun createPacket(source:Source,packet:DrawPacket):PacketGpu{
         val key=source.geometryKeys[packet.geometry]
         val m=JSONObject(source.world.materials[packet.material])
+        if (source.world.geometries[packet.geometry].paper) return createPaperPacket(source, packet, key, m)
         val textureId=if(m.isNull("texture"))null else m.getInt("texture");val textureKey=textureKey(source,textureId)
         val g=geometry.acquire(key){createGeometry(source,source.world.geometries[packet.geometry])}
         val weather=source.surfaceCoverage[packet.material].optics.precipitation
@@ -914,11 +940,65 @@ class PacketRenderer(private val engine: Engine, private val scene: Scene, priva
             if(acquiredGround)textures.release(groundKey!!);if(acquiredTexture)textures.release(textureKey);geometry.release(key);throw error
         }
     }
+    private fun createPaperPacket(source:Source,packet:DrawPacket,key:String,material:JSONObject):PacketGpu {
+        require(packet.layer == "static" && packet.count == 1 && packet.aux == null &&
+            !packet.castShadow && !packet.receiveShadow && material.getBoolean("unlit") &&
+            material.getBoolean("vertexColors") && material.isNull("texture"))
+        val matrix = source.world.section(packet.instances)
+        require((0..15).all { matrix.getFloat(it*4) == if(it % 5 == 0) 1f else 0f })
+        val g = geometry.acquire(key) { createGeometry(source,source.world.geometries[packet.geometry]) }
+        var instance:MaterialInstance? = null
+        var entity = 0
+        try {
+            val program = program(if(material.getBoolean("transparent"))"paper-fade" else "paper-opaque").createInstance()
+            instance = program
+            program.setParameter("opacity",material.getDouble("opacity").toFloat())
+            paperUniforms(program,source.lighting,source.nativeSurfaceState,nativeEnvironment?.uniforms?.storm?.thunderstorm == true)
+            entity = EntityManager.get().create()
+            engine.transformManager.create(entity)
+            val b = packet.bounds
+            val center = FloatArray(3) { (b.min[it]+b.max[it])*.5f }
+            val half = FloatArray(3) { max(.001f,(b.max[it]-b.min[it])*.5f) }
+            RenderableManager.Builder(1).geometry(0,RenderableManager.PrimitiveType.TRIANGLES,g.vertex,g.index).material(0,program)
+                .boundingBox(Box(center,half)).culling(cullingEnabled).priority(packet.priority)
+                .castShadows(false).receiveShadows(false).build(engine,entity)
+            return PacketGpu(packet,entity,null,program,key,null,coverage=source.surfaceCoverage[packet.material],
+                fog=material.getBoolean("fog"),lit=false,paper=true)
+        } catch(error:Throwable) {
+            if(entity!=0){engine.destroyEntity(entity);EntityManager.get().destroy(entity)}
+            instance?.let(engine::destroyMaterialInstance)
+            geometry.release(key)
+            throw error
+        }
+    }
+
+    private fun paperUniforms(material:MaterialInstance,lighting:SourceLighting,state:NativeSurfaceState?,storm:Boolean) {
+        val night = state?.nightFactor ?: 0f
+        val directional = lighting.lights.firstOrNull { it.type == "DirectionalLight" }
+        val sun = directional?.color ?: listOf(1f,1f,1f)
+        val cover = if(storm) .70f else if(state?.clearSky == 1f) 1f else .90f
+        val moon=(directional?.intensity?:0f).coerceIn(0f,.55f)
+        val day=1f-night
+        val floor=night*(1f+moon*.26f)
+        material.setParameter("tint",cover*(day*(.98f+.09f*sun[0])+floor*.34f),
+            cover*(day*(.93f+.08f*sun[1])+floor*.43f),cover*(day*(.88f+.10f*sun[2])+floor*.57f))
+        // A small cool fill keeps the cutout edges visible over the darker sky.
+        material.setParameter("nightFill",night*cover*.014f,night*cover*.019f,night*cover*.032f)
+        val fog = lighting.fog
+        val sky = fog?.color ?: lighting.clearColor
+        material.setParameter("mist",sky[0],sky[1],sky[2])
+        applyPaperFog(material,projectedFog ?: fog?.let{NativeFogRange(it.near.toDouble(),it.far.toDouble())})
+    }
+
+    private fun applyPaperFog(material:MaterialInstance,range:NativeFogRange?) {
+        val visible=range?.takeIf{fogEnabled}
+        material.setParameter("fogRange",visible?.near?.toFloat()?:1e6f,visible?.far?.toFloat()?:1e6f+1)
+    }
     private fun destroyPacket(draw:PacketGpu){
         attach(draw,false);engine.destroyEntity(draw.entity);EntityManager.get().destroy(draw.entity)
         animalUploads.remove(draw.entity)?.close();animalSlots.remove(draw.entity);stormUploads.remove(draw.entity)?.close()
-        engine.destroyMaterialInstance(draw.material);engine.destroyTexture(draw.data)
-        geometry.release(draw.geometryKey);textures.release(draw.textureKey)
+        engine.destroyMaterialInstance(draw.material);draw.data?.let(engine::destroyTexture)
+        geometry.release(draw.geometryKey);draw.textureKey?.let(textures::release)
         draw.groundKey?.let{textures.release(it)}
         for(k in draw.atlasKeys)textures.release(k)
     }
@@ -934,6 +1014,7 @@ class PacketRenderer(private val engine: Engine, private val scene: Scene, priva
         nativeEnvironment=null
         nativeInventory=null
         weatherPackets=emptyList();weatherContext=null;weatherState=null;weatherFrame=null
+        paperPackets=emptyList()
         animalRuntime?.close();animalRuntime=null;nativeAnimalPrepared=null;nativeAnimalPicking=null;animalPackets=emptyList();animalSlots.clear();for(upload in animalUploads.values)upload.close();animalUploads.clear()
         stormRuntime?.close();stormRuntime=null;stormWeather=null;stormPackets=emptyList();for(upload in stormUploads.values)upload.close();stormUploads.clear();stormVisible=false
         if(stormLight!=0){scene.removeEntity(stormLight);engine.destroyEntity(stormLight);EntityManager.get().destroy(stormLight);stormLight=0};stormFlash=NativeStormFlash.NONE;cloudPackets=emptyList()

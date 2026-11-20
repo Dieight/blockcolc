@@ -58,8 +58,12 @@ class NativeStateStore(private val db: SqlDatabase, private val checkpoint: (Str
             sql.execute("INSERT OR REPLACE INTO cloud_baseline(account,canonical) VALUES(?,?)",listOf(baseline.account,baseline.canonical()))
         }
     }
-    fun initialize(domain: DomainDocument): StoredState {
-        val recovery = RecoveryContext()
+    fun initialize(
+        domain: DomainDocument,
+        recovery: RecoveryContext = RecoveryContext(),
+        archives: Sequence<BackupArchive> = emptySequence(),
+    ): StoredState {
+        recovery.validate(domain, 0)
         val local = recovery.canonical()
         val token = StateToken(0, 0)
         val layout = db.transaction { sql ->
@@ -67,6 +71,17 @@ class NativeStateStore(private val db: SqlDatabase, private val checkpoint: (Str
             val prepared = RecordLayout.split(domain)
             writeRecords(sql, prepared)
             sql.execute("INSERT INTO local_recovery(id,canonical) VALUES(1,?)", listOf(local))
+            var daily = 0
+            var rollbacks = 0
+            for (archive in archives) {
+                require(archive.id.isNotBlank() && archive.sourceRevision >= 0)
+                val kind = if (archive.date == null) "rollback" else "daily"
+                if (kind == "daily") require(++daily <= 1) else require(++rollbacks <= 2)
+                val snapshot = SnapshotStore.prepare(archive.domain)
+                val root = SnapshotStore.save(sql, archive.id, kind, archive.createdAt, archive.date, archive.sourceRevision,
+                    archive.reason, archive.source, snapshot)
+                if (kind == "daily") require(root.bytes <= SnapshotStore.DAILY_BYTES)
+            }
             checkpoint("before-meta")
             sql.execute("INSERT INTO state_meta(id,layout_version,revision,replacement_generation,domain_sha) VALUES(1,?,0,0,?)", listOf(StateSchema.VERSION, domain.sha256))
             checkpoint("before-commit")

@@ -30,6 +30,34 @@ import android.view.Choreographer
 /** Actual account form -> TLS API -> native writer, with isolated app data. */
 class P3CloudUiTest {
     @get:Rule val compose=createComposeRule()
+    @Test fun minimalFriendsOnlyShowAcceptedSummariesAndRefreshWhenVisible(){
+        val refreshes=AtomicInteger()
+        val opened=AtomicInteger()
+        val account=JSONObject().put("id","reader").put("friendsEnabled",true)
+        val rows=listOf(
+            JSONObject().put("id","shared").put("status","accepted").put("name","Shared friend").put("focusing",true).put("currentName","Reading"),
+            JSONObject().put("id","private").put("status","accepted").put("name","Private friend"),
+            JSONObject().put("id","pending").put("status","pending").put("name","Pending friend"),
+        )
+        var visible by mutableStateOf(false)
+        val resources=UiResources.load()
+        compose.setContent{
+            NativeTheme(ClientPreferences(language="en"),resources,reduceMotion=true){
+                NativeMinimalFriends(CloudView(account=account,friends=rows),visible,{refreshes.incrementAndGet()}){opened.incrementAndGet()}
+            }
+        }
+        compose.onNodeWithText("Shared friend").assertIsDisplayed()
+        compose.onNodeWithText("Reading").assertIsDisplayed()
+        compose.onNodeWithText("Private friend").assertIsDisplayed()
+        compose.onNodeWithText("Pending friend").assertDoesNotExist()
+        compose.onNodeWithText("Not focusing").assertDoesNotExist()
+        assertEquals(0,refreshes.get())
+        compose.runOnIdle{visible=true}
+        compose.waitUntil(5000){refreshes.get()>0}
+        compose.onNodeWithContentDescription("View friends").performClick()
+        assertEquals(1,opened.get())
+    }
+
     @Test fun friendSummariesOpenOnlyTheSelectedSharedHistory(){
         val fetched=AtomicInteger()
         val privateFetches=AtomicInteger()

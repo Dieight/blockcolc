@@ -36,18 +36,20 @@ class CloudTransport(context:Context,private val base:String="https://107.150.98
         val trust=TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm()).apply{init(roots)}
         SSLContext.getInstance("TLS").apply{init(null,trust.trustManagers,null)}.socketFactory
     }
-    fun request(path:String,method:String="GET",token:String?=null,body:String?=null):JSONObject =
-        JSONObject(text(path,method,token,body))
-    fun text(path:String,method:String="GET",token:String?=null,body:String?=null):String {
+    fun request(path:String,method:String="GET",token:String?=null,body:String?=null,timeoutMillis:Long=totalTimeoutMillis):JSONObject =
+        JSONObject(text(path,method,token,body,timeoutMillis))
+    fun text(path:String,method:String="GET",token:String?=null,body:String?=null,timeoutMillis:Long=totalTimeoutMillis):String {
         require(path.startsWith("/v1/")||path=="/healthz")
+        require(timeoutMillis in 1000..600000)
+        val budget=minOf(timeoutMillis,totalTimeoutMillis)
         val connection=(if(proxy==null)URL(base+path).openConnection()else URL(base+path).openConnection(proxy)) as HttpsURLConnection
-        connection.sslSocketFactory=ssl;connection.connectTimeout=15000;connection.readTimeout=90000
+        connection.sslSocketFactory=ssl;connection.connectTimeout=minOf(15000L,budget).toInt();connection.readTimeout=minOf(90000L,budget).toInt()
         connection.instanceFollowRedirects=false;connection.requestMethod=method
         connection.setRequestProperty("Accept","application/json");token?.let{connection.setRequestProperty("Authorization","Bearer $it")}
         val expired=AtomicBoolean(false)
         // readTimeout only limits one stalled read, not a slow stream or a
         // blocked request-body write. A complete operation also has a deadline.
-        val deadline=deadlines.schedule({expired.set(true);connection.disconnect()},totalTimeoutMillis,TimeUnit.MILLISECONDS)
+        val deadline=deadlines.schedule({expired.set(true);connection.disconnect()},budget,TimeUnit.MILLISECONDS)
         try {
             if(body!=null){connection.doOutput=true;connection.setRequestProperty("Content-Type","application/json; charset=utf-8")
                 // No second 100 MiB UTF-8 byte array retained next to the wire.

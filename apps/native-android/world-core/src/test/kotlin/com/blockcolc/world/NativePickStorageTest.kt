@@ -50,11 +50,16 @@ class NativePickStorageTest {
         }
         val tree=PickTree(bounds){false}
         assertTrue("Packed reads during preparation: $reads",reads<bounds.size*90)
+        reads=0
+        val spatial=PickTree(bounds,spatialOrder=true){false}
+        assertEquals("Spatial build reads each bound three times",bounds.size*18,reads)
         for(x in listOf(-1.0,.5,8.5,18.5,30.5,34.0))for(y in listOf(.5,10.5,30.5)){
             val ray=NativePickRay(BlockPoint(x,y,40.0),BlockPoint(0.0,0.0,-1.0))
             val expected=(0 until bounds.size).minOf{bounds.near(it,ray,Double.POSITIVE_INFINITY)}
-            val actual=tree.visit(ray,Double.POSITIVE_INFINITY){index,before->minOf(before,bounds.near(index,ray,before))}
-            assertEquals(expected,actual,0.0)
+            for(candidate in listOf(tree,spatial)){
+                val actual=candidate.visit(ray,Double.POSITIVE_INFINITY){index,before->minOf(before,bounds.near(index,ray,before))}
+                assertEquals(expected,actual,0.0)
+            }
         }
     }
 }

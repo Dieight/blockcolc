@@ -15,6 +15,22 @@ const STATIC = {
   '/viewer.css': ['viewer.css', 'text/css'],
 };
 
+const escapeHtml = text => text.replace(/[&<>"]/g, character => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' })[character]);
+
+function legalPage(language) {
+  const file = new URL(`../policy/${language}.md`, import.meta.url);
+  const parts = readFileSync(file, 'utf8').trim().split(/\r?\n\r?\n/);
+  const title = escapeHtml(parts.shift().replace(/^# /, ''));
+  const sections = parts.map(part => part.startsWith('## ')
+    ? `<h2>${escapeHtml(part.slice(3))}</h2>`
+    : `<p>${escapeHtml(part)}</p>`).join('\n');
+  return Buffer.from(`<!doctype html>
+<html lang="${language}"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${title}</title><link rel="stylesheet" href="/viewer.css"><link rel="stylesheet" href="/account.css">
+<main class="report"><nav><a href="/">BLOCKCOLC</a> · <a href="/legal">简体中文</a> · <a href="/legal/en">English</a></nav>
+<article><h1>${title}</h1>${sections}<p><a href="https://github.com/Dieight/blockcolc">GitHub · Blockcolc</a></p></article></main></html>`);
+}
+
 async function credentials(req) {
   fail(req.headers['content-type']?.split(';', 1)[0] === 'application/json' && !req.headers['content-encoding'], 'JSON_REQUIRED', 415);
   const chunks = [];
@@ -53,6 +69,8 @@ export function createFocusViewer(cloud, { owner, from, origin, webRoot, onError
   const store = new FocusViewerStore(cloud, { owner, from });
   const assets = new Map(Object.entries(STATIC).map(([route, [name, type]]) =>
     [route, { type, body: readFileSync(join(webRoot, name)) }]));
+  assets.set('/legal', { type:'text/html', body:legalPage('zh-CN') });
+  assets.set('/legal/en', { type:'text/html', body:legalPage('en') });
   const streams = new Map();
   const limits = new Map();
   let ticks = 0;

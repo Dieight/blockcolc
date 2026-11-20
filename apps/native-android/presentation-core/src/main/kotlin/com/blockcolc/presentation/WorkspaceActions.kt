@@ -39,6 +39,7 @@ enum class FocusEndReason(val key:String) {
 sealed interface FocusDecision {
     data object CompleteEarly:FocusDecision
     data object EndRest:FocusDecision
+    data object FinishExtension:FocusDecision
     data class Interrupt(val reason:FocusEndReason?=null,val note:String?=null):FocusDecision
     data class Cancel(val reason:FocusEndReason?=null,val note:String?=null):FocusDecision
 }

@@ -144,7 +144,14 @@ class WorkspaceCommandsTest {
     @Test fun featurePagesCannotReachTheDiagnosticRuntimeOrBuildDomainJson(){
         val root=generateSequence(File(System.getProperty("user.dir"))){it.parentFile}.first{File(it,"packages/domain/src/index.ts").isFile}
         val pages=File(root,"apps/native-android/app/src/main/kotlin/com/blockcolc/preview/ui").walkTopDown().filter{it.extension=="kt"}
-        val forbidden=listOf("PreviewRuntime","PreviewSnapshot","DomainEngine","org.json","AndroidStateDatabase","NativeStateStore")
-        for(page in pages){val text=page.readText();for(symbol in forbidden)assertFalse("${page.name} reaches implementation detail $symbol",text.contains(symbol))}
+        val forbidden=listOf("PreviewRuntime","PreviewSnapshot","DomainEngine","AndroidStateDatabase","NativeStateStore")
+        val accountWireViews=setOf("NativeCloudUi.kt","NativeFriendsUi.kt")
+        for(page in pages){
+            val text=page.readText()
+            for(symbol in forbidden)assertFalse("${page.name} reaches implementation detail $symbol",text.contains(symbol))
+            // Account panels consume cloud wire JSON. Workspace feature pages
+            // still use typed intents and cannot construct raw domain payloads.
+            if(page.name !in accountWireViews)assertFalse("${page.name} builds raw JSON",text.contains("org.json"))
+        }
     }
 }

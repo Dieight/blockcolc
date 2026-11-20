@@ -92,13 +92,16 @@ class FocusPlatform(private val context: Context) {
         if (Build.VERSION.SDK_INT >= 26) notifications.createNotificationChannel(NotificationChannel(CHANNEL, "方块钟 · 专注与休息", NotificationManager.IMPORTANCE_LOW).apply { setSound(null, null); enableVibration(false) })
         val intent = PendingIntent.getActivity(context, 1, Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         @Suppress("DEPRECATION") val b = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(context, CHANNEL) else Notification.Builder(context)
-        val heading=if(english(state))when(state.phase){"FOCUS"->"Focus · ${state.round+1}/${state.rounds}";"REST"->"Break";"READY"->"Ready for the next round";"REPORT"->"Focus completed";else->"blockcolc"}else state.heading
+        val extended=state.extensionStartedAt?.takeIf{ticket!=null}
+        val heading=if(extended!=null)text(state,"加时专注","Extended focus")else if(english(state))when(state.phase){"FOCUS"->"Focus · ${state.round+1}/${state.rounds}";"REST"->"Break";"READY"->"Ready for the next round";"REPORT"->"Focus completed";else->"blockcolc"}else state.heading
+        val subtext=if(extended!=null)text(state,"等待用户结束","Waiting for manual finish")else "${minOf(state.round+1,maxOf(1,state.rounds))}/${maxOf(1,state.rounds)}"
         b.setSmallIcon(R.drawable.ic_focus).setContentTitle(heading).setContentText(state.detail).setContentIntent(intent)
             .setCategory(if(ticket!=null)"stopwatch" else Notification.CATEGORY_REMINDER)
-            .setGroup("blockcolc-focus-audio").setSubText("${minOf(state.round+1,maxOf(1,state.rounds))}/${maxOf(1,state.rounds)}")
+            .setGroup("blockcolc-focus-audio").setSubText(subtext)
             .setVisibility(Notification.VISIBILITY_PUBLIC).setOnlyAlertOnce(true).setOngoing(ticket != null).setShowWhen(false)
         val remaining = ticket?.let { DomainTime.millis(it.end) - System.currentTimeMillis() } ?: 0
-        if (remaining > 0 && ticket != null&&Build.VERSION.SDK_INT>=26) {
+        if(extended!=null)b.setWhen(DomainTime.millis(extended)).setShowWhen(true).setUsesChronometer(true)
+        else if (remaining > 0 && ticket != null&&Build.VERSION.SDK_INT>=26) {
             b.setWhen(DomainTime.millis(ticket.end)).setShowWhen(true).setUsesChronometer(true)
             b.setChronometerCountDown(true)
             // Even if an OEM delays/kills the receiver, the stale countdown is
@@ -111,7 +114,7 @@ class FocusPlatform(private val context: Context) {
             putBoolean("oplus_smallicon_use_app_icon",false)
         }
         if(ticket!=null){
-            extras.putAll(OriginOsTimerSurface.extras(context,intent,heading,state.detail,"${minOf(state.round+1,state.rounds)}/${state.rounds}"))
+            extras.putAll(OriginOsTimerSurface.extras(context,intent,heading,state.detail,subtext))
             if(extras.containsKey("notification.superx.scene")&&notifications.activeNotifications.any{
                 it.id==LIVE&&it.notification.extras.getString("blockcolc.focus.ticket")==ticket.json().toString()&&it.notification.extras.containsKey("notification.superx.scene")
             })extras.putInt("notification.superx.operation",1)

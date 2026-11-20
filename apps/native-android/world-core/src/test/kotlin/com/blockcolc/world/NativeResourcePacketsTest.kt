@@ -81,4 +81,41 @@ class NativeResourcePacketsTest{
         val matrices=structure.batches.single().matrices();assertEquals(0f,matrices.get(12),0f);assertEquals(1f,matrices.get(28),0f)
         assertEquals(0f,matrices.get(14),0f);assertEquals(0f,matrices.get(30),0f)
     }}
+    @Test fun packedPlacedTranslationsMatchTheGeneralMatrixProductBitForBit(){prepared{stack,textures->
+        val rows=listOf(voxel(0.0).copy(y=-0.0,z=.1875),voxel(1.125).copy(y=.25,z=-1.75),voxel(-2.5).copy(z=1.125))
+        val worldOrigin=BlockPoint(-.125,.375,.25)
+        val recipe=BuildingPreparation.staticStructure(rows,"fractional-instances")
+        val structure=NativeResourceStructureCompiler(stack,textures).compile(recipe,worldOrigin)
+        assertEquals(3,structure.acceptedMembers.size)
+        val owner="building:placed-pack";val packets=NativeResourcePackets(textures)
+        for(angle in listOf(0.0,Math.PI*.5,-Math.PI*.5,.3125)){
+            val placement=NativeStructurePlacement(BlockPoint(31.5,-1.375,-8.125),angle,Position2(.261,-.8125))
+            val builder=NativePacketBuilder(owner)
+            packets.append(builder,owner,structure,placement,NativeSurfaceState())
+            val world=builder.build().world!!
+            val draws=world.packets;assertEquals(structure.batches.size,draws.size)
+            val parent=placement.parent(worldOrigin)
+            for((index,draw)in draws.withIndex()){
+                val local=structure.batches[index].matrices();val instances=world.section(draw.instances)
+                repeat(draw.count){i->
+                    val expected=parent*BlockTransform.fromElements(DoubleArray(16){local.get(i*16+it).toDouble()})
+                    repeat(16){j->assertEquals(expected[j].toFloat().toRawBits(),instances.getInt(i*80+j*4))}
+                }
+            }
+        }
+    }}
+    @Test fun modelCacheIgnoresPropertyOrderAndKeepsAnOwnedKey(){prepared{stack,textures->
+        val compiler=NativeResourceStructureCompiler(stack,textures)
+        fun route(state:Map<String,String>){
+            val input=voxel(0.0).copy(sourceBlockState=state)
+            compiler.compile(BuildingPreparation.staticStructure(listOf(input),"prop-order"))
+        }
+        val mutable=linkedMapOf("facing" to "north","waterlogged" to "false")
+        route(mutable)
+        route(linkedMapOf("waterlogged" to "false","facing" to "north"))
+        assertEquals(1,compiler.cachedModelQueries)
+        mutable["facing"]="south";route(mutable)
+        route(linkedMapOf("facing" to "north","waterlogged" to "false"))
+        assertEquals(2,compiler.cachedModelQueries)
+    }}
 }

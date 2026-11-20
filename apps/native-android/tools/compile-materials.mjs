@@ -60,4 +60,10 @@ for(const name of ['terminal-color','color-probe','bloom-bright','bloom-blur','g
   await writeFile(source,(await readFile(path.join(root,'world-filament/src/main/materials',name+'.mat'),'utf8')).replaceAll('@SOURCE_COLOR@',sourceColor));
   execFileSync(compiler,['-p','mobile','-a','opengl','-a','vulkan','--optimize-size','-o',path.join(output,name+'.filamat'),source],{stdio:'inherit'});
 }
+const paper=await readFile(path.join(root,'world-filament/src/main/materials/paper.mat.in'),'utf8');
+for(const blend of ['opaque','fade']) {
+  const source=path.join(output,'paper-'+blend+'.mat');
+  await writeFile(source,paper.replaceAll('@BLEND@',blend).replaceAll('@DEPTH@',String(blend==='opaque')));
+  execFileSync(compiler,['-p','mobile','-a','opengl','-a','vulkan','--optimize-size','-o',path.join(output,'paper-'+blend+'.filamat'),source],{stdio:'inherit'});
+}
 await writeFile(path.join(output,'compiler.json'),JSON.stringify({filament:'1.56.0',version,compilerSha256,backends:['opengl','vulkan']},null,2));

@@ -91,7 +91,9 @@ class P3NativeResourceTerrainTest{
         assertEquals(25,initial.projectionJson().getJSONArray("projects").length())
         val business=initial.sha256
         val results=JSONArray();val screens=JSONArray()
-        val builder=WorldPlanBuilder();val compiler=NativeWorldPacketCompiler(AndroidSignRasterizer());val allocator=AndroidPacketBuffers(context)
+        val builder=WorldPlanBuilder()
+        val allocator=AndroidPacketBuffers(context)
+        val compiler=NativeWorldPacketCompiler(AndroidSignRasterizer(),allocator,parallel=true)
         var revision=0L;var view:NativeWorldView?=null
         val now=DomainTime.millis("2026-09-15T08:00:00.000Z")
         fun save(){File(context.filesDir,"p3-world-large-capacity.json").writeText(JSONObject()
@@ -110,9 +112,9 @@ class P3NativeResourceTerrainTest{
         }
         fun render(world:WorldTerrainPlan,resources:NativeResourceWorldAssets?,stage:String):List<String>{
             val started=android.os.SystemClock.elapsedRealtime()
-            val frame=NativePacketBuffers.using(allocator){compiler.prepare(WorldRequestIdentity("large-capacity.db",0,revision++),world,
+            val frame=compiler.prepare(WorldRequestIdentity("large-capacity.db",0,revision++),world,
                 WorldRenderOptions(now,"Asia/Shanghai",quality=NativeLightingQuality.HIGH,aspect=.75,
-                    weather=NativeWeatherOverride(NativeWeatherKind.CLEAR),resources=resources))}
+                    weather=NativeWeatherOverride(NativeWeatherKind.CLEAR),resources=resources))
             val cpuMs=android.os.SystemClock.elapsedRealtime()-started
             val heapBefore=Runtime.getRuntime()
             File(context.filesDir,"p3-world-large-capacity-stage.json").writeText(JSONObject().put("schema",1).put("caseLabel",label)
@@ -155,7 +157,7 @@ class P3NativeResourceTerrainTest{
         }catch(error:Throwable){
             if(captureFailure)com.blockcolc.world.filament.NativeWorldFailureEvidence.capture(error)
             throw error
-        }finally{com.blockcolc.world.filament.NativeWorldFailureEvidence.reset();view?.let{instrumentation.runOnMainSync{it.pause()}};compiler.clear();builder.clear()}
+        }finally{com.blockcolc.world.filament.NativeWorldFailureEvidence.reset();view?.let{instrumentation.runOnMainSync{it.pause()}};compiler.close();builder.clear()}
     }
     @Test fun fourGeneratedWorldsAdoptCroppedTilesAndRestoreTheirOriginalSurfaces(){
         val rows=oracle.getJSONArray("cases");val row=(0 until rows.length()).map{rows.getJSONObject(it)}.first{it.getString("name")=="terrain-gallery"}

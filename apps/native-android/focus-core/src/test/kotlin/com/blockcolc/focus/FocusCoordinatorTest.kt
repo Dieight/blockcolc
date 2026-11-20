@@ -25,6 +25,56 @@ class FocusCoordinatorTest {
     private fun run(block: (JdbcStateDatabase, NativeStateStore, FocusCoordinator) -> Unit) {
         JdbcStateDatabase(temp.newFolder().toPath().resolve("state.db")).use { db -> val s = NativeStateStore(db); s.initialize(doc()); block(db, s, FocusCoordinator(s, "test-db")) }
     }
+    @Test fun extendedOrdinaryRoundRecoversAndSettlesTheHalfRoundExactlyOnce()=run{_,store,c->
+        c.begin("ordinary",spec(PlanMode.ROUNDS,count=1).copy(extendAfterPlan=true),false,at)
+        val first=c.reconcile("due",at+1000).state
+        val extending=first.recovery.plan!!
+        assertEquals(PlanPhase.FOCUS,extending.phase)
+        assertEquals(DomainTime.format(at+1000),extending.extensionStartedAt)
+        assertEquals(extending.extensionSessionId(1),first.domain.activeFocusSession()!!.getString("id"))
+        val resumed=FocusCoordinator(store,"test-db")
+        val stop=resumed.finishExtension("finish-extra",at+2500).state
+        val report=stop.recovery.plan!!
+        assertEquals(PlanPhase.REPORT,report.phase)
+        assertEquals(2,report.extensionRounds)
+        val history=stop.domain.projectionJson().getJSONArray("focusHistory")
+        val ids=(0 until history.length()).map{history.getJSONObject(it).getString("id")}
+        assertEquals(listOf(1000L,1000L,500L),(0 until history.length()).map{history.getJSONObject(it).getLong("actualDurationMs")})
+        assertTrue(ids.all(report::completed))
+        assertTrue(resumed.finishExtension("finish-extra",at+2600).replayed)
+        val settled=resumed.command("report-extra",DomainEngine.command("ReportSubtaskProgress","reportId" to "extra-report",
+            "subtaskId" to "read","focusSessionIds" to JSONArray(ids),"progressBasisPoints" to 5000),at+2600).state
+        assertNull(settled.recovery.plan)
+        assertEquals(3,settled.domain.projectionJson().getJSONArray("progressReports").getJSONObject(0).getJSONArray("focusSessionIds").length())
+    }
+
+    @Test fun terminalRestAndShortTailDoNotCreateExtraCompletedRounds()=run{_,store,c->
+        c.begin("timed",spec(count=1,exact=at+1200).copy(extendAfterPlan=true),false,at)
+        val rest=c.reconcile("rest",at+1000).state.recovery.plan!!
+        assertTrue(rest.terminalRest);assertNull(rest.extensionStartedAt)
+        val reopened=FocusCoordinator(store,"test-db")
+        val extended=reopened.reconcile("extend",at+1200).state
+        assertEquals(DomainTime.format(at+1200),extended.recovery.plan!!.extensionStartedAt)
+        val done=reopened.finishExtension("short-tail",at+1699).state
+        assertEquals(0,done.recovery.plan!!.extensionRounds)
+        val history=done.domain.projectionJson().getJSONArray("focusHistory")
+        assertEquals("interrupted",history.getJSONObject(1).getString("status"))
+        assertEquals(499L,history.getJSONObject(1).getLong("actualDurationMs"))
+        assertEquals(1,done.recovery.plan!!.completedSessionIds.size)
+    }
+
+    @Test fun extendedHabitDoesNotDoubleAwardACompletedBuilding()=run{_,_,c->
+        c.begin("habit",PlanRequest("habit-extra","habit",null,PlanMode.ROUNDS,1,1000,0,extendAfterPlan=true),false,at)
+        val during=c.reconcile("due-habit",at+10500).state
+        assertEquals(9,during.recovery.plan!!.extensionRounds)
+        assertTrue(during.domain.activeFocusSession()!!.getBoolean("deferredSettlement"))
+        val done=c.finishExtension("finish-habit",at+11500).state
+        assertNull(done.recovery.plan)
+        val facts=done.domain.projectionJson()
+        assertEquals(1,facts.getJSONArray("habitBuildings").length())
+        assertEquals(12,facts.getJSONArray("focusHistory").length())
+        assertTrue(facts.getJSONArray("focusHistory").getJSONObject(11).has("settledAt"))
+    }
     @Test fun initialStartCommitsPlanAndSessionTogetherAndReplayDoesNotStartAgain() = run { _, _, c ->
         val before=c.load()
         val request=spec(PlanMode.ROUNDS)
@@ -67,6 +117,30 @@ class FocusCoordinatorTest {
         c.manual("manual-stop",true,false,null,null,at+1500)
         val waiting=c.load();assertNull(waiting.recovery.automatic)
         assertEquals(waiting,c.resume(at+60000){error("Manual waiting must not auto-start")}.state)
+    }
+    @Test fun reopenedForegroundKeepsTheSecondRoundOnItsOriginalClock()=run{db,_,started->
+        started.command("policy", DomainEngine.command("ConfigureFocusIntegrity", "enabled" to true,
+            "maxEffectiveExcursions" to 1, "excursionThresholdSeconds" to 2), at)
+        started.begin("begin",spec().copy(focusMs=25_000,restMs=5_000),true,at)
+        started.observeLifecycle(false,"screen-lock",at+500){"locked"}
+        val first = FocusCoordinator(NativeStateStore(db), "test-db")
+        val unlocked = first.observeLifecycle(true, "app-switch", at + 5000) { "unlocked" }.state
+        assertEquals(DomainTime.format(at + 25_000), first.deadline(unlocked)?.end)
+        assertEquals(0, unlocked.domain.activeFocusSession()!!.getJSONObject("integrity").getInt("effectiveExcursions"))
+        first.observeLifecycle(false, "screen-lock", at + 5100) { "locked-again" }
+        // Open a new reader and coordinator while the process was away
+        // across both the first deadline and its automatic rest.
+        val reopened=FocusCoordinator(NativeStateStore(db),"test-db")
+        val restored=reopened.observeLifecycle(true,"app-switch",at+37_200){"cold-foreground"}.state
+        val active=restored.domain.activeFocusSession()!!
+        val plan=restored.recovery.plan!!
+        assertEquals(PlanPhase.FOCUS,plan.phase)
+        assertEquals(1,plan.completedSessionIds.size)
+        assertEquals(DomainTime.format(at+30_000),active.getString("startedAt"))
+        assertEquals(DomainTime.format(at+55_000),active.getString("endsAt"))
+        assertEquals(active.getString("id"),plan.currentSessionId)
+        assertEquals(17_800L,DomainTime.millis(plan.phaseEndsAt!!)-(at+37_200))
+        assertEquals(restored,reopened.observeLifecycle(true,"app-switch",at+38_000){error("Repeated resume restarted a live round")}.state)
     }
     @Test fun failedInitialStartDoesNotSaveEvenItsProjectSwitchOrPlan() = run { _, _, c ->
         c.command("switch",DomainEngine.command("SwitchActiveProject","projectId" to "habit"),at)
@@ -220,12 +294,12 @@ class FocusCoordinatorTest {
         val a=state.domain.json().getJSONArray("focusHistory");assertEquals(24,a.length())
         assertEquals(at+24*10800000L,DomainTime.millis(a.getJSONObject(23).getString("completedAt")))
     }
-    @Test fun integrityInterruptionRemovesGrantAndKeepsTheManualRetrySlot() = run { _, _, c ->
+    @Test fun integrityInterruptionThroughTheCommandEntryClearsThePlanAndGrant() = run { _, _, c ->
         c.command("policy",DomainEngine.command("ConfigureFocusIntegrity","enabled" to true,"maxEffectiveExcursions" to 1,"excursionThresholdSeconds" to 1),at)
         c.confirm("confirm",spec().copy(focusMs=10000),at);c.start("start",true,at)
         c.command("bg",DomainEngine.command("RecordFocusBackgrounded","reason" to "app-switch"),at+1)
         c.command("fg",DomainEngine.command("RecordFocusForegrounded"),at+1002)
-        assertEquals(PlanPhase.READY,c.load().recovery.plan!!.phase);assertNull(c.load().recovery.automatic);assertEquals(0,c.load().recovery.plan!!.completedSessionIds.size)
+        assertEquals(RecoveryContext(), c.load().recovery)
         c.reconcile("later",at+100000);assertNull(c.load().domain.json().optJSONObject("activeFocusSession"))
     }
     @Test fun failedReadAfterSuccessfulCommitIsNotAnUncommittedCommand(){
@@ -343,6 +417,40 @@ class FocusCoordinatorTest {
         c.lifecycle("user-stop",false,"app-switch",at+13000)
         c.lifecycle("user-back",true,"app-switch",at+15001)
         assertNull(c.load().domain.json().optJSONObject("activeFocusSession"))
+    }
+
+    @Test fun integrityLimitStopsThePlanAndKeepsCompletedPooledRoundsUnallocated() = run { _, store, c ->
+        c.command("policy", DomainEngine.command("ConfigureFocusIntegrity", "enabled" to true,
+            "maxEffectiveExcursions" to 1, "excursionThresholdSeconds" to 2), at)
+        c.begin("begin", spec(rest = 0).copy(focusMs = 10_000), true, at)
+        c.reconcile("first-due", at + 10_000)
+        c.observeLifecycle(false, "app-switch", at + 11_000) { "left" }
+        val stopped = c.observeLifecycle(true, "app-switch", at + 14_000) { "back" }.state
+        assertEquals(RecoveryContext(), stopped.recovery)
+        assertNull(stopped.domain.activeFocusSession())
+        val facts = stopped.domain.focusControlJson().getJSONArray("focusHistory")
+        assertEquals(2, facts.length())
+        assertEquals("completed", facts.getJSONObject(0).getString("status"))
+        assertEquals(10_000L, facts.getJSONObject(0).getLong("actualDurationMs"))
+        assertTrue(facts.getJSONObject(0).has("settledAt"))
+        assertEquals("app-switch-limit", facts.getJSONObject(1).getString("interruptionReason"))
+        assertEquals(0, stopped.domain.focusControlJson().getJSONArray("progressReports").length())
+        val reopened = FocusCoordinator(store, "test-db")
+        assertEquals(stopped, reopened.resume(at + 15_000) { error("No report or timer may reopen") }.state)
+    }
+
+    @Test fun olderPausedPlanAfterAnIntegrityFailureReturnsToIdleOnRecovery() = run { _, store, c ->
+        c.command("policy", DomainEngine.command("ConfigureFocusIntegrity", "enabled" to true,
+            "maxEffectiveExcursions" to 1, "excursionThresholdSeconds" to 2), at)
+        c.begin("begin", spec(PlanMode.MARATHON).copy(focusMs = 10_000), true, at)
+        val asleep = c.observeLifecycle(false, "app-switch", at + 1000) { "left" }.state
+        val ended = DomainEngine.execute(asleep.domain, DomainEngine.command("RecordFocusForegrounded"), at + 4000)
+        assertTrue(ended.error, ended.ok)
+        val oldWaiting = asleep.recovery.plan!!.copy(phase = PlanPhase.READY, currentSessionId = null, phaseEndsAt = null)
+        store.commit(asleep.token, "older-interruption", ended.state, RecoveryContext(oldWaiting))
+        val recovered = c.resume(at + 5000) { "recover-old-waiting" }.state
+        assertEquals(RecoveryContext(), recovered.recovery)
+        assertEquals(ended.state, recovered.domain)
     }
 
     @Test fun failedOutboxAcknowledgementKeepsThePendingReceiptForRetry()=run{db,_,c->

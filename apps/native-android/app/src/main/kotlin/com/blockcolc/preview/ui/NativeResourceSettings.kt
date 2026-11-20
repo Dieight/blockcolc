@@ -13,21 +13,26 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.blockcolc.preview.resources.NativeResourceLibraryView
 import com.blockcolc.world.resource.ResourceContentState
+import com.blockcolc.world.resource.NativeResourceArchive
+import com.blockcolc.world.resource.ResourceArchiveLimits
 
 @Composable fun NativeResourceSettings(state:NativeResourceLibraryView,onImport:()->Unit,onRefresh:()->Unit,onRetry:()->Unit,
     onOriginal:()->Unit,onSelect:(String?,Boolean)->Unit,onDelete:(String)->Unit){
     val ui=LocalNativeUi.current;val metadata=state.metadata;val available=state.ready&&!state.busy&&metadata!=null
     var deleting by rememberNativePageState<String?>("resources/deleting"){null}
     val current=metadata?.items?.firstOrNull{it.id==metadata.activeId}?.name?:ui.text("方块钟原创材质")
-    NativeSettingGroup("方块材质包",current){
-        Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp,androidx.compose.ui.Alignment.End),verticalAlignment=androidx.compose.ui.Alignment.CenterVertically){
-            NativeAction(ui.text("导入材质包"),onImport,Modifier.weight(1f,fill=false),pending=state.operation=="import",enabled=available,primary=false,icon="plus")
-            NativeIconAction(ui.text("刷新"),"reset",onRefresh,pending=state.operation=="refresh",enabled=!state.busy)
-        }
-        NativeAction(ui.text("方块钟原创材质"),onOriginal,Modifier.fillMaxWidth(),pending=state.operation=="original",enabled=available,
-            primary=metadata?.let{it.activeId==null&&it.baseId==null}==true,icon="map")
+    NativeSettingGroup("方块材质包",current,trailing={
+        NativeInfoAction(ui.text("导入材质包"),ui.text(
+            "支持 Java 版资源包 ZIP（最多 {0} MiB）或客户端 JAR（最多 {1} MiB）。",
+            remember{ResourceArchiveLimits().maxInputBytes / (1024 * 1024)},NativeResourceArchive.MAX_JAR_BYTES / (1024 * 1024),
+        ))
+        NativeIconAction(ui.text("导入材质包"),"plus",onImport,pending=state.operation=="import",enabled=available)
+        NativeIconAction(ui.text("刷新"),"reset",onRefresh,pending=state.operation=="refresh",enabled=!state.busy)
+    }){
+        val original=metadata?.let{it.activeId==null&&it.baseId==null}==true
+        NativeInlineAction(ui.text("方块钟原创材质"),onOriginal,if(original)"check"else"map",
+            ui.text(if(original)"使用中"else"使用"),pending=state.operation=="original",enabled=available,checked=original)
         if(!state.ready)Text(ui.text("正在读取本机资源包…"),style=MaterialTheme.typography.bodySmall)
-        else if(metadata?.items?.isEmpty()==true)Text(ui.text("本机尚无导入的资源包。"),style=MaterialTheme.typography.bodySmall)
         for(item in metadata?.items.orEmpty()){
             Column(Modifier.fillMaxWidth().testTag("resource-pack-${item.id}")){
             NativeSeparator()

@@ -1,5 +1,10 @@
 package com.blockcolc.preview.ui
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -33,10 +38,11 @@ import java.util.*
 
 /** Same workbench and symmetric FocusFace slots as the formal WorldScreenV7.
  * The application owns planning and recovery; this page only presents them. */
-@Composable internal fun NativeTimerPage(s:WorkspaceUiState,runtime:WorkspaceActions,minimal:Boolean,immersive:Boolean,pool:ReportPool?,reportPending:Boolean,delivered:Boolean,reportError:String?,selectedTask:String?,onMinimal:(Boolean)->Unit,onAdjust:(PlanEditorModel)->Unit,onManual:()->Unit,onCreate:()->Unit,onSubmit:(ReportDraft)->Unit,onWorldHeight:(Int)->Unit,memory:String?,onCloseMemory:()->Unit,panelOpacity:Float=1f,active:Boolean=true,onPanelTop:(Int)->Unit={},wide:Boolean=false){
+@Composable internal fun NativeTimerPage(s:WorkspaceUiState,runtime:WorkspaceActions,minimal:Boolean,immersive:Boolean,pool:ReportPool?,reportPending:Boolean,delivered:Boolean,reportError:String?,selectedTask:String?,onMinimal:(Boolean)->Unit,onAdjust:(PlanEditorModel)->Unit,onManual:()->Unit,onCreate:()->Unit,onSubmit:(ReportDraft)->Unit,onWorldHeight:(Int)->Unit,memory:String?,onCloseMemory:()->Unit,panelOpacity:Float=1f,active:Boolean=true,onPanelTop:(Int)->Unit={},wide:Boolean=false,minimalFriends:(@Composable (Boolean)->Unit)?=null){
     val ui=LocalNativeUi.current;val timer=s.timer?:return
-    var now by remember{mutableLongStateOf(System.currentTimeMillis())}
-    LaunchedEffect(active){while(active&&isActive){now=System.currentTimeMillis();delay(250)}}
+    var now by remember(timer.planId,timer.surface,timer.deadline){mutableLongStateOf(System.currentTimeMillis())}
+    LaunchedEffect(active,timer.planId,timer.surface,timer.deadline){while(active&&isActive){now=System.currentTimeMillis();delay(250)}}
+    val countdown=LocalDateCountdownPreference.current?.value
     val project=s.choices.find{it.id==timer.projectId}?:s.choices.find{it.id==s.activeProject}
     val task=project?.tasks?.find{it.id==timer.subtaskId}?:project?.tasks?.find{it.id==selectedTask}?:project?.tasks?.firstOrNull{it.progress<10000}
     val details=s.workspace?.projects?.find{it.id==project?.id}
@@ -44,7 +50,12 @@ import java.util.*
     fun begin(){if(s.planId!=null)start.submit{runtime.startPlan(it)}else if(project!=null)start.submit{runtime.beginFocus(FocusDraft(project.id,task?.id,PlanMode.ROUNDS,DraftSchedule.Rounds(1)),it)}}
     fun adjust(){onAdjust(PlanEditorModel(projectId=project?.id,taskId=task?.id,mode=timer.mode?:PlanMode.ROUNDS,rounds=timer.totalRounds,endAt=timer.deadline?.let(DomainTime::millis),replacingPlanId=s.planId))}
     val remaining=timer.deadline?.let{(DomainTime.millis(it)-now).coerceAtLeast(0)}?:timer.remainingMs
-    val clock=formalClock(if(!immersive&&timer.mode!=PlanMode.MARATHON)(if(project?.habit==true)s.preferences.habitFocusMinutes else s.preferences.focusMinutes)*60000L else remaining)
+    // A mode animation may still be showing the ordinary layout when an
+    // already committed round/rest has resumed. Both faces share its clock.
+    val workbenchDuration=!immersive&&timer.mode!=PlanMode.MARATHON&&timer.surface in setOf(TimerSurface.IDLE,TimerSurface.PREPARED)
+    val extensionElapsed=timer.extensionStartedAt?.let{(now-DomainTime.millis(it)).coerceAtLeast(0)}
+    val clock=formalClock(extensionElapsed?:if(workbenchDuration)(if(project?.habit==true)s.preferences.habitFocusMinutes else s.preferences.focusMinutes)*60000L else remaining,
+        countUp=extensionElapsed!=null)
     val planSummary="${timer.totalRounds.coerceAtLeast(1)} ${ui.text("轮")} · ${ui.text("总计")} ${formatDuration(if(timer.surface==TimerSurface.PREPARED)timer.remainingMs else (if(project?.habit==true)s.preferences.habitFocusMinutes else s.preferences.focusMinutes)*60000L*timer.totalRounds.coerceAtLeast(1)+s.preferences.breakMinutes*60000L*(timer.totalRounds-1).coerceAtLeast(0))}"
     var revealed by rememberSaveable(timer.surface,minimal){mutableStateOf(false)}
     val reveal=Modifier.pointerInput(timer.surface){detectTapGestures(onDoubleTap={revealed=true})}
@@ -73,6 +84,7 @@ import java.util.*
                             FormalTextAction(ui.text("调整"),"edit",::adjust,enabled=!s.busy)
                         }
                         NativeText(clock,NativeTextRole.CLOCK,Modifier.padding(vertical=4.dp),accent=true)
+                        NativeDateCountdown(countdown,now)
                         NativeRequestError(start)
                     }
                     NativeAction(if(timer.mode==PlanMode.MARATHON)ui.text("开始专注")else ui.text("开始 {0} 轮",timer.totalRounds.coerceAtLeast(1)),::begin,Modifier.fillMaxWidth().heightIn(min=52.dp),pending=start.busy,enabled=project.canStart&&!s.busy,icon="play")
@@ -115,6 +127,7 @@ import java.util.*
                     Column(Modifier.fillMaxWidth().weight(1f).heightIn(min=112.dp),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.Center){
                         NativeText(ui.text(if(timer.mode==PlanMode.MARATHON)"剩余总时长"else"每轮时长"),NativeTextRole.CAPTION)
                         Spacer(Modifier.height(6.dp));NativeText(clock,NativeTextRole.CLOCK,accent=true)
+                        NativeDateCountdown(countdown,now,Modifier.padding(top=6.dp))
                     }
                     NativeAction(if(timer.mode==PlanMode.MARATHON)ui.text("开始专注")else ui.text("开始 {0} 轮",timer.totalRounds.coerceAtLeast(1)),::begin,Modifier.fillMaxWidth().heightIn(min=52.dp),pending=start.busy,enabled=project.canStart&&!s.busy,icon="play")
                     if(timer.mayCancelUnstarted)FormalTextAction(ui.text("取消本次计划"),"close",{start.submit{runtime.decideFocus(FocusDecision.Cancel(),it)}},Modifier.align(Alignment.CenterHorizontally),!start.busy&&!s.busy)
@@ -133,34 +146,51 @@ import java.util.*
           NativeGlass(s.preferences.focusGlassTransparency,panel.then(if(wide)Modifier else Modifier.height(focusPanelHeight)).testTag("formal-minimal-panel").onGloballyPositioned{onPanelTop(it.positionInRoot().y.roundToInt())}.graphicsLayer{alpha=panelOpacity}.then(reveal)){
             Box(Modifier.fillMaxSize().padding(horizontal=20.dp,vertical=16.dp)){
               if(minimal&&timer.surface==TimerSurface.IDLE){
-                val pager=rememberPagerState(initialPage=if(s.preferences.quickNotesEnabled)1 else 0,pageCount={if(s.preferences.quickNotesEnabled)3 else 2})
+                val pages=remember(s.preferences.quickNotesEnabled,minimalFriends!=null){
+                    buildList{
+                        if(s.preferences.quickNotesEnabled)add("notes")
+                        add("clock")
+                        add("statistics")
+                        if(minimalFriends!=null)add("friends")
+                    }
+                }
+                val pager=rememberPagerState(initialPage=pages.indexOf("clock"),pageCount={pages.size})
                 val pagerScope=rememberCoroutineScope()
-                HorizontalPager(pager,Modifier.fillMaxSize().testTag("minimal-info-pager").onKeyEvent{event->if(event.type==KeyEventType.KeyDown&&event.key in listOf(Key.DirectionLeft,Key.DirectionRight)){val direction=if(event.key==Key.DirectionLeft)-1 else 1;pagerScope.launch{pager.animateScrollToPage((pager.currentPage+direction).coerceIn(0,pager.pageCount-1))};true}else false},key={index->if(s.preferences.quickNotesEnabled)listOf("notes","clock","statistics")[index]else listOf("clock","statistics")[index]}){index->
-                    val key=if(s.preferences.quickNotesEnabled)listOf("notes","clock","statistics")[index]else listOf("clock","statistics")[index]
+                HorizontalPager(pager,Modifier.fillMaxSize().testTag("minimal-info-pager").onKeyEvent{event->if(event.type==KeyEventType.KeyDown&&event.key in listOf(Key.DirectionLeft,Key.DirectionRight)){val direction=if(event.key==Key.DirectionLeft)-1 else 1;pagerScope.launch{pager.animateScrollToPage((pager.currentPage+direction).coerceIn(0,pager.pageCount-1))};true}else false},key={pages[it]}){index->
+                    val key=pages[index]
                     when(key){
                         "notes"->NativeQuickNotes(s,runtime,compact=true)
                         "statistics"->Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.Center){
                             val timeline=s.workspace?.todayTimeline
                             if(timeline!=null)NativeTodayFocusPanel(timeline)else NativeHistoryDetailsStatus(s,runtime)
                         }
-                        else->FormalFocusFace(stretch=true,context={},timer={
+                        "friends"->minimalFriends?.invoke(active&&pager.settledPage==index)
+                        else->FormalFocusFace(stretch=true,context={NativeDateCountdown(countdown,now)},timer={
                             var end by rememberSaveable{mutableStateOf<Long?>(null)}
                             NativeClockPicker(end,now,s.preferences.focusMinutes,s.preferences.breakMinutes,doubleConfirm=true,enabled=project!=null&&!s.busy,clockStyle=MaterialTheme.typography.displayLarge,onChange={end=it},onConfirm={deadline->project?.let{p->start.submit{runtime.beginFocus(FocusDraft(p.id,null,PlanMode.MINIMAL,DraftSchedule.EndAt(deadline)),it)}}})
                         },controls={
-                            Box(Modifier.fillMaxWidth().height(48.dp),contentAlignment=Alignment.Center){if(revealed)FormalTextAction(ui.text("返回完整模式"),"",{onMinimal(false)})}
+                            Box(Modifier.fillMaxWidth().height(48.dp),contentAlignment=Alignment.Center){
+                                if(revealed)FormalTextAction(ui.text("返回普通模式"),"",{onMinimal(false)},Modifier.offset(y=(-8).dp))
+                            }
                         })
                     }
                 }
                 s.workspace?.let{Box(Modifier.align(Alignment.TopEnd)){NativeOccasionEmblems(it.today,0,it.settings.birthday)}}
               }else{
                 FormalFocusFace(context={
-                    val context=when(timer.surface){TimerSurface.FOCUS->if(timer.mode in setOf(PlanMode.MINIMAL,PlanMode.MARATHON))ui.text("专注中 第{0}/{1}轮",timer.completedRounds+1,timer.totalRounds)else timer.taskTitle?:task?.title?:project?.title.orEmpty();TimerSurface.REST->ui.text("休息中");TimerSurface.WAITING->ui.text("剩余专注总时间");else->""}
+                    val context=when(timer.surface){
+                        TimerSurface.FOCUS->if(extensionElapsed!=null)ui.text("加时专注")
+                        else if(timer.mode in setOf(PlanMode.MINIMAL,PlanMode.MARATHON))ui.text("专注中 第{0}/{1}轮",timer.completedRounds+1,timer.totalRounds)else timer.taskTitle?:task?.title?:project?.title.orEmpty()
+                        TimerSurface.REST->ui.text("休息中")
+                        TimerSurface.WAITING->ui.text("剩余专注总时间")
+                        else->""
+                    }
                     Text(context,style=MaterialTheme.typography.bodyLarge,textAlign=TextAlign.Center,maxLines=2)
                 },timer={
                     NativeText(clock,NativeTextRole.IMMERSIVE_CLOCK,Modifier.testTag("formal-focus-time").then(if(timer.surface in setOf(TimerSurface.PREPARED,TimerSurface.WAITING))Modifier.pointerInput(timer.planId,s.busy,start.busy){detectTapGestures(onDoubleTap={if(!s.busy&&!start.busy)begin()})}else Modifier),accent=true)
                 },controls={
                     when(timer.surface){
-                        TimerSurface.FOCUS->key(timer.planId,timer.deadline){NativeFocusExitControl(!s.busy,onManual)}
+                        TimerSurface.FOCUS->key(timer.planId,if(extensionElapsed==null)timer.deadline else timer.extensionStartedAt){NativeFocusExitControl(!s.busy,onManual)}
                         TimerSurface.REST->if(timer.mode==PlanMode.MARATHON&&revealed)FormalTextAction(ui.text("调整计划"),"edit",::adjust,enabled=!s.busy)
                         else->Unit
                     }
@@ -194,4 +224,46 @@ import java.util.*
       }
     }
 }
-private fun formalClock(ms:Long):String{val seconds=(ms.coerceAtLeast(0)+999)/1000;return if(seconds>=3600)String.format(Locale.ROOT,"%d:%02d:%02d",seconds/3600,seconds/60%60,seconds%60)else String.format(Locale.ROOT,"%02d:%02d",seconds/60,seconds%60)}
+
+@Composable internal fun NativeFocusIntegrityBanner(notice: FocusIntegrityNotice?, visible: Boolean, modifier: Modifier = Modifier) {
+    val ui = LocalNativeUi.current
+    val key = notice?.let { "${it.sessionId}:${it.count}:${it.limit}:${it.stopped}" }
+    var announced by rememberSaveable { mutableStateOf<String?>(null) }
+    var showing by remember { mutableStateOf(false) }
+    LaunchedEffect(key, visible) {
+        showing = false
+        if (visible && key != null && key != announced) {
+            announced = key
+            showing = true
+            delay(4200)
+            showing = false
+        }
+    }
+    AnimatedVisibility(showing && notice != null, modifier,
+        enter = if (ui.reduceMotion) EnterTransition.None else fadeIn(tween(160)),
+        exit = if (ui.reduceMotion) ExitTransition.None else fadeOut(tween(180))) {
+        if (notice != null) {
+            val colors = MaterialTheme.colorScheme
+            Surface(color = when {
+                notice.stopped -> colors.errorContainer
+                notice.count > 0 -> colors.tertiaryContainer
+                else -> colors.surface
+            }, contentColor = when {
+                notice.stopped -> colors.onErrorContainer
+                notice.count > 0 -> colors.onTertiaryContainer
+                else -> colors.onSurface
+            }, modifier = Modifier.testTag("focus-integrity-notice").semantics { liveRegion = LiveRegionMode.Polite }) {
+                Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(ui.text("有效离开 {0}/{1} 次", notice.count, notice.limit), style = MaterialTheme.typography.bodyMedium)
+                    if (notice.stopped) Text(ui.text("已达离开次数上限，计划结束"),
+                        style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center)
+                }
+            }
+        }
+    }
+}
+
+internal fun formalClock(ms:Long,countUp:Boolean=false):String{
+    val seconds=(ms.coerceAtLeast(0)+if(countUp)0 else 999)/1000
+    return if(seconds>=3600)String.format(Locale.ROOT,"%d:%02d:%02d",seconds/3600,seconds/60%60,seconds%60)else String.format(Locale.ROOT,"%02d:%02d",seconds/60,seconds%60)
+}

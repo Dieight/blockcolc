@@ -39,7 +39,7 @@ class NativeConstructionDetails(private val materials:NativeOriginalMaterials=Na
         checkpoint(cancelled);return vines.size
     }
     fun appendOutline(target:NativePacketBuilder,blueprint:BlueprintSnapshot,completion:Int,visible:Boolean,origin:BlockPoint,placement:NativeStructurePlacement,
-        cancelled:()->Boolean={false}):Int {
+        cancelled:()->Boolean={false},paper:Boolean=false):Int {
         checkpoint(cancelled);require(completion in 0..10000)
         if(!visible||completion>=10000)return 0
         val occupied=HashSet<BlockPoint>(blueprint.voxels.size)
@@ -53,7 +53,7 @@ class NativeConstructionDetails(private val materials:NativeOriginalMaterials=Na
         val parent=placement.parent(origin);val rows=FloatArray(planned.size*16)
         planned.forEachIndexed{index,v->if(index%128==0)checkpoint(cancelled)
             write(rows,index,parent,BlockTransform.translation(v.x-origin.x,v.y-origin.y,v.z-origin.z))}
-        target.add(outlineCube,outlineMaterial,FloatBuffer.wrap(rows),castShadow=false,receiveShadow=false,priority=5)
+        target.add(outlineCube,if(paper)outlineMaterial.copy(unlit=true)else outlineMaterial,FloatBuffer.wrap(rows),castShadow=false,receiveShadow=false,priority=5)
         checkpoint(cancelled);return planned.size
     }
 }

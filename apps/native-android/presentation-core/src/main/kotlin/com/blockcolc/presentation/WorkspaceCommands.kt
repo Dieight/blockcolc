@@ -58,6 +58,7 @@ object WorkspaceCommands {
     fun decide(coordinator:FocusCoordinator,requestId:String,decision:FocusDecision,now:Long)=when(decision){
         FocusDecision.CompleteEarly->coordinator.manual(requestId,true,false,null,null,now)
         FocusDecision.EndRest->coordinator.manual(requestId,false,false,null,null,now)
+        FocusDecision.FinishExtension->coordinator.finishExtension(requestId,now)
         is FocusDecision.Interrupt->coordinator.manual(requestId,false,false,decision.reason?.key,decision.note,now)
         is FocusDecision.Cancel->coordinator.manual(requestId,false,true,decision.reason?.key,decision.note,now)
     }

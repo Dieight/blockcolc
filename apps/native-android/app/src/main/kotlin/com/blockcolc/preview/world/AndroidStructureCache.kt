@@ -64,7 +64,7 @@ internal class AndroidStructureCache(context:Context,directory:File,private val 
         override val headerBytes=OriginalStructureCodec.HEADER_BYTES
         override val maximumBytes=OriginalStructureCodec.MAX_BYTES
         override fun isCandidate(key:String,header:ByteArray,length:Long)=OriginalStructureCodec.isCandidateHeader(key,header,length)
-        override fun encode(key:String,value:OriginalStructure,allocate:(Int)->ByteBuffer,cancelled:()->Boolean)=OriginalStructureCodec.encodeBuffer(key,value,allocate,cancelled)
+        override fun encode(key:String,value:OriginalStructure,allocate:(Int)->ByteBuffer,cancelled:()->Boolean)=OriginalStructureCodec.encodeBuffer(key,value,allocate,cancelled)?.let{listOf(it)}
         override fun decode(key:String,bytes:ByteBuffer,cancelled:()->Boolean)=OriginalStructureCodec.decodeBuffer(key,bytes,cancelled)
     }
 }

@@ -1,13 +1,13 @@
 package com.blockcolc.updates
 
 data class UpdateView(val status:UpdateStatus?=null,val release:AppRelease?=null,val checking:Boolean=false,val operating:Boolean=false,
-    val checked:Boolean=false,val problem:UpdateProblem?=null,val notice:Long=0,val installRequested:Boolean=false)
+    val checked:Boolean=false,val problem:UpdateProblem?=null,val notice:Long=0,val installRequested:Boolean=false,val feed:UpdateFeed=UpdateFeed.STABLE)
 
 /** Application workflow, independent of Android/Compose. The host serializes
  * calls except cancellation, and retains this session when About closes. */
 class UpdateSession(private val engine:UpdateEngine,private val source:ReleaseSource,private val currentVersion:String,private val publish:(UpdateView)->Unit,
-    private val automaticAllowed:()->Boolean={true}) {
-    var view=UpdateView(status=UpdateStatus(engine.channel));private set
+    private val automaticAllowed:()->Boolean={true},initialNotice:Long=0) {
+    var view=UpdateView(status=UpdateStatus(engine.channel),notice=initialNotice);private set
     @Volatile private var checking:UpdateCancellation?=null
     @Volatile private var automatic=false
     private var attempted=false
@@ -29,8 +29,8 @@ class UpdateSession(private val engine:UpdateEngine,private val source:ReleaseSo
         show(view.copy(checking=true,problem=null,installRequested=false))
         try{
             val latest=source.latest(cancel);cancel.check()
-            val newer=UpdatePolicy.compare(latest.version,currentVersion)>0
-            show(view.copy(checking=false,release=latest.takeIf{newer},checked=true))
+            val newer=latest!=null&&UpdatePolicy.compare(latest.version,currentVersion)>0
+            show(view.copy(checking=false,release=latest?.takeIf{newer},checked=true))
             if(isAutomatic&&newer)pendingAutomatic=latest
         }catch(error:Exception){
             show(view.copy(checking=false,problem=if(isAutomatic||(error as? UpdateFailure)?.problem==UpdateProblem.CANCELLED)null else UpdateProblem.CHECK))

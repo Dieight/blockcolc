@@ -1,9 +1,12 @@
 package com.blockcolc.preview
 
+import android.app.Activity
+import android.app.KeyguardManager
 import android.content.Context
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
 import android.os.SystemClock
 import com.blockcolc.domain.*
 import com.blockcolc.focus.*
@@ -43,7 +46,8 @@ data class PreviewSnapshot(val ready: Boolean = false, val error: String? = null
     val choices:List<ProjectChoice> = emptyList(),val reportPool:ReportPool?=null,val planId:String?=null,val plannedFocusMs:Long?=null,
     val timer:TimerPresentation?=null,val uiResources:UiResources?=null,val workspace:WorkspaceProjection?=null,val blueprintNames:Map<String,String> = emptyMap(),
     val receipts:List<UiReceipt> = emptyList(),val setupRequired:Boolean=false,val tutorialPending:Boolean=false,val generation:Long=0,val refreshRequired:Boolean=false,val dailyBackupFailed:Boolean=false,val automaticAuthorized:Boolean=false,
-    val blueprints:NativeBlueprintLibrary=NativeBlueprintLibrary(),val returnReminderKey:String?=null,val achievementAttention:Set<String> = emptySet(),val achievementAttentionFailed:Boolean=false,val roomContext:String?=null,val backupListingReady:Boolean=false,val backupImportIssue:BackupImportIssue?=null)
+    val blueprints:NativeBlueprintLibrary=NativeBlueprintLibrary(),val returnReminderKey:String?=null,val achievementAttention:Set<String> = emptySet(),val achievementAttentionFailed:Boolean=false,val roomContext:String?=null,val backupListingReady:Boolean=false,val backupImportIssue:BackupImportIssue?=null,
+    val extensionStartedAt:String?=null)
 
 /** One process-wide writer, including receiver/service entry. No renderer or main-thread storage. */
 class PreviewRuntime private constructor(private val context: Context):WorkspaceActions,AchievementReceiptActions {
@@ -112,6 +116,7 @@ class PreviewRuntime private constructor(private val context: Context):Workspace
     }
     private val listeners = java.util.concurrent.CopyOnWriteArraySet<(PreviewSnapshot) -> Unit>()
     private val worldListeners=java.util.concurrent.CopyOnWriteArraySet<(CommittedWorldInput)->Unit>()
+    private val cloudFocusListeners=java.util.concurrent.CopyOnWriteArraySet<()->Unit>()
     private val celebrationState=androidx.compose.runtime.mutableStateOf(NativeCelebrations())
     var celebrations:NativeCelebrations
         get()=celebrationState.value
@@ -126,6 +131,8 @@ class PreviewRuntime private constructor(private val context: Context):Workspace
     @Volatile var committedWorld:CommittedWorldInput?=null;private set
     @Volatile var latest = PreviewSnapshot(); private set
     private var initialized = false
+    private var lastCloudFocus:CloudFocusMoment?=null
+    private data class CloudFocusMoment(val database:String,val databaseGeneration:Long,val activeId:String?,val phase:PlanPhase?,val deadline:String?)
     private data class PendingBackup(val backup:ParsedBackup,val original:NativeBackupImportFile,val summary:String)
     private var pendingImport:PendingBackup?=null
     private var importIssue:BackupImportIssue?=null
@@ -158,8 +165,28 @@ class PreviewRuntime private constructor(private val context: Context):Workspace
         check(Looper.myLooper()==Looper.getMainLooper());worldListeners.add(listener);committedWorld?.let(listener)
         return {worldListeners.remove(listener)}
     }
-    fun start() = enqueue("startup") { c -> c.resume(System.currentTimeMillis()){ "resume:${id()}" } }
+    internal fun subscribeCloudFocus(listener:()->Unit):()->Unit{
+        cloudFocusListeners.add(listener)
+        return {cloudFocusListeners.remove(listener)}
+    }
+    fun start() = enqueue("startup") { c ->
+        // The Activity can resume while the actor is still opening the DB.
+        // Reconcile deadlines and the saved foreground observation together.
+        c.observeLifecycle(true,"app-switch",System.currentTimeMillis()){ "resume:${id()}" }
+    }
+    private fun observeCloudFocus(state:StoredState){
+        if((recordingTest&&!cloudTesting)||!cloudGate.ownsAccountExecution())return
+        val active=state.domain.activeFocusSession()
+        val plan=state.recovery.plan
+        val moment=CloudFocusMoment(databaseName(),state.token.replacementGeneration,active?.getString("id"),plan?.phase,
+            active?.getString("endsAt")?:plan?.phaseEndsAt)
+        if(moment==lastCloudFocus)return
+        lastCloudFocus=moment
+        if(!recordingTest)NativeCloudController.get(context,this).start()
+        cloudFocusListeners.forEach{it()}
+    }
     private fun committedEvents(result:Operation){
+        if(!result.replayed)observeCloudFocus(result.state)
         val target=celebrations
         if(!result.replayed&&result.events.isNotEmpty()){
             val completion=ProjectCompletion.from(result.state.domain,result.events)
@@ -297,6 +324,7 @@ class PreviewRuntime private constructor(private val context: Context):Workspace
             return
         }
         actor.execute {
+            if(lifecycle&&name!="startup"&&!initialized)return@execute
             if(gated)publish(latest.copy(busy=true,message=null))
             val begin = SystemClock.elapsedRealtimeNanos()
             var acknowledged:Operation?=null
@@ -403,10 +431,11 @@ class PreviewRuntime private constructor(private val context: Context):Workspace
         val plan=state.recovery.plan
         val phase=plan?.phase?.name?:if(active!=null)"FOCUS" else "IDLE"
         val round=plan?.completedSessionIds?.size?:0;val count=plan?.totalRounds?:0
-        val heading=when(phase){"FOCUS"->"专注中 第 ${round+1}/${maxOf(1,count)}轮";"REST"->"休息中";"REPORT"->"汇报本次推进";"READY"->"准备下一轮";else->"把专注慢慢建成世界"}
+        val heading=when(phase){"FOCUS"->if(plan?.extensionStartedAt!=null)"加时专注"else"专注中 第 ${round+1}/${maxOf(1,count)}轮";"REST"->"休息中";"REPORT"->"汇报本次推进";"READY"->"准备下一轮";else->"把专注慢慢建成世界"}
         val detail=active?.takeUnless{it.isNull("subtaskId")}?.getString("subtaskId")?.let(subtaskTitle)?:if(phase=="READY")"剩余专注总时间" else ""
         return FocusSurface(phase,round,count,heading,detail)
     }
+    private fun RecoveryContext.keepDeadlineService()=automatic!=null||plan?.let{it.extendAfterPlan&&it.phase in setOf(PlanPhase.FOCUS,PlanPhase.REST)}==true
 
     /** A system-only wake still reconciles and schedules the absolute
      * deadline. There is no screen to prepare until the first Activity load. */
@@ -423,7 +452,8 @@ class PreviewRuntime private constructor(private val context: Context):Workspace
         val preferences=clientPreferences.load()
         val display=latest.copy(phase=phase,round=round,rounds=count,heading=heading,detail=detail,ticket=c.deadline(state),
             revision=state.token.revision,generation=state.token.replacementGeneration,planMode=state.recovery.plan?.mode,planId=state.recovery.plan?.id,
-            preferences=preferences.value,preferencesReadFailed=preferences.readFailed,automaticAuthorized=state.recovery.automatic!=null,
+            preferences=preferences.value,preferencesReadFailed=preferences.readFailed,automaticAuthorized=state.recovery.keepDeadlineService(),
+            extensionStartedAt=state.recovery.plan?.extensionStartedAt?.takeIf{phase=="FOCUS"},
             returnReminderKey=state.recovery.returnReminder?.takeIf{it.database==c.databaseIdentity}?.key)
         publish(display)
         projectFocusPlatform(c,display,events){ack->adoptPlatformOnly(c,ack,emptyList())}
@@ -488,8 +518,9 @@ class PreviewRuntime private constructor(private val context: Context):Workspace
             roots = root, revision = state.token.revision, progress = projects.firstOrNull { it.id == "complex-0" }?.progress,planMode=p?.mode,
             preferences=preferences.value,preferencesReadFailed=preferences.readFailed,preferencesSaving=pendingPreferences.get()>0,
             choices=FocusChoices.projects(s),reportPool=ReportPool.from(s,state.recovery),planId=p?.id,plannedFocusMs=p?.focusDurationMs,
-            timer=TimerPresentation.from(s,state.recovery,preferences.value,now),uiResources=uiResources,workspace=workspace,blueprintNames=blueprintNames.orEmpty(),
-            receipts=receipt(uiRequest,true),busy=uiPending.get(),setupRequired=!setupFinishedInProcess&&uiPrefs.getBoolean("setupRequired",false)&&projects.isEmpty()&&history.isEmpty(),tutorialPending=uiPrefs.getBoolean("tutorialPending",false),generation=state.token.replacementGeneration,dailyBackupFailed=latest.dailyBackupFailed,automaticAuthorized=state.recovery.automatic!=null,blueprints=library,returnReminderKey=state.recovery.returnReminder?.takeIf{it.database==c.databaseIdentity}?.key,achievementAttention=attention.getOrDefault(emptySet()),achievementAttentionFailed=attention.isFailure,roomContext=room)
+            timer=TimerPresentation.from(s,state.recovery,preferences.value,now,events),uiResources=uiResources,workspace=workspace,blueprintNames=blueprintNames.orEmpty(),
+            receipts=receipt(uiRequest,true),busy=uiPending.get(),setupRequired=!setupFinishedInProcess&&uiPrefs.getBoolean("setupRequired",false)&&projects.isEmpty()&&history.isEmpty(),tutorialPending=uiPrefs.getBoolean("tutorialPending",false),generation=state.token.replacementGeneration,dailyBackupFailed=latest.dailyBackupFailed,automaticAuthorized=state.recovery.keepDeadlineService(),blueprints=library,returnReminderKey=state.recovery.returnReminder?.takeIf{it.database==c.databaseIdentity}?.key,achievementAttention=attention.getOrDefault(emptySet()),achievementAttentionFailed=attention.isFailure,roomContext=room,
+            extensionStartedAt=p?.extensionStartedAt?.takeIf{phase=="FOCUS"})
         val identity=WorldRequestIdentity(c.databaseIdentity,state.token.replacementGeneration,state.token.revision)
         // Plan-only writes and the proven session splice have no world
         // changes. Keep the render request alive, but publish the new
@@ -540,19 +571,28 @@ class PreviewRuntime private constructor(private val context: Context):Workspace
                     return@execute
                 }
                 val c = NativeStartupTrace.measure("receiver-open",benchmark=true){open(prepareAssets=false)}
-                if((!recordingTest||cloudTesting)&&!cloudGate.canExecute()){platform.update(null,latest);return@execute}
+                if((!recordingTest||cloudTesting)&&!cloudGate.canExecute()){
+                    NativeStartupTrace.point("receiver-execution-not-owned")
+                    platform.update(null,latest);return@execute
+                }
                 val now=System.currentTimeMillis()
                 // Reject another database/generation/session and early wakes
                 // before packaged-asset preparation can write anything.
-                if(ticket!=null&&(ticket!=c.deadline(c.load())||now<DomainTime.millis(ticket.end)))return@execute
-                prepareRewards(c)
+                if(ticket!=null){
+                    val expected=NativeStartupTrace.measure("receiver-read-ticket",benchmark=true){c.deadline(c.load())}
+                    if(ticket!=expected){NativeStartupTrace.point("receiver-stale-ticket");return@execute}
+                    if(now<DomainTime.millis(ticket.end)){NativeStartupTrace.point("receiver-early-ticket");return@execute}
+                }
+                NativeStartupTrace.measure("receiver-reward-preparation",benchmark=true){prepareRewards(c)}
                 val begin = SystemClock.elapsedRealtimeNanos()
                 val result = if(ticket==null) {
                     // Boot, clock and permission changes only ask us to look at
                     // current facts. There is no external command to acknowledge.
                     NativeStartupTrace.measure("system-observation"){c.resume(now){"system:${id()}"}}
-                } else NativeStartupTrace.measure("deadline-delivery") {
-                    c.reconcile("deadline:${StrictJson.sha(StrictJson.render(ticket.json())).take(64)}", now, ticket)
+                } else NativeStartupTrace.measure("deadline-delivery",benchmark=true) {
+                    if(BuildConfig.BUILD_TYPE=="benchmark")NativeStartupTrace.measureDeadlineWrite{
+                        c.reconcile("deadline:${StrictJson.sha(StrictJson.render(ticket.json())).take(64)}",now,ticket)
+                    }else c.reconcile("deadline:${StrictJson.sha(StrictJson.render(ticket.json())).take(64)}",now,ticket)
                 }
                 committedEvents(result)
                 val events=result.events+result.signals
@@ -778,6 +818,14 @@ class PreviewRuntime private constructor(private val context: Context):Workspace
         check(!recordingTest||cloudTesting){"TEST_WORKSPACE"};val c=open(prepareAssets=false);val state=c.load()
         CloudLocal(c.databaseIdentity,state.token,state.domain,state.recovery,clientPreferences.load().value,checkNotNull(store).cloudBaseline(account))
     }
+    internal fun cloudPresenceCapture(account:String,knownExecution:Long):Future<Pair<StoredState,Long>?> = actor.submit<Pair<StoredState,Long>?>{
+        check(!recordingTest||cloudTesting){"TEST_WORKSPACE"}
+        if(!cloudGate.ownsAccountExecution())return@submit null
+        val c=open(prepareAssets=false)
+        // A fresh claim can change the fence without changing any workspace row.
+        val fence=knownExecution.takeIf{it>0}?:checkNotNull(store).cloudBaseline(account)?.execution?.takeIf{it>0}?:return@submit null
+        c.load() to fence
+    }
     internal fun cloudAcknowledge(expected:CloudLocal,baseline:CloudBaseline):Future<Unit> = actor.submit<Unit>{
         check((!recordingTest||cloudTesting)&&databaseName()==expected.database){"WORKSPACE_CHANGED"}
         check(open(prepareAssets=false).load().token.replacementGeneration==expected.token.replacementGeneration){"WORKSPACE_CHANGED"}
@@ -814,10 +862,17 @@ class PreviewRuntime private constructor(private val context: Context):Workspace
                     .onFailure{navigation.cancel();android.util.Log.w("BlockcolcP3","Settings activity unavailable",it)}}
         }
     }
+    internal fun activityStopped(activity: Activity) {
+        if (activity.isChangingConfigurations) return
+        // The display can become non-interactive before the keyguard reports
+        // that it is showing. Capture both signals at the transition.
+        val asleep = activity.getSystemService(PowerManager::class.java)?.isInteractive == false
+        val locked = activity.getSystemService(KeyguardManager::class.java)?.isKeyguardLocked == true
+        foreground(false, screenLocked = asleep || locked)
+    }
     fun foreground(foreground: Boolean, screenLocked: Boolean = false) {
         val reason=if(foreground){navigation.cancel();"app-switch"}else navigation.backgroundReason(screenLocked)
         actor.execute{dailyBackups.foreground(foreground);scheduleDaily()}
-        if (!initialized) return
         enqueue(if(foreground)"RecordFocusForegrounded"else"RecordFocusBackgrounded",lockUi=false){c->
             c.observeLifecycle(foreground,reason,System.currentTimeMillis()){id()}
         }

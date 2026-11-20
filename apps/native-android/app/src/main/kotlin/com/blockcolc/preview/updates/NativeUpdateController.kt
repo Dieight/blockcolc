@@ -14,6 +14,7 @@ import java.util.concurrent.TimeUnit
  * focus actor. Android's DownloadManager survives About/Activity/process exit. */
 class NativeUpdateController private constructor(context:Context) {
     private val app=context.applicationContext
+    private val preferences=app.getSharedPreferences("app-update",Context.MODE_PRIVATE)
     private val main=Handler(Looper.getMainLooper())
     private val worker=ScheduledThreadPoolExecutor(1){r->Thread(r,"blockcolc-updates")}.apply{removeOnCancelPolicy=true}
     private val listeners=CopyOnWriteArraySet<(UpdateView)->Unit>()
@@ -22,16 +23,35 @@ class NativeUpdateController private constructor(context:Context) {
     @Volatile private var enabled=false
     @Volatile private var operable=false
     @Volatile private var language="zh-CN"
-    @Volatile private var view=UpdateView()
+    @Volatile private var feed=if(preferences.getBoolean("beta",UpdatePolicy.isBeta(BuildConfig.PUBLIC_RELEASE_VERSION)))UpdateFeed.BETA else UpdateFeed.STABLE
+    private var sessionFeed:UpdateFeed?=null
+    @Volatile private var view=UpdateView(feed=feed)
     private val presentedNotice=java.util.concurrent.atomic.AtomicLong()
     private val checkRevision=java.util.concurrent.atomic.AtomicLong()
     private var poll:ScheduledFuture<*>?=null
     fun snapshot()=view
+    fun betaEnabled()=feed==UpdateFeed.BETA
+    fun selectBeta(enabled:Boolean){
+        val selection=if(enabled)UpdateFeed.BETA else UpdateFeed.STABLE
+        if(feed==selection)return
+        feed=selection
+        preferences.edit().putBoolean("beta",enabled).apply()
+        checkRevision.incrementAndGet()
+        session?.cancelCheck()
+        run{it.refresh();it.configure(this.enabled,visible,operable)}
+    }
     fun subscribe(listener:(UpdateView)->Unit):()->Unit{listeners+=listener;listener(view);return{listeners-=listener}}
     private fun publish(value:UpdateView){view=value;main.post{listeners.forEach{it(value)}}}
     fun claimNotice(notice:Long):Boolean{val old=presentedNotice.get();return notice>old&&presentedNotice.compareAndSet(old,notice)}
-    private fun current():UpdateSession=session?:UpdateSession(AndroidUpdates.engine(app,BuildConfig.PUBLIC_RELEASE_VERSION){language},PublicReleaseSource(),BuildConfig.PUBLIC_RELEASE_VERSION,::publish,
-        {enabled&&visible&&operable}).also{session=it}
+    private fun current():UpdateSession{
+        val selection=feed
+        session?.takeIf{sessionFeed==selection}?.let{return it}
+        val engine=AndroidUpdates.engine(app,BuildConfig.PUBLIC_RELEASE_VERSION,selection){language}
+        return UpdateSession(engine,PublicReleaseSource(selection),BuildConfig.PUBLIC_RELEASE_VERSION,
+            {state->if(feed==selection)publish(state.copy(feed=selection))},
+            {enabled&&visible&&operable&&feed==selection},initialNotice=view.notice,
+        ).also{sessionFeed=selection;session=it}
+    }
     private fun run(action:(UpdateSession)->Unit){worker.execute{
         try{action(current())}catch(error:Exception){publish(view.copy(checking=false,operating=false,problem=(error as? UpdateFailure)?.problem?:UpdateProblem.STORAGE))}
         schedule()

@@ -3,7 +3,6 @@ package com.blockcolc.preview.ui
 import androidx.compose.runtime.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.ui.unit.dp
-import androidx.compose.material3.Text
 import androidx.compose.ui.platform.LocalContext
 import com.blockcolc.preview.FocusPlatform
 
@@ -27,7 +26,7 @@ import com.blockcolc.preview.FocusPlatform
                 androidx.compose.foundation.layout.Column(androidx.compose.ui.Modifier.weight(1f)){
                     NativeText(title,NativeTextRole.BODY);NativeText(status,NativeTextRole.CAPTION,color=androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                FormalTextAction(t("系统设置","System settings"),"gear",{onOpen(platform.settingsIntent(kind))})
+                NativeAction(t("系统设置","System settings"),{onOpen(platform.settingsIntent(kind))},primary=false,icon="gear")
             }
         }
         row(t("通知权限","Notifications"),t(if(platform.notificationAllowed())"已开启"else"未开启",if(platform.notificationAllowed())"Enabled"else"Disabled"),"notifications")

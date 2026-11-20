@@ -30,7 +30,7 @@ class NativeResourceStructure internal constructor(val recipeKey:String,val stac
 class NativeResourceStructureCompiler(private val stack:ResourcePackStack,val textures:NativeAtlasTextures,
     private val palette:ResourceBiomePalette=ResourceBiomePalette.from(stack),private val styles:OriginalMaterialStyles=OriginalMaterialStyles(),
     private val assetBudget:Long=32L*1024*1024,private val structureBudget:Long=48L*1024*1024,private val specials:NativeResourceSpecialCompiler=NativeResourceSpecialCompiler(stack)){
-    private data class Query(val id:String,val state:List<Pair<String,String>>,val selection:String?)
+    private data class Query(val id:String,val state:Map<String,String>,val selection:String?)
     private data class Asset(val result:NativeResourceModelResult,val keys:List<String>,val bytes:Long)
     private data class PartKey(val shape:String,val page:Int,val alpha:String,val emission:EffectiveEmission,val response:OriginalResponse)
     private data class Group(val part:NativeResourceModelPart,val emission:EffectiveEmission,val response:OriginalResponse,val members:MutableList<Int>)
@@ -75,7 +75,7 @@ class NativeResourceStructureCompiler(private val stack:ResourcePackStack,val te
             if(styles.fluid(id)!=null){fallbacks[index]="FLUID_ROUTE";continue}
             val properties=v.sourceBlockState.orEmpty()
             val position=if(weighted(id))ResourceBlockPosition(v.x,v.y,v.z)else null
-            val query=Query(id,properties.toList().sortedBy{it.first},if(position==null)null else resolver.geometryChoiceKey(id,properties,position,cancelled))
+            val query=Query(id,properties,if(position==null)null else resolver.geometryChoiceKey(id,properties,position,cancelled))
             val asset=models[query]?:run{
                 val mapped=NativeResourceAtlasMapping.geometry(resolver.geometry(id,properties,position,cancelled),textures.atlas)
                 val decoded=NativeResourceGeometry.compile(id,properties,mapped,textures.atlas,palette,cancelled)
@@ -90,9 +90,11 @@ class NativeResourceStructureCompiler(private val stack:ResourcePackStack,val te
                     }
                     if(canonical===part)part else NativeResourceModelPart(part.page,part.alphaMode,canonical.geometry,part.resources)
                 })else decoded
-                val size=256L+query.id.length*2+query.state.sumOf{(it.first.length+it.second.length)*2L}+
+                val size=256L+query.id.length*2+query.state.entries.sumOf{(it.key.length+it.value.length)*2L}+
                     if(model is NativeResourceModelResult.Model)model.parts.sumOf{it.geometry.byteSize+256}else 64
-                Asset(model,keys,size).also{if(size<=assetBudget){models[query]=it;retainedBytes+=size;evict()}}
+                // A lookup can borrow the voxel's map. Only a new key needs
+                // to snapshot it; Map equality already ignores field order.
+                Asset(model,keys,size).also{if(size<=assetBudget){models[query.copy(state=properties.toMap())]=it;retainedBytes+=size;evict()}}
             }
             val result=asset.result
             if(result is NativeResourceModelResult.Fallback){
@@ -119,8 +121,12 @@ class NativeResourceStructureCompiler(private val stack:ResourcePackStack,val te
         val batches=groups.values.map{g->checkpoint(cancelled);val members=g.members.toIntArray();val matrices=NativePacketBuffers.floats(members.size*16)
             val ao=FloatArray(members.size);val face=IntArray(members.size)
             for((i,index)in members.withIndex()){
-                if(i%128==0)checkpoint(cancelled);val v=recipe.intact[index];val m=BlockTransform.translation(v.x-origin.x,v.y-origin.y,v.z-origin.z)
-                repeat(16){matrices.put(i*16+it,m[it].toFloat().also{n->require(n.isFinite())})};ao[i]=recipe.occlusion(index);face[i]=recipe.faceWord(index)
+                if(i%128==0)checkpoint(cancelled);val v=recipe.intact[index];val at=i*16
+                val x=(v.x-origin.x).toFloat();val y=(v.y-origin.y).toFloat();val z=(v.z-origin.z).toFloat()
+                require(x.isFinite()&&y.isFinite()&&z.isFinite())
+                repeat(12){matrices.put(at+it,BlockTransform.IDENTITY[it].toFloat())}
+                matrices.put(at+12,x);matrices.put(at+13,y);matrices.put(at+14,z);matrices.put(at+15,1f)
+                ao[i]=recipe.occlusion(index);face[i]=recipe.faceWord(index)
             }
             NativeResourceDrawBatch(g.part,g.emission,g.response,members,matrices,ao,face)
         }
@@ -142,6 +148,12 @@ class NativeResourcePackets(private val textures:NativeAtlasTextures,private val
         val active=(structure.batches.flatMap{it.part.resources}+structure.fluids?.batches.orEmpty().flatMap{it.resources}).toSet();val bindings=textures.forOwner(owner,active)
         structure.fluids?.let{NativeResourceFluidPackets(textures).append(target,owner,it,structure.sourceVoxels,placement,state,lod,cancelled,bindings)}
         val parent=placement.parent(structure.origin)
+        // Every local instance produced above is a pure translation. Its
+        // first three columns yield the same product once for the owner.
+        // Keep the full multiply's addition order and Float32 input rounding
+        // for the position column, including authored fractional positions.
+        val basis=parent*BlockTransform.IDENTITY
+        val leading=FloatArray(12){basis[it].toFloat().also{value->require(value.isFinite())}}
         for(batch in structure.batches){checkpoint();val part=batch.part;val response=library.response(batch.response);val surface=NativeSurfaceBinding(if(part.alphaMode=="translucent")0f else .025f)
             val strength=(batch.emission.level/15f)*1.55f
             val material=NativeRenderMaterial(color=LinearRgb.WHITE.let{c->val f=(1-weathering*.28).toFloat();LinearRgb(c.red*f,c.green*f,c.blue*f)},texture=bindings.getValue(part.page).color,
@@ -151,8 +163,11 @@ class NativeResourcePackets(private val textures:NativeAtlasTextures,private val
                 emissionStrength=state.nightFactor*strength,environment=NativeMaterialBinding(surface,if(strength==0f)null else strength))
             val matrix=batch.matrices();val transformed=NativePacketBuffers.floats(batch.instanceCount*16);val colors=NativePacketBuffers.floats(batch.instanceCount*4);val aux=NativePacketBuffers.floats(batch.instanceCount*4)
             val ao=batch.occlusion();val face=batch.faceWords()
-            repeat(batch.instanceCount){i->if(i%128==0)checkpoint();val world=parent*BlockTransform.fromElements(DoubleArray(16){matrix.get(i*16+it).toDouble()})
-                repeat(16){transformed.put(i*16+it,world[it].toFloat().also{v->require(v.isFinite())})}
+            repeat(batch.instanceCount){i->if(i%128==0)checkpoint();val at=i*16
+                val x=matrix.get(at+12).toDouble();val y=matrix.get(at+13).toDouble();val z=matrix.get(at+14).toDouble()
+                repeat(12){transformed.put(at+it,leading[it])}
+                repeat(4){row->val value=(parent[row]*x+parent[4+row]*y+parent[8+row]*z+parent[12+row]).toFloat()
+                    require(value.isFinite());transformed.put(at+12+row,value)}
                 repeat(3){colors.put(i*4+it,1-ao.get(i)*state.ambientOcclusion*.7f)};colors.put(i*4+3,1f)
                 aux.put(i*4,face.get(i).toFloat());aux.put(i*4+1,batch.response.code.toFloat())
             }

@@ -15,7 +15,7 @@ object NativeResourceFluidGeometry {
         val source=OriginalFluids.geometry(batch.faceMask,batch.waterlogged);val count=source.vertexCount
         val p=source.positions().let{a->FloatArray(a.remaining()){a.get()}};val n=source.normals().let{a->FloatArray(a.remaining()){a.get()}}
         val local=source.textureCoordinates()!!;val uv=FloatArray(count*2);val color=FloatArray(count*3);val face=FloatArray(count)
-        val page=atlas.pages.first{it.index==batch.page};val tiles=atlas.entries.filter{it.page==batch.page}.associateBy{it.pageTextureIndex}
+        val page=checkNotNull(atlas.page(batch.page))
         val angle=(entry.surface.packedMetadata-1_000_000)%32768*(PI*2)/4096
         val sin=.25*sin(angle);val cos=.25*cos(angle);val rgb=LinearRgb.fromSrgb(if(batch.kind==OriginalFluid.WATER)palette.water else 0xffffff)
         repeat(count){i->val slot=when{n[i*3+1]<-.5f->0;n[i*3+1]>.5f->1;n[i*3+2]<-.5f->2;n[i*3+2]>.5f->3;n[i*3]<-.5f->4;else->5};face[i]=slot.toFloat()
@@ -24,7 +24,7 @@ object NativeResourceFluidGeometry {
                 u=if(z<0)if(x<0).5-cos-sin else .5+cos-sin else if(x<0).5-cos+sin else .5+cos+sin
                 v=if(z<0)if(x<0).5-cos+sin else .5-cos-sin else if(x<0).5+cos+sin else .5+cos-sin
             }
-            val tile=checkNotNull(tiles[entry.faceTiles[slot]])
+            val tile=checkNotNull(atlas.entryAt(batch.page,entry.faceTiles[slot]))
             uv[i*2]=((tile.x+.5+u*(tile.width-1))/page.width).toFloat();uv[i*2+1]=((tile.y+.5+v*(tile.width-1))/page.height).toFloat()
             val shade=when(slot){0->.5f;1->1f;2,3->.8f;else->.6f};color[i*3]=rgb.red*shade;color[i*3+1]=rgb.green*shade;color[i*3+2]=rgb.blue*shade
         }
@@ -40,8 +40,9 @@ object NativeResourceFluidGeometry {
         val plan=NativeResourceFluidPlanner().plan(voxels,atlas,maximumWorkingBytes=budget,cancelled=cancelled);val draws=ArrayList<NativeResourceFluidPrepared.Draw>();var bytes=0L
         for(batch in plan.batches)for(entries in batch.entries.groupBy{it.faceTiles to if(it.surface.flowing)it.surface.packedMetadata%32768 else -1}.values){
             check();val geometry=compile(batch,entries.first(),atlas,palette);bytes+=geometry.byteSize+entries.size*96L;require(bytes<=budget){"Resource fluid geometry exceeds budget"}
-            val used=(0..5).filter{batch.faceMask and(1 shl it)!=0}.map{entries.first().faceTiles[it]}.toSet()
-            val resources=atlas.entries.filter{it.page==batch.page&&it.pageTextureIndex in used}.map{it.resourceId}.toSet()
+            val resources=(0..5).filter{batch.faceMask and(1 shl it)!=0}
+                .map{face->checkNotNull(atlas.entryAt(batch.page,entries.first().faceTiles[face])).resourceId}
+                .sorted().toSet()
             draws+=NativeResourceFluidPrepared.Draw(batch,geometry,java.util.Collections.unmodifiableList(entries.toList()),resources)
         }
         check();return NativeResourceFluidPrepared(plan,origin,atlas,draws)

@@ -19,7 +19,7 @@ class AndroidTerrainCache(context:Context,directory:File=File(context.cacheDir,"
         override val kind="terrain";override val fileName="terrain-v1.bin"
         override val headerBytes=TerrainMeshCodec.HEADER_BYTES;override val maximumBytes=TerrainMeshCodec.MAX_BYTES
         override fun isCandidate(key:String,header:ByteArray,length:Long)=TerrainMeshCodec.isCandidateHeader(key,header,length)
-        override fun encode(key:String,value:TerrainMesh,allocate:(Int)->ByteBuffer,cancelled:()->Boolean)=TerrainMeshCodec.encodeBuffer(key,value,allocate,cancelled)
+        override fun encode(key:String,value:TerrainMesh,allocate:(Int)->ByteBuffer,cancelled:()->Boolean)=TerrainMeshCodec.encodeBuffer(key,value,allocate,cancelled)?.let{listOf(it)}
         override fun decode(key:String,bytes:ByteBuffer,cancelled:()->Boolean)=TerrainMeshCodec.decodeBuffer(key,bytes,cancelled)
     }
 }

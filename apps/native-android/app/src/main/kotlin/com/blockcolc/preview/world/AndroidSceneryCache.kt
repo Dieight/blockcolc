@@ -19,7 +19,7 @@ class AndroidSceneryCache(context:Context,directory:File=File(context.cacheDir,"
         override val kind="scenery";override val fileName="scenery-v1.bin"
         override val headerBytes=SceneryCodec.HEADER_BYTES;override val maximumBytes=SceneryCodec.MAX_BYTES
         override fun isCandidate(key:String,header:ByteArray,length:Long)=SceneryCodec.isCandidateHeader(key,header,length)
-        override fun encode(key:String,value:WorldScenery,allocate:(Int)->ByteBuffer,cancelled:()->Boolean)=SceneryCodec.encodeBuffer(key,value,allocate,cancelled)
+        override fun encode(key:String,value:WorldScenery,allocate:(Int)->ByteBuffer,cancelled:()->Boolean)=SceneryCodec.encodeBuffer(key,value,allocate,cancelled)?.let{listOf(it)}
         override fun decode(key:String,bytes:ByteBuffer,cancelled:()->Boolean)=SceneryCodec.decodeBuffer(key,bytes,cancelled)
     }
 }

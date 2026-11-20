@@ -41,7 +41,8 @@ data class AnimalInitialState(val bounds:AnimalBounds,val center:AnimalPoint,val
         }
     }
 }
-data class AnimalCamera(val eye:DoubleArray,val target:DoubleArray,val fov:Double,val aspect:Double,val near:Double,val far:Double) {
+data class AnimalCamera(val eye:DoubleArray,val target:DoubleArray,val fov:Double,val aspect:Double,val near:Double,val far:Double,
+    val orthographic:Boolean=false) {
     private val forward=DoubleArray(3)
     private val right=DoubleArray(3)
     private val up=DoubleArray(3)
@@ -49,10 +50,11 @@ data class AnimalCamera(val eye:DoubleArray,val target:DoubleArray,val fov:Doubl
     private val tanX:Double
     private val cosX:Double
     private val cosY:Double
+    val distance:Double
     init{require(eye.size==3&&target.size==3&&(eye.toList()+target.toList()+listOf(fov,aspect,near,far)).all{it.isFinite()}
-        &&fov>0&&fov<179&&aspect>0&&near>0&&far>near)
+        &&fov>0&&fov<179&&aspect>0&&(orthographic||near>0)&&far>near)
         for(i in 0..2)forward[i]=target[i]-eye[i]
-        val length=sqrt(forward.sumOf{it*it});require(length>1e-8)
+        val length=sqrt(forward.sumOf{it*it});require(length>1e-8);distance=length
         for(i in 0..2)forward[i]/=length
         val horizontal=hypot(forward[0],forward[2]);require(horizontal>1e-8)
         right[0]=-forward[2]/horizontal;right[2]=forward[0]/horizontal
@@ -64,11 +66,12 @@ data class AnimalCamera(val eye:DoubleArray,val target:DoubleArray,val fov:Doubl
         val radius=if(a.kind=="bird")1.5 else 1.8
         val depth=px*forward[0]+py*forward[1]+pz*forward[2];if(depth+radius<near||depth-radius>far)return false
         val x=px*right[0]+pz*right[2];val y=px*up[0]+py*up[1]+pz*up[2]
+        if(orthographic)return abs(x)<=distance*tanX+radius&&abs(y)<=distance*tanY+radius
         return depth*tanX*cosX-abs(x)*cosX>=-radius&&depth*tanY*cosY-abs(y)*cosY>=-radius
     }
 }
 
-class NativeAnimalRuntime(input:AnimalHabitatInput,val initial:AnimalInitialState,activityScale:Double) {
+class NativeAnimalRuntime(input:AnimalHabitatInput,val initial:AnimalInitialState,activityScale:Double,private val paper:Boolean=false) {
     var activityScale:Double=activityScale;private set
     init{require(activityScale.isFinite()&&activityScale in .25..1.0)}
     fun updateActivityScale(value:Double){require(value.isFinite()&&value in .25..1.0);activityScale=value}
@@ -81,7 +84,7 @@ class NativeAnimalRuntime(input:AnimalHabitatInput,val initial:AnimalInitialStat
             a.ripple,a.jumpCooldown,a.school,a.waterY)
     }
     val community=NativeAnimalCommunity(habitat,initial.seed,agents,initial.sequence,initial.time)
-    val rig=AnimalRig()
+    val rig=AnimalRig(paper)
     private var lastAt=0L;private var lastFrame=0L;private var lastPose=0L
     private var visible=emptySet<Int>()
     private val births=initial.agents.associate{it.id to (it.position to it.heading)}
@@ -91,7 +94,7 @@ class NativeAnimalRuntime(input:AnimalHabitatInput,val initial:AnimalInitialStat
     var ownerReplacements=0;private set
     fun pause(){lastAt=0;lastFrame=0;community.suspend()}
     fun advance(nowNs:Long,camera:AnimalCamera,motion:Boolean):Boolean {
-        require(nowNs>0);if(lastFrame>0&&nowNs-lastFrame<31_000_000)return false
+        require(nowNs>0);if(lastFrame>0&&nowNs-lastFrame<(if(paper)45_000_000 else 31_000_000))return false
         val dt=if(lastAt>0)((nowNs-lastAt)/1e9).coerceIn(0.0,.12)else 0.0;lastAt=nowNs;lastFrame=nowNs
         val next=community.agents.filter{it.id !in suppressed&&camera.visible(it)}.map{it.id}.toSet();val changed=next!=visible;visible=next
         val responding=community.agents.any{it.response>0||it.ripple>0}
@@ -100,7 +103,7 @@ class NativeAnimalRuntime(input:AnimalHabitatInput,val initial:AnimalInitialStat
         if(motion){val began=System.nanoTime();community.pumpPlanning();planningMaxNs=max(planningMaxNs,System.nanoTime()-began)}
         val moving=community.agents.any{it.id in visible&&it.activity in setOf("walk","swim","jump","takeoff","fly","land")}
         if(!changed&&!responding&&!moving&&lastPose>0&&nowNs-lastPose<180_000_000)return false
-        rig.update(community.agents,community.time,visible);lastPose=nowNs;updates++;return true
+        rig.update(community.agents,community.time,visible,paper&&camera.orthographic&&camera.distance>110);lastPose=nowNs;updates++;return true
     }
     inner class OwnerUpdate internal constructor(private val collision:AnimalCollisionWorld.PreparedOwners,private val count:Int){
         fun commit(){collision.commit();ownerReplacements+=count;recoverAfterOwnerChange()}

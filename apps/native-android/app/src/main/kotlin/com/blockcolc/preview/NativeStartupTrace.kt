@@ -44,6 +44,9 @@ object NativeStartupTrace {
     internal fun <T> measureFocusWrite(work:()->T):T = measurePipeline("focus-write",work){name->
         name.startsWith("storage.")||name=="domain.execute"||name=="recovery.validate"||name=="json.sha"
     }
+    internal fun <T> measureDeadlineWrite(work:()->T):T = measurePipeline("deadline-write",work){name->
+        name.startsWith("storage.")||name=="domain.execute"||name=="recovery.validate"||name=="json.sha"
+    }
     internal fun <T> measureInitialRead(work:()->T):T = if(BuildConfig.BUILD_TYPE!="benchmark")work() else measurePipeline("first-read",work){name->
         name.startsWith("storage.")||name.startsWith("checkpoint.")||name=="blueprint.parallel-proof"||
             name=="blueprint.stream-validate"||name=="domain.validate"||name.startsWith("json.")

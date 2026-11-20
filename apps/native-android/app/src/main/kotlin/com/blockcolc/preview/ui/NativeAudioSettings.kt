@@ -25,8 +25,10 @@ import com.blockcolc.presentation.*
     val ui=LocalNativeUi.current;val current=preferences.ambience;val available=!library.busy
     var deleting by rememberSaveable{mutableStateOf<String?>(null)}
     fun change(transform:(Ambience)->Ambience)=update{it.copy(ambience=transform(it.ambience))}
-    NativeSettingGroup("白噪音",ui.text("环境录音、雨声与音量")){
-        NativeToggle(ui.text("自然白噪音"),ui.text("聚落共用 · 循环间随机留白"),current.enabled,available){value->change{it.copy(enabled=value)}}
+    NativeSettingGroup("白噪音"){
+        NativeToggle(ui.text("自然白噪音"),value=current.enabled,enabled=available,trailing={
+            NativeInfoAction(ui.text("自然白噪音"),ui.text("最多 8 份 · 单份 64 MiB · 主音轨仅播放一份"))
+        }){value->change{it.copy(enabled=value)}}
         AnimatedVisibility(current.enabled,enter=expandVertically(tween(if(ui.reduceMotion)0 else 200)),exit=shrinkVertically(tween(if(ui.reduceMotion)0 else 180))){
             Column{
                 val choices=listOf("forest-birds" to ui.text("清晨林中鸟鸣"),"shore-waves" to ui.text("贴岸小浪"))+library.items.map{it.id to it.name}
@@ -41,8 +43,9 @@ import com.blockcolc.presentation.*
                         library.items.find{it.id==id}?.let{item->NativeIconAction(ui.text("删除音频：{0}",title),"close",{deleting=item.id},enabled=available)}
                     }
                 }
-                NativeAction(ui.text("导入音频"),onImport,Modifier.fillMaxWidth(),pending=library.busy,enabled=available&&library.items.size<8,primary=false,icon="plus")
-                Text(ui.text("最多 8 份 · 单份 64 MiB · 主音轨仅播放一份"),style=MaterialTheme.typography.bodySmall)
+                NativeSeparator()
+                NativeInlineAction(ui.text("导入音频"),onImport,"plus",ui.text("选择文件"),
+                    pending=library.busy,enabled=available&&library.items.size<8)
             }
         }
         NativeSeparator()

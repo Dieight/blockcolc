@@ -265,12 +265,12 @@ class P3NativePagesTest {
                 }
                 val old=visibleFrame(0,-1);initialFrame=old;screen("resource-picker-original")
                 nav("设置");compose.onNodeWithText("方块材质包").performScrollTo().performClick()
-                compose.onNodeWithText("导入材质包").performScrollTo().performClick()
+                compose.onNodeWithContentDescription("导入材质包").performScrollTo().performClick()
                 val device=androidx.test.uiautomator.UiDevice.getInstance(instrumentation)
                 assertTrue(device.wait(androidx.test.uiautomator.Until.gone(androidx.test.uiautomator.By.pkg(context.packageName)),10000));device.pressBack()
                 assertTrue(device.wait(androidx.test.uiautomator.Until.hasObject(androidx.test.uiautomator.By.pkg(context.packageName)),10000))
                 compose.waitForIdle();assertEquals(originalIds,library().metadata!!.items.map{it.id}.toSet());cancelled=true
-                compose.onNodeWithText("导入材质包").performScrollTo().performClick()
+                compose.onNodeWithContentDescription("导入材质包").performScrollTo().performClick()
                 val pickerRow=device.wait(androidx.test.uiautomator.Until.findObject(androidx.test.uiautomator.By.textContains(stem)),10000)
                 assertNotNull("The document picker did not expose the owned ZIP fixture",pickerRow);pickerRow.click()
                 if(!device.wait(androidx.test.uiautomator.Until.hasObject(androidx.test.uiautomator.By.pkg(context.packageName)),1500)){
@@ -762,6 +762,50 @@ class P3NativePagesTest {
         File(context.filesDir,"p3-world-host-color.json").writeText(JSONObject().put("schema",1).put("caseLabel",group).put("before",before).put("first",first).put("resumed",resumed)
             .put("scope","Real preference subscription and stable Compose world host; no UI button or performance approval").toString())
     }
+    @Test fun paperQualityFromSettingsReachesBothTimerModesWithSameFrameGlass()=run(configure={
+        it.copy(lightingQuality="performance",minimalMode=false,focusGlassTransparency=100)
+    }){
+        nav("设置")
+        val paper=compose.onNodeWithText("纸雕").performScrollTo()
+        val smooth=compose.onNodeWithText("流畅")
+        assertTrue(paper.fetchSemanticsNode().boundsInRoot.left<smooth.fetchSemanticsNode().boundsInRoot.left)
+        paper.performClick()
+        compose.waitUntil(10000){!runtime.latest.preferencesSaving&&runtime.latest.preferences.lightingQuality=="paper"}
+        compose.onNodeWithText("极简模式").performScrollTo().performClick()
+        compose.waitUntil(10000){!runtime.latest.preferencesSaving&&runtime.latest.preferences.minimalMode}
+        nav("计时")
+        compose.onNodeWithTag("formal-normal-workbench").assertIsDisplayed()
+        fun ready():JSONObject {
+            var selected=JSONObject()
+            compose.waitUntil(90000){renderedWorld()?.let{world->
+                selected=worldDiagnostic(world,false)
+                selected.optLong("gpuReadyFrames")>0&&selected.isNull("pendingPresentation")&&!selected.optBoolean("failed")&&
+                    selected.optJSONObject("colorPipeline")?.optJSONObject("config")?.optInt("sampleCount")==1
+            }==true}
+            return selected
+        }
+        val ordinary=ready()
+        val world=checkNotNull(renderedWorld())
+        compose.waitUntilDoesNotExist(hasText("准备世界…"),20000)
+        screen("paper-ordinary")
+        compose.onNodeWithText("极简").performClick()
+        compose.waitUntilDoesNotExist(hasTestTag("mode-transition"),20000)
+        compose.onNodeWithTag("formal-minimal-panel").assertIsDisplayed()
+        compose.waitUntil(15000){
+            worldDiagnostic(world,false).getJSONObject("colorPipeline").optInt("glassRegions")>0
+        }
+        val minimal=ready()
+        assertEquals("same-frame-gpu",minimal.getJSONObject("colorPipeline").getString("glassSampling"))
+        assertEquals(ordinary.getLong("presentationIdentity"),minimal.getLong("presentationIdentity"))
+        screen("paper-minimal")
+        compose.onNodeWithTag("formal-minimal-panel").performTouchInput{doubleClick(Offset(width*.5f,height*.94f))}
+        compose.onNodeWithText("返回普通模式").performClick()
+        compose.waitUntilDoesNotExist(hasTestTag("mode-transition"),20000)
+        compose.onNodeWithTag("formal-normal-workbench").assertIsDisplayed()
+        assertSame(world,renderedWorld())
+        assertEquals(ordinary.getLong("presentationIdentity"),ready().getLong("presentationIdentity"))
+        compose.waitUntilDoesNotExist(hasText("准备世界…"),20000)
+    }
     @Test fun debugWeatherAndClockRestoreNormalFactsWithoutReplacingStaticWorldOwners()=run{
         compose.waitUntil(60000){renderedWorld()!=null}
         val world=checkNotNull(renderedWorld())
@@ -1076,7 +1120,13 @@ class P3NativePagesTest {
         compose.onNodeWithText("调整").performScrollTo().performClick()
         compose.onNodeWithContentDescription("减少轮数").assertIsNotEnabled()
         repeat(4){compose.onNodeWithContentDescription("增加轮数").performScrollTo().performClick()}
-        compose.onNode(hasText("5") and hasAnyAncestor(isDialog())).assertIsDisplayed()
+        val count=compose.onNode(hasText("5") and hasAnyAncestor(isDialog())).assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        val minus=compose.onNodeWithContentDescription("减少轮数").fetchSemanticsNode().boundsInRoot
+        val plus=compose.onNodeWithContentDescription("增加轮数").fetchSemanticsNode().boundsInRoot
+        assertEquals((minus.center.x+plus.center.x)/2,count.center.x,1f)
+        compose.onNodeWithContentDescription("减少轮数").performClick()
+        compose.onNode(hasText("4") and hasAnyAncestor(isDialog())).assertExists()
+        compose.onNodeWithContentDescription("增加轮数").performClick()
         compose.onNodeWithContentDescription("选择小任务").performScrollTo().performClick()
         compose.onNodeWithText("本次专注").assertIsDisplayed();screen("separate-task-selector")
         compose.onNodeWithText("第二章").performScrollTo().performClick()
@@ -1149,6 +1199,44 @@ class P3NativePagesTest {
     }
     @Test fun approvedUiUsesConsistentControlsAndReachableSheets()=consistentUiReview("zh-CN","dark","pixel",1f)
     @Test fun approvedUiKeepsLargeEnglishTextAndActionsReadable()=consistentUiReview("en","light","mixed",2f)
+
+    private fun integrityStopReturnsToInitialTimer(mode: PlanMode) = run(configure = { it.copy(minimalMode = mode == PlanMode.MINIMAL) }) {
+        val now = System.currentTimeMillis()
+        runtime.testOperation { c ->
+            c.command("integrity-policy", DomainEngine.command("ConfigureFocusIntegrity", "enabled" to true,
+                "maxEffectiveExcursions" to 2, "excursionThresholdSeconds" to 2), now)
+            c.begin("integrity-start", PlanRequest("integrity-plan", "work", if (mode == PlanMode.MINIMAL) null else "first",
+                mode, 3, 120_000, 5000), true, now)
+        }.get(30, TimeUnit.SECONDS)
+        compose.waitUntilAtLeastOneExists(hasText("有效离开 0/2 次"), 15_000)
+        compose.waitUntilDoesNotExist(hasTestTag("mode-transition"), 10_000)
+        val clockBounds = compose.onNodeWithTag("formal-focus-time").fetchSemanticsNode().boundsInRoot
+
+        fun oneDeparture(index: Int) {
+            val left = System.currentTimeMillis()
+            runtime.testOperation { c ->
+                c.lifecycle("integrity-leave-$index", false, "app-switch", left)
+            }.get(30, TimeUnit.SECONDS)
+            android.os.SystemClock.sleep(2200)
+            runtime.testOperation { c ->
+                c.lifecycle("integrity-return-$index", true, "app-switch", System.currentTimeMillis())
+            }.get(30, TimeUnit.SECONDS)
+        }
+        oneDeparture(1)
+        compose.waitUntilAtLeastOneExists(hasText("有效离开 1/2 次"), 10_000)
+        assertEquals(clockBounds, compose.onNodeWithTag("formal-focus-time").fetchSemanticsNode().boundsInRoot)
+        oneDeparture(2)
+        compose.waitUntilAtLeastOneExists(hasText("已达离开次数上限，计划结束"), 15_000)
+        compose.onNodeWithText("有效离开 2/2 次").assertIsDisplayed()
+        compose.onNodeWithText("剩余专注总时间").assertDoesNotExist()
+        assertNull(runtime.latest.planId)
+        if (mode == PlanMode.MINIMAL) compose.onNodeWithTag("minimal-info-pager").assertIsDisplayed()
+        else compose.onNodeWithText("调整").assertIsDisplayed()
+    }
+
+    @Test fun focusIntegrityReturnsOrdinaryToItsWorkbench() = integrityStopReturnsToInitialTimer(PlanMode.ROUNDS)
+    @Test fun focusIntegrityReturnsMinimalToItsIdleClock() = integrityStopReturnsToInitialTimer(PlanMode.MINIMAL)
+
     private fun completeTwoRoundUiFlow(mode:PlanMode,habit:Boolean=false)=run(configure={it.copy(minimalMode=mode==PlanMode.MINIMAL)}){
         compose.waitUntil(60000){renderedWorld()?.let{worldDiagnostic(it).optLong("gpuReadyFrames")>0}==true}
         val project=if(habit)"habit"else"work"
@@ -1331,7 +1419,7 @@ class P3NativePagesTest {
         if(minimal)compose.onNode(hasText("写作工程") and hasClickAction()).performScrollTo().performClick()
         compose.onNodeWithText("完成小任务").performScrollTo().performClick()
         if(minimal){
-            compose.onNodeWithContentDescription("增加").performScrollTo().performClick()
+            compose.onNodeWithContentDescription("增加轮数").performScrollTo().performClick()
             compose.onNodeWithText("一次提交本次推进").performScrollTo().performClick()
         }
         compose.waitUntil(30000){runtime.latest.planId==null&&!runtime.latest.busy}
@@ -1359,7 +1447,7 @@ class P3NativePagesTest {
         compose.onNodeWithText("全部关闭").performScrollTo().performClick()
         compose.waitUntilDoesNotExist(isDialog(),15000)
         if(minimal){
-            compose.onNodeWithText("返回完整模式").assertExists()
+            compose.onNodeWithText("返回普通模式").assertExists()
             compose.onNodeWithText("其他任务").assertDoesNotExist()
         }else{
             compose.onNodeWithText("其他任务").performScrollTo().assertIsDisplayed()
@@ -1574,11 +1662,13 @@ class P3NativePagesTest {
     }
     @Test fun birthdayDateSavingAndOffOnRoundTripsNeverLeaveTheSaveActionPending()=run{
         nav("设置")
-        fun toggle()=compose.onNodeWithText("生日祝福").performScrollTo().performClick()
+        compose.onNodeWithText("生日祝福").performScrollTo().performClick()
+        fun toggle()=compose.onNodeWithText("启用生日祝福").performScrollTo().performClick()
         fun saved(enabled:Boolean){compose.waitUntil(15000){runtime.latest.workspace?.settings?.birthday?.enabled==enabled&&!runtime.latest.busy}}
+        val save=compose.onNodeWithText("保存日期")
+        save.assertIsNotEnabled()
         toggle()
         compose.onNodeWithText("月份").assertDoesNotExist()
-        val save=compose.onNodeWithContentDescription("保存日期")
         save.performScrollTo().performClick();saved(true)
         compose.waitForIdle();save.assertIsNotEnabled().assert(SemanticsMatcher.keyNotDefined(SemanticsProperties.StateDescription))
         val revision=runtime.latest.revision
@@ -1596,7 +1686,7 @@ class P3NativePagesTest {
         val expected=com.blockcolc.world.importing.NativeLitematic.parse(java.io.ByteArrayInputStream(bytes))
         withOwnedDocument("litematic","application/octet-stream",bytes){stem->run{
             nav("设置");compose.onNodeWithText("蓝图库").performScrollTo().performClick()
-            compose.onNodeWithText("导入 .litematic").performScrollTo().performClick();chooseOwnedDocument(stem)
+            compose.onNodeWithContentDescription("导入 .litematic").performScrollTo().performClick();chooseOwnedDocument(stem)
             compose.waitUntilAtLeastOneExists(hasText("保存到建筑蓝图库"),15000)
             compose.onNodeWithContentDescription("Owned reversed blueprint完整建筑预览，可拖动旋转").assertExists()
             compose.waitUntilAtLeastOneExists(hasContentDescription("重置预览视角"),60000)
@@ -1617,14 +1707,14 @@ class P3NativePagesTest {
         }}
     }
     @Test fun minimalHourlyPanelUsesOccupiedTimeAndItsPagerReturnsBothWays()=run(configure={it.copy(minimalMode=true)}){
-        compose.onNodeWithText("返回完整模式").assertExists()
+        compose.onNodeWithText("返回普通模式").assertExists()
         compose.onNodeWithTag("minimal-info-pager").performTouchInput{swipeLeft()}
         compose.waitUntilAtLeastOneExists(hasTestTag("minimal-today-timeline"),10000)
         compose.onNodeWithTag("minimal-today-timeline").assertExists()
         assertEquals(0L,runtime.latest.workspace!!.todayTimeline!!.totalMs)
         screen("minimal-hourly-panel")
         compose.onNodeWithTag("minimal-today-timeline").performTouchInput{swipeRight()}
-        compose.onNodeWithText("返回完整模式").assertExists()
+        compose.onNodeWithText("返回普通模式").assertExists()
         compose.onNodeWithTag("minimal-today-timeline").assertIsNotDisplayed()
     }
     @Test fun twentyFiveSourceBuildingsUseTheActualWorkspaceAndKeepTheLastWorldDuringEnvironmentReplacement(){
@@ -1887,10 +1977,14 @@ class P3NativePagesTest {
             assertTrue("All seven weekdays fit the same setting row",bounds.left>=row.left&&bounds.right<=row.right)
         };screen("settings-weekdays")
         compose.onNodeWithTag("setting-世界色彩").performScrollTo()
+        val collapsedColour=compose.onNodeWithText("世界色彩").fetchSemanticsNode().boundsInRoot
+        compose.onNodeWithContentDescription("恢复默认").assertDoesNotExist()
         compose.onNodeWithText("世界色彩").performClick()
         val colour=compose.onNodeWithText("世界色彩").fetchSemanticsNode().boundsInRoot
         val reset=compose.onNodeWithContentDescription("恢复默认").fetchSemanticsNode().boundsInRoot
+        assertEquals(collapsedColour.center.y,colour.center.y,1f)
         assertEquals(colour.center.y,reset.center.y,context.resources.displayMetrics.density*8)
+        for(label in listOf("饱和度","亮度","对比度"))compose.onNodeWithContentDescription(label).assertExists()
         screen("settings-world-colour")
         compose.onNodeWithText("新手教程").performScrollTo();screen("settings-advanced-footer")
         compose.onNodeWithText("关于").performScrollTo().performClick();compose.onNodeWithContentDescription("blockcolc").assertIsDisplayed()
@@ -1922,7 +2016,7 @@ class P3NativePagesTest {
         compose.onNodeWithText("极简").performClick();compose.waitUntilDoesNotExist(hasTestTag("mode-transition"),15000)
         compose.onNodeWithText("正在准备视图").assertDoesNotExist();compose.onNodeWithTag("formal-minimal-panel").assertIsDisplayed()
         compose.onNodeWithTag("formal-minimal-panel").performTouchInput{doubleClick(Offset(width*.5f,height*.94f))}
-        compose.onNodeWithText("返回完整模式").performClick();compose.waitUntilDoesNotExist(hasTestTag("mode-transition"),15000)
+        compose.onNodeWithText("返回普通模式").performClick();compose.waitUntilDoesNotExist(hasTestTag("mode-transition"),15000)
         compose.onNodeWithTag("formal-normal-workbench").assertIsDisplayed()
         assertSame(world,renderedWorld());val after=worldDiagnostic(world)
         assertEquals(before.getLong("presentationIdentity"),after.getLong("presentationIdentity"))
@@ -2177,7 +2271,7 @@ class P3NativePagesTest {
         compose.waitUntil(15000){runCatching{compose.onNodeWithTag("formal-minimal-panel").assertIsDisplayed()}.isSuccess}
         val glass=compose.onNodeWithTag("formal-minimal-panel").fetchSemanticsNode().boundsInRoot
         assertEquals(266f*density,glass.height,2f)
-        compose.onNodeWithText("返回完整模式").assertDoesNotExist();screen("formal-minimal-idle")
+        compose.onNodeWithText("返回普通模式").assertDoesNotExist();screen("formal-minimal-idle")
         // Core controls are intentionally usable before any world View exists.
         // Observe the actual scene, not the time spent visiting the other tabs.
         compose.waitUntil(90000){renderedWorld()?.let{world->
@@ -2187,11 +2281,11 @@ class P3NativePagesTest {
         val world=checkNotNull(renderedWorld())
         compose.waitUntil(10000){worldDiagnostic(world).getJSONObject("colorPipeline").optInt("glassRegions")==1}
         compose.onNodeWithTag("formal-minimal-panel").performTouchInput{doubleClick(Offset(width*.5f,height*.94f))}
-        compose.onNodeWithText("返回完整模式").assertIsDisplayed();screen("formal-minimal-revealed")
+        compose.onNodeWithText("返回普通模式").assertIsDisplayed();screen("formal-minimal-revealed")
         compose.onNodeWithTag("minimal-info-pager").performTouchInput{swipeLeft()}
         compose.onNodeWithTag("minimal-today-timeline").assertIsDisplayed();screen("formal-minimal-today")
         compose.onNodeWithTag("minimal-info-pager").performTouchInput{swipeRight()}
-        compose.onNodeWithText("返回完整模式").performClick()
+        compose.onNodeWithText("返回普通模式").performClick()
         compose.waitUntilDoesNotExist(hasTestTag("mode-transition"),15000)
         compose.waitUntil(15000){runCatching{compose.onNodeWithTag("formal-normal-workbench").assertIsDisplayed()}.isSuccess}
         compose.onNodeWithText("调整").performClick();compose.waitUntilAtLeastOneExists(isDialog(),10000)
@@ -2213,7 +2307,7 @@ class P3NativePagesTest {
             assertSame(world,renderedWorld())
             compose.waitUntil(10000){worldDiagnostic(world).getJSONObject("colorPipeline").optInt("glassRegions")==1}
             compose.onNodeWithTag("formal-minimal-panel").performTouchInput{doubleClick(Offset(width*.5f,height*.94f))}
-            compose.onNodeWithText(text.text(language,"返回完整模式")).performClick()
+            compose.onNodeWithText(text.text(language,"返回普通模式")).performClick()
             compose.waitUntilDoesNotExist(hasTestTag("mode-transition"),15000)
             compose.onNodeWithTag("formal-normal-workbench").assertIsDisplayed();assertSame(world,renderedWorld())
             val restored=compose.onNodeWithTag("formal-normal-workbench").fetchSemanticsNode().boundsInRoot
@@ -2329,11 +2423,11 @@ class P3NativePagesTest {
         compose.setContent{com.blockcolc.preview.ui.NativeTheme(com.blockcolc.presentation.ClientPreferences(themeMode="light"),resources){
             androidx.compose.foundation.layout.Column(androidx.compose.ui.Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Color.White).padding(horizontal=20.dp),verticalArrangement=Arrangement.Center){
                 com.blockcolc.preview.ui.NativeToggle("测试开关",null,true,true){}
-                com.blockcolc.preview.ui.NativeSettingSlider("沉浸计时玻璃",value,0,100,true,saving,error){submitted=it;saving=true}
+                com.blockcolc.preview.ui.NativeSettingSlider("液态玻璃",value,0,100,true,saving,error){submitted=it;saving=true}
             }
         }}
-        compose.onNodeWithText("沉浸计时玻璃").performClick();compose.waitForIdle()
-        val slider=compose.onNodeWithContentDescription("沉浸计时玻璃")
+        compose.onNodeWithText("液态玻璃").performClick();compose.waitForIdle()
+        val slider=compose.onNodeWithContentDescription("液态玻璃")
         for(pullY in listOf(-48f,48f)){
             compose.runOnIdle{value=50;submitted=null;saving=false;error=null}
             val bounds=slider.fetchSemanticsNode().boundsInRoot

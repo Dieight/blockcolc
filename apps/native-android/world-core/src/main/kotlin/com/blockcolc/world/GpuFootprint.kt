@@ -35,7 +35,7 @@ data class GpuFootprint(val geometryBytes:Long,val instanceBytes:Long,val textur
                     val ref=u.optJSONObject(key);if(ref?.has("texture")==true)charge(ref.getInt("texture"))
                 }}
             }
-            return GpuFootprint(world.geometries.sumOf{it.vertexCount*64L+it.indexCount*4L},world.packets.sumOf{it.count*96L}+32,textureBytes)
+            return GpuFootprint(world.geometries.sumOf{it.gpuBytes},world.packets.sumOf{it.count*96L}+32,textureBytes)
         }
     }
 }

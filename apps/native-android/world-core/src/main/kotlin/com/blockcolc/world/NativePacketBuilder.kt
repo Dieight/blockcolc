@@ -116,7 +116,7 @@ class NativePacketSource internal constructor(val owner:String,val world:WorldPa
         val digest=MessageDigest.getInstance("SHA-256");digest.update(world.section(g.vertex));digest.update(world.section(g.index))
         "${g.vertexCount}:${g.indexCount}:"+digest.digest().joinToString(""){"%02x".format(it.toInt() and 255)}
     }?:emptyList())
-    val footprint:GpuFootprint=GpuFootprint(world?.geometries?.sumOf{it.vertexCount*64L+it.indexCount*4L}?:0,
+    val footprint:GpuFootprint=GpuFootprint(world?.geometries?.sumOf{it.gpuBytes}?:0,
         world?.packets?.sumOf{it.count*96L}?:0,textures.distinctBy{it.identity}.sumOf{it.gpuBytes}+(precipitation?.input?.ground?.texture?.gpuBytes?:0)+if(world?.materials?.any{JSONObject(it).isNull("texture")}==true)4 else 0)
     fun textureMetadata()=JSONArray(textures.mapIndexed{index,texture->texture.metadata(index)}).apply{precipitation?.input?.ground?.texture?.let{put(it.metadata(textures.size))}}
     fun validateRuntime(environment:NativeSceneEnvironment){
@@ -191,7 +191,8 @@ class NativePacketSource internal constructor(val owner:String,val world:WorldPa
  * files or a fixture manifest. Bounded owner payloads permit local updates.
  * Inputs must retain their immutable backing until build returns. */
 class NativePacketBuilder(val owner:String,val layer:NativePacketLayer=NativePacketLayer.STATIC,private val cloudKey:NativeCloudKey?=null,
-    private val precipitation:NativePrecipitationRuntime?=null,private val precipitationKey:NativePrecipitationKey?=null,private val skyKey:NativeSkyKey?=null) {
+    private val precipitation:NativePrecipitationRuntime?=null,private val precipitationKey:NativePrecipitationKey?=null,private val skyKey:NativeSkyKey?=null,
+    private val retainManifest: Boolean = false) {
     private data class Draw(val geometry:Int,val material:Int,val matrices:FloatBuffer,val colors:FloatBuffer?,val aux:FloatBuffer?,val count:Int,
         val cast:Boolean,val receive:Boolean,val priority:Int,val lod:SceneryLod?,val boundsOverride:BlockBox?)
     private val geometries=ArrayList<BlockGeometry>();private val geometryIds=IdentityHashMap<BlockGeometry,Int>()
@@ -209,7 +210,12 @@ class NativePacketBuilder(val owner:String,val layer:NativePacketLayer=NativePac
         require(geometry.vertexCount in 1..4_000_000&&geometry.bounds!=null&&matrices.remaining()%16==0)
         require(matrices.remaining()>0&&priority in 0..7)
         require((geometry.vertexPreparation=="atlas-static-v1")== (material.atlas!=null))
-        require(geometry.vertexPreparation==null||geometry.vertexPreparation=="atlas-static-v1")
+        require(geometry.vertexPreparation==null||geometry.vertexPreparation=="atlas-static-v1"||geometry is PaperFaceGeometry)
+        if (geometry is PaperFaceGeometry) {
+            require(layer == NativePacketLayer.STATIC && material.unlit && material.vertexColors && material.texture == null &&
+                material.environment == null && !castShadow && !receiveShadow && aux == null && matrices.remaining() == 16 &&
+                (0..15).all { matrices.get(matrices.position() + it) == if (it % 5 == 0) 1f else 0f })
+        }
         material.atlas?.let{require(it.owner==owner&&layer==NativePacketLayer.STATIC)}
         val count=matrices.remaining()/16;require(colors==null||colors.remaining()==count*4);require(aux==null||aux.remaining()==count*4)
         if(layer==NativePacketLayer.CLOUDS)require(aux!=null&&material.environment?.cloud==true&&material.surface.optics.cloud!=null&&!castShadow&&!receiveShadow&&lod==null)
@@ -234,9 +240,10 @@ class NativePacketBuilder(val owner:String,val layer:NativePacketLayer=NativePac
             val bits=f.toRawBits();val next=Float.fromBits(if(up==(f>0))bits+1 else bits-1);require(next.isFinite())
             return next.toDouble()
         }
-        val indexCounts=geometries.map{g->g.indices()?.remaining()?:g.vertexCount}
+        val indexCounts=geometries.map{g->if(g is PaperFaceGeometry)g.vertexCount/4*6 else g.indices()?.remaining()?:g.vertexCount}
         var length=16L
-        for((i,g)in geometries.withIndex()){require(indexCounts[i] in 3..12_000_000&&indexCounts[i]%3==0);length+=g.vertexCount*48L+indexCounts[i]*4L}
+        for((i,g)in geometries.withIndex()){require(indexCounts[i] in 3..12_000_000&&indexCounts[i]%3==0)
+            length+=g.vertexCount*(if(g is PaperFaceGeometry)PaperFaceGeometry.STRIDE else 48).toLong()+indexCounts[i]*4L}
         length+=draws.sumOf{it.count*(80L+if(it.aux!=null)16L else 0L)}
         require(length in 16..WorldPackets.MAX_BYTES.toLong()){"Native owner packet budget"}
         val bytes=NativePacketBuffers.allocate(length.toInt()).order(ByteOrder.LITTLE_ENDIAN);bytes.position(16);var sections=0
@@ -245,16 +252,25 @@ class NativePacketBuilder(val owner:String,val layer:NativePacketLayer=NativePac
         val geometryRows=JSONArray()
         val uploadedBounds=ArrayList<BlockBox>()
         for((id,g)in geometries.withIndex()) {
-            checkpoint();val position=g.positions();val normal=g.normals();val uv=g.textureCoordinates();val color=g.colors();val alpha=g.colorAlpha()
-            require(position.remaining()==g.vertexCount*3&&normal.remaining()==g.vertexCount*3&&(uv==null||uv.remaining()==g.vertexCount*2)&&(color==null||color.remaining()==g.vertexCount*3))
-            require(alpha==null||alpha.remaining()==g.vertexCount);require(g.vertexPreparation==null||color!=null&&alpha!=null&&uv!=null)
+            checkpoint()
             var start=bytes.position()
             val low=DoubleArray(3){Double.POSITIVE_INFINITY};val high=DoubleArray(3){Double.NEGATIVE_INFINITY}
-            repeat(g.vertexCount){i->if(i%1024==0)checkpoint();repeat(3){axis->val p=position.get();require(p.isFinite());bytes.putFloat(p);low[axis]=min(low[axis],p.toDouble());high[axis]=max(high[axis],p.toDouble())};repeat(3){bytes.putFloat(normal.get())}
-                repeat(2){bytes.putFloat(uv?.get()?:0f)};repeat(3){bytes.putFloat(color?.get()?:1f)};val a=alpha?.get()?:1f
-                require(a.isFinite()&&(g.vertexPreparation==null||a in 0f..5f&&a%1f==0f));bytes.putFloat(a)}
+            fun coordinate(axis:Int,p:Float){require(p.isFinite());low[axis]=min(low[axis],p.toDouble());high[axis]=max(high[axis],p.toDouble())}
+            if (g is PaperFaceGeometry) {
+                for(axis in 0..2){low[axis]=g.bounds.min[axis];high[axis]=g.bounds.max[axis]}
+                bytes.put(g.vertices())
+            } else {
+                val position=g.positions();val normal=g.normals();val uv=g.textureCoordinates();val color=g.colors();val alpha=g.colorAlpha()
+                require(position.remaining()==g.vertexCount*3&&normal.remaining()==g.vertexCount*3&&(uv==null||uv.remaining()==g.vertexCount*2)&&(color==null||color.remaining()==g.vertexCount*3))
+                require(alpha==null||alpha.remaining()==g.vertexCount);require(g.vertexPreparation==null||color!=null&&alpha!=null&&uv!=null)
+                repeat(g.vertexCount){i->if(i%1024==0)checkpoint();repeat(3){axis->val p=position.get();coordinate(axis,p);bytes.putFloat(p)};repeat(3){bytes.putFloat(normal.get())}
+                    repeat(2){bytes.putFloat(uv?.get()?:0f)};repeat(3){bytes.putFloat(color?.get()?:1f)};val a=alpha?.get()?:1f
+                    require(a.isFinite()&&(g.vertexPreparation==null||a in 0f..5f&&a%1f==0f));bytes.putFloat(a)}
+            }
             val vertex=section(start);start=bytes.position();val indices=g.indices()
-            if(indices==null)repeat(g.vertexCount){bytes.putInt(it)}else while(indices.hasRemaining()){if(indices.position()%4096==0)checkpoint();bytes.putInt(indices.get())}
+            if(g is PaperFaceGeometry)repeat(g.vertexCount/4){i->
+                val first=i*4;bytes.putInt(first).putInt(first+1).putInt(first+2).putInt(first).putInt(first+2).putInt(first+3)
+            }else if(indices==null)repeat(g.vertexCount){bytes.putInt(it)}else while(indices.hasRemaining()){if(indices.position()%4096==0)checkpoint();bytes.putInt(indices.get())}
             val actual=BlockBox(BlockPoint(low[0],low[1],low[2]),BlockPoint(high[0],high[1],high[2]));uploadedBounds+=actual
             geometryRows.put(JSONObject().put("id",id).put("vertex",vertex).put("index",section(start)).put("vertexCount",g.vertexCount).put("indexCount",indexCounts[id]).put("bounds",bounds(actual)).apply{if(g.vertexPreparation!=null)put("vertexPreparation",g.vertexPreparation)})
         }
@@ -285,7 +301,7 @@ class NativePacketBuilder(val owner:String,val layer:NativePacketLayer=NativePac
         val surfaces=materials.map{m->m.atlas?.let{a->val colorId=textureId(a.color)
             m.surface.copy(optics=m.surface.optics.copy(atlas=a.source(colorId,a.frames?.let{textureId(it)},a.blends?.let{textureId(it)})))}?:m.surface}
         val manifest=JSONObject().put("version",5).put("geometries",geometryRows).put("materials",materialRows).put("packets",packetRows)
-        checkpoint();val world=WorldPackets.read(manifest.toString(),bytes)
+        checkpoint();val world=WorldPackets.read(manifest.toString(),bytes,retainManifest,cancelled)
         checkpoint();return NativePacketSource(owner,world,textures,surfaces,materials.map{it.environment},layer,cloudKey,precipitation,precipitationKey,skyKey,schedules)
     }
 }

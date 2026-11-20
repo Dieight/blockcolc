@@ -57,7 +57,8 @@ def deploy(*, reuse_tls, viewer_web):
     subprocess.run(['node','tools/build.mjs'],cwd=ROOT/'services/cloud',check=True)
     label=time.strftime('%Y%m%d-%H%M%S')
     bundle=PRIVATE/('cloud-'+label+'.tar.gz')
-    files=list((ROOT/'services/cloud/src').glob('*.mjs'))+[ROOT/'services/cloud/build/domain.mjs']
+    files=(list((ROOT/'services/cloud/src').glob('*.mjs')) +
+           list((ROOT/'services/cloud/policy').glob('*.md')) + [ROOT/'services/cloud/build/domain.mjs'])
     with tarfile.open(bundle,'w:gz') as tar:
         for file in files: tar.add(file,arcname=file.relative_to(ROOT/'services/cloud'))
         if not reuse_tls:
@@ -137,6 +138,8 @@ Environment=BLOCKCOLC_EXTERNAL_CONFIG=/etc/blockcolc-cloud/external-focus.json
 EnvironmentFile=-/etc/blockcolc-cloud/viewer.env
 StateDirectory=blockcolc-cloud
 StateDirectoryMode=0700
+UMask=0077
+LimitCORE=0
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true

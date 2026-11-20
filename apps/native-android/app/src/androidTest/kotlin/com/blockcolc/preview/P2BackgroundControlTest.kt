@@ -43,6 +43,10 @@ class P2BackgroundControlTest {
             c.command("goal",DomainEngine.command("SetDailyGoal","date" to date,"targetPomodoros" to 1),now)
             c.command("birthday",DomainEngine.command("ConfigureBirthday","enabled" to true,"month" to date.substring(5,7).toInt(),"day" to date.substring(8).toInt()),now)
             c.command("observe",DomainEngine.command("ObserveBirthday"),now)
+            if (args.getString("protect") == "true") {
+                c.command("protection", DomainEngine.command("ConfigureFocusIntegrity", "enabled" to true,
+                    "maxEffectiveExcursions" to 1, "excursionThresholdSeconds" to 2), now)
+            }
             prepared=c.load().domain
             val exact=args.getString("endDurationMs")?.toLong()?.let{DomainTime.format(now+it)}
             c.confirm("confirm",PlanRequest(UUID.randomUUID().toString(),"complex-0",null,PlanMode.MINIMAL,rounds,focus,rest,exact),now)

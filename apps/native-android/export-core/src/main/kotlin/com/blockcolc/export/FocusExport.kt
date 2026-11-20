@@ -15,7 +15,10 @@ object FocusExport {
     fun project(state:StoredState,from:LocalDate,now:Long):Pair<JSONObject,JSONArray>{
         return projectData(state.domain.focusControlJson(),state.recovery,from,now)
     }
-    internal fun projectData(data:JSONObject,recovery:RecoveryContext,from:LocalDate,now:Long):Pair<JSONObject,JSONArray>{
+    fun presence(state:StoredState,now:Long):JSONObject=
+        projectData(state.domain.focusControlJson(),state.recovery,date(now),now,cloudPresence=true).first.getJSONObject("value")
+
+    internal fun projectData(data:JSONObject,recovery:RecoveryContext,from:LocalDate,now:Long,cloudPresence:Boolean=false):Pair<JSONObject,JSONArray>{
         val today=date(now);require(!from.isAfter(today))
         require(java.time.temporal.ChronoUnit.DAYS.between(from,today)<20_000)
         val active=data.optJSONObject("activeFocusSession")
@@ -41,7 +44,12 @@ object FocusExport {
         if(active!=null){
             start=DomainTime.millis(active.getString("startedAt"));end=DomainTime.millis(active.getString("endsAt"))
             name=when{active.optBoolean("deferredSettlement")->"极简模式";active.optBoolean("marathon")->"马拉松";else->"专注中"}
-            if(name=="专注中"){
+            val extension=if(cloudPresence)recovery.plan?.extensionStartedAt else null
+            if(extension!=null){start=DomainTime.millis(extension);end=null;name="专注中"}
+            else if(cloudPresence&&active.optBoolean("marathon")){
+                name="专注中"
+                end=recovery.plan?.exactEndAt?.let(DomainTime::millis)?:end
+            }else if(name=="专注中"){
                 val projects=data.getJSONArray("projects")
                 for(i in 0 until projects.length()) {val project=projects.getJSONObject(i);if(project.getString("id")==active.getString("projectId")){
                     val tasks=project.getJSONArray("subtasks");for(j in 0 until tasks.length()){val task=tasks.getJSONObject(j);if(task.getString("id")==active.optString("subtaskId"))name=task.getString("title")}
@@ -54,9 +62,9 @@ object FocusExport {
                 start=DomainTime.millis(plan.restStartedAt?:error("Exact saved rest start unavailable"));end=DomainTime.millis(plan.phaseEndsAt!!);name="休息"
             }
         }
-        if(start!=null)require(end!!>start&&start<=now)
+        if(start!=null)require((end==null||end>start)&&start<=now)
         val snapshot=JSONObject().put("currentName",name?:JSONObject.NULL).put("startedAt",start?.let(DomainTime::format)?:JSONObject.NULL)
-            .put("estimatedElapsedMs",if(start==null)0 else minOf(now,end!!)-start).put("estimatedEndsAt",end?.let(DomainTime::format)?:JSONObject.NULL).put("todayActualFocusMs",totals[today]?:0)
+            .put("estimatedElapsedMs",if(start==null)0 else minOf(now,end?:now)-start).put("estimatedEndsAt",end?.let(DomainTime::format)?:JSONObject.NULL).put("todayActualFocusMs",totals[today]?:0)
         return JSONObject().put("capturedAt",DomainTime.format(now)).put("value",snapshot) to days
     }
 }

@@ -38,7 +38,9 @@ import kotlinx.coroutines.withContext
             Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(10.dp)){NativeBrand();Text(ui.text("方块钟")+" · blockcolc",Modifier.weight(1f),style=MaterialTheme.typography.titleMedium)}
             Text(ui.text("版本 {0} ({1})",BuildConfig.VERSION_NAME,BuildConfig.VERSION_CODE),style=MaterialTheme.typography.bodySmall)
             Text(ui.text("任务、记录与蓝图默认保存在本机。"))
-            Text(ui.text("原生预览 · 尚未作为正式版交付"),style=MaterialTheme.typography.bodySmall)
+            if(BuildConfig.APPLICATION_ID!="com.blockcolc.app"){
+                Text(ui.text("原生预览 · 尚未作为正式版交付"),style=MaterialTheme.typography.bodySmall)
+            }
             NativeSeparator()
             NativeAction(ui.text("项目仓库"),{link(UpdatePolicy.REPOSITORY)},Modifier.fillMaxWidth(),primary=false,icon="map")
             NativeAction(ui.text("项目许可 · Apache-2.0"),{legal=NativeLegalCatalog.project},Modifier.fillMaxWidth(),primary=false,icon="tasks")
@@ -49,7 +51,7 @@ import kotlinx.coroutines.withContext
             }
             Text(ui.text("本应用不是 Minecraft 官方产品，未获 Mojang Studios 或 Microsoft 认可或关联。Minecraft 是其权利人的商标。"),style=MaterialTheme.typography.bodySmall)
             NativeSeparator()
-            NativeAction(ui.text("手动检查更新"),updates::check,Modifier.fillMaxWidth(),pending=view.checking,enabled=!view.operating,primary=false,icon="reset")
+            NativeInlineAction(ui.text("手动检查更新"),updates::check,"reset",pending=view.checking,enabled=!view.operating)
             val status=view.status;val release=view.release;val releaseAsset=release?.asset;val jobAsset=status?.asset;val version=jobAsset?.version?:release?.version.orEmpty()
             val moving=status?.phase in setOf(UpdatePhase.DOWNLOADING,UpdatePhase.PAUSED)
             val problem=view.problem?:status?.problem
@@ -63,6 +65,7 @@ import kotlinx.coroutines.withContext
                 moving->ui.text(if(status?.phase==UpdatePhase.PAUSED)"等待网络后继续下载 {0}" else "正在下载 {0}",version)
                 release!=null&&release.asset==null->ui.text("新版暂未提供可验证的安装包。")
                 release!=null->ui.text("发现新版本 {0}。",release.version)
+                view.checked&&view.feed==UpdateFeed.BETA->ui.text("测试通道没有较新的版本。")
                 view.checked->ui.text("当前已是最新公开版本 {0}。",BuildConfig.PUBLIC_RELEASE_VERSION)
                 else->ui.text("等待手动检查更新")
             }

@@ -10,12 +10,20 @@ import org.json.JSONObject
 import java.util.Collections
 import java.util.concurrent.CancellationException
 
-data class PreparedBuilding(val fact:WorldBuildingFact,val blueprint:BlueprintSnapshot,val placement:VillagePlacement,val recipe:BuildingInputRecipe,val originalGeometry:OriginalStructure)
+data class PreparedBuilding(val fact:WorldBuildingFact,val blueprint:BlueprintSnapshot,val placement:VillagePlacement,val recipe:BuildingInputRecipe,
+    private val standardGeometry:OriginalStructure?) {
+    val origin get()=blueprint.bounds.let{BlockPoint(it.minX.toDouble(),it.minY.toDouble(),it.minZ.toDouble())}
+    val originalGeometry get()=checkNotNull(standardGeometry)
+}
 
 /** x/z placement only. A subsequent terrain stage must lift rewards with the
  * actual surface sampler and create bottom support; the legacy y here is not
  * an adopted render transform and must never become a terrain-flattening pad. */
-data class RewardBeforeTerrain(val fact:WorldRewardFact,val blueprint:BlueprintSnapshot,val horizontalPlacement:DecorationPlacement,val recipe:BuildingInputRecipe,val originalGeometry:OriginalStructure)
+data class RewardBeforeTerrain(val fact:WorldRewardFact,val blueprint:BlueprintSnapshot,val horizontalPlacement:DecorationPlacement,val recipe:BuildingInputRecipe,
+    private val standardGeometry:OriginalStructure?) {
+    val origin get()=blueprint.bounds.let{BlockPoint(it.minX.toDouble(),it.minY.toDouble(),it.minZ.toDouble())}
+    val originalGeometry get()=checkNotNull(standardGeometry)
+}
 
 class WorldSpatialPlan internal constructor(val key:String,val environment:WorldEnvironment,val village:SupportedVillage,roads:List<RoadCell>,val roadGeometry:RoadGeometry) {
     val roads:List<RoadCell> = Collections.unmodifiableList(roads.toList())
@@ -51,7 +59,10 @@ class WorldPlanBuilder(private val sources:BlueprintSources=NativeBlueprintSourc
         if(cancelled()||Thread.currentThread().isInterrupted)throw CancellationException("World planning superseded")
     }
 
-    fun prepare(facts:WorldFacts,buildingCondition:Int?=null,cancelled:()->Boolean={false}):WorldCpuPlan {
+    fun prepare(facts:WorldFacts,buildingCondition:Int?=null,cancelled:()->Boolean={false}):WorldCpuPlan =
+        prepare(facts,buildingCondition,true,cancelled)
+
+    internal fun prepare(facts:WorldFacts,buildingCondition:Int?,prepareOriginal:Boolean,cancelled:()->Boolean):WorldCpuPlan {
         require(buildingCondition==null||buildingCondition in 0..10000)
         checkpoint(cancelled)
         require(facts.terrainVersion==4){"Only the current V4 world generator is supported"}
@@ -93,22 +104,27 @@ class WorldPlanBuilder(private val sources:BlueprintSources=NativeBlueprintSourc
             val blueprint=blueprints.getValue(fact.id)
             val recipe=com.blockcolc.preview.NativeStartupTrace.measure("layout-building-recipe"){recipes.prepare(owner,blueprint,fact.id,fact.completion,buildingCondition?:fact.condition,cancelled)}
             val origin=blueprint.bounds.let{BlockPoint(it.minX.toDouble(),it.minY.toDouble(),it.minZ.toDouble())}
-            val geometry=com.blockcolc.preview.NativeStartupTrace.measure("layout-building-geometry"){structures.prepare(owner,recipe,origin,cancelled)}
+            val geometry=if(prepareOriginal)com.blockcolc.preview.NativeStartupTrace.measure("layout-building-geometry"){structures.prepare(owner,recipe,origin,cancelled)}else null
             PreparedBuilding(fact,blueprint,byIndex.getValue(fact.settlementIndex),recipe,geometry)
         }}
         val horizontal=VillageLayout.decorations(rewardInputs.map { (building,reward,blueprint) ->
-            DecorationInput(reward.rewardId,reward.resourceId,reward.date,building.id,blueprint.bounds.footprint,Position2(reward.localX,reward.localZ),reward.quarterTurns)
+            val bounds=blueprint.bounds.footprint
+            val saved=Position2(reward.localX,reward.localZ)
+            val position=if(environment==WorldEnvironment.FLOATING)
+                SettlementSupport.floatingRewardOffset(byIndex.getValue(building.settlementIndex),bounds,saved)
+            else saved
+            DecorationInput(reward.rewardId,reward.resourceId,reward.date,building.id,bounds,position,reward.quarterTurns)
         },facts.buildings.map{DecorationHost(it.id,byIndex.getValue(it.settlementIndex))},spatial.roads,cancelled).associateBy{it.input.rewardId}
         val rewards=com.blockcolc.preview.NativeStartupTrace.measure("layout-rewards"){rewardInputs.map { (_,fact,blueprint) ->
             checkpoint(cancelled)
             val owner="reward:${fact.rewardId}";owners+=owner
             val recipe=recipes.prepare(owner,blueprint,owner,10000,10000,cancelled)
             val origin=blueprint.bounds.let{BlockPoint(it.minX.toDouble(),it.minY.toDouble(),it.minZ.toDouble())}
-            RewardBeforeTerrain(fact,blueprint,horizontal.getValue(fact.rewardId),recipe,structures.prepare(owner,recipe,origin,cancelled))
+            RewardBeforeTerrain(fact,blueprint,horizontal.getValue(fact.rewardId),recipe,if(prepareOriginal)structures.prepare(owner,recipe,origin,cancelled)else null)
         }}
         checkpoint(cancelled)
         val result=WorldCpuPlan(facts,spatial,buildings,rewards)
-        recipes.retainOwners(owners);structures.retainOwners(owners);lastSpatial=spatial
+        recipes.retainOwners(owners);structures.retainOwners(if(prepareOriginal)owners else emptySet());lastSpatial=spatial
         return result
     }
 
@@ -116,7 +132,10 @@ class WorldPlanBuilder(private val sources:BlueprintSources=NativeBlueprintSourc
         checkpoint(cancelled)
         val p=input.spatial.village
         val generatorOptions=TerrainOptions(input.spatial.environment,input.facts.seed,input.facts.terrainVersion,options.refinedFar)
-        val key=TerrainInputKey.key(p.placements,input.spatial.roads,p.pads,options.minimumRadius,generatorOptions)
+        val minimum=if(input.spatial.environment==WorldEnvironment.FLOATING)
+            SteppedTerrain.floatingMinimumRadius(p.placements,input.spatial.roads,p.pads,options.minimumRadius,input.rewards.map{it.horizontalPlacement})
+        else options.minimumRadius
+        val key=TerrainInputKey.key(p.placements,input.spatial.roads,p.pads,minimum,generatorOptions)
         var reuse=TerrainReuse.MEMORY
         val cached=lastTerrain?.takeIf{it.key==key}?:run {
             // These are optional CPU caches, not the displayed GPU scene.
@@ -127,7 +146,7 @@ class WorldPlanBuilder(private val sources:BlueprintSources=NativeBlueprintSourc
             val restored=try{terrainCache?.read(key,cancelled)}catch(_:CancellationException){checkpoint(cancelled);null}catch(_:Exception){null}
             checkpoint(cancelled)
             reuse=if(restored==null)TerrainReuse.GENERATED else TerrainReuse.PERSISTENT
-            val terrain=(restored?:SteppedTerrain.generate(p.placements,input.spatial.roads,p.pads,options.minimumRadius,generatorOptions,cancelled)).inNativeStorage(cancelled)
+            val terrain=(restored?:SteppedTerrain.generate(p.placements,input.spatial.roads,p.pads,minimum,generatorOptions,cancelled)).inNativeStorage(cancelled)
             CachedTerrain(key,terrain,TerrainSurfaceTable.from(terrain,cancelled))
         }
         val rewards=input.rewards.map{reward->checkpoint(cancelled);PreparedReward(reward,DecorationSupport.place(reward.horizontalPlacement,reward.blueprint,cached.surfaces,cancelled))}

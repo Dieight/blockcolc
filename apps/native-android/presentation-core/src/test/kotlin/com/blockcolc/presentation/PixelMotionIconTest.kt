@@ -5,6 +5,15 @@ import org.junit.Test
 import org.json.JSONObject
 
 class PixelMotionIconTest {
+    @Test fun bothRoundStepperGlyphsHaveMotion(){
+        val icons=UiResources.load().iconMotion
+        for(name in listOf("minus","plus")){
+            val motion=icons.getValue(name).motions.getValue("")
+            assertEquals(900,motion.duration)
+            assertTrue(motion.at(0f).scaleX<1f)
+            assertEquals(1f,motion.at(900f).scaleX,0f)
+        }
+    }
     @Test fun numericSvgPivotsUseViewCoordinatesEvenWhenTheViewboxStartsNegative(){
         // Browser getCTM probe fixes (5.5,5.5) at (130,130) in a 280px
         // viewport with viewBox -1 -1 14 14, before and after 90deg.

@@ -14,7 +14,11 @@ data class SourcePost(val bloom:Boolean,val threshold:Float,val knee:Float,val s
         val NONE=SourcePost(false,.72f,.22f,0f,0)
         // The source default framebuffer requests antialias:true (4 samples on
         // the GLES3 reference), whereas its explicit bloom target is bounded to 2.
-        fun native(quality:NativeLightingQuality)=if(quality==NativeLightingQuality.HIGH)SourcePost(true,.72f,.22f,.32f,2)else NONE.copy(direct=true,samples=4)
+        fun native(quality:NativeLightingQuality)=when(quality){
+            NativeLightingQuality.PAPER->NONE.copy(direct=true,samples=0)
+            NativeLightingQuality.HIGH->SourcePost(true,.72f,.22f,.32f,2)
+            else->NONE.copy(direct=true,samples=4)
+        }
         fun read(pipeline:JSONObject):SourcePost {
             val b=pipeline.getJSONObject("bloom");val enabled=b.get("enabled");require(enabled is Boolean)
             fun n(key:String):Float{val raw=b.get(key);require(raw is Number);val v=raw.toDouble();require(v.isFinite()&&v in 0.0..1.0);return v.toFloat()}

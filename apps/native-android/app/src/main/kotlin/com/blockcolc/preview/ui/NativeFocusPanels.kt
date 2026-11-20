@@ -35,6 +35,7 @@ data class PlanEditorModel(val token:String=UUID.randomUUID().toString(),val pro
     var revealed by rememberSaveable{mutableStateOf(false)}
     var hint by remember{mutableStateOf(true)}
     LaunchedEffect(Unit){kotlinx.coroutines.delay(3800);hint=false}
+    fun toggleEndControl(){revealed=!revealed;hint=false}
     val drawReceipt=if(BuildConfig.BUILD_TYPE=="benchmark"&&enabled){
         val reported=remember{booleanArrayOf(false)}
         Modifier.drawWithContent{
@@ -47,14 +48,14 @@ data class PlanEditorModel(val token:String=UUID.randomUUID().toString(),val pro
     }else Modifier
     Box(modifier.fillMaxWidth().heightIn(min=48.dp)
         .then(drawReceipt)
-        .pointerInput(enabled){detectTapGestures(onDoubleTap={if(enabled)revealed=true})}
+        .pointerInput(enabled){detectTapGestures(onDoubleTap={if(enabled)toggleEndControl()})}
         .onFocusChanged{if(it.hasFocus&&enabled)revealed=true}
-        .onKeyEvent{event->if(enabled&&event.type==KeyEventType.KeyDown&&event.key in listOf(Key.Enter,Key.Spacebar)){revealed=true;true}else false}
+        .onKeyEvent{event->if(enabled&&event.type==KeyEventType.KeyDown&&event.key in listOf(Key.Enter,Key.Spacebar)){toggleEndControl();true}else false}
         .semantics{
             contentDescription=ui.text("专注操作区")
-            customActions=listOf(CustomAccessibilityAction(ui.text("显示结束操作")){if(enabled){revealed=true;true}else false})
+            customActions=listOf(CustomAccessibilityAction(ui.text(if(revealed)"隐藏结束操作"else"显示结束操作")){if(enabled){toggleEndControl();true}else false})
         }.focusable(enabled),contentAlignment=Alignment.Center){
-        if(revealed)FormalGlassAction(ui.text("结束本次专注"),onEnd,enabled=enabled,danger=true)
+        if(revealed)FormalGlassAction(ui.text("结束本次专注"),onEnd,enabled=enabled,danger=true,onDoubleClick=::toggleEndControl)
         else if(hint)NativeText(ui.text("双击下方空白处唤出结束按钮"),NativeTextRole.CAPTION)
     }
 }
@@ -77,7 +78,7 @@ data class PlanEditorModel(val token:String=UUID.randomUUID().toString(),val pro
             androidx.activity.compose.BackHandler{choosingTask=false}
             for(p in s.choices){key(p.id){
                 NativeSeparator()
-                if(p.habit)FormalFocusChoice(p.title,if(p.canStart)ui.text("每座 {0} 轮",s.workspace?.projects?.find{it.id==p.id}?.habitTarget?:10)else ui.text("请先选择下一座建筑"),project==p.id,pending==null&&p.canStart,"repeat",habit=true){project=p.id;task=null;choosingTask=false}
+                if(p.habit)FormalFocusChoice(p.title,null,project==p.id,pending==null&&p.canStart,habit=true){project=p.id;task=null;choosingTask=false}
                 else {
                     var expanded by rememberSaveable(entry.token,p.id){mutableStateOf(p.id==project)}
                     NativeDisclosure(p.title,null,expanded,{expanded=it},titleStyle=MaterialTheme.typography.titleMedium,rowPadding=8.dp,contentSpacing=0.dp){
@@ -114,12 +115,15 @@ data class PlanEditorModel(val token:String=UUID.randomUUID().toString(),val pro
     }
 }
 
-@Composable private fun FormalFocusChoice(title:String,detail:String,selected:Boolean,enabled:Boolean,icon:String?=null,habit:Boolean=false,onClick:()->Unit){
+@Composable private fun FormalFocusChoice(title:String,detail:String?,selected:Boolean,enabled:Boolean,habit:Boolean=false,onClick:()->Unit){
     val ink=LocalContentColor.current
-    Row(Modifier.fillMaxWidth().heightIn(min=if(habit)60.dp else 48.dp).drawBehind{if(selected&&!habit)drawRect(ink,Offset.Zero,androidx.compose.ui.geometry.Size(2.dp.toPx(),size.height))}
+    Row(Modifier.fillMaxWidth().heightIn(min=if(habit)52.dp else 48.dp).drawBehind{if(selected&&!habit)drawRect(ink,Offset.Zero,androidx.compose.ui.geometry.Size(2.dp.toPx(),size.height))}
         .clickable(enabled=enabled,role=Role.RadioButton,interactionSource=remember{MutableInteractionSource()},indication=null,onClick=onClick).semantics{this.selected=selected}.padding(horizontal=if(habit)0.dp else 10.dp,vertical=8.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(8.dp)){
-        if(icon!=null)PixelGlyph(icon,Modifier.size(18.dp),ink)
-        Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(3.dp)){NativeText(title,NativeTextRole.BODY);NativeText(detail,NativeTextRole.CAPTION)}
+        Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(3.dp)){
+            if(habit)Text(title,style=MaterialTheme.typography.titleMedium,color=if(enabled)ink else MaterialTheme.colorScheme.onSurfaceVariant)
+            else NativeText(title,NativeTextRole.BODY,color=if(enabled)ink else MaterialTheme.colorScheme.onSurfaceVariant)
+            if(detail!=null)NativeText(detail,NativeTextRole.CAPTION)
+        }
         if(selected)PixelGlyph("check",Modifier.size(16.dp),ink)
     }
 }
@@ -128,7 +132,9 @@ data class PlanEditorModel(val token:String=UUID.randomUUID().toString(),val pro
     Row(Modifier.fillMaxWidth().heightIn(min=60.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(8.dp)){
         NativeText(ui.text("计划轮数"),NativeTextRole.BODY,Modifier.weight(1f))
         NativeIconAction(ui.text("减少轮数"),"minus",{onChange(value-1)},enabled=enabled&&value>1)
-        NativeText(value.toString(),NativeTextRole.SECTION,Modifier.widthIn(min=32.dp).semantics{stateDescription=ui.text("{0} 轮",value)},accent=true)
+        Box(Modifier.widthIn(min=36.dp).semantics{stateDescription=ui.text("{0} 轮",value)},contentAlignment=Alignment.Center){
+            NativeText(value.toString(),NativeTextRole.SECTION,accent=true)
+        }
         NativeIconAction(ui.text("增加轮数"),"plus",{onChange(value+1)},enabled=enabled&&value<24)
     }
 }
@@ -177,14 +183,16 @@ data class PlanEditorModel(val token:String=UUID.randomUUID().toString(),val pro
         var selected by rememberNativePageState<Int?>("report/${pool.planId}/selected"){null}
         Column(Modifier.fillMaxWidth(),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.spacedBy(10.dp)){
             PixelGlyph("check",Modifier.size(32.dp),MaterialTheme.colorScheme.primary)
-            NativeText(ui.text("本轮已记录"),NativeTextRole.CAPTION,color=MaterialTheme.colorScheme.primary)
+            val rounds=if(pool.totalRounds==1)ui.text("本轮已记录")else "${pool.totalRounds} ${ui.text("轮专注已结束")}"
+            val summary=if(pool.partialExtensionMs>0)"$rounds · ${formalClock(pool.totalDurationMs,countUp=true)}"else rounds
+            NativeText(summary,NativeTextRole.CAPTION,color=MaterialTheme.colorScheme.primary)
             Text(ui.text("这次工作推进到哪里？"),style=MaterialTheme.typography.titleLarge,textAlign=androidx.compose.ui.text.style.TextAlign.Center)
             Column(Modifier.padding(vertical=6.dp),horizontalAlignment=Alignment.CenterHorizontally){NativeText(target.title,NativeTextRole.BODY);NativeText(ui.text("当前")+" ${target.progress/100}%",NativeTextRole.CAPTION)}
             for(value in listOf(target.progress,2500,5000,7500,10000).distinct().filter{it>=target.progress}){
                 val label=if(selected==value&&delivered)ui.text("材料已送达！")else if(selected==value&&pending)ui.text("正在保存…")else if(value==target.progress)ui.text("保持 {0}%",value/100)else if(value==10000)ui.text("完成小任务")else ui.text("推进至 {0}%",value/100)
                 val enabled=!pending&&!delivered
                 val colors=MaterialTheme.colorScheme
-                Row(Modifier.fillMaxWidth().heightIn(min=48.dp).border(1.dp,if(value==10000)colors.primary else colors.outlineVariant).background(colors.surface.copy(alpha=.8f)).clickable(enabled=enabled,role=androidx.compose.ui.semantics.Role.Button,interactionSource=remember{MutableInteractionSource()},indication=null){selected=value;onSubmit(ReportDraft(pool.planId,listOf(TaskAllocation(target.projectId,target.taskId!!,value,1))))}.padding(12.dp).then(if(selected==value)feedbackDraw else Modifier),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(8.dp,Alignment.CenterHorizontally)){
+                Row(Modifier.fillMaxWidth().heightIn(min=48.dp).border(1.dp,if(value==10000)colors.primary else colors.outlineVariant).background(colors.surface.copy(alpha=.8f)).clickable(enabled=enabled,role=androidx.compose.ui.semantics.Role.Button,interactionSource=remember{MutableInteractionSource()},indication=null){selected=value;onSubmit(ReportDraft(pool.planId,listOf(TaskAllocation(target.projectId,target.taskId!!,value,pool.totalRounds))))}.padding(12.dp).then(if(selected==value)feedbackDraw else Modifier),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(8.dp,Alignment.CenterHorizontally)){
                     if(pending&&selected==value)NativeBusy()
                     Text(label,color=if(value==10000)colors.primary else colors.onSurface,style=MaterialTheme.typography.bodyLarge)
                 }
@@ -194,7 +202,8 @@ data class PlanEditorModel(val token:String=UUID.randomUUID().toString(),val pro
     }
     Column(Modifier.fillMaxWidth(),verticalArrangement=Arrangement.spacedBy(4.dp)){
         NativeText("${pool.totalRounds} "+ui.text("轮专注已结束"),NativeTextRole.CAPTION,color=MaterialTheme.colorScheme.primary)
-        NativeText(formatDuration(pool.sessions.sumOf{it.durationMs}),NativeTextRole.NUMBER,accent=true)
+        val duration=if(pool.partialExtensionMs>0)formalClock(pool.totalDurationMs,countUp=true)else formatDuration(pool.totalDurationMs)
+        NativeText(duration,NativeTextRole.NUMBER,accent=true)
     }
     var help by rememberNativePageState("report/${pool.planId}/help"){false}
     NativeDisclosure(ui.text("轮次如何记录"),null,help,{help=it},rowHeight=44.dp,titleStyle=MaterialTheme.typography.bodySmall,indicator={NativeText(if(help)"−"else"+",NativeTextRole.CAPTION)}){

@@ -21,6 +21,7 @@ for(const name of ['AmbientAudioService','AmbientPlaybackControl','AmbientPlayba
   if(name==='AmbientAudioService'){
     source=replace(source,'PresentationLanguage.text','AmbientAudioHost.text',8);
     source=replace(source,'new Intent(this,MainActivity.class)','AmbientAudioHost.openIntent(this)');
+    source=replace(source,'new File(getFilesDir(),"ambient-imports")','NativeAudioController.contentDirectory(this)');
     source=replace(source,'.setStyle(new Notification.MediaStyle()', '.setGroup("blockcolc-focus-audio").setStyle(new Notification.MediaStyle()');
     source=replace(source,'super.onCreate();running=true;','super.onCreate();running=true;AmbientAudioHost.created(this);');
     source=replace(source,'running=false;releaseMain();','running=false;AmbientAudioHost.closed(this);releaseMain();');

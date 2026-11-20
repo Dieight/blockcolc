@@ -172,6 +172,33 @@ class TerrainGeneratorTest {
         val table=TerrainSurfaceTable.from(result)
         assertNull(table.sample(Double.NaN,0.0));assertTrue(table.query(TerrainPlanBounds(1.0,0.0,0.0,1.0)).isEmpty())
     }
+
+    @Test fun distantRewardCornersStayAboveGeneratedFloatingTerrain(){
+        val bounds=FootprintBounds(0,5,0,5)
+        val reward=DecorationPlacement(DecorationInput("holiday:festival:2026","harvest","2026-11-20","project",bounds,Position2(39.0,24.0),0),
+            Position3(39.0,0.0,24.0),0.0,Footprint(6.0,6.0),Position2(-2.5,-2.5))
+        val before=TerrainSurfaceTable.from(SteppedTerrain.generate(emptyList(),emptyList()))
+        assertNull(before.sample(reward.worldPosition.x,reward.worldPosition.z))
+        val radius=SteppedTerrain.floatingMinimumRadius(emptyList(),emptyList(),emptyList(),null,listOf(reward))
+        assertNotNull(radius)
+        val after=TerrainSurfaceTable.from(SteppedTerrain.generate(emptyList(),emptyList(),minimumRadius=radius))
+        for(x in 36..42)for(z in 21..27){
+            assertEquals(TerrainMaterial.GRASS,after.sample(x.toDouble(),z.toDouble())?.material)
+        }
+        val near=reward.copy(worldPosition=Position3(8.0,0.0,8.0))
+        assertNull(SteppedTerrain.floatingMinimumRadius(emptyList(),emptyList(),emptyList(),null,listOf(near)))
+    }
+
+    @Test fun floatingRewardsPreserveDirectionWithoutExtendingTerrainToAnImportedOffset(){
+        val host=VillageLayout.generate(listOf(VillageInput(0,FootprintBounds(0,12,0,12)))).single()
+        val reward=FootprintBounds(0,5,0,5)
+        val nearby=Position2(10.0,-10.0)
+        assertEquals(nearby,SettlementSupport.floatingRewardOffset(host,reward,nearby))
+        val far=Position2(9_007_199_254_740_991.0,-9_007_199_254_740_991.0)
+        val placed=SettlementSupport.floatingRewardOffset(host,reward,far)
+        assertEquals(placed.x,-placed.z,1e-12)
+        assertTrue(placed.x in 10.0..32.0)
+    }
     @Test fun mixedResolutionIntervalQueriesRetainSourceEmissionOrder() {
         val edges=listOf(TerrainEdge(8.0,16.0,1.0),TerrainEdge(0.0,32.0,2.0),TerrainEdge(-8.0,4.0,3.0),TerrainEdge(4.0,8.0,4.0))
         val index=TerrainLineIntervals(edges)

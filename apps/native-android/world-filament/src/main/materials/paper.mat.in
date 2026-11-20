@@ -1,0 +1,26 @@
+material {
+    name:"blockcolc-paper-@BLEND@", shadingModel:unlit, blending:@BLEND@,
+    culling:none, requires:[color], depthWrite:@DEPTH@,
+    variables:[paperDepth],
+    parameters:[{type:float3,name:tint},{type:float3,name:nightFill},{type:float,name:opacity},
+        {type:float3,name:mist},{type:float2,name:fogRange}]
+}
+vertex {
+    void materialVertex(inout MaterialVertexInputs material) {
+        material.paperDepth = vec4(-(getViewFromWorldMatrix() * material.worldPosition).z, 0.0, 0.0, 0.0);
+    }
+}
+fragment {
+    float3 paperSrgb(float3 c) {
+        return mix(12.92 * c, 1.055 * pow(max(c, vec3(0.0)), vec3(1.0 / 2.4)) - 0.055,
+            step(vec3(0.0031308), c));
+    }
+    void material(inout MaterialInputs m) {
+        prepareMaterial(m);
+        vec4 paint = getColor();
+        float fog = smoothstep(materialParams.fogRange.x, materialParams.fogRange.y, variable_paperDepth.x);
+        vec3 pigment = mix(paint.rgb * materialParams.tint + materialParams.nightFill, materialParams.mist, fog);
+        float alpha = paint.a * materialParams.opacity;
+        m.baseColor = vec4(paperSrgb(clamp(pigment, 0.0, 1.0)) * alpha, alpha);
+    }
+}

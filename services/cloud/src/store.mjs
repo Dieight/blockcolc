@@ -15,6 +15,7 @@ export class CloudStore {
     this.db.exec(`CREATE TABLE IF NOT EXISTS accounts(id TEXT PRIMARY KEY,username TEXT UNIQUE NOT NULL,name TEXT NOT NULL,salt TEXT NOT NULL,password TEXT NOT NULL,code TEXT UNIQUE NOT NULL,zone TEXT NOT NULL,sharing TEXT NOT NULL,friends_enabled INTEGER NOT NULL DEFAULT 0,created INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS devices(user TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,id TEXT NOT NULL,name TEXT NOT NULL,last_seen INTEGER NOT NULL,PRIMARY KEY(user,id));
       CREATE TABLE IF NOT EXISTS sessions(token TEXT PRIMARY KEY,user TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,device TEXT NOT NULL,expires INTEGER NOT NULL);
+      CREATE INDEX IF NOT EXISTS sessions_device ON sessions(user,device,expires);
       CREATE TABLE IF NOT EXISTS heads(user TEXT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,epoch TEXT NOT NULL,revision INTEGER NOT NULL DEFAULT 0,owner TEXT,execution INTEGER NOT NULL DEFAULT 0,changed INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS entries(user TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,key TEXT NOT NULL,canonical TEXT NOT NULL,sha TEXT NOT NULL,PRIMARY KEY(user,key));
       CREATE TABLE IF NOT EXISTS receipts(user TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,id TEXT NOT NULL,request_sha TEXT NOT NULL,result TEXT NOT NULL,created INTEGER NOT NULL,PRIMARY KEY(user,id));
@@ -63,8 +64,8 @@ export class CloudStore {
     return {id:a.id,salt:a.salt};
   }
   session(user,device,name){const token=random(),now=this.clock();this.transaction(()=>{
-    const exists=this.db.prepare('SELECT 1 FROM devices WHERE user=? AND id=?').get(user,device);
-    fail(exists||this.db.prepare('SELECT count(*) n FROM devices WHERE user=?').get(user).n<16,'DEVICE_LIMIT',409);
+    const active=this.devices({user,device});
+    fail(active.some(d=>d.current)||active.length<16,'DEVICE_LIMIT',409);
     this.db.prepare('INSERT INTO devices VALUES(?,?,?,?) ON CONFLICT(user,id) DO UPDATE SET name=excluded.name,last_seen=excluded.last_seen').run(user,device,name,now);
     this.db.prepare('DELETE FROM sessions WHERE user=? AND device=?').run(user,device);
     this.db.prepare('INSERT INTO sessions VALUES(?,?,?,?)').run(sha(token),user,device,now+90*DAY);
@@ -72,12 +73,16 @@ export class CloudStore {
   authenticate(token){fail(typeof token==='string'&&token.length<=128,'UNAUTHORIZED',401);const s=this.db.prepare('SELECT * FROM sessions WHERE token=? AND expires>?').get(sha(token),this.clock());
     fail(s,'UNAUTHORIZED',401);this.db.prepare('UPDATE devices SET last_seen=? WHERE user=? AND id=?').run(this.clock(),s.user,s.device);return s;}
   assertSession(s){const row=this.db.prepare('SELECT * FROM sessions WHERE token=?').get(s.token);fail(row&&row.user===s.user&&row.device===s.device&&row.expires>this.clock(),'UNAUTHORIZED',401);}
-  logout(s){this.transaction(()=>{this.db.prepare('DELETE FROM sessions WHERE token=?').run(s.token);
-    if(this.head(s.user).owner===s.device){this.db.prepare('UPDATE heads SET owner=NULL,execution=execution+1 WHERE user=?').run(s.user);this.db.prepare('DELETE FROM presence WHERE user=?').run(s.user);}});}
-  devices(s){return this.db.prepare('SELECT id,name,last_seen FROM devices WHERE user=? ORDER BY last_seen DESC').all(s.user).map(d=>({...d,current:d.id===s.device}));}
-  revokeDevice(s,id){fail(typeof id==='string');this.transaction(()=>{this.db.prepare('DELETE FROM sessions WHERE user=? AND device=?').run(s.user,id);this.db.prepare('DELETE FROM devices WHERE user=? AND id=?').run(s.user,id);
-    if(this.head(s.user).owner===id)this.db.prepare('DELETE FROM presence WHERE user=?').run(s.user);
-    this.db.prepare('UPDATE heads SET owner=NULL,execution=execution+1 WHERE user=? AND owner=?').run(s.user,id);});}
+  logout(s){this.transaction(()=>{this.assertSession(s);this.removeDevice(s.user,s.device);});}
+  devices(s){return this.db.prepare(`SELECT d.id,d.name,d.last_seen FROM devices d WHERE d.user=? AND EXISTS
+    (SELECT 1 FROM sessions s WHERE s.user=d.user AND s.device=d.id AND s.expires>?) ORDER BY d.last_seen DESC`).all(s.user,this.clock()).map(d=>({...d,current:d.id===s.device}));}
+  removeDevice(user,id){
+    this.db.prepare('DELETE FROM sessions WHERE user=? AND device=?').run(user,id);
+    this.db.prepare('DELETE FROM devices WHERE user=? AND id=?').run(user,id);
+    if(this.db.prepare('UPDATE heads SET owner=NULL,execution=execution+1 WHERE user=? AND owner=?').run(user,id).changes)
+      this.db.prepare('DELETE FROM presence WHERE user=?').run(user);
+  }
+  revokeDevice(s,id){fail(typeof id==='string');this.transaction(()=>{this.assertSession(s);this.removeDevice(s.user,id);});}
   updateAccount(s,input){this.assertSession(s);const current=this.account(s.user),policy=input.sharing==null?current.sharing:sharing(input.sharing);
     const name=input.name??current.name,zone=input.timeZone??current.timeZone,enabled=input.friendsEnabled??current.friendsEnabled;
     fail(typeof enabled==='boolean'&&typeof name==='string'&&name.trim().length>0&&name.length<=64);accountDate(this.clock(),zone);
@@ -164,18 +169,20 @@ export class CloudStore {
       return result;
     });
   }
-  replace(s,{revision,entries,requestId}){this.assertSession(s);fail(Number.isSafeInteger(revision)&&entries&&typeof entries==='object'&&!Array.isArray(entries));
+  replace(s,{revision,entries,requestId,execution}){this.assertSession(s);fail(Number.isSafeInteger(revision)&&entries&&typeof entries==='object'&&!Array.isArray(entries));
     fail(typeof requestId==='string'&&/^[a-zA-Z0-9_:-]{8,128}$/.test(requestId));
-    const requestSha=sha(canonical({revision,entries,requestId}));
+    const keepExecution=execution!==undefined;
+    const requestSha=sha(canonical(keepExecution?{revision,entries,requestId,execution}:{revision,entries,requestId}));
     // A deliberate whole-workspace choice gets a new epoch. No stale device
     // can silently reapply changes made against the discarded history.
     return this.transaction(()=>{const replay=this.db.prepare('SELECT request_sha,result FROM receipts WHERE user=? AND id=?').get(s.user,requestId);
       if(replay){fail(replay.request_sha===requestSha,'REQUEST_ID_REUSED',409);return JSON.parse(replay.result);}
       const h=this.head(s.user);fail(h.revision===revision,'SYNC_CONFLICT',409);
+      if(keepExecution)fail(Number.isSafeInteger(execution)&&h.execution===execution&&h.owner===s.device,'EXECUTION_CHANGED',409);
       for(const key of ['@preferences','@plan'])if(entries[key]!=null)validateExtra(key,entries[key]);validatePlanDomain(entries,assembleDomain(entries,k=>this.asset(s.user,k)));
       this.db.prepare('DELETE FROM entries WHERE user=?').run(s.user);
       for(const [key,value]of Object.entries(entries))this.db.prepare('INSERT INTO entries VALUES(?,?,?,?)').run(s.user,key,value,sha(value));
-      this.db.prepare('UPDATE heads SET epoch=?,revision=revision+1,owner=NULL,execution=execution+1,changed=? WHERE user=?').run(randomUUID(),this.clock(),s.user);
+      this.db.prepare('UPDATE heads SET epoch=?,revision=revision+1,owner=?,execution=execution+1,changed=? WHERE user=?').run(randomUUID(),keepExecution?s.device:null,this.clock(),s.user);
       this.db.prepare('DELETE FROM presence WHERE user=?').run(s.user);const result=this.workspace(s);
       this.db.prepare('INSERT INTO receipts VALUES(?,?,?,?,?)').run(s.user,requestId,requestSha,canonical(result),this.clock());return result;});
   }
@@ -224,14 +231,17 @@ export class CloudStore {
     fail(!this.db.prepare('SELECT 1 FROM external_sources WHERE user=?').get(id),'READ_ONLY_FRIEND',409);
     if(value===null)this.db.prepare('DELETE FROM friend_sharing WHERE user=? AND friend=?').run(s.user,id);
     else this.db.prepare('INSERT INTO friend_sharing VALUES(?,?,?) ON CONFLICT(user,friend) DO UPDATE SET value=excluded.value').run(s.user,id,canonical(sharing(value)));return {ok:true};}
-  presence(s,value,execution){const h=this.head(s.user);fail(h.owner===s.device&&h.execution===execution,'EXECUTION_CHANGED',409);
+  presence(s,value,execution){this.assertSession(s);const h=this.head(s.user);fail(h.owner===s.device&&h.execution===execution,'EXECUTION_CHANGED',409);
     fail(value&&typeof value==='object'&&Object.keys(value).sort().join()==='currentName,estimatedElapsedMs,estimatedEndsAt,startedAt,todayActualFocusMs');
     const now=this.clock();fail(Number.isSafeInteger(value.todayActualFocusMs)&&value.todayActualFocusMs>=0&&value.todayActualFocusMs<=DAY);
+    const timed=value.estimatedEndsAt!==null;
     if(value.currentName!=null){fail(typeof value.currentName==='string'&&value.currentName.length<=512);
-      const start=Date.parse(value.startedAt),end=Date.parse(value.estimatedEndsAt);fail(Number.isFinite(start)&&Number.isFinite(end)&&start<=now+30000&&end>start&&end-start<=DAY);
-      fail(Number.isSafeInteger(value.estimatedElapsedMs)&&value.estimatedElapsedMs>=0&&value.estimatedElapsedMs<=end-start);
+      const start=Date.parse(value.startedAt),end=Date.parse(value.estimatedEndsAt);
+      fail(typeof value.startedAt==='string'&&Number.isFinite(start)&&start<=now+30000);
+      if(timed)fail(typeof value.estimatedEndsAt==='string'&&Number.isFinite(end)&&end>start&&end-start<=DAY);
+      fail(Number.isSafeInteger(value.estimatedElapsedMs)&&value.estimatedElapsedMs>=0&&value.estimatedElapsedMs<=(timed?end:now+30000)-start);
     }else fail(value.startedAt===null&&value.estimatedEndsAt===null&&value.estimatedElapsedMs===0);
-    const expires=value.currentName==null?now+90000:Math.min(now+90000,Date.parse(value.estimatedEndsAt));
+    const expires=timed?Math.min(now+90000,Date.parse(value.estimatedEndsAt)):now+90000;
     this.db.prepare('INSERT INTO presence VALUES(?,?,?) ON CONFLICT(user) DO UPDATE SET value=excluded.value,expires=excluded.expires').run(s.user,canonical({...value,updatedAt:new Date(now).toISOString()}),expires);
     return {ok:true};}
   dayTotals(user,zone){
@@ -288,7 +298,9 @@ export class CloudStore {
     if(live&&live.expires>this.clock()){
       if(policy.status)base.focusing=snapshot.currentName!=null;
       if(policy.name)base.currentName=snapshot.currentName;
-      if(policy.time){base.startedAt=snapshot.startedAt;base.endsAt=snapshot.estimatedEndsAt;}
+      if(policy.time){base.startedAt=snapshot.startedAt;base.endsAt=snapshot.estimatedEndsAt;
+        if(snapshot.currentName!=null&&snapshot.estimatedEndsAt===null)base.waitingForEnd=true;
+      }
     }else if(policy.status||policy.name||policy.time)base.stale=true;
     if(policy.daily){
       if(summary){

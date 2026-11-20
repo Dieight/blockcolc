@@ -17,7 +17,9 @@ data class NativeSunState(val phase:String,val position:BlockPoint,val sunPositi
     val skyColor:Int,val skyZenithColor:Int,val skyHorizonColor:Int,val skyLowerColor:Int,val cloudColor:Int,val fogColor:Int,
     val hemisphereSkyColor:Int,val hemisphereGroundColor:Int,val hemisphereIntensity:Double,val exposure:Double,val nightFactor:Double,
     val lunar:NativeLunarIllumination,val sun:NativeCelestialPosition?=null,val moon:NativeCelestialPosition?=null,val directSunIntensity:Double?=null)
-enum class NativeLightingQuality(val faceContrast:Float,val ambientOcclusion:Float,val coolColor:Int,val cloudDensity:Double){LOW(.18f,.3f,0x7890ac,.45),BALANCED(.22f,.38f,0x7088aa,.72),HIGH(.25f,.44f,0x6981a5,1.0)}
+enum class NativeLightingQuality(val faceContrast:Float,val ambientOcclusion:Float,val coolColor:Int,val cloudDensity:Double){
+    PAPER(.16f,0f,0x798ba2,.5),LOW(.18f,.3f,0x7890ac,.45),BALANCED(.22f,.38f,0x7088aa,.72),HIGH(.25f,.44f,0x6981a5,1.0)
+}
 data class NativeEnvironmentSample(val sun:NativeSunState,val weather:NativeWeather,val lighting:SourceLighting,val surface:NativeSurfaceState,val post:SourcePost,
     val cloudColor:LinearRgb=LinearRgb.WHITE,val sky:NativeSkyState?=null,val fogProjection:NativeFogProjection?=null) {
     fun uniforms()=NativeSceneEnvironment(lighting,surface,cloudColor,sky,fogProjection,post.direct,NativeStormWeather(weather.thunderstorm,weather.seed))
@@ -121,7 +123,7 @@ object NativeEnvironment {
         val effects=SurfaceEffects(direction.map{-it},rgb(lightColor),rgb(quality.coolColor),quality.faceContrast,0f)
         val skyState=NativeSky.state(state,weather,quality,skyOptions);val night=skyState.night
         val cloud=rgb(state.cloudColor);val cloudColor=List(3){i->if(weatherTint==null)cloud[i]else mix(cloud[i].toDouble(),weatherTint[i].toDouble(),cloudBlend).toFloat()}
-        return NativeEnvironmentSample(state,weather,SourceLighting(state.exposure.toFloat(),clear,lights,true,emptyList(),SourceFog(fogColor,range.near.toFloat(),range.far.toFloat())),
+        return NativeEnvironmentSample(state,weather,SourceLighting(state.exposure.toFloat(),clear,lights,quality!=NativeLightingQuality.PAPER,emptyList(),SourceFog(fogColor,range.near.toFloat(),range.far.toFloat())),
             NativeSurfaceState(effects,night,state.nightFactor.toFloat(),quality.ambientOcclusion,clearSky=if(kind==NativeWeatherKind.CLEAR)1f else 0f),SourcePost.native(quality),LinearRgb(cloudColor[0],cloudColor[1],cloudColor[2]),skyState,fogProjection)
     }
 }

@@ -21,7 +21,7 @@ class NativeVertexUploadsTest {
         NativeVertexUploads.each(input,count){offset,data->
             offsets+=offset
             assertTrue(data.isDirect)
-            assertTrue(data.remaining()<=256*1024)
+            assertTrue(data.remaining()<=1024*1024)
             if(staging==null)staging=data else assertSame("The bounded staging allocation is reused",staging,data)
             while(data.hasRemaining()){
                 val at=3+rows*12

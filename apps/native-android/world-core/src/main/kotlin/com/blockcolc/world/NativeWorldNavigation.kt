@@ -37,6 +37,8 @@ class NativeWorldNavigation(camera:NativeSceneCamera,targets:List<NativeOrbitTar
     private var opening:Opening?=null
     val openingActive:Boolean get()=opening!=null
     val indoors:Boolean get()=interior!=null
+    val orthographic:Boolean get()=camera.paper&&!indoors
+    val orthographicEyeOffset:Double get()=if(orthographic)paperEyeOffset(target,distance)else 0.0
     // Indoor look direction is a unit vector, not the distance to the town.
     // Feeding that unit length to atmospheric fog hid every outdoor building.
     val atmosphericDistance:Double get()=interior?.sceneDistance?:distance
@@ -118,19 +120,39 @@ class NativeWorldNavigation(camera:NativeSceneCamera,targets:List<NativeOrbitTar
         maximum=fitted*if(focus==null&&!camera.preview).9 else 1.35
         distance=(if(reset)fitted*if(opening&&!camera.preview).45 else 1.0 else distance).coerceIn(minimum,maximum)
     }
+    private fun paperEyeOffset(target:BlockPoint,distance:Double):Double {
+        // Moving an orthographic eye along its viewing direction leaves the
+        // composition unchanged. Keep every corner of the world in front of
+        // it, including nearby terrain revealed by the taller focus window.
+        val box=camera.volume.visibility
+        val extent=sqrt((0..2).sumOf{axis->
+            max(abs(target[axis]-box[0][axis]),abs(target[axis]-box[1][axis])).pow(2)
+        })
+        return max(0.0,extent+48.0-distance)
+    }
     fun ray(x:Double,y:Double,width:Int,height:Int):NativePickRay {
         require(width>0&&height>0&&x.isFinite()&&y.isFinite())
         val f=frame;val forward=unit(sub(f.target,f.eye));val right=unit(cross(forward,BlockPoint(0.0,1.0,0.0)));val up=cross(right,forward)
         val vertical=tan(f.fov*PI/360);val px=(2*x/width-1)*vertical*width/height;val py=(1-2*y/height)*vertical
+        if(orthographic){
+            val distance=f.distance
+            val offset=orthographicEyeOffset
+            val origin=BlockPoint(f.eye.x-forward.x*offset+(right.x*px+up.x*py)*distance,
+                f.eye.y-forward.y*offset+(right.y*px+up.y*py)*distance,
+                f.eye.z-forward.z*offset+(right.z*px+up.z*py)*distance)
+            return NativePickRay(origin,forward)
+        }
         return NativePickRay(f.eye,unit(BlockPoint(forward.x+right.x*px+up.x*py,forward.y+right.y*px+up.y*py,forward.z+right.z*px+up.z*py)))
     }
     /** Also used by accessibility/diagnostic projection, never by domain logic. */
     fun screen(point:BlockPoint,width:Int,height:Int):Pair<Double,Double>? {
         require(width>0&&height>0)
         val f=frame;val forward=unit(sub(f.target,f.eye));val right=unit(cross(forward,BlockPoint(0.0,1.0,0.0)));val up=cross(right,forward);val delta=sub(point,f.eye)
-        val depth=dot(delta,forward);if(depth<=0)return null
+        val depth=dot(delta,forward)
+        if(if(orthographic)depth+orthographicEyeOffset<=0 else depth<=0)return null
         val vertical=tan(f.fov*PI/360)
-        return (dot(delta,right)/(depth*vertical*width/height)+1)*width/2 to (1-dot(delta,up)/(depth*vertical))*height/2
+        val scale=if(orthographic)f.distance else depth
+        return (dot(delta,right)/(scale*vertical*width/height)+1)*width/2 to (1-dot(delta,up)/(scale*vertical))*height/2
     }
     companion object {
         private fun owned(targets:List<NativeOrbitTarget>)=Collections.unmodifiableList(targets.toList()).also{require(it.size<=4095&&it.map{t->t.id}.distinct().size==it.size)}

@@ -1,5 +1,18 @@
 plugins { id 'com.android.application'; id 'org.jetbrains.kotlin.android'; id 'org.jetbrains.kotlin.plugin.compose' }
 def diagnostics=providers.gradleProperty('nativeDiagnostics').getOrElse('false')=='true'
+def upgradeCandidate=providers.gradleProperty('nativeUpgradeCandidate').getOrElse('false')=='true'
+def publicVersion=new groovy.json.JsonSlurper().parse(rootProject.file('../../version.json'))
+def beta=providers.gradleProperty('nativeBetaNumber').orNull
+def betaCode=providers.gradleProperty('nativeBetaVersionCode').orNull
+def stableCode=providers.gradleProperty('nativeReleaseVersionCode').orNull
+if(beta!=null||betaCode!=null){
+    if(!upgradeCandidate||!(beta==~ /[1-9][0-9]{0,5}/)||!(betaCode==~ /[1-9][0-9]{0,8}/)||betaCode.toInteger()<=publicVersion.versionCode.toInteger())
+        throw new GradleException('Beta requires formal signing, a positive beta number and a versionCode above the public release')
+}
+def currentReleaseVersion=upgradeCandidate?(beta==null?'3.0.0':"3.0.0-beta.${beta}".toString()):publicVersion.versionName
+if(stableCode!=null&&(!upgradeCandidate||beta!=null||!(stableCode==~ /[1-9][0-9]{0,8}/)||stableCode.toInteger()<=publicVersion.versionCode.toInteger()))
+    throw new GradleException('The formal release versionCode must exceed the installed public release')
+def nativeAppId=upgradeCandidate?'com.blockcolc.app':'com.blockcolc.preview'
 def largeHeap=providers.gradleProperty('nativeLargeHeap').getOrElse('false')
 if(!(largeHeap in ['true','false']))throw new GradleException('nativeLargeHeap must be true or false')
 def diagnosticVersion=providers.gradleProperty('nativePreviewVersionCode')
@@ -7,6 +20,7 @@ if(diagnosticVersion.isPresent()&&(!diagnostics||!(diagnosticVersion.get()==~ /[
 // An internal benchmark can retain the installed preview's version code so
 // its byte-identical original APK can be restored without an uninstall.
 def benchmarkVersion=providers.gradleProperty('nativeBenchmarkVersionCode')
+if(upgradeCandidate&&(diagnostics||benchmarkVersion.isPresent()))throw new GradleException('The upgrade candidate requires the formal release configuration')
 if(benchmarkVersion.isPresent()) {
     if(diagnostics||!(benchmarkVersion.get()==~ /[1-9][0-9]{0,8}/))throw new GradleException('Invalid benchmark version override')
     gradle.taskGraph.whenReady { graph ->
@@ -17,12 +31,30 @@ if(benchmarkVersion.isPresent()) {
 android {
     namespace 'com.blockcolc.preview'
     compileSdk 35
-    defaultConfig { applicationId 'com.blockcolc.preview'; minSdk 23; targetSdk 35; versionCode(diagnostics?diagnosticVersion.getOrElse('2').toInteger():benchmarkVersion.getOrElse('12').toInteger()); versionName(diagnostics?'0.3-p3-diagnostic':'3.0.0-p3-preview'); testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner' }
+    defaultConfig {
+        applicationId nativeAppId
+        minSdk 23
+        targetSdk 35
+        versionCode(upgradeCandidate?((betaCode?:stableCode)?.toInteger()?:publicVersion.versionCode.toInteger()+1):diagnostics?diagnosticVersion.getOrElse('2').toInteger():benchmarkVersion.getOrElse('19').toInteger())
+        versionName(upgradeCandidate?currentReleaseVersion:diagnostics?'0.3-p3-diagnostic':'3.0.0-p3-preview')
+        testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
+    }
     defaultConfig { buildConfigField 'boolean','NATIVE_DIAGNOSTICS',diagnostics.toString() }
-    defaultConfig { manifestPlaceholders = [nativeLargeHeap:largeHeap] }
+    defaultConfig { manifestPlaceholders = [nativeLargeHeap:largeHeap, nativeAppLabel:upgradeCandidate?'方块钟':'blockcolc · native preview'] }
+    if(upgradeCandidate) signingConfigs.create('formalUpgrade') {
+        def required={ name ->
+            def value=providers.environmentVariable(name).orNull
+            if(!value) throw new GradleException('Formal upgrade signing needs '+name)
+            value
+        }
+        storeFile file(required('BLOCKCOLC_STORE_FILE'))
+        storePassword required('BLOCKCOLC_STORE_PASSWORD')
+        keyAlias required('BLOCKCOLC_KEY_ALIAS')
+        keyPassword required('BLOCKCOLC_KEY_PASSWORD')
+    }
     buildTypes {
         debug { minifyEnabled !diagnostics; proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'),'user-preview.pro' }
-        release { signingConfig signingConfigs.debug; debuggable false; minifyEnabled !diagnostics; proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'),'user-preview.pro' }
+        release { signingConfig(upgradeCandidate?signingConfigs.formalUpgrade:signingConfigs.debug); debuggable false; minifyEnabled !diagnostics; proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'),'user-preview.pro' }
         // Same isolated identity and signing as the user preview, with the
         // production optimizer and runtime flags. Never benchmark Debug as if
         // it were the release application.
@@ -33,12 +65,17 @@ android {
             debuggable false
         }
     }
-    sourceSets.main.java.srcDir diagnostics?'src/diagnostic/kotlin':'src/userPreview/kotlin'
+    sourceSets.main.java.srcDir upgradeCandidate?'src/upgradeCandidate/kotlin':diagnostics?'src/diagnostic/kotlin':'src/userPreview/kotlin'
+    if(!diagnostics) sourceSets.main.java.srcDir 'src/optimized/kotlin'
     if(diagnostics)sourceSets.test.java.srcDir 'src/diagnosticTest/kotlin'
     if(diagnostics) { sourceSets.main.res.srcDir 'src/diagnostic/res' }
+    if(diagnostics||upgradeCandidate) {
+        sourceSets.main.java.srcDir 'src/upgrade/kotlin'
+        sourceSets.main.assets.srcDir 'src/upgrade/assets'
+    }
     buildFeatures { compose true }
     buildFeatures { buildConfig true }
-    defaultConfig { buildConfigField 'String','PUBLIC_RELEASE_VERSION',groovy.json.JsonOutput.toJson(new groovy.json.JsonSlurper().parse(rootProject.file('../../version.json')).versionName) }
+    defaultConfig { buildConfigField 'String','PUBLIC_RELEASE_VERSION',groovy.json.JsonOutput.toJson(currentReleaseVersion) }
     compileOptions { coreLibraryDesugaringEnabled true; sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
     kotlinOptions { jvmTarget = '17' }
     if(diagnostics) sourceSets.main.assets.srcDir layout.buildDirectory.dir('generated/world-inputs')
@@ -52,6 +89,7 @@ android {
 // also keeps ordinary user-package lint from traversing diagnostic test roots.
 androidComponents.beforeVariants(androidComponents.selector().all()){variant->
     if(diagnostics && variant.buildType=='benchmark')variant.enable=false
+    if(upgradeCandidate && variant.buildType!='release')variant.enable=false
     variant.enableAndroidTest=diagnostics
 }
 
@@ -67,6 +105,13 @@ tasks.register('prepareNativeLauncherResources',Sync){
 }
 android.sourceSets.main.res.srcDir launcherResources
 tasks.named('preBuild').configure{dependsOn 'prepareNativeLauncherResources'}
+def cloudPolicyAssets=layout.buildDirectory.dir('generated/cloud-policy')
+tasks.register('prepareCloudPolicyAssets',Sync){
+    from(rootProject.file('../../services/cloud/policy')){include 'zh-CN.md','en.md'}
+    into cloudPolicyAssets.map{it.dir('cloud-policy')}
+}
+android.sourceSets.main.assets.srcDir cloudPolicyAssets
+tasks.named('preBuild').configure{dependsOn 'prepareCloudPolicyAssets'}
 dependencies {
     coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.3'
     implementation project(':focus-core')
@@ -208,11 +253,13 @@ if(diagnostics){
 }
 def identity=layout.buildDirectory.file('generated/native-build/native-build.json')
 tasks.register('prepareNativeBuildIdentity'){
-    inputs.property 'diagnostics',diagnostics
+    def mode=upgradeCandidate?'upgrade-candidate':diagnostics?'diagnostic':'user-preview'
+    inputs.property 'mode',mode
+    inputs.property 'applicationId',nativeAppId
     inputs.property 'privateRelay',false
     inputs.property 'largeHeap',largeHeap
     outputs.file identity
-    doLast{def out=identity.get().asFile;out.parentFile.mkdirs();out.text=groovy.json.JsonOutput.toJson([schema:1,mode:diagnostics?'diagnostic':'user-preview',privateRelay:false,accountBased:true,cloudProtocol:1,applicationId:'com.blockcolc.preview',largeHeap:largeHeap=='true'])}
+    doLast{def out=identity.get().asFile;out.parentFile.mkdirs();out.text=groovy.json.JsonOutput.toJson([schema:1,mode:mode,privateRelay:false,accountBased:true,cloudProtocol:1,applicationId:nativeAppId,largeHeap:largeHeap=='true'])}
 }
 android.sourceSets.main.assets.srcDir layout.buildDirectory.dir('generated/native-build')
 tasks.named('preBuild').configure {dependsOn 'prepareNativeBuildIdentity'}
@@ -230,6 +277,21 @@ tasks.register('verifyUserPreviewPackage',Exec){
     dependsOn 'assembleRelease'
     workingDir rootProject.projectDir
     commandLine 'node','tools/check-user-preview-package.mjs',project.layout.buildDirectory.file('outputs/apk/release/app-release.apk').get().asFile.absolutePath
+}
+
+if(upgradeCandidate) {
+    tasks.register('verifyUpgradeCandidate',Exec){
+        dependsOn 'assembleRelease'
+        workingDir rootProject.projectDir
+        commandLine 'node','tools/check-user-preview-package.mjs',project.layout.buildDirectory.file('outputs/apk/release/app-release.apk').get().asFile.absolutePath,'--upgrade-candidate'
+        if(beta!=null)args "--beta=${beta}".toString(),"--beta-code=${betaCode}".toString()
+        if(stableCode!=null)args "--release-code=${stableCode}".toString()
+    }
+    tasks.register('recordUpgradeCandidate',Exec){
+        dependsOn 'verifyUpgradeCandidate'
+        workingDir rootProject.projectDir
+        commandLine 'node','tools/preview-apk-pair.mjs','--record','--upgrade-candidate'
+    }
 }
 
 tasks.register('recordBenchmarkPreview',Exec){

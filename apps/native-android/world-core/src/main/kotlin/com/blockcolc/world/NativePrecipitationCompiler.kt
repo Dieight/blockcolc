@@ -39,18 +39,24 @@ class NativePrecipitationPrepared(val key:NativePrecipitationKey,val source:Nati
  * uniforms and visible-time texel; seed rows/ground pixels upload only on adopt. */
 class NativePrecipitationCompiler {
     companion object {
-        fun key(context:NativePrecipitationContext,weather:NativeWeather,density:Double,randomTail:Long):NativePrecipitationKey {
+        fun key(context:NativePrecipitationContext,weather:NativeWeather,density:Double,randomTail:Long,paper:Boolean=false):NativePrecipitationKey {
             require(density.isFinite()&&density in 0.0..1.0&&randomTail in 0..0xffffffffL)
-            return NativePrecipitationKey(precipitationIdentity("precipitation-v1:${context.identity}:$weather:$density:$randomTail"))
+            return NativePrecipitationKey(precipitationIdentity("precipitation-v1:${context.identity}:$weather:$density:$randomTail:$paper"))
         }
     }
     private var cached:NativePrecipitationPrepared?=null
-    fun prepare(context:NativePrecipitationContext,weather:NativeWeather,density:Double,randomTail:Long,cancelled:()->Boolean={false}):NativePrecipitationPrepared {
+    fun prepare(context:NativePrecipitationContext,weather:NativeWeather,density:Double,randomTail:Long,cancelled:()->Boolean={false},paper:Boolean=false):NativePrecipitationPrepared {
         fun checkpoint(){if(cancelled()||Thread.currentThread().isInterrupted)throw CancellationException("Native precipitation preparation superseded")}
-        checkpoint();val key=key(context,weather,density,randomTail);cached?.takeIf{it.key==key}?.let{return it}
+        checkpoint();val key=key(context,weather,density,randomTail,paper);cached?.takeIf{it.key==key}?.let{return it}
         val snow=weather.kind==NativeWeatherKind.SNOW
         val reference=if(snow)weather.snowFlakeCount else if(weather.kind==NativeWeatherKind.RAIN)weather.rainDropCount else 0
-        val capacity=if(reference<=0)0 else if(context.preview)80 else if(snow)49152 else 32768
+        val capacity=when {
+            reference<=0->0
+            context.preview->80
+            paper->1024
+            snow->49152
+            else->32768
+        }
         val visual=weather.visualPrecipitationIntensity.also{require(it.isFinite()&&it in 0.0..1.0)}
         val base=if(snow).36 else .022+visual*.013
         val runtime=if(capacity>0)NativePrecipitationRuntime(context,snow,reference,density,capacity,visual,base)else null
@@ -64,8 +70,10 @@ class NativePrecipitationCompiler {
             }
             val material=NativeRenderMaterial(color=LinearRgb.fromSrgb(if(snow)0xf3f7ff else if(weather.thunderstorm)0xd5e6f1 else 0xb8d6df),unlit=true,
                 transparent=true,opacity=if(snow).96f else (.42+visual*.35).toFloat(),depthWrite=false,fog=false,
+                side=if(paper)NativeFaceSide.DOUBLE else NativeFaceSide.FRONT,
                 surface=SurfaceCoverage(SurfaceEffects.NONE,listOf("source-precipitation-v3"),emptyList(),SurfaceOptics(precipitation=runtime.descriptor)))
-            builder.add(NativePrecipitationGeometry.create(snow,visual),material,FloatBuffer.wrap(matrices),aux=FloatBuffer.wrap(auxiliary),castShadow=false,receiveShadow=false)
+            val geometry=if(paper)NativePrecipitationGeometry.paper(snow,visual)else NativePrecipitationGeometry.create(snow,visual)
+            builder.add(geometry,material,FloatBuffer.wrap(matrices),aux=FloatBuffer.wrap(auxiliary),castShadow=false,receiveShadow=false)
         }
         val result=NativePrecipitationPrepared(key,builder.build(cancelled),capacity);checkpoint();cached=result;return result
     }

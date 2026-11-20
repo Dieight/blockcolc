@@ -6,7 +6,7 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SYSTEM_EXEMPTED" />
-    <application android:label="blockcolc · native preview" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round" android:theme="@style/BlockcolcNative" android:allowBackup="false" android:dataExtractionRules="@xml/no_transfer" android:usesCleartextTraffic="false" android:largeHeap="${nativeLargeHeap}">
+    <application android:label="${nativeAppLabel}" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round" android:theme="@style/BlockcolcNative" android:allowBackup="false" android:dataExtractionRules="@xml/no_transfer" android:usesCleartextTraffic="false" android:largeHeap="${nativeLargeHeap}">
         <activity android:name=".MainActivity" android:exported="true">
             <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
         </activity>

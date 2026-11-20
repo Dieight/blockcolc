@@ -6,7 +6,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 data class PlanRequest(val id: String, val projectId: String, val subtaskId: String?, val mode: PlanMode,
-    val rounds: Int, val focusMs: Long, val restMs: Long, val exactEndAt: String? = null)
+    val rounds: Int, val focusMs: Long, val restMs: Long, val exactEndAt: String? = null,val extendAfterPlan:Boolean=false)
 data class DeadlineTicket(val database: String, val generation: Long, val plan: String?, val session: String?, val phase: String, val end: String) {
     fun json() = DomainEngine.command("deadline", "database" to database, "generation" to generation, "plan" to plan, "session" to session, "phase" to phase, "end" to end)
     companion object { fun parse(x: JSONObject) = DeadlineTicket(x.getString("database"), x.getLong("generation"), if (x.isNull("plan")) null else x.getString("plan"), if (x.isNull("session")) null else x.getString("session"), x.getString("phase"), x.getString("end")) }
@@ -91,6 +91,7 @@ class FocusCoordinator(private val store: NativeStateStore, val databaseIdentity
             val active = m.active()
             if (active != null && DomainTime.millis(active.getString("endsAt")) <= now) { m.advance(now); return@change }
             val p = m.context.plan
+            if(p?.extensionStartedAt!=null)throw FocusFailure("EXTENSION_REQUIRES_FINISH")
             if(cancelPlan&&p!=null){require(p.mode!=PlanMode.ROUNDS){"Ordinary rounds do not cancel the whole plan"};require(category!=null||active==null&&!p.hasStarted&&p.completedSessionIds.isEmpty()){"Choose a cancellation reason"}}
             m.context = m.context.copy(automatic = null)
             if (active != null) {
@@ -114,6 +115,16 @@ class FocusCoordinator(private val store: NativeStateStore, val databaseIdentity
                 else -> RecoveryContext(next)
             }
         }
+    @Synchronized fun finishExtension(requestId:String,now:Long):Operation=change(requestId,DomainEngine.command("finish-extension")){m->
+        if(m.context.plan?.extensionStartedAt==null||m.active()==null)throw FocusFailure("FOCUS_NOT_ACTIVE")
+        // Account for full boundaries before deciding whether the tail earns a round.
+        do { m.advance(now) } while(m.active()?.let{DomainTime.millis(it.getString("endsAt"))<=now}==true)
+        val plan=checkNotNull(m.context.plan)
+        val id=checkNotNull(m.active()).getString("id")
+        m.command(DomainEngine.command("FinishExtendedRound"),now)
+        val rounds=plan.extensionRounds+if(m.history(id)?.getString("status")=="completed")1 else 0
+        m.endExtension(plan.copy(extensionRounds=rounds),now)
+    }
     /** Package preparation is one restricted transaction before startup
      * reconciliation. Advancing between imports could settle an overdue focus
      * with only the first candidate present in the daily reward pool. */
@@ -140,7 +151,7 @@ class FocusCoordinator(private val store: NativeStateStore, val databaseIdentity
         // library entry, or change the original user-intent receipt identity.
         val prepared=prepareCommand?.invoke(m.doc,StrictJson.copy(command) as JSONObject)?:command
         val type = command.getString("type")
-        require(type !in setOf("StartFocus", "CompleteFocus", "CompleteFocusEarly", "CancelFocus")) { "Use plan commands for focus transitions" }
+        require(type !in setOf("StartFocus", "CompleteFocus", "CompleteFocusEarly", "CancelFocus", "FinishExtendedRound")) { "Use plan commands for focus transitions" }
         if(type in setOf("CreateProject","CreateHabitProject","SwitchActiveProject"))require(m.context.plan==null){"A confirmed plan still owns the task context"}
         if (type == "DeleteActiveProject") {
             require(m.context.plan == null) { "Cancel the plan before deleting its project" }
@@ -153,22 +164,19 @@ class FocusCoordinator(private val store: NativeStateStore, val databaseIdentity
             val ids=command.getJSONArray("focusSessionIds")
             require((0 until ids.length()).map{ids.getString(it)}.toSet()==m.unsettled(reporting).toSet()){"Report must settle this plan, not unrelated history"}
         }
-        if(type=="ReportSubtaskProgress"&&reporting?.phase==PlanPhase.REPORT&&m.doc.json().opt("activeProjectId")!=reporting.projectId)
-            m.command(DomainEngine.command("SwitchActiveProject","projectId" to reporting.projectId),now)
+        if(type=="ReportSubtaskProgress"&&reporting?.phase==PlanPhase.REPORT){
+            val ids=command.getJSONArray("focusSessionIds")
+            val submitted=List(ids.length()){ids.getString(it)}
+            require(submitted.toSet()==m.unsettled(reporting).toSet()&&submitted.size==submitted.distinct().size)
+            if(m.doc.json().opt("activeProjectId")!=reporting.projectId)
+                m.command(DomainEngine.command("SwitchActiveProject","projectId" to reporting.projectId),now)
+        }
         m.command(prepared, now)
         val p = m.context.plan
-        if (previous != null && m.active() == null) {
-            val completed = m.history(previous.getString("id"))!!
-            if(p!=null){
-                if (completed.getString("status") == "interrupted") m.context = if(p.mode==PlanMode.ROUNDS&&p.totalRounds==1&&p.completedSessionIds.isEmpty())RecoveryContext()
-                    else RecoveryContext(p.copy(phase = PlanPhase.READY, currentSessionId = null, phaseEndsAt = null))
-                else m.afterCompletion(p, completed, false)
-            } else m.recoverPending()
-        }
+        if (previous != null && m.active() == null) m.afterObservedEnd(previous, now)
         if (type == "ReportMarathonFocus") {
             m.context = RecoveryContext()
         } else if (type == "ReportSubtaskProgress" && p?.phase == PlanPhase.REPORT) {
-            require(command.getJSONArray("focusSessionIds").let { it.length() == 1 && it.getString(0) == p.completedSessionIds.last() })
             m.afterReport(p, now)
         }
         m.advance(now)
@@ -212,7 +220,9 @@ class FocusCoordinator(private val store: NativeStateStore, val databaseIdentity
         return Operation(saved, m.events, journal=m.journal,signals=m.signals)
     }
     private fun readCommitted(receipt:CommitReceipt):StoredState=try{load()}catch(error:Exception){throw CommittedStateUnavailable(receipt,error)}
-    private fun PlanRequest.json(type: String) = DomainEngine.command(type, "id" to id, "projectId" to projectId, "subtaskId" to subtaskId, "mode" to mode.name, "rounds" to rounds, "focusMs" to focusMs, "restMs" to restMs, "exactEndAt" to exactEndAt)
+    private fun PlanRequest.json(type: String) = DomainEngine.command(type, "id" to id, "projectId" to projectId, "subtaskId" to subtaskId, "mode" to mode.name, "rounds" to rounds, "focusMs" to focusMs, "restMs" to restMs, "exactEndAt" to exactEndAt).also{
+        if(extendAfterPlan)it.put("extendAfterPlan",true)
+    }
     private class Mutation(val base: StoredState,val database:String) {
         private var parsedControls:JSONObject?=null
         private val image:JSONObject get()=parsedControls?:doc.focusControlJson().also{parsedControls=it}
@@ -228,19 +238,51 @@ class FocusCoordinator(private val store: NativeStateStore, val databaseIdentity
         fun recordLifecycle(foreground:Boolean,reason:String,now:Long){
             val before=active()
             command(if(foreground)DomainEngine.command("RecordFocusForegrounded")else DomainEngine.command("RecordFocusBackgrounded","reason" to reason),now)
-            if(before!=null&&active()==null){
-                val plan=context.plan
-                if(plan!=null)context=if(plan.mode==PlanMode.ROUNDS&&plan.totalRounds==1&&plan.completedSessionIds.isEmpty())RecoveryContext()
-                    else RecoveryContext(plan.copy(phase=PlanPhase.READY,currentSessionId=null,phaseEndsAt=null))
-                else recoverPending()
+            if (before != null && active() == null) afterObservedEnd(before, now)
+        }
+        fun afterObservedEnd(previous: JSONObject, now: Long) {
+            val fact = checkNotNull(history(previous.getString("id")))
+            val plan = context.plan
+            when {
+                fact.optString("interruptionReason") == "app-switch-limit" -> stopAfterIntegrity(now)
+                plan != null -> afterCompletion(plan, fact, false)
+                else -> recoverPending()
             }
+        }
+        private fun stopAfterIntegrity(now: Long) {
+            // Keep valid rounds in history when leaving the plan. Pooled
+            // rounds with no report stay unallocated and cannot reopen a report.
+            val plan=context.plan
+            val pending=plan?.let(::unsettled).orEmpty()
+            val pooled=when{
+                plan==null->emptyList()
+                plan.mode!=PlanMode.ROUNDS->pending
+                plan.extensionStartedAt!=null->pending.filter{history(it)?.optBoolean("deferredSettlement")==true}
+                else->emptyList()
+            }
+            if (pooled.isNotEmpty()) command(DomainEngine.command("ReportMarathonFocus", "focusSessionIds" to JSONArray(pooled),
+                "entries" to JSONArray(), "habitAllocations" to JSONArray()), now)
+            if(plan?.extensionStartedAt!=null&&plan.mode==PlanMode.ROUNDS&&plan.subtaskId!=null&&pending.isNotEmpty()){
+                val task=checkNotNull(project(plan.projectId)).getJSONArray("subtasks")
+                val current=(0 until task.length()).map(task::getJSONObject).first{it.getString("id")==plan.subtaskId}
+                command(DomainEngine.command("ReportSubtaskProgress","reportId" to "integrity:${plan.id}","subtaskId" to plan.subtaskId,
+                    "focusSessionIds" to JSONArray(pending),"progressBasisPoints" to current.getLong("progressBasisPoints")),now)
+            }
+            context = RecoveryContext()
+        }
+        private fun stoppedWaitingPlan(plan: SavedPlan): Boolean {
+            if (plan.phase != PlanPhase.READY || !plan.hasStarted) return false
+            val facts = image.getJSONArray("focusHistory")
+            val latest = facts.optJSONObject(facts.length() - 1) ?: return false
+            return latest.optString("interruptionReason") == "app-switch-limit" &&
+                latest.getString("id").startsWith("session:${plan.id}:")
         }
         fun confirm(spec:PlanRequest,now:Long){
             require(active()==null&&context.plan==null){"A plan is already pending"}
             require(spec.rounds in 1..24&&spec.focusMs in 1..10800000&&spec.restMs in 0..3600000&&spec.id.isNotBlank())
             val end=spec.exactEndAt?.let{DomainTime.millis(it)};require(end==null||end>now)
             if(image.opt("activeProjectId")!=spec.projectId)command(DomainEngine.command("SwitchActiveProject","projectId" to spec.projectId),now)
-            context=RecoveryContext(SavedPlan(spec.id,spec.projectId,spec.subtaskId,spec.mode,spec.rounds,emptyList(),PlanPhase.READY,spec.focusMs,spec.restMs,exactEndAt=spec.exactEndAt))
+            context=RecoveryContext(SavedPlan(spec.id,spec.projectId,spec.subtaskId,spec.mode,spec.rounds,emptyList(),PlanPhase.READY,spec.focusMs,spec.restMs,exactEndAt=spec.exactEndAt,extendAfterPlan=spec.extendAfterPlan))
         }
         fun start(requestId:String,automatic:Boolean,now:Long){
             val p=context.plan?:throw FocusFailure("PLAN_NOT_FOUND");if(p.phase!=PlanPhase.READY)throw FocusFailure("PLAN_NOT_READY")
@@ -255,7 +297,9 @@ class FocusCoordinator(private val store: NativeStateStore, val databaseIdentity
             val used = (objects("progressReports").flatMap { ids(it.getJSONArray("focusSessionIds")) } +
                 objects("habitBuildings").flatMap { ids(it.getJSONArray("focusSessionIds")) } +
                 objects("projects").flatMap { it.optJSONObject("habit")?.let { h -> ids(h.getJSONArray("completedFocusSessionIds")) }.orEmpty() }).toSet()
-            return p.completedSessionIds.filter { id -> val s = history(id); s != null && !s.has("settledAt") && id !in used }
+            return objects("focusHistory").mapNotNull{s->
+                s.getString("id").takeIf{p.completed(it)&&!s.has("settledAt")&&it !in used}
+            }
         }
         fun finish(p: SavedPlan): RecoveryContext = if (unsettled(p).isNotEmpty()) RecoveryContext(p.copy(phase = PlanPhase.REPORT, currentSessionId = null, phaseEndsAt = null, terminalRest = false)) else RecoveryContext()
         fun recoverPending() {
@@ -277,30 +321,55 @@ class FocusCoordinator(private val store: NativeStateStore, val databaseIdentity
         }
         fun startAt(at: Long, nonce: String) {
             val p = context.plan ?: return
-            val duration = minOf(p.focusDurationMs, p.exactEndAt?.let { DomainTime.millis(it) - at } ?: Long.MAX_VALUE)
+            val extending=p.extensionStartedAt!=null
+            val exact=p.exactEndAt.takeUnless{extending}
+            val duration = minOf(p.focusDurationMs, exact?.let { DomainTime.millis(it) - at } ?: Long.MAX_VALUE)
             if (duration <= 0) { context = finish(p); return }
-            val sessionId = "session:${p.id}:${p.completedSessionIds.size + 1}:${StrictJson.sha(nonce).take(16)}"
+            val sessionId = if(extending)p.extensionSessionId(p.extensionRounds+1)else "session:${p.id}:${p.completedSessionIds.size + 1}:${StrictJson.sha(nonce).take(16)}"
             val cmd = DomainEngine.command("StartFocus", "sessionId" to sessionId, "projectId" to p.projectId, "subtaskId" to p.subtaskId, "plannedDurationMs" to duration)
-            if (p.mode != PlanMode.ROUNDS) cmd.put("marathon", true)
-            if (p.mode == PlanMode.MINIMAL) cmd.put("deferredSettlement", true)
-            if (p.exactEndAt != null) cmd.put("deadlineAt", p.exactEndAt)
+            // A filled habit building needs an explicit next-blueprint choice.
+            // Time can continue without advancing that building a second time.
+            val deferred=p.mode==PlanMode.MINIMAL||extending&&project(p.projectId)?.optJSONObject("habit")?.optBoolean("awaitingNextBuilding")==true
+            if (p.mode != PlanMode.ROUNDS||deferred) cmd.put("marathon", true)
+            if (deferred) cmd.put("deferredSettlement", true)
+            if (exact != null) cmd.put("deadlineAt", exact)
             command(cmd, at)
             context = context.copy(plan = p.copy(phase = PlanPhase.FOCUS, currentSessionId = sessionId, phaseEndsAt = active()!!.getString("endsAt"), terminalRest = false,hasStarted=true))
         }
         fun afterReport(p: SavedPlan, at: Long) {
             val owner = project(p.projectId)
-            if (p.cancelled || p.completedSessionIds.size >= p.totalRounds || owner?.getString("status") == "monument") { context = RecoveryContext(); return }
+            if (p.cancelled || p.extensionStartedAt!=null || p.completedSessionIds.size >= p.totalRounds || owner?.getString("status") == "monument") { context = RecoveryContext(); return }
             rest(p, at)
+        }
+        private fun startExtension(p:SavedPlan,at:Long){
+            context=RecoveryContext(p.copy(extensionStartedAt=DomainTime.format(at),restStartedAt=null))
+            startAt(at,p.id)
+        }
+        fun endExtension(p:SavedPlan,now:Long){
+            if(p.mode==PlanMode.ROUNDS&&p.subtaskId==null){
+                val pooled=unsettled(p)
+                if(pooled.isNotEmpty())command(DomainEngine.command("ReportMarathonFocus","focusSessionIds" to JSONArray(pooled),
+                    "entries" to JSONArray(),"habitAllocations" to JSONArray()),now)
+            }
+            context=finish(p)
         }
         fun afterCompletion(p: SavedPlan, done: JSONObject, manual: Boolean) {
             val id = done.getString("id")
+            val at = DomainTime.millis(done.getString("completedAt"))
+            if(p.extensionStartedAt!=null){
+                context=RecoveryContext(p.copy(extensionRounds=p.extensionRounds+1))
+                startAt(at,p.id)
+                return
+            }
             val next = p.copy(completedSessionIds = (p.completedSessionIds + id).distinct(), currentSessionId = null, phaseEndsAt = null, terminalRest = false)
             context = context.copy(plan = next, automatic = if (manual) null else context.automatic?.copy(predecessorSessionId = id))
             val owner = project(p.projectId)!!
+            val exact = p.exactEndAt?.let(DomainTime::millis)
+            if(!manual&&next.completedSessionIds.size==p.totalRounds&&p.extendAfterPlan&&(exact==null||exact<=at)){
+                startExtension(next,at);return
+            }
             if (p.mode == PlanMode.ROUNDS && owner.getString("kind") != "habit") { context = context.copy(plan = next.copy(phase = PlanPhase.REPORT)); return }
             if (owner.getString("kind") == "habit" && p.mode != PlanMode.MINIMAL && owner.getJSONObject("habit").getBoolean("awaitingNextBuilding")) { context = RecoveryContext(); return }
-            val at = DomainTime.millis(done.getString("completedAt"))
-            val exact = p.exactEndAt?.let(DomainTime::millis)
             if (next.completedSessionIds.size >= p.totalRounds) {
                 if (exact != null && exact > at && p.restDurationMs > 0) {
                     context = RecoveryContext(next.copy(phase = PlanPhase.REST, restStartedAt=DomainTime.format(at), phaseEndsAt = DomainTime.format(minOf(exact, at + p.restDurationMs)), terminalRest = true))
@@ -329,7 +398,10 @@ class FocusCoordinator(private val store: NativeStateStore, val databaseIdentity
                     }
                 } else if (p?.phase == PlanPhase.REST && DomainTime.millis(p.phaseEndsAt!!) <= now) {
                     val at = DomainTime.millis(p.phaseEndsAt!!)
-                    if (p.terminalRest) { context = finish(p); return }
+                    if (p.terminalRest) {
+                        if(p.extendAfterPlan){startExtension(p,at);return@repeat}
+                        context = finish(p);return
+                    }
                     context = context.copy(plan = p.copy(phase = PlanPhase.READY, phaseEndsAt = null))
                     if (context.automatic != null) startAt(at, "${context.automatic!!.id}:${p.completedSessionIds.size + 1}") else {
                         if(p.mode!=PlanMode.ROUNDS&&p.completedSessionIds.size<p.totalRounds){
@@ -338,9 +410,15 @@ class FocusCoordinator(private val store: NativeStateStore, val databaseIdentity
                         }
                         return
                     }
-                } else { if(p==null)recoverPending();return }
+                } else {
+                    if (p == null) recoverPending()
+                    else if (stoppedWaitingPlan(p)) stopAfterIntegrity(now)
+                    return
+                }
             }
-            error("Plan reconciliation exceeded bounded phase count")
+            // An indefinitely extended plan can be many rounds overdue after
+            // a process stop. Persist this batch and let its next ticket resume.
+            if(context.plan?.extensionStartedAt==null)error("Plan reconciliation exceeded bounded phase count")
         }
     }
 }

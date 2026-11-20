@@ -1,0 +1,203 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+<script>
+const workspaceDatabase = "blockcolc-v1";
+const resourceDatabase = "blockcolc-resource-packs-v1";
+const preferencesKey = "blockcolc-focus-preferences-v1";
+const planKey = "blockcolc-round-plan-v1";
+const setupKey = "blockcolc-first-project-setup-v1";
+
+function existingDatabase(name) {
+    return new Promise((resolve, reject) => {
+        let absent = false;
+        const request = indexedDB.open(name);
+        request.onupgradeneeded = () => {
+            absent = true;
+            request.transaction.abort();
+        };
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => absent ? resolve(null) : reject(request.error);
+        request.onblocked = () => reject(new Error("Database unavailable"));
+    });
+}
+
+function readTransaction(database, stores, read) {
+    return new Promise((resolve, reject) => {
+        const transaction = database.transaction(stores, "readonly");
+        const requests = read(transaction);
+        transaction.oncomplete = () => resolve(requests.map(request => request.result));
+        transaction.onabort = () => reject(transaction.error);
+    });
+}
+
+async function readBackups(database, writeFile) {
+    const stores = database.objectStoreNames;
+    const rollbackDates = [];
+    if (stores.contains("rollbackBackups")) {
+        const [ids] = await readTransaction(database, ["rollbackBackups"], transaction => [
+            transaction.objectStore("rollbackBackups").getAllKeys()
+        ]);
+        if (ids.length > 2) throw new Error("Rollback library limit");
+        for (const id of ids) {
+            const [record] = await readTransaction(database, ["rollbackBackups"], transaction => [
+                transaction.objectStore("rollbackBackups").get(id)
+            ]);
+            if (!record || record.id !== id || typeof record.createdAt !== "string") throw new Error("Invalid rollback record");
+            await writeFile("rollback-" + rollbackDates.length + ".json", new Blob([JSON.stringify(record)]));
+            rollbackDates.push(record.createdAt);
+        }
+    }
+    const rollbacks = rollbackDates.length;
+    const rollbackOrder = rollbackDates.map((_, index) => index).sort((a, b) => rollbackDates[a].localeCompare(rollbackDates[b]));
+    if (!stores.contains("dailyBackups")) return { rollbacks, rollbackOrder, dailyBackups: 0 };
+    const [manifests] = await readTransaction(database, ["dailyBackups"], transaction => [
+        transaction.objectStore("dailyBackups").getAll()
+    ]);
+    if (manifests.length === 0) return { rollbacks, rollbackOrder, dailyBackups: 0 };
+    const written = new Map();
+    let totalBytes = 0;
+    for (const manifest of manifests) {
+        if (!Array.isArray(manifest.blocks) || !manifest.blocks.length) throw new Error("Invalid daily backup manifest");
+        for (const block of manifest.blocks) {
+            if (typeof block.id !== "string" || !/^[a-f0-9]{64}$/.test(block.id) ||
+                !Number.isSafeInteger(block.bytes) || block.bytes <= 0) throw new Error("Invalid daily backup block");
+            if (written.has(block.id)) {
+                if (written.get(block.id) !== block.bytes) throw new Error("Conflicting daily backup block");
+                continue;
+            }
+            totalBytes += block.bytes;
+            if (totalBytes > 200 * 1024 * 1024) throw new Error("Daily backup library limit");
+            const [record] = await readTransaction(database, ["dailyBackupBlocks"], transaction => [
+                transaction.objectStore("dailyBackupBlocks").get(block.id)
+            ]);
+            if (record?.id !== block.id || !(record.data instanceof Uint8Array) || record.data.length !== block.bytes) {
+                throw new Error("Missing daily backup content");
+            }
+            await writeFile("daily-" + block.id + ".bin", new Blob([record.data]));
+            written.set(block.id, block.bytes);
+        }
+    }
+    await writeFile("daily-index.json", new Blob([JSON.stringify(manifests)]));
+    return { rollbacks, rollbackOrder, dailyBackups: manifests.length };
+}
+
+async function readWorkspace(writeFile) {
+    const database = await existingDatabase(workspaceDatabase);
+    if (!database) return { version: null, revision: 0, replacementRevision: 0, state: null, dailyBackups: 0, rollbacks: 0 };
+    try {
+        if (database.version > 3 || !database.objectStoreNames.contains("appState")) {
+            throw new Error("Unsupported workspace database");
+        }
+        const backups = await readBackups(database, writeFile);
+        const stores = database.objectStoreNames.contains("metadata") ? ["appState", "metadata"] : ["appState"];
+        const [current, marker] = await readTransaction(database, stores, transaction => [
+            transaction.objectStore("appState").get("current"),
+            stores.includes("metadata") ? transaction.objectStore("metadata").get("last-domain-replacement") : {}
+        ]);
+        const revision = current?.revision ?? 0;
+        const replacementRevision = marker?.revision ?? 0;
+        if (!Number.isSafeInteger(revision) || !Number.isSafeInteger(replacementRevision) ||
+            replacementRevision < 0 || revision < replacementRevision ||
+            (current && (!Object.prototype.hasOwnProperty.call(current, "state") || current.id !== "current" ||
+                (current.state !== null && (typeof current.state !== "object" || Array.isArray(current.state)))))) {
+            throw new Error("Invalid workspace record");
+        }
+        return { version: database.version, revision, replacementRevision, state: current?.state ?? null, ...backups };
+    } finally {
+        database.close();
+    }
+}
+
+function nativeResourceId(legacyId) {
+    if (typeof legacyId !== "string" || !/^sha256:[a-f0-9]{64}$/.test(legacyId)) {
+        throw new Error("Invalid saved resource ID");
+    }
+    return legacyId.slice("sha256:".length);
+}
+
+async function readResources(writeFile) {
+    const database = await existingDatabase(resourceDatabase);
+    if (!database) return { items: [], activeId: null, baseId: null, databaseExists: false };
+    try {
+        if (database.version !== 1) throw new Error("Unsupported resource database");
+        const [ids, active, base] = await readTransaction(database, ["resourcePacks", "metadata"], transaction => [
+            transaction.objectStore("resourcePacks").getAllKeys(),
+            transaction.objectStore("metadata").get("active-pack"),
+            transaction.objectStore("metadata").get("base-pack")
+        ]);
+        if (ids.length > 512) throw new Error("Resource library limit");
+        const items = [];
+        for (const id of ids) {
+            const digest = nativeResourceId(id);
+            const [record] = await readTransaction(database, ["resourcePacks"], transaction => [
+                transaction.objectStore("resourcePacks").get(id)
+            ]);
+            if (record?.id !== id ||
+                typeof record.name !== "string" || typeof record.importedAt !== "string" ||
+                !(record.archive instanceof Uint8Array) || record.archive.length === 0) {
+                throw new Error("Invalid saved resource archive");
+            }
+            const file = "resource-" + items.length + ".bin";
+            await writeFile(file, new Blob([record.archive]));
+            items.push({ id: digest, name: record.name, importedAt: record.importedAt, file });
+        }
+        return {
+            items,
+            activeId: active?.packId == null ? null : nativeResourceId(active.packId),
+            baseId: base?.packId == null ? null : nativeResourceId(base.packId),
+            databaseExists: true
+        };
+    } finally {
+        database.close();
+    }
+}
+
+async function transfer(port) {
+    let stage = "preferences";
+    function send(message) {
+        return new Promise((resolve, reject) => {
+            port.onmessage = event => event.data === "ok" ? resolve() : reject(new Error("Transfer rejected"));
+            port.postMessage(JSON.stringify(message));
+        });
+    }
+    async function writeFile(name, blob) {
+        await send({ type: "file", name, bytes: blob.size });
+        const size = 128 * 1024;
+        for (let offset = 0; offset < blob.size; offset += size) {
+            const bytes = new Uint8Array(await blob.slice(offset, offset + size).arrayBuffer());
+            let binary = "";
+            for (let i = 0; i < bytes.length; i += 8192) binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
+            await send({ type: "chunk", data: btoa(binary) });
+        }
+        await send({ type: "end" });
+    }
+    try {
+        const settings = localStorage.getItem(preferencesKey);
+        const plan = localStorage.getItem(planKey);
+        const setup = localStorage.getItem(setupKey);
+        const tutorial = localStorage.getItem("blockcolc-onboarding-v1");
+        stage = "resources";
+        const resources = await readResources(writeFile);
+        stage = "workspace";
+        const workspace = await readWorkspace(writeFile);
+        if (workspace.version === null && !resources.databaseExists && settings === null &&
+            plan === null && setup === null && tutorial === null) {
+            port.postMessage('{"type":"absent"}');
+            return;
+        }
+        stage = "transfer";
+        const { state, ...store } = workspace;
+        await writeFile("domain.json", new Blob([JSON.stringify(state)]));
+        await writeFile("metadata.json", new Blob([JSON.stringify({ schema: 1, ...store, settings, plan, setup, tutorial, resources })]));
+        port.postMessage('{"type":"done"}');
+    } catch {
+        port.postMessage(JSON.stringify({ type: "error", stage }));
+    }
+}
+
+window.addEventListener("message", event => {
+    if (event.data !== "blockcolc-legacy-reader" || event.ports.length !== 1) return;
+    transfer(event.ports[0]);
+}, { once: true });
+</script>

@@ -20,7 +20,10 @@ class NativeWorldFrame(val identity:WorldRequestIdentity,val scene:NativeGenerat
 /** Generation-thread adapter. Root geometry survives title/note/progress-only
  * changes; every business building/reward keeps an independently replaceable
  * owner. CPU preparation never opens an engine or reads business storage. */
-class NativeWorldPacketCompiler(signRasterizer:NativeSignRasterizer?=null,allocator:NativePacketAllocator?=null,parallel:Boolean=false):AutoCloseable {
+class NativeWorldPacketCompiler internal constructor(signRasterizer:NativeSignRasterizer?,private val allocator:NativePacketAllocator?,parallel:Boolean,
+    private val staticWorldCache:AndroidStaticWorldCache?,private val paperWorldCache:AndroidStaticWorldCache?=null):AutoCloseable {
+    constructor(signRasterizer:NativeSignRasterizer?=null,allocator:NativePacketAllocator?=null,parallel:Boolean=false):
+        this(signRasterizer,allocator,parallel,null)
     private val preparation=WorldPacketPreparation(allocator,parallel)
     private var rootCompiler:NativeWorldRootCompiler?=null
     private val materials=NativeOriginalMaterials();private val originals=NativeOriginalPackets(materials);private val compiler=OriginalStructureCompiler()
@@ -36,12 +39,12 @@ class NativeWorldPacketCompiler(signRasterizer:NativeSignRasterizer?=null,alloca
     private var resourceCompiler:NativeResourceStructureCompiler?=null
     private var resourcePackets:NativeResourcePackets?=null
     private var ground:Pair<String,NativePrecipitationGround>?=null
-    private data class RootKey(val spatial:String,val terrain:String,val scenery:String,val state:NativeSurfaceState)
+    private data class RootKey(val spatial:String,val terrain:String,val scenery:String,val state:NativeSurfaceState,val paper:Boolean)
     private var root:Pair<RootKey,NativePacketSource>?=null
     // Preparation caches may evict/recreate an identical structure after a
     // cancelled or failed candidate. Reuse by its complete immutable input and
     // rebase origin, not the temporary geometry container's object identity.
-    private data class OwnerKey(val structureKey:String,val origin:BlockPoint,val placement:NativeStructurePlacement,val weathering:Double,val state:NativeSurfaceState,val foundation:List<RenderVoxel> = emptyList(),val outline:Boolean=false,val entities:NativeStaticEntityPlan?=null)
+    private data class OwnerKey(val structureKey:String,val origin:BlockPoint,val placement:NativeStructurePlacement,val weathering:Double,val state:NativeSurfaceState,val foundation:List<RenderVoxel> = emptyList(),val outline:Boolean=false,val entities:NativeStaticEntityPlan?=null,val paper:Boolean=false)
     private val owners=LinkedHashMap<String,Pair<OwnerKey,NativePacketSource>>()
     private fun placement(position:Position3,rotation:Double,offset:Position2)=NativeStructurePlacement(BlockPoint(position.x,position.y,position.z),rotation,offset)
     private val preparedResources=HashMap<String,NativeResourceStructure>()
@@ -60,6 +63,7 @@ class NativeWorldPacketCompiler(signRasterizer:NativeSignRasterizer?=null,alloca
     private fun prepare(request:WorldRequestIdentity,world:WorldTerrainPlan,options:WorldRenderOptions,batch:WorldPacketPreparation.Batch):NativeWorldFrame {
         val cancelled=batch::cancelled
         check(cancelled)
+        val paper=options.quality==NativeLightingQuality.PAPER
         // Scratch for entity membership in this preparation, not another
         // resource cache. Retiring it before the next root is important when
         // restoring originals while the old textured GPU world stays visible.
@@ -70,7 +74,7 @@ class NativeWorldPacketCompiler(signRasterizer:NativeSignRasterizer?=null,alloca
             resourcePackets=options.resources?.let{NativeResourcePackets(it.textures)}
             root=null;owners.clear()
         }
-        val camera=camera(world,options.aspect);val t=world.terrain;val b=t.bounds
+        val camera=camera(world,options.aspect,paper);val t=world.terrain;val b=t.bounds
         val half=maxOf(abs(b.minX),abs(b.maxX),abs(b.minZ),abs(b.maxZ));val core=camera.volume.framingRadius
         val environmentContext=NativeEnvironmentContext(options.zone,options.quality,core,half,camera.fittedDistance*.45,
             world.input.spatial.environment==WorldEnvironment.OCEAN,options.coordinates,options.weather,
@@ -79,69 +83,94 @@ class NativeWorldPacketCompiler(signRasterizer:NativeSignRasterizer?=null,alloca
         // AO is baked into instance rows. Sun, night, water reflection and
         // weather tint are uniforms and must not invalidate these CPU packets.
         val materialState=NativeSurfaceState(ambientOcclusion=options.quality.ambientOcclusion)
-        val key=RootKey(world.input.spatial.key,world.cacheKey,world.sceneryKey,materialState)
+        val key=RootKey(world.input.spatial.key,world.cacheKey,world.sceneryKey,materialState,paper)
         val cachedRoot=root?.takeIf{it.first==key}?.second
-        val rootTask=batch.submit{com.blockcolc.preview.NativeStartupTrace.measure("packets-root",benchmark=true){cachedRoot?:
-            (rootCompiler?:NativeWorldRootCompiler().also{rootCompiler=it}).prepare(world,materialState,options.resources,cancelled)}}
-        val animalTask=batch.submit{com.blockcolc.preview.NativeStartupTrace.measure("packets-animals",benchmark=true){animals.prepare(world,cancelled)}}
+        val cache=if(paper)paperWorldCache else staticWorldCache?.takeIf{options.resources==null}
+        val diskKey=cache?.key(world,materialState.ambientOcclusion)
+        val rootTask=batch.submit{com.blockcolc.preview.NativeStartupTrace.measure("packets-root",benchmark=true){
+            val reused=cachedRoot?:diskKey?.let{cache?.read(it,cancelled)?.also{
+                com.blockcolc.preview.NativeStartupTrace.point(if(paper)"paper-packets-cache-hit" else "root-packets-cache-hit")
+            }}
+            if(reused!=null)reused to false else if(paper){
+                rootCompiler?.clear();rootCompiler=null
+                val target=NativePacketBuilder("world",retainManifest=diskKey!=null)
+                PaperWorldMesh.appendRoot(target,world,allocator,cancelled)
+                target.build(cancelled) to (diskKey!=null)
+            } else {
+                val compiler=rootCompiler?:NativeWorldRootCompiler().also{rootCompiler=it}
+                compiler.prepare(world,materialState,options.resources,diskKey!=null,cancelled) to (diskKey!=null)
+            }
+        }}
+        val animalTask=batch.submit{com.blockcolc.preview.NativeStartupTrace.measure("packets-animals",benchmark=true){animals.prepare(world,paper,cancelled)}}
         val cachedGround=ground?.takeIf{it.first==world.cacheKey}?.second
         val groundTask=batch.submit{com.blockcolc.preview.NativeStartupTrace.measure("packets-rain-ground",benchmark=true){cachedGround?:NativePrecipitationGround.prepare(world.surfaces,cancelled)}}
         val inputs=ArrayList<NativePacketSource>()
-        val entityPlans=com.blockcolc.preview.NativeStartupTrace.measure("packets-entities"){entities.prepare(world.input.buildings.map{entityRequest("building:${it.fact.id}",it.recipe,it.originalGeometry,cancelled)}+
+        val entityPlans=if(paper)emptyMap() else com.blockcolc.preview.NativeStartupTrace.measure("packets-entities"){entities.prepare(world.input.buildings.map{entityRequest("building:${it.fact.id}",it.recipe,it.originalGeometry,cancelled)}+
             world.rewards.map{entityRequest("reward:${it.source.fact.rewardId}",it.source.recipe,it.source.originalGeometry,cancelled)},cancelled)}
         val adopted=LinkedHashMap<String,Pair<OwnerKey,NativePacketSource>>();var pendingEntities=0
         com.blockcolc.preview.NativeStartupTrace.measure("packets-buildings"){
         for(building in world.input.buildings){check(cancelled);val owner="building:${building.fact.id}"
             val pose=placement(building.placement.worldPosition,building.placement.rotationY,building.placement.blueprintOffset)
             val show=options.outlines.shows(building.fact.active,building.fact.completion)
-            val entityPlan=entityPlans.getValue(owner)
-            val input=OwnerKey(building.originalGeometry.inputKey,building.originalGeometry.origin,pose,building.recipe.weathering,materialState,outline=show,entities=entityPlan)
+            val entityPlan=entityPlans[owner]
+            val input=OwnerKey(building.recipe.key,building.origin,pose,building.recipe.weathering,materialState,outline=show,entities=entityPlan,paper=paper)
             val source=owners[owner]?.takeIf{it.first==input}?.second?:NativePacketBuilder(owner).also{target->
-                appendStructure(target,owner,building.recipe,building.originalGeometry,pose,materialState,building.recipe.weathering,entityPlan.replacedIndices,cancelled=cancelled)
-                entities.append(target,entityPlan,building.originalGeometry.origin,pose,cancelled)
-                construction.appendVines(target,building.recipe.vines,building.originalGeometry.origin,pose,materialState,cancelled)
-                construction.appendOutline(target,building.blueprint,building.fact.completion,show,building.originalGeometry.origin,pose,cancelled)
+                if(paper)PaperWorldMesh.appendOwner(target,building.recipe.intact,emptyList(),building.origin,pose,building.recipe.weathering,allocator,cancelled)
+                else {
+                    val plan=checkNotNull(entityPlan)
+                    appendStructure(target,owner,building.recipe,building.originalGeometry,pose,materialState,building.recipe.weathering,plan.replacedIndices,cancelled=cancelled)
+                    entities.append(target,plan,building.origin,pose,cancelled)
+                    construction.appendVines(target,building.recipe.vines,building.origin,pose,materialState,cancelled)
+                }
+                construction.appendOutline(target,building.blueprint,building.fact.completion,show,building.origin,pose,cancelled,paper=paper)
             }.build(cancelled)
-            pendingEntities+=entityPlan.pendingBlocks;adopted[owner]=input to source;inputs+=source
+            pendingEntities+=entityPlan?.pendingBlocks?:0;adopted[owner]=input to source;inputs+=source
         }
         }
         com.blockcolc.preview.NativeStartupTrace.measure("packets-rewards"){
         for(reward in world.rewards){check(cancelled);val owner="reward:${reward.source.fact.rewardId}";val p=reward.support.placement
-            val pose=placement(p.worldPosition,p.rotationY,p.blueprintOffset);val entityPlan=entityPlans.getValue(owner)
-            val input=OwnerKey(reward.source.originalGeometry.inputKey,reward.source.originalGeometry.origin,pose,0.0,materialState,reward.support.foundation,entities=entityPlan)
+            val pose=placement(p.worldPosition,p.rotationY,p.blueprintOffset);val entityPlan=entityPlans[owner];val origin=reward.source.origin
+            val input=OwnerKey(reward.source.recipe.key,origin,pose,0.0,materialState,reward.support.foundation,entities=entityPlan,paper=paper)
             val source=owners[owner]?.takeIf{it.first==input}?.second?:NativePacketBuilder(owner).also{target->
-                appendStructure(target,owner,reward.source.recipe,reward.source.originalGeometry,pose,materialState,excluded=entityPlan.replacedIndices,cancelled=cancelled)
-                entities.append(target,entityPlan,reward.source.originalGeometry.origin,pose,cancelled)
-                if(reward.support.foundation.isNotEmpty()){
-                    val recipe=BuildingPreparation.staticStructure(reward.support.foundation,"${world.cacheKey}:$owner:foundation",cancelled=cancelled)
-                    val origin=reward.source.originalGeometry.origin;val mesh=if(resourceCompiler==null)compiler.compile(recipe,origin,cancelled)else null
-                    appendStructure(target,owner,recipe,mesh,pose,materialState,origin=origin,cancelled=cancelled)
+                if(paper)PaperWorldMesh.appendOwner(target,reward.source.recipe.intact,reward.support.foundation,origin,pose,0.0,allocator,cancelled)
+                else {
+                    val plan=checkNotNull(entityPlan)
+                    appendStructure(target,owner,reward.source.recipe,reward.source.originalGeometry,pose,materialState,excluded=plan.replacedIndices,cancelled=cancelled)
+                    entities.append(target,plan,origin,pose,cancelled)
+                    if(reward.support.foundation.isNotEmpty()){
+                        val recipe=BuildingPreparation.staticStructure(reward.support.foundation,"${world.cacheKey}:$owner:foundation",cancelled=cancelled)
+                        val mesh=if(resourceCompiler==null)compiler.compile(recipe,origin,cancelled)else null
+                        appendStructure(target,owner,recipe,mesh,pose,materialState,origin=origin,cancelled=cancelled)
+                    }
                 }
             }.build(cancelled)
-            pendingEntities+=entityPlan.pendingBlocks;adopted[owner]=input to source;inputs+=source
+            pendingEntities+=entityPlan?.pendingBlocks?:0;adopted[owner]=input to source;inputs+=source
         }
         }
-        val rootSource=rootTask();inputs.add(0,rootSource)
+        val (rootSource,storeRoot)=rootTask();inputs.add(0,rootSource)
         val animal=animalTask()
         val cloudContext=cloudContext(world)
-        val cloud=com.blockcolc.preview.NativeStartupTrace.measure("packets-clouds"){clouds.prepare(cloudContext,sample.weather,options.quality.cloudDensity,cancelled)};inputs+=cloud.source
+        val cloud=com.blockcolc.preview.NativeStartupTrace.measure("packets-clouds"){clouds.prepare(cloudContext,sample.weather,options.quality.cloudDensity,cancelled,paper)};inputs+=cloud.source
         val ground=groundTask()
         val visible=camera.volume.visibility;val precipitationContext=NativePrecipitationContext(
             listOf(visible[0][0],visible[1][0],visible[0][2],visible[1][2]),listOf(cloudContext.view.contentWidth,cloudContext.view.contentDepth),ground)
-        val rain=com.blockcolc.preview.NativeStartupTrace.measure("packets-rain"){precipitation.prepare(precipitationContext,sample.weather,options.quality.cloudDensity,cloud.randomTail,cancelled)};inputs+=rain.source
-        inputs+=sky.prepare(world.input.spatial.environment==WorldEnvironment.FLOATING,cancelled)
+        val rain=com.blockcolc.preview.NativeStartupTrace.measure("packets-rain"){precipitation.prepare(precipitationContext,sample.weather,options.quality.cloudDensity,cloud.randomTail,cancelled,paper)};inputs+=rain.source
+        if(!paper)inputs+=sky.prepare(world.input.spatial.environment==WorldEnvironment.FLOATING,cancelled)
         val stormContext=NativeStormContext(camera.target,cloudContext.view.contentWidth,cloudContext.view.contentDepth,cloudContext.baseY)
         inputs+=lightning.prepare(stormContext,cancelled)
         animal?.let{inputs+=it.second}
         val targets=world.input.buildings.map{b->val p=b.placement;NativeOrbitTarget(b.fact.id,BlockPoint(p.worldPosition.x,p.worldPosition.y,p.worldPosition.z),p.footprint.width.toDouble(),p.footprint.depth.toDouble(),(b.blueprint.bounds.maxY-b.blueprint.bounds.minY+1).toDouble())}+
             world.rewards.map{r->val p=r.support.placement;NativeOrbitTarget("reward:${r.source.fact.rewardId}",BlockPoint(p.worldPosition.x,p.worldPosition.y,p.worldPosition.z),p.footprint.width.toDouble(),p.footprint.depth.toDouble(),(r.source.blueprint.bounds.maxY-r.source.blueprint.bounds.minY+1).toDouble())}
         inputs+=NativeInteriorCompiler.empty()
-        val pickIndex=com.blockcolc.preview.NativeStartupTrace.measure("packets-picking"){picking.prepare(inputs,animal!=null,cancelled)}
+        val pickIndex=com.blockcolc.preview.NativeStartupTrace.measure("packets-picking"){
+            picking.prepare(if(paper)inputs.filter{it.owner!="world"} else inputs,animal!=null,cancelled)
+        }
         check(cancelled);val scene=NativeGeneratedScene(inputs,sample.lighting,sample.post.copy(worldColor=options.worldColor),camera,request.replacementGeneration,request.revision,sample.surface,sample.cloudColor,sample.sky,sample.fogProjection,
             NativeStormWeather(sample.weather.thunderstorm,sample.weather.seed),stormContext,targets,pickIndex,animal?.first)
         // Cache only the current result. Failed/cancelled packing cannot replace
         // the reusable inputs still supporting the visible generation.
         check(cancelled);root=key to rootSource;owners.clear();owners.putAll(adopted);this.ground=world.cacheKey to ground;preparedResources.clear()
+        if(storeRoot&&diskKey!=null)cache?.write(diskKey,rootSource)
         return NativeWorldFrame(request,scene,sample,world.input.spatial.key,world.cacheKey,world.sceneryKey,pendingEntities,environmentContext,cloudContext,cloud,precipitationContext,rain)
     }
     private fun cloudContext(world:WorldTerrainPlan):NativeCloudContext {
@@ -154,7 +183,7 @@ class NativeWorldPacketCompiler(signRasterizer:NativeSignRasterizer?=null,alloca
         return NativeCloudContext(NativeCloudView(maxX-minX,maxZ-minZ,vx1-vx0,vz1-vz0,near.maxX-near.minX,near.maxZ-near.minZ),
             (vx0+vx1)/2,(vz0+vz1)/2,max(20.0,max(bounds.maxY,maxY)+9))
     }
-    private fun camera(world:WorldTerrainPlan,aspect:Double):NativeSceneCamera {
+    private fun camera(world:WorldTerrainPlan,aspect:Double,paper:Boolean):NativeSceneCamera {
         val t=world.terrain;val framing=t.framingBounds;val b=t.bounds
         val minY= -2.5;var maxY=4.0
         for(building in world.input.buildings)maxY=max(maxY,building.placement.worldPosition.y+building.blueprint.bounds.maxY+1)
@@ -165,7 +194,7 @@ class NativeWorldPacketCompiler(signRasterizer:NativeSignRasterizer?=null,alloca
         val distance=(fitted*.45).coerceIn(min(fitted*.9,max(12.0,fitted*.1)),fitted*.9);val pitch=38*PI/180;val azimuth=PI/4
         val eye=BlockPoint(target.x+distance*cos(pitch)*sin(azimuth),target.y+distance*sin(pitch),target.z+distance*cos(pitch)*cos(azimuth))
         val volume=SourceCamera(radius,listOf(listOf(b.minX,min(b.minY,minY),b.minZ),listOf(b.maxX,max(b.maxY,maxY),b.maxZ)),NativeSky.RADIUS,.82,.91,1.5,NativeSky.RADIUS)
-        return NativeSceneCamera(target,eye,fitted,fov,volume,aspect)
+        return NativeSceneCamera(target,eye,fitted,fov,volume,aspect,paper=paper)
     }
     private fun appendStructure(target:NativePacketBuilder,owner:String,recipe:BuildingInputRecipe,original:OriginalStructure?,placement:NativeStructurePlacement,
         state:NativeSurfaceState,weathering:Double=0.0,excluded:Set<Int> = emptySet(),lod:SceneryLod?=null,origin:BlockPoint=original?.origin?:BlockPoint(0.0,0.0,0.0),cancelled:()->Boolean){

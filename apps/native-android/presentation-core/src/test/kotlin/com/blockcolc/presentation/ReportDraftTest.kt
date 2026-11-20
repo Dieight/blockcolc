@@ -43,6 +43,29 @@ class ReportDraftTest {
         val rows=FocusProjection.attribution(discarded.state).getJSONArray("sessions")
         assertTrue((0 until rows.length()).all{rows.getJSONObject(it).getString("reason")=="discarded"})
     }
+    @Test fun reportTimeIncludesTheShortExtensionWithoutOfferingItAsAnAllocatableRound(){
+        val (doc,recovery)=state()
+        val plan=recovery.plan!!
+        val start=now+270000L
+        val id=plan.extensionSessionId(1)
+        val active=DomainEngine.execute(doc,DomainEngine.command("StartFocus","sessionId" to id,"projectId" to plan.projectId,
+            "subtaskId" to null,"plannedDurationMs" to plan.focusDurationMs,"marathon" to true,"deferredSettlement" to true),start)
+        assertTrue(active.error,active.ok)
+        for(tail in listOf(0L,59000L,60000L)){
+            val stopped=DomainEngine.execute(active.state,DomainEngine.command("FinishExtendedRound"),start+tail)
+            assertTrue(stopped.error,stopped.ok)
+            val credited=if(tail>=plan.focusDurationMs/2)1 else 0
+            val extended=plan.copy(extendAfterPlan=true,extensionStartedAt=DomainTime.format(start),extensionRounds=credited)
+            val pool=ReportPool.from(stopped.state,recovery.copy(plan=extended))!!
+            assertEquals(270000L+tail,pool.totalDurationMs)
+            assertEquals(3+credited,pool.totalRounds)
+            val draft=ReportDraft(plan.id,listOf(TaskAllocation("first","one",2500,3+credited)))
+            assertEquals(270000L+tail*credited,draft.assignedDurations(pool)["task:one"])
+            val ids=draft.command(pool){"report"}.getJSONArray("focusSessionIds")
+            assertEquals(3+credited,ids.length())
+            if(credited==1)assertEquals(id,ids.getString(3))
+        }
+    }
     @Test fun stalePoolDuplicateTargetsOverAllocationAndExceedingHabitCapacityFailBeforeAnyCommand(){
         val(doc,recovery)=state();val pool=ReportPool.from(doc,recovery)!!;val original=doc.canonical
         val invalid=listOf(

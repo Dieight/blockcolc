@@ -39,15 +39,22 @@ object NativeAnimalPackets {
         NativeRenderMaterial(texture=texture(true),roughness=1f,emissionStrength=1f),
         NativeRenderMaterial(color=LinearRgb.fromSrgb(0x2b3527),opacity=.16f,transparent=true,unlit=true,depthWrite=false),
         NativeRenderMaterial(color=LinearRgb.fromSrgb(0xd9f6ec),opacity=.35f,transparent=true,unlit=true,depthWrite=false,side=NativeFaceSide.DOUBLE))}
+    private val paperMaterials by lazy {
+        listOf(
+            NativeRenderMaterial(unlit=true),NativeRenderMaterial(unlit=true),
+            materials[2].copy(opacity=.10f),materials[3].copy(opacity=.46f)
+        )
+    }
     /** All slots are present even when the initial pose has fewer parts. Slots
      * start inactive and are filled by the admitted runtime before drawing. */
-    fun prepare(bounds:BlockBox,cancelled:()->Boolean={false}):NativePacketSource {
+    fun prepare(bounds:BlockBox,cancelled:()->Boolean={false}):NativePacketSource=prepare(bounds,false,cancelled)
+    fun prepare(bounds:BlockBox,paper:Boolean,cancelled:()->Boolean={false}):NativePacketSource {
         val builder=NativePacketBuilder(PacketOwners.ANIMALS,NativePacketLayer.ANIMALS)
         for(kind in 0..3){
             if(cancelled()||Thread.currentThread().isInterrupted)throw CancellationException("Animal packets superseded")
             val capacity=AnimalRig.capacities[kind];val matrices=FloatArray(capacity*16){if(it%16%5==0)1f else 0f}
             val aux=FloatArray(capacity*4){when(it%4){0->(it/4).toFloat();1->kind.toFloat();else->0f}}
-            builder.add(geometry[kind],materials[kind],FloatBuffer.wrap(matrices),aux=FloatBuffer.wrap(aux),castShadow=false,receiveShadow=true,
+            builder.add(geometry[kind],(if(paper)paperMaterials else materials)[kind],FloatBuffer.wrap(matrices),aux=FloatBuffer.wrap(aux),castShadow=false,receiveShadow=true,
                 priority=4,boundsOverride=bounds)
         }
         return builder.build(cancelled)

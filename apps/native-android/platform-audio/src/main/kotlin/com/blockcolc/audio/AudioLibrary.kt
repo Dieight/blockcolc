@@ -50,7 +50,7 @@ class AudioLibrary(private val folder:File,private val index:AudioIndex,private 
     }
     private fun write(items:List<ImportedAudio>){val body=render(items);index.write(JSONObject().put("schema",1).put("items",JSONArray(body))
         .put("sha256",hash(body.toByteArray(Charsets.UTF_8))).toString())}
-    @Synchronized fun importAudio(name:String,open:()->InputStream):ImportedAudio {
+    @Synchronized fun importAudio(name:String,expectedId:String?=null,open:()->InputStream):ImportedAudio {
         val before=list();if(before.size>=MAX_FILES)throw AudioFailure("AUDIO_LIBRARY_FULL")
         if(!folder.isDirectory&&!folder.mkdirs())throw AudioFailure("AUDIO_STORAGE_UNAVAILABLE")
         val temporary=File.createTempFile("import-",".part",folder)
@@ -62,6 +62,7 @@ class AudioLibrary(private val folder:File,private val index:AudioIndex,private 
             if(bytes==0L)throw AudioFailure("AUDIO_INVALID_MEDIA")
             val length=duration(temporary);if(length !in 1..MAX_DURATION)throw AudioFailure("AUDIO_INVALID_MEDIA")
             val id=digest.digest().joinToString(""){"%02x".format(it.toInt()and 255)}
+            if(expectedId!=null&&id!=expectedId)throw AudioFailure("AUDIO_CONTENT_INVALID")
             before.firstOrNull{it.id==id}?.let{return it}
             val target=file(id)
             if(target.exists()){

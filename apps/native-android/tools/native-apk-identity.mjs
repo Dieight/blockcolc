@@ -17,7 +17,14 @@ export function readApk(file){
   assert.ok(at+e.packed<=bytes.length,'Truncated APK member');const value=e.method===0?raw:e.method===8?inflateRawSync(raw,{maxOutputLength:64*1024*1024}):null;assert.ok(value,'Unsupported APK compression');assert.equal(value.length,e.size);return value;
  }};
 }
-export function apkIdentity(file){const apk=readApk(file),identity=JSON.parse(apk.read('assets/native-build.json'));assert.equal(identity.schema,1);assert.equal(identity.applicationId,'com.blockcolc.preview');assert.ok(['user-preview','diagnostic'].includes(identity.mode));assert.equal(typeof identity.privateRelay,'boolean');return {apk,identity};}
+export function apkIdentity(file){
+ const apk=readApk(file),identity=JSON.parse(apk.read('assets/native-build.json'));
+ assert.equal(identity.schema,1);
+ assert.ok(['user-preview','diagnostic','upgrade-candidate'].includes(identity.mode));
+ assert.equal(identity.applicationId,identity.mode==='upgrade-candidate'?'com.blockcolc.app':'com.blockcolc.preview');
+ assert.equal(typeof identity.privateRelay,'boolean');
+ return {apk,identity};
+}
 export function assertDiagnosticApk(file){
  const {apk,identity}=apkIdentity(file);assert.equal(identity.mode,'diagnostic','Diagnostic tool rejected user-preview APK before ADB; build explicitly with -PnativeDiagnostics=true');
  const dex=Buffer.concat(apk.names.filter(x=>/^classes[0-9]*\.dex$/.test(x)).map(x=>apk.read(x)));

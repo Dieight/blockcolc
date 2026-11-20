@@ -91,6 +91,49 @@ class DomainDocument private constructor(private val wire:CanonicalWire, private
         val blueprints=java.util.Collections.unmodifiableMap(blueprintSlices.mapValues{(_,slice)->shifted(slice)})
         return DomainDocument(next,null,null,sessionWire,dailyResources,birthdayControls,null,blueprints,roots,projectionSections,controlSections,focusStartBaseSha=sha256)
     }
+
+    /** Focus and task-selection commands can edit records and seal a habit
+     * building with its project's existing blueprint. Validate updated records
+     * and references while keeping the exact validated blueprint bodies. */
+    internal fun editRetainingBlueprints(edit: (JSONObject) -> Unit): DomainDocument? {
+        if (snapshot != null || blueprintSlices.isEmpty()) return null
+        val draft = projectionJson()
+        fun attachments(root: JSONObject) = sequence {
+            for ((section, field) in blueprintFields) {
+                val rows = root.getJSONArray(section)
+                for (i in 0 until rows.length()) {
+                    val row = rows.getJSONObject(i)
+                    if (!row.isNull(field)) yield(Triple(section to row.getString("id"), field, row))
+                }
+            }
+        }
+        val original = attachments(draft).associate { (owner, field, row) ->
+            val header = row.getJSONObject(field)
+            owner to (header to StrictJson.render(header))
+        }
+        edit(draft)
+
+        val canonicalBodies = java.util.IdentityHashMap<JSONObject, String>()
+        val proofs = java.util.IdentityHashMap<JSONObject, DomainValidation.BlueprintProof>()
+        for ((owner, field, row) in attachments(draft)) {
+            val source = when {
+                owner in original -> owner
+                owner.first == "habitBuildings" && owner !in blueprintSlices -> "projects" to row.getString("habitProjectId")
+                else -> return null
+            }
+            val projected = row.getJSONObject(field)
+            val (previous, spelling) = original[source] ?: return null
+            if ((owner == source && previous !== projected) || StrictJson.render(projected) != spelling) return null
+            val body = blueprintCanonical(source.first, source.second) ?: return null
+            val header = JSONObject().put("schemaVersion", 1).put("id", projected.get("id"))
+                .put("title", projected.get("title")).put("bounds", projected.get("bounds"))
+            row.put(field, header)
+            canonicalBodies[header] = body
+            proofs[header] = DomainValidation.BlueprintProof(header, projected.getInt("voxelCount"), source.first == "decorationBlueprintResources")
+        }
+        return fromOwned(draft, canonicalLength, canonicalBodies, proofs)
+    }
+
     override fun equals(other: Any?) = other is DomainDocument && wire.sameAs(other.wire)
     override fun hashCode() = canonical.hashCode()
     companion object {

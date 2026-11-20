@@ -1,6 +1,7 @@
 package com.blockcolc.updates
 
 import org.json.JSONObject
+import org.json.JSONArray
 import java.io.File
 import java.security.MessageDigest
 
@@ -9,21 +10,30 @@ class UpdateFailure(val problem:UpdateProblem):java.io.IOException(problem.name)
 data class UpdateAsset(val version:String,val url:String,val size:Long,val sha256:String)
 data class AppRelease(val version:String,val url:String,val asset:UpdateAsset?)
 enum class UpdateChannel { STANDARD, PRIVATE, PREVIEW }
+enum class UpdateFeed { STABLE, BETA }
 data class AppIdentity(val packageName:String,val version:String,val code:Long,val signers:List<String>,val privateBuild:Boolean=false)
 
-/** Same public stable source and asset contract as app-update.ts / AppUpdatePolicy.
+/** Public releases share a package and signing identity across both feeds.
  * An independent gate prevents a preview or private installation from fetching
  * the public APK even when a caller bypasses the About UI. */
 object UpdatePolicy {
     const val REPOSITORY="https://github.com/Dieight/blockcolc"
     const val API="https://api.github.com/repos/Dieight/blockcolc/releases/latest"
+    const val BETA_API="https://api.github.com/repos/Dieight/blockcolc/releases?per_page=30"
     const val MAX_BYTES=100L*1024*1024
-    private val version=Regex("(?:0|[1-9][0-9]{0,5})\\.(?:0|[1-9][0-9]{0,5})\\.(?:0|[1-9][0-9]{0,5})")
+    private const val number="(0|[1-9][0-9]{0,5})"
+    private val version=Regex("$number\\.$number\\.$number(?:-beta\\.([1-9][0-9]{0,5}))?")
     fun isVersion(value:String)=version.matches(value)
+    fun isBeta(value:String)=version.matchEntire(value)?.groups?.get(4)!=null
     fun compare(a:String,b:String):Int {
-        if(!isVersion(a)||!isVersion(b))throw UpdateFailure(UpdateProblem.DESCRIPTOR)
-        a.split('.').map(String::toInt).zip(b.split('.').map(String::toInt)).forEach{(x,y)->if(x!=y)return x.compareTo(y)}
-        return 0
+        val left=version.matchEntire(a)?:throw UpdateFailure(UpdateProblem.DESCRIPTOR)
+        val right=version.matchEntire(b)?:throw UpdateFailure(UpdateProblem.DESCRIPTOR)
+        for(index in 1..3){
+            val result=left.groupValues[index].toInt().compareTo(right.groupValues[index].toInt())
+            if(result!=0)return result
+        }
+        return (left.groups[4]?.value?.toInt()?:Int.MAX_VALUE)
+            .compareTo(right.groups[4]?.value?.toInt()?:Int.MAX_VALUE)
     }
     fun channel(installed:AppIdentity)=when {installed.privateBuild->UpdateChannel.PRIVATE;installed.packageName!="com.blockcolc.app"->UpdateChannel.PREVIEW;else->UpdateChannel.STANDARD}
     fun requireDownload(installed:AppIdentity){if(channel(installed)!=UpdateChannel.STANDARD)throw UpdateFailure(UpdateProblem.CHANNEL)}
@@ -35,8 +45,20 @@ object UpdatePolicy {
     fun release(body:String):AppRelease {
         try {
             require(body.toByteArray(Charsets.UTF_8).size<=1024*1024)
-            val json=JSONObject(body);val tag=json.getString("tag_name");val v=tag.removePrefix("v")
-            require(isVersion(v)&&json.opt("draft")==false&&json.opt("prerelease")==false)
+            return parseRelease(JSONObject(body),UpdateFeed.STABLE)?:throw UpdateFailure(UpdateProblem.CHECK)
+        }catch(e:Exception){throw UpdateFailure(UpdateProblem.CHECK)}
+    }
+    fun betaFeed(body:String):AppRelease? {
+        try {
+            val rows=JSONArray(body)
+            return (0 until rows.length()).mapNotNull{index->rows.optJSONObject(index)?.let{parseRelease(it,UpdateFeed.BETA)}}
+                .maxWithOrNull{a,b->compare(a.version,b.version)}
+        }catch(e:Exception){throw UpdateFailure(UpdateProblem.CHECK)}
+    }
+    private fun parseRelease(json:JSONObject,feed:UpdateFeed):AppRelease? {
+            val tag=json.opt("tag_name") as? String?:return null
+            val v=tag.removePrefix("v")
+            if(!isVersion(v)||json.opt("draft")!=false||json.opt("prerelease")!=isBeta(v)||feed==UpdateFeed.STABLE&&isBeta(v))return null
             val assets=json.optJSONArray("assets")
             val matching=if(assets==null)emptyList()else(0 until assets.length()).mapNotNull{assets.optJSONObject(it)}.filter{it.opt("name")=="Blockcolc-v$v.apk"}
             val asset=matching.singleOrNull()?.let{a->
@@ -45,7 +67,6 @@ object UpdatePolicy {
                 else UpdateAsset(v,a.optString("browser_download_url"),size.toLong(),digest.substring(7).lowercase()).takeIf{runCatching{validate(it)}.isSuccess}
             }
             return AppRelease(v,"$REPOSITORY/releases/tag/$tag",asset)
-        }catch(e:Exception){throw UpdateFailure(UpdateProblem.CHECK)}
     }
     fun identity(candidate:AppIdentity,installed:AppIdentity,expected:UpdateAsset){
         requireDownload(installed);validate(expected)

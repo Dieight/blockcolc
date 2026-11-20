@@ -23,7 +23,8 @@ class WorldGenerationWorker(
     private val builderFactory:()->WorldPlanBuilder={WorldPlanBuilder()},
     private val resourcePreparation:((com.blockcolc.preview.resources.ResourceWorldSelection?,()->Boolean)->com.blockcolc.world.NativeResourceWorldAssets?)?=null,
     private val closeResourcePreparation:(()->Unit)?=null,
-    private val packetAllocator:com.blockcolc.world.NativePacketAllocator?=null
+    private val packetAllocator:com.blockcolc.world.NativePacketAllocator?=null,
+    private val packetCompilerFactory:(()->NativeWorldPacketCompiler)?=null
 ):AutoCloseable {
     constructor(deliver:(Runnable)->Unit,builderFactory:()->WorldPlanBuilder={WorldPlanBuilder()}):this(deliver,null,builderFactory)
     private val gate=Any()
@@ -52,12 +53,17 @@ class WorldGenerationWorker(
                 val result=try { com.blockcolc.world.NativePacketBuffers.using(packetAllocator){
                     val planner=builder?:builderFactory().also{builder=it}
                     val facts=com.blockcolc.preview.NativeStartupTrace.measure("world-facts",benchmark=true){WorldFacts.from(document)}
-                    val plan=com.blockcolc.preview.NativeStartupTrace.measure("world-layout",benchmark=true){planner.prepare(facts,options.buildingCondition,::cancelled)}
+                    val paper=options.rendering?.quality==com.blockcolc.world.NativeLightingQuality.PAPER
+                    val plan=com.blockcolc.preview.NativeStartupTrace.measure("world-layout",benchmark=true){
+                        planner.prepare(facts,options.buildingCondition,!paper,::cancelled)
+                    }
                     val terrain=com.blockcolc.preview.NativeStartupTrace.measure("world-terrain",benchmark=true){planner.terrain(plan,options,::cancelled)}
                     com.blockcolc.preview.NativeStartupTrace.point("cache-${terrain.reuse.name}-${terrain.sceneryReuse.name}")
                     val frame=options.rendering?.let{renderOptions->
-                        val compiler=packetCompiler?:NativeWorldPacketCompiler(signRasterizer,packetAllocator,parallel=true).also{packetCompiler=it}
-                        val actual=resourcePreparation?.let{prepare->renderOptions.copy(resources=prepare(options.resourceSelection,::cancelled))}?:renderOptions
+                        val compiler=packetCompiler?:(packetCompilerFactory?.invoke()
+                            ?:NativeWorldPacketCompiler(signRasterizer,packetAllocator,parallel=true)).also{packetCompiler=it}
+                        val actual=if(paper)renderOptions else
+                            resourcePreparation?.let{prepare->renderOptions.copy(resources=prepare(options.resourceSelection,::cancelled))}?:renderOptions
                         com.blockcolc.preview.NativeStartupTrace.measure("world-packets",benchmark=true){compiler.prepare(identity,terrain,actual,::cancelled)}
                     }
                     PreparedWorldRequest(identity,document.sha256,plan,terrain,frame)

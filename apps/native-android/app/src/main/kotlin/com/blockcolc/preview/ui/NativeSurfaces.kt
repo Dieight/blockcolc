@@ -24,6 +24,8 @@ import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.unit.Dp
 import kotlinx.coroutines.launch
 
+internal val LocalNativeSettingsActions=staticCompositionLocalOf{false}
+
 @Composable fun NativeAction(label:String,onClick:()->Unit,modifier:Modifier=Modifier,pending:Boolean=false,enabled:Boolean=true,icon:String="check",primary:Boolean=true,danger:Boolean=false,leading:(@Composable ()->Unit)?=null){
     val colors=MaterialTheme.colorScheme
     val ink=if(primary)if(danger)colors.onError else colors.onPrimary else if(danger)colors.error else colors.onSurface
@@ -31,12 +33,17 @@ import kotlinx.coroutines.launch
     val interaction=remember{MutableInteractionSource()}
     val pressed by interaction.collectIsPressedAsState()
     val reduce=LocalNativeUi.current.reduceMotion
+    val settings=LocalNativeSettingsActions.current
     var motion by remember{mutableIntStateOf(0)}
     val shift by animateFloatAsState(if(pressed&&enabled&&!pending)1f else 0f,tween(if(reduce)0 else 70),label="button-press")
     Row(modifier.heightIn(min=48.dp).graphicsLayer{translationY=if(reduce)0f else shift*density}.then(if(!primary)Modifier.border(1.dp,if(danger)colors.error else colors.outline)else Modifier).background(if(enabled)background else colors.surfaceVariant).clickable(interactionSource=interaction,indication=null,
-        enabled=enabled&&!pending,role=Role.Button,onClick={motion++;onClick()}).semantics{if(pending)stateDescription=label}.padding(horizontal=16.dp,vertical=12.dp),
+        enabled=enabled&&!pending,role=Role.Button,onClick={motion++;onClick()}).semantics{if(pending)stateDescription=label}
+        .padding(horizontal=if(settings)12.dp else 16.dp,vertical=if(settings)8.dp else 12.dp),
         horizontalArrangement=Arrangement.spacedBy(8.dp,Alignment.CenterHorizontally),verticalAlignment=Alignment.CenterVertically){
-        CompositionLocalProvider(LocalContentColor provides if(enabled)ink else colors.onSurfaceVariant){if(pending&&icon=="reset")NativeRefreshingGlyph()else if(pending)NativeBusy(Modifier.size(20.dp))else if(leading!=null)leading()else if(icon.isNotEmpty())NativeMotionGlyph(icon,motion,Modifier.size(20.dp));Text(label,Modifier.weight(1f,fill=false),style=MaterialTheme.typography.labelLarge)}
+        CompositionLocalProvider(LocalContentColor provides if(enabled)ink else colors.onSurfaceVariant){
+            if(pending&&icon=="reset")NativeRefreshingGlyph()else if(pending)NativeBusy(Modifier.size(20.dp))else if(leading!=null)leading()else if(icon.isNotEmpty())NativeMotionGlyph(icon,motion,Modifier.size(20.dp))
+            Text(label,Modifier.weight(1f,fill=false),style=if(settings)MaterialTheme.typography.bodyMedium else MaterialTheme.typography.labelLarge)
+        }
     }
 }
 
@@ -47,10 +54,50 @@ import kotlinx.coroutines.launch
     PixelGlyph("reset",Modifier.size(20.dp).graphicsLayer{rotationZ=rotation.value})
 }
 
+@Composable internal fun NativeInlineAction(
+    title:String,onClick:()->Unit,icon:String,action:String?=null,
+    enabled:Boolean=true,pending:Boolean=false,checked:Boolean?=null,
+){
+    val ui=LocalNativeUi.current
+    val colors=MaterialTheme.colorScheme
+    val interaction=remember{MutableInteractionSource()}
+    val pressed by interaction.collectIsPressedAsState()
+    var motion by remember{mutableIntStateOf(0)}
+    val actionColor=if(enabled||pending)colors.primary else colors.onSurfaceVariant
+    Row(
+        Modifier.fillMaxWidth().heightIn(min=48.dp)
+            .clickable(enabled=enabled&&!pending,role=Role.Button,interactionSource=interaction,indication=null){
+                motion++;onClick()
+            }.semantics{
+                if(pending)stateDescription=ui.text("处理中")
+                if(checked!=null)selected=checked
+            }.padding(vertical=8.dp),
+        verticalAlignment=Alignment.CenterVertically,
+        horizontalArrangement=Arrangement.spacedBy(12.dp),
+    ){
+        Text(title,Modifier.weight(1f),style=MaterialTheme.typography.bodyLarge)
+        Row(
+            Modifier.graphicsLayer{translationY=if(pressed&&!ui.reduceMotion)1.dp.toPx() else 0f},
+            verticalAlignment=Alignment.CenterVertically,
+            horizontalArrangement=Arrangement.spacedBy(NativeSettingActionGap),
+        ){
+            if(action!=null)Text(action,color=actionColor,style=MaterialTheme.typography.bodyMedium)
+            CompositionLocalProvider(LocalContentColor provides actionColor){
+                when{
+                    pending&&icon=="reset"->NativeRefreshingGlyph()
+                    pending->NativeBusy(Modifier.size(20.dp))
+                    else->NativeMotionGlyph(icon,motion,Modifier.size(20.dp))
+                }
+            }
+        }
+    }
+}
+
 @Composable fun NativeIconAction(title:String,icon:String,onClick:()->Unit,modifier:Modifier=Modifier,enabled:Boolean=true,pending:Boolean=false){
     val ui=LocalNativeUi.current;var motion by remember{mutableIntStateOf(0)}
     val interaction=remember{MutableInteractionSource()};val pressed by interaction.collectIsPressedAsState()
-    Box(modifier.sizeIn(minWidth=44.dp,minHeight=44.dp).clickable(enabled=enabled&&!pending,role=Role.Button,interactionSource=interaction,indication=null){
+    val target=if(LocalNativeSettingsActions.current)48.dp else 44.dp
+    Box(modifier.sizeIn(minWidth=target,minHeight=target).clickable(enabled=enabled&&!pending,role=Role.Button,interactionSource=interaction,indication=null){
         motion++;onClick()
     }.semantics{contentDescription=title;if(pending)stateDescription=title}.padding(10.dp),contentAlignment=Alignment.Center){
         val tint=if(enabled)LocalContentColor.current else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha=.45f)

@@ -20,7 +20,18 @@ data class SavedPlan(
     val cancelled: Boolean = false, val cancellationCategory: String? = null, val cancellationNote: String? = null,
     val hasStarted:Boolean = phase!=PlanPhase.READY || completedSessionIds.isNotEmpty(),
     val restStartedAt:String?=null,
-)
+    val extendAfterPlan:Boolean=false,
+    val extensionStartedAt:String?=null,
+    val extensionRounds:Int=0,
+) {
+    fun extensionSessionId(round:Int)="session:$id:extension:${mode.name}:$round"
+    fun completed(id:String):Boolean {
+        if(id in completedSessionIds)return true
+        if(extensionRounds==0)return false
+        val prefix="session:${this.id}:extension:${mode.name}:"
+        return id.startsWith(prefix)&&id.removePrefix(prefix).toIntOrNull()?.let{it in 1..extensionRounds&&extensionSessionId(it)==id}==true
+    }
+}
 data class ContinuationGrant(val id: String, val replacementGeneration: Long, val predecessorSessionId: String?)
 
 /** Durable platform outbox in local recovery, committed with the REST -> READY transition. */
@@ -40,7 +51,10 @@ data class RecoveryContext(val plan: SavedPlan? = null, val automatic: Continuat
         check(p.totalRounds in 1..24 && p.completedSessionIds.size <= p.totalRounds && p.completedSessionIds.toSet().size == p.completedSessionIds.size, "Invalid round counts")
         check(p.focusDurationMs in 1..10800000 && p.restDurationMs in 0..3600000, "Invalid schedule inputs")
         fun instant(s: String?) { if (s != null) check(runCatching { Instant.parse(s).toEpochMilli() }.isSuccess, "Invalid absolute deadline") }
-        instant(p.phaseEndsAt); instant(p.exactEndAt)
+        instant(p.phaseEndsAt); instant(p.exactEndAt); instant(p.extensionStartedAt)
+        val extending=p.extensionStartedAt!=null
+        check(p.extensionRounds>=0&&(extending||p.extensionRounds==0),"Invalid extended round count")
+        check(!extending||p.extendAfterPlan&&p.completedSessionIds.size==p.totalRounds&&p.phase in setOf(PlanPhase.FOCUS,PlanPhase.REPORT)&&automatic==null,"Invalid extended focus phase")
         val state = domain.focusControlJson(); val projects = state.getJSONArray("projects")
         val owner = (0 until projects.length()).map { projects.getJSONObject(it) }.find { it.getString("id") == p.projectId }
         check(owner != null && (owner.getString("status") in setOf("active", "paused") || p.phase == PlanPhase.REPORT && owner.getString("status") == "monument"), "Plan owner unavailable"); owner!!
@@ -59,6 +73,14 @@ data class RecoveryContext(val plan: SavedPlan? = null, val automatic: Continuat
             val s = byId[id]
             check(s != null && s.getString("status") != "interrupted" && s.getString("projectId") == p.projectId, "Missing completed plan round")
         }
+        if(extending){
+            check(p.extensionRounds<=history.length(),"Missing extended focus rounds")
+            for(round in 1..p.extensionRounds){
+                val s=byId[p.extensionSessionId(round)]
+                check(s!=null&&s.getString("projectId")==p.projectId&&s.getString("status")=="completed"&&
+                    DomainTime.millis(s.getString("startedAt"))>=DomainTime.millis(p.extensionStartedAt!!),"Missing completed extended round")
+            }
+        }
         val active = if (state.isNull("activeFocusSession")) null else state.getJSONObject("activeFocusSession")
         check(p.hasStarted || p.phase==PlanPhase.READY&&p.completedSessionIds.isEmpty(),"Unstarted plan has completed or active phases")
         if (p.phase == PlanPhase.FOCUS) {
@@ -67,7 +89,7 @@ data class RecoveryContext(val plan: SavedPlan? = null, val automatic: Continuat
             // A deferred/habit session has a real JSON null, not a task named null.
             check(active != null && active.getString("id") == p.currentSessionId && active.getString("projectId") == p.projectId &&
                 (if(active.isNull("subtaskId"))null else active.getString("subtaskId")) == p.subtaskId, "Plan/active session mismatch")
-            check(active!!.getString("endsAt") == p.phaseEndsAt && p.completedSessionIds.size < p.totalRounds, "Plan deadline/count mismatch")
+            check(active!!.getString("endsAt")==p.phaseEndsAt&&(if(extending)p.currentSessionId==p.extensionSessionId(p.extensionRounds+1)else p.completedSessionIds.size<p.totalRounds),"Plan deadline/count mismatch")
         } else {
             check(active == null && p.currentSessionId == null, "Non-focus plan has active session")
             if (p.phase == PlanPhase.REST) check(p.phaseEndsAt != null && p.completedSessionIds.isNotEmpty(), "Rest requires completion and deadline")
@@ -89,7 +111,11 @@ data class RecoveryContext(val plan: SavedPlan? = null, val automatic: Continuat
             .put("totalRounds", p.totalRounds).put("completedSessionIds", JSONArray(p.completedSessionIds)).put("phase", p.phase.name)
             .put("focusDurationMs", p.focusDurationMs).put("restDurationMs", p.restDurationMs).put("currentSessionId", nullable(p.currentSessionId))
             .put("phaseEndsAt", nullable(p.phaseEndsAt)).put("exactEndAt", nullable(p.exactEndAt)).put("terminalRest", p.terminalRest)
-            .put("cancelled",p.cancelled).put("cancellationCategory",nullable(p.cancellationCategory)).put("cancellationNote",nullable(p.cancellationNote)).put("hasStarted",p.hasStarted).also{if(p.restStartedAt!=null)it.put("restStartedAt",p.restStartedAt)} }
+            .put("cancelled",p.cancelled).put("cancellationCategory",nullable(p.cancellationCategory)).put("cancellationNote",nullable(p.cancellationNote)).put("hasStarted",p.hasStarted).also{
+                if(p.restStartedAt!=null)it.put("restStartedAt",p.restStartedAt)
+                if(p.extendAfterPlan)it.put("extendAfterPlan",true)
+                if(p.extensionStartedAt!=null)it.put("extensionStartedAt",p.extensionStartedAt).put("extensionRounds",p.extensionRounds)
+            } }
         val a = automatic?.let { a -> JSONObject().put("id", a.id).put("replacementGeneration", a.replacementGeneration).put("predecessorSessionId", nullable(a.predecessorSessionId)) }
         return StrictJson.render(JSONObject().put("schema", 1).put("plan", p ?: JSONObject.NULL).put("automatic", a ?: JSONObject.NULL).also{x->returnReminder?.let{r->x.put("returnReminder",JSONObject().put("database",r.database).put("generation",r.generation).put("plan",r.plan).put("completed",r.completed).put("restEnd",r.restEnd))}})
     }
@@ -104,7 +130,8 @@ data class RecoveryContext(val plan: SavedPlan? = null, val automatic: Continuat
                 val legacy = !p.has("terminalRest")
                 val cancellation=p.has("cancelled")
                 val started=p.has("hasStarted")
-                keys(p, "id projectId subtaskId mode totalRounds completedSessionIds phase focusDurationMs restDurationMs currentSessionId phaseEndsAt exactEndAt" + (if (legacy) "" else " terminalRest")+(if(cancellation)" cancelled cancellationCategory cancellationNote" else "")+(if(started)" hasStarted" else "")+(if(p.has("restStartedAt"))" restStartedAt" else ""))
+                keys(p, "id projectId subtaskId mode totalRounds completedSessionIds phase focusDurationMs restDurationMs currentSessionId phaseEndsAt exactEndAt" + (if (legacy) "" else " terminalRest")+(if(cancellation)" cancelled cancellationCategory cancellationNote" else "")+(if(started)" hasStarted" else "")+(if(p.has("restStartedAt"))" restStartedAt" else "")+
+                    (if(p.has("extendAfterPlan"))" extendAfterPlan" else "")+(if(p.has("extensionStartedAt"))" extensionStartedAt extensionRounds" else ""))
                 val ids = p.getJSONArray("completedSessionIds"); val rounds = number(p, "totalRounds"); require(rounds in 1..24)
                 SavedPlan(text(p, "id"), text(p, "projectId"), nullable(p, "subtaskId"), PlanMode.valueOf(text(p, "mode")), rounds.toInt(),
                     (0 until ids.length()).map { ids.get(it).also { require(it is String) } as String }, PlanPhase.valueOf(text(p, "phase")),
@@ -118,7 +145,10 @@ data class RecoveryContext(val plan: SavedPlan? = null, val automatic: Continuat
                         // paused first round; unrelated project history does not.
                         val history=domain?.json()?.getJSONArray("focusHistory")
                         text(p,"phase")!="READY"||ids.length()>0||history?.let{a->(0 until a.length()).any{i->a.getJSONObject(i).getString("id").startsWith("session:${text(p,"id")}:")}}==true
-                    },if(p.has("restStartedAt"))nullable(p,"restStartedAt")else null)
+                    },if(p.has("restStartedAt"))nullable(p,"restStartedAt")else null,
+                    p.has("extendAfterPlan").also{if(it)require(p.opt("extendAfterPlan")==true)},
+                    if(p.has("extensionStartedAt"))text(p,"extensionStartedAt")else null,
+                    if(p.has("extensionRounds"))number(p,"extensionRounds").also{require(it in 0..Int.MAX_VALUE.toLong())}.toInt()else 0)
             }
             val a = if (x.isNull("automatic")) null else x.getJSONObject("automatic").let { a ->
                 keys(a, "id replacementGeneration predecessorSessionId"); ContinuationGrant(text(a, "id"), number(a, "replacementGeneration"), nullable(a, "predecessorSessionId"))

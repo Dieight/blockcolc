@@ -37,7 +37,7 @@ class NativeResourceFluidPlanner(private val planner:OriginalFluids=OriginalFlui
             val missing=ArrayList<OriginalFluidEntry>()
             for(surface in batch.entries){
                 checkpoint();val top=if(surface.flowing)flow?:still else still?:flow;val side=flow?:still
-                if(top==null||side==null||atlas==null||atlas.pages.none{it.index==top.page}||atlas.pages.none{it.index==side.page}){missing+=surface;continue}
+                if(top==null||side==null||atlas==null||atlas.page(top.page)==null||atlas.page(side.page)==null){missing+=surface;continue}
                 data class Page(var mask:Int,val tiles:MutableList<Int>,var alpha:String)
                 val pages=LinkedHashMap<Int,Page>()
                 for(face in 0..5)if(surface.faceMask and(1 shl face)!=0){

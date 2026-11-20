@@ -27,6 +27,20 @@ class FocusExportTest {
   assertThrows(Exception::class.java){FocusExport.projectData(data,RecoveryContext(plan.copy(restStartedAt=null)),LocalDate.parse("2026-10-29"),DomainTime.millis("2026-10-29T10:11:00.000Z"))}
   assertEquals("2026-10-29T10:10:00.000Z",value.getString("startedAt"));assertEquals(60000,value.getLong("estimatedElapsedMs"));assertEquals("休息",value.getString("currentName"));assertEquals(5,value.length())
  }
+ @Test fun cloudUsesTheWholeTimedPlanAndOpenEndedExtension(){
+  val now=DomainTime.millis("2026-10-29T10:11:00.000Z")
+  val active=JSONObject().put("startedAt",DomainTime.format(now-60000)).put("endsAt",DomainTime.format(now+240000)).put("marathon",true).put("deferredSettlement",true)
+  val data=JSONObject().put("projects",JSONArray()).put("activeFocusSession",active).put("focusHistory",JSONArray())
+  val plan=SavedPlan("plan","project",null,PlanMode.MINIMAL,2,emptyList(),PlanPhase.FOCUS,300000L,0L,exactEndAt=DomainTime.format(now+540000L))
+  val day=FocusExport.date(now)
+  val planned=FocusExport.projectData(data,RecoveryContext(plan),day,now,cloudPresence=true).first.getJSONObject("value")
+  assertEquals("专注中",planned.getString("currentName"))
+  assertEquals(plan.exactEndAt,planned.getString("estimatedEndsAt"))
+  val extension=plan.copy(extendAfterPlan=true,extensionStartedAt=DomainTime.format(now-360000L))
+  val live=FocusExport.projectData(data,RecoveryContext(extension),day,now,cloudPresence=true).first.getJSONObject("value")
+  assertEquals("专注中",live.getString("currentName"));assertTrue(live.isNull("estimatedEndsAt"))
+  assertEquals(360000L,live.getLong("estimatedElapsedMs"));assertEquals(extension.extensionStartedAt,live.getString("startedAt"))
+ }
  @Test fun noopDoesNotReadClockOrProject(){
   val lane=ExportLane(null){error("standard must not scan")}
   lane.offer("db",StoredState(StateToken(0,0),DomainEngine.initial("UTC"),RecoveryContext()));lane.close()

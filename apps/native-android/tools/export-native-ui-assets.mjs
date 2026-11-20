@@ -10,8 +10,9 @@ if(!output)throw Error('Native UI output directory required');
 const sourceHashes={};
 function track(name){sourceHashes[name]=createHash('sha256').update(readFileSync(path.join(root,name))).digest('hex');}
 async function load(name){
- const compiled=buildSync({entryPoints:[path.join(root,name)],bundle:true,write:false,platform:'node',format:'esm',jsx:'automatic',metafile:true});
- for(const file of Object.keys(compiled.metafile.inputs))track(path.relative(root,path.resolve(file)).replaceAll('\\','/'));
+ const compiled=buildSync({absWorkingDir:root,entryPoints:[name],bundle:true,write:false,platform:'node',format:'esm',
+  jsx:'automatic',metafile:true,preserveSymlinks:true});
+ for(const file of Object.keys(compiled.metafile.inputs))track(file.replaceAll('\\','/'));
  return import('data:text/javascript;base64,'+Buffer.from(compiled.outputFiles[0].text).toString('base64'));
 }
 const {EN}=await load('apps/web/src/messages-en.ts');
@@ -56,10 +57,15 @@ assert.ok(closeLiteral,'Formal close receipt changed');
 const closeSpec=buildSync({stdin:{contents:`export default ${closeLiteral[1]}`,loader:'ts'},write:false,platform:'node',format:'esm'});
 const closeFrames=(await import('data:text/javascript;base64,'+Buffer.from(closeSpec.outputFiles[0].text).toString('base64'))).default;
 iconMotion.close.motions['']={keyframes:closeFrames,origin:'50% 50%',delay:0,duration:Number(closeLiteral[2]),easing:closeLiteral[3]};
+iconMotion.minus.motions['']={
+ keyframes:[{transform:'scale(.65)'},{transform:'scale(1.12)',offset:.65},{transform:'scale(1)'}],
+ origin:'50% 50%',delay:0,duration:ICON_MOTION_MS,easing:'ease-out',
+};
 track('apps/native-android/tools/export-native-ui-assets.mjs');track('package-lock.json');
 const assets=path.join(output,'assets'),res=path.join(output,'res/drawable');mkdirSync(assets,{recursive:true});mkdirSync(res,{recursive:true});
 // Native-only account controls extend the shared atlas without changing Web.
 Object.assign(icons,{
+ study:['000000000000','011111111110','010000000010','010001000010','010001000010','011111111110','010001000010','010001000010','010001000010','011111111110','111111111111','000000000000'],
  back:['000000000000','000001000000','000011000000','000110000000','001100000000','011111111110','011111111110','001100000000','000110000000','000011000000','000001000000','000000000000'],
  info:['000111111000','001000000100','010001100010','100001100001','100000000001','100011100001','100001100001','100001100001','100011110001','010000000010','001000000100','000111111000'],
  eyeopen:['000000000000','000000000000','000011110000','001100001100','010000000010','100001100001','100001100001','010000000010','001100001100','000011110000','000000000000','000000000000'],

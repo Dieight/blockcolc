@@ -65,6 +65,12 @@ test('account viewer keeps mobile execution, scope, visit counts and live data s
   };
 
   assert.equal((await request('/')).status, 200);
+  for (const [path, title] of [['/legal', '方块钟云服务条款与隐私说明'], ['/legal/en', 'Blockcolc Cloud Terms and Privacy Notice']]) {
+    const response = await request(path);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('set-cookie'), null);
+    assert.ok((await response.text()).includes(title));
+  }
   for (const route of ['/api/live', '/api/events', '/api/visits', '/api/days?from=2026-11-14&through=2026-11-15']) {
     assert.equal((await request(route, { cookie: 'relay_session=retired-invite' })).status, 401);
   }

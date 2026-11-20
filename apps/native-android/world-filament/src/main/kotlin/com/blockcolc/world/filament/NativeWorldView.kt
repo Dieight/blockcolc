@@ -186,6 +186,7 @@ class NativeWorldView(context: Context, private val fixture: String, private val
             openingFinished=onFinished;openingPlaying=true;cameraDirty=true;requestFrame()
         }else main.post(onFinished)
     }}
+    private var orthographicEyeOffset=0.0
     private fun project(width:Int=viewportWidth,height:Int=viewportHeight) {
         val window=NativeViewportWindow.clamped(height,presentationTop,if(presentationHeight>0)presentationHeight else height)
         val visibleHeight=window.height
@@ -196,10 +197,16 @@ class NativeWorldView(context: Context, private val fixture: String, private val
         val eye=doubleArrayOf(target[0]+radius*cos(pitch)*sin(azimuth),target[1]+radius*sin(pitch),target[2]+radius*cos(pitch)*cos(azimuth))
         frame=sourceCamera?.frame(eye,radius)?:frame
         if(navigation?.indoors==true)frame=CameraFrame(.025,frame.far,frame.skyRadius)
-        camera?.setProjection(fov,width.toDouble()/visibleHeight,frame.near,frame.far,Camera.Fov.VERTICAL)
+        val aspect=width.toDouble()/visibleHeight
+        orthographicEyeOffset=navigation?.orthographicEyeOffset?:0.0
+        if(navigation?.orthographic==true){
+            val halfHeight=radius*tan(fov*PI/360)
+            val halfWidth=halfHeight*aspect
+            camera?.setProjection(Camera.Projection.ORTHO,-halfWidth,halfWidth,-halfHeight,halfHeight,.1,frame.far+orthographicEyeOffset)
+        }else camera?.setProjection(fov,aspect,frame.near,frame.far,Camera.Fov.VERTICAL)
         camera?.setScaling(1.0,window.scaleY)
         camera?.setShift(0.0,window.shiftY)
-        packets?.projectFog(navigation?.atmosphericDistance?:radius)
+        packets?.projectFog(navigation?.atmosphericDistance?:radius,orthographicEyeOffset)
     }
     private fun report(value:String) {main.post {status(value)}}
     init {
@@ -762,7 +769,8 @@ class NativeWorldView(context: Context, private val fixture: String, private val
             val animated=runtimeEnabled&&packets?.hasAnimation==true&&!colorProbe
             val measure=if(BuildConfig.NATIVE_DIAGNOSTICS)orbit else null
             if(measure!=null&&!measure.completed){azimuth=orbitStart-measure.angle(System.nanoTime());cameraDirty=true}
-            if(animated&&!cameraDirty&&timestamp-lastDrawNs<32_000_000L){requestFrame();return}
+            val paper=navigation?.orthographic==true
+            if(animated&&!cameraDirty&&timestamp-lastDrawNs<(if(paper)41_000_000L else 32_000_000L)){requestFrame();return}
             val nightActive=!generatedMode||packets?.hasNightAnimation==true
             if(animated&&clock.advance(timestamp,nightActive))packets?.setRuntime(if(weatherOnly||animalOnly)0f else clock.seconds,!weatherOnly&&!animalOnly&&nightActive,
                 if(weatherOnly||animalOnly)0f else clock.cloudSeconds,if(animalOnly)0f else clock.weatherElapsedMs.toFloat(),
@@ -774,12 +782,14 @@ class NativeWorldView(context: Context, private val fixture: String, private val
                 packets?.updateWeather(eye,target,fov,viewportWidth.toDouble()/viewportHeight,frame.near,frame.far,logicalHeight)
             }
             packets?.advanceAnimals(timestamp,doubleArrayOf(target[0]+radius*cos(pitch)*sin(azimuth),target[1]+radius*sin(pitch),target[2]+radius*cos(pitch)*cos(azimuth)),
-                target,fov,viewportWidth.toDouble()/viewportHeight,frame.near,frame.far,runtimeEnabled&&stormMotionAllowed&&!weatherOnly&&!colorProbe)
+                target,fov,viewportWidth.toDouble()/if(paper&&presentationHeight>0)presentationHeight else viewportHeight,
+                if(paper).1-orthographicEyeOffset else frame.near,frame.far,runtimeEnabled&&stormMotionAllowed&&!weatherOnly&&!colorProbe,paper)
             packets?.updateLightning(clock.weatherElapsedMs,sceneDistance(),fov,logicalHeight,runtimeEnabled&&stormMotionAllowed&&!weatherOnly&&!animalOnly&&!colorProbe)
             cameraDirty=false;lastDrawNs=timestamp
-            val horizontal=radius*cos(pitch)
-            c.lookAt(target[0]+horizontal*sin(azimuth),target[1]+radius*sin(pitch),target[2]+horizontal*cos(azimuth),target[0],target[1],target[2],0.0,1.0,0.0)
-            packets?.moveSky(target[0]+horizontal*sin(azimuth),target[1]+radius*sin(pitch),target[2]+horizontal*cos(azimuth),frame.skyRadius)
+            val viewRadius=radius+orthographicEyeOffset
+            val horizontal=viewRadius*cos(pitch)
+            c.lookAt(target[0]+horizontal*sin(azimuth),target[1]+viewRadius*sin(pitch),target[2]+horizontal*cos(azimuth),target[0],target[1],target[2],0.0,1.0,0.0)
+            packets?.moveSky(target[0]+horizontal*sin(azimuth),target[1]+viewRadius*sin(pitch),target[2]+horizontal*cos(azimuth),frame.skyRadius)
             if(r.beginFrame(chain,timestamp)){
                 colorPipeline?.draw(r)?:r.render(v);r.endFrame()
                 if(pendingInteriorFrame){pendingInteriorFrame=false;awaitInteriorFrame(surfaceTicket,interiorSequence)}

@@ -1,8 +1,13 @@
 package com.blockcolc.preview
 
+import android.view.View
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.test.*
@@ -13,6 +18,9 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.width
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.test.platform.app.InstrumentationRegistry
 import com.blockcolc.presentation.ClientPreferences
 import com.blockcolc.presentation.UiResources
 import com.blockcolc.preview.ui.*
@@ -30,9 +38,29 @@ class P3SupplementUiTest {
         compose.onNodeWithText("结束本次专注").assertDoesNotExist()
         compose.onNodeWithContentDescription("专注操作区").performTouchInput{doubleClick()}
         compose.onNodeWithText("结束本次专注").assertIsDisplayed()
+        compose.onNodeWithText("结束本次专注").performTouchInput{doubleClick()}
+        compose.onNodeWithText("结束本次专注").assertDoesNotExist()
         compose.runOnIdle{assertEquals(0,ended)}
-        compose.onNodeWithText("结束本次专注").performClick()
+        compose.onNodeWithContentDescription("专注操作区").performTouchInput{doubleClick()}
+        compose.onNodeWithText("结束本次专注").performTouchInput{click()}
+        compose.waitUntil(2000){ended==1}
         compose.runOnIdle{assertEquals(1,ended)}
+    }
+    @Test fun immersiveCutoutUsesTheFullWindowAndRestoresTheStatusBar(){
+        var immersive by mutableStateOf(true)
+        lateinit var view:View
+        compose.setContent{view=LocalView.current;NativeSystemBars(immersive);Box(Modifier.fillMaxSize())}
+        fun statusBarVisible():Boolean?=compose.runOnIdle{ViewCompat.getRootWindowInsets(view)?.isVisible(WindowInsetsCompat.Type.statusBars())}
+        compose.waitUntil(5000){statusBarVisible()==false}
+        compose.runOnIdle{
+            val position=IntArray(2);view.getLocationOnScreen(position)
+            assertEquals("Immersive content starts at the physical top edge",0,position[1])
+            if(InstrumentationRegistry.getArguments().getString("p4SimulatedCutout")=="true"){
+                assertTrue("The emulator must provide a top display cutout",(ViewCompat.getRootWindowInsets(view)?.displayCutout?.safeInsetTop?:0)>0)
+            }
+            immersive=false
+        }
+        compose.waitUntil(5000){statusBarVisible()==true}
     }
     @Test fun pixelToggleHasOneAccessibleSwitchAndDisabledStateCannotChangeIt(){
         var checked by mutableStateOf(false);var enabled by mutableStateOf(true);var changes=0

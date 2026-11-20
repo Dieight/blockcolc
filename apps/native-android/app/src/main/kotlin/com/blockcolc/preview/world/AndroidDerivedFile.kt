@@ -6,6 +6,7 @@ import android.util.Log
 import java.io.File
 import java.io.FileInputStream
 import java.nio.ByteBuffer
+import java.nio.channels.FileChannel
 import java.security.MessageDigest
 import java.util.concurrent.CancellationException
 import java.util.concurrent.CountDownLatch
@@ -24,7 +25,7 @@ internal interface DerivedFileFormat<T:Any> {
     val headerBytes:Int
     val maximumBytes:Int
     fun isCandidate(key:String,header:ByteArray,length:Long):Boolean
-    fun encode(key:String,value:T,allocate:(Int)->ByteBuffer,cancelled:()->Boolean):ByteBuffer?
+    fun encode(key:String,value:T,allocate:(Int)->ByteBuffer,cancelled:()->Boolean):List<ByteBuffer>?
     fun decode(key:String,bytes:ByteBuffer,cancelled:()->Boolean):T?
 }
 
@@ -37,7 +38,8 @@ internal class AndroidDerivedFile<T:Any>(
     private val format:DerivedFileFormat<T>,
     private val maximumBytes:Int=format.maximumBytes,
     private val sharedExecutor:ScheduledThreadPoolExecutor?=null,
-    private val ioGate:Any=Any()
+    private val ioGate:Any=Any(),
+    private val mapReadOnly:Boolean=false
 ):AutoCloseable {
     private val gate=Any()
     private val file:AtomicFile
@@ -68,6 +70,9 @@ internal class AndroidDerivedFile<T:Any>(
                     val length=input.channel.size();if(length>maximumBytes||length<format.headerBytes)return null
                     val header=ByteArray(format.headerBytes);readFully(input,header,0,header.size,cancelled)
                     if(!format.isCandidate(key,header,length))return null
+                    // Atomic replacement moves whole files. A mapped reader
+                    // keeps its own inode after a later cache is published.
+                    if(mapReadOnly)return@use input.channel.map(FileChannel.MapMode.READ_ONLY,0,length)
                     val data=buffers.allocate(length.toInt());data.put(header)
                     while(data.hasRemaining()){checkpoint(cancelled);val end=minOf(data.limit(),data.position()+65536);val limit=data.limit();data.limit(end)
                         try{require(input.channel.read(data)>0){"Truncated derived cache"}}finally{data.limit(limit)}}
@@ -91,15 +96,19 @@ internal class AndroidDerivedFile<T:Any>(
                 fun cancelled()=synchronized(gate){closed||sequence!=ticket}
                 try {
                     checkpoint(::cancelled)
-                    val bytes=format.encode(key,value,{size->if(size>maximumBytes)throw DerivedFileTooLarge();buffers.allocate(size)},::cancelled)
-                    if(bytes==null||bytes.remaining()>maximumBytes){oversized.incrementAndGet();return@schedule}
-                    val size=bytes.remaining();val expectedHeader=ByteArray(format.headerBytes).also{bytes.duplicate().get(it)}
+                    val parts=format.encode(key,value,{size->if(size>maximumBytes)throw DerivedFileTooLarge();buffers.allocate(size)},::cancelled)
+                    val length=parts?.sumOf{it.remaining().toLong()}?:0
+                    if(parts==null||length !in format.headerBytes.toLong()..maximumBytes.toLong()){oversized.incrementAndGet();return@schedule}
+                    val size=length.toInt();val expectedHeader=ByteArray(format.headerBytes).also{parts.first().duplicate().get(it)}
                     synchronized(ioGate) {
                         checkpoint(::cancelled);check(folder.isDirectory||folder.mkdirs()){"Cannot create derived cache folder"}
                         val output=file.startWrite()
                         try {
-                            val remaining=bytes.duplicate();val chunk=ByteArray(65536)
-                            while(remaining.hasRemaining()){checkpoint(::cancelled);val n=minOf(chunk.size,remaining.remaining());remaining.get(chunk,0,n);output.write(chunk,0,n)}
+                            val chunk=ByteArray(65536)
+                            for(part in parts){
+                                val remaining=part.duplicate()
+                                while(remaining.hasRemaining()){checkpoint(::cancelled);val n=minOf(chunk.size,remaining.remaining());remaining.get(chunk,0,n);output.write(chunk,0,n)}
+                            }
                             output.fd.sync();checkpoint(::cancelled);file.finishWrite(output)
                         }catch(error:Throwable){file.failWrite(output);throw error}
                         // AtomicFile can log rather than throw on rename/sync

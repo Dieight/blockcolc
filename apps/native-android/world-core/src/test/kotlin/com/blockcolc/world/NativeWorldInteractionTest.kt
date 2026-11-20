@@ -31,6 +31,19 @@ class NativeWorldInteractionTest {
         val root=generateSequence(File(System.getProperty("user.dir"))){it.parentFile}.first{File(it,"packages/voxel/src/renderer.ts").exists()}
         val hashes=oracle.getJSONObject("sourceHashes");hashes.keys().forEach{file->assertEquals(file,hashes.getString(file),MessageDigest.getInstance("SHA-256").digest(File(root,file).readBytes()).joinToString(""){"%02x".format(it.toInt()and 255)})}
     }
+    @Test fun paperProjectionAndRayIncludeForegroundInFrontOfTheOrbit(){
+        val camera=NativeSceneCamera(BlockPoint(0.0,2.0,0.0),BlockPoint(8.0,6.0,8.0),24.0,40.0,
+            SourceCamera(8.0,listOf(listOf(-80.0,-8.0,-80.0),listOf(80.0,40.0,80.0)),360.0,.82,.91,1.5,360.0),
+            paper=true)
+        val navigation=NativeWorldNavigation(camera,emptyList(),.75)
+        val frame=navigation.frame
+        val point=BlockPoint(frame.eye.x+1.0,frame.eye.y+1.0,frame.eye.z+1.0)
+        val screen=checkNotNull(navigation.screen(point,720,960))
+        val ray=navigation.ray(screen.first,screen.second,720,960)
+        val difference=NativeWorldNavigation.sub(point,ray.origin)
+        assertTrue(NativeWorldNavigation.dot(difference,ray.direction)>0)
+        assertEquals(0.0,NativeWorldNavigation.cross(difference,ray.direction).let{NativeWorldNavigation.dot(it,it)},1e-8)
+    }
     @Test fun focusAndBothResetsMatchActualRendererAcrossAspectsAndWorldSizes(){
         val cases=oracle.getJSONArray("cameras");assertEquals(10,cases.length())
         repeat(cases.length()){i->val case=cases.getJSONObject(i);val input=case.getJSONObject("input");val navigation=NativeWorldNavigation(camera(input),targets(input),input.getDouble("aspect"));val frames=case.getJSONArray("frames")

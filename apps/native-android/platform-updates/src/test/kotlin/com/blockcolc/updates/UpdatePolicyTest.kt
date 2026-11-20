@@ -24,6 +24,21 @@ class UpdatePolicyTest {
         for(body in listOf("{",release().put("prerelease",true).toString(),release().put("draft",true).toString(),release().put("tag_name","v3.0.0-rc1").toString(),release().put("draft","false").toString()))
             assertEquals(UpdateProblem.CHECK,(runCatching{UpdatePolicy.release(body)}.exceptionOrNull() as UpdateFailure).problem)
     }
+    @Test fun betaFeedIgnoresDraftsAndOrdersPublishedVersionsNumerically(){
+        fun row(version:String,draft:Boolean=false,prerelease:Boolean=UpdatePolicy.isBeta(version)):JSONObject {
+            val apk=asset().put("name","Blockcolc-v$version.apk")
+                .put("browser_download_url","${UpdatePolicy.REPOSITORY}/releases/download/v$version/Blockcolc-v$version.apk")
+            return release(apk).put("tag_name","v$version").put("draft",draft).put("prerelease",prerelease)
+        }
+        val rows=JSONArray().put(row("3.0.0-beta.2")).put(row("3.0.0-beta.10"))
+            .put(row("3.1.0-beta.1",draft=true)).put(row("4.0.0-beta.1",prerelease=false))
+        val beta=checkNotNull(UpdatePolicy.betaFeed(rows.toString()))
+        assertEquals("3.0.0-beta.10",beta.version)
+        assertEquals(beta.version,beta.asset?.version)
+        assertEquals("3.0.0",UpdatePolicy.betaFeed(rows.put(row("3.0.0")).toString())?.version)
+        assertNull(UpdatePolicy.betaFeed("[]"))
+        assertThrows(UpdateFailure::class.java){UpdatePolicy.release(row("3.0.0-beta.1").toString())}
+    }
     @Test fun realBytesMustMatchSizeAndDigest(){
         val file=temporary.newFile("update.apk");file.writeText("ten bytes!")
         val sha=UpdatePolicy.hex(MessageDigest.getInstance("SHA-256").digest(file.readBytes()))

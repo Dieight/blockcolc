@@ -6,12 +6,16 @@ import com.blockcolc.storage.*
 import org.json.JSONObject
 
 enum class TimerSurface { IDLE, PREPARED, FOCUS, REST, WAITING, REPORT }
+data class FocusIntegrityNotice(
+    val sessionId: String, val count: Int, val limit: Int, val stopped: Boolean, val returnsToMinimal: Boolean = false,
+)
 data class TimerPresentation(val surface:TimerSurface,val planId:String?,val mode:PlanMode?,val completedRounds:Int,val totalRounds:Int,
     val projectId:String?,val taskTitle:String?,val deadline:String?,val remainingMs:Long,val minimalReport:Boolean,
-    val mayCancelUnstarted:Boolean,val mayCancelRunning:Boolean,val subtaskId:String?=null){
+    val mayCancelUnstarted:Boolean,val mayCancelRunning:Boolean,val subtaskId:String?=null,
+    val integrityNotice: FocusIntegrityNotice? = null,val extensionStartedAt:String?=null){
     companion object {
         fun from(domain:DomainDocument,recovery:RecoveryContext,preferences:ClientPreferences,now:Long):TimerPresentation = from(domain.json(),recovery,preferences,now)
-        fun from(s:JSONObject,recovery:RecoveryContext,preferences:ClientPreferences,now:Long):TimerPresentation{
+        fun from(s:JSONObject,recovery:RecoveryContext,preferences:ClientPreferences,now:Long,events:List<String> = emptyList()):TimerPresentation{
             val p=recovery.plan;val active=s.optJSONObject("activeFocusSession")
             val surface=when{
                 active!=null->TimerSurface.FOCUS
@@ -37,7 +41,30 @@ data class TimerPresentation(val surface:TimerSurface,val planId:String?,val mod
             return TimerPresentation(surface,p?.id,p?.mode,completed,p?.totalRounds?:1,project,title,deadline?:p?.exactEndAt,remaining,
                 p?.mode in setOf(PlanMode.MINIMAL,PlanMode.MARATHON),
                 p?.mode==PlanMode.MARATHON&&surface==TimerSurface.PREPARED,
-                p!=null&&p.mode!=PlanMode.ROUNDS&&p.totalRounds>1&&surface in setOf(TimerSurface.FOCUS,TimerSurface.REST),task)
+                p!=null&&p.extensionStartedAt==null&&p.mode!=PlanMode.ROUNDS&&p.totalRounds>1&&surface in setOf(TimerSurface.FOCUS,TimerSurface.REST),task,
+                integrityNotice(s, active, surface, now, events),p?.extensionStartedAt?.takeIf{surface==TimerSurface.FOCUS})
+        }
+
+        private fun integrityNotice(s: JSONObject, active: JSONObject?, surface: TimerSurface, now: Long, events: List<String>): FocusIntegrityNotice? {
+            val policy = s.getJSONObject("focusIntegrityPolicy")
+            val limit = policy.getInt("maxEffectiveExcursions")
+            if (active != null && policy.getBoolean("enabled")) {
+                val count = active.getJSONObject("integrity").getInt("effectiveExcursions")
+                return FocusIntegrityNotice(active.getString("id"), count, limit, stopped = false)
+            }
+            if (surface != TimerSurface.IDLE) return null
+            val history = s.getJSONArray("focusHistory")
+            val last = history.optJSONObject(history.length() - 1) ?: return null
+            if (last.optString("interruptionReason") != "app-switch-limit") return null
+            val id = last.getString("id")
+            val excursion = events.asSequence().map(::JSONObject).firstOrNull {
+                it.optString("type") == "FocusExcursionRecorded" && it.optString("sessionId") == id
+            }
+            if (excursion == null && now - DomainTime.millis(last.getString("interruptedAt")) !in 0..8000L) return null
+            val extensionMode=id.substringAfterLast(":extension:","").substringBefore(':')
+            return FocusIntegrityNotice(id, excursion?.getInt("effectiveExcursions") ?: limit,
+                excursion?.getInt("maxEffectiveExcursions") ?: limit, stopped = true,
+                returnsToMinimal = last.optBoolean("deferredSettlement")&&extensionMode in listOf("",PlanMode.MINIMAL.name))
         }
     }
 }

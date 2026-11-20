@@ -41,6 +41,10 @@ class NativeBackdrop:AutoCloseable {
     var corePresented by mutableStateOf(true)
     var opening by mutableStateOf(false)
     var failed by mutableStateOf(false)
+    var preparingSettlement by mutableStateOf(false)
+    var preparingQuality by mutableStateOf(false)
+    var worldSettingFailed by mutableStateOf(false)
+    var retryWorld:()->Unit={}
     fun configure(view:NativeWorldView?,active:Boolean,rect:Rect){
         if(closed)return
         if(source!==view){source?.glassRegions(emptyList());source=view;sent=emptyList()}

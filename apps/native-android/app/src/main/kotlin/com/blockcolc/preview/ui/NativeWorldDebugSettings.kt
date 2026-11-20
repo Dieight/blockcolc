@@ -21,7 +21,7 @@ import kotlin.math.roundToInt
  * No native selection dialog and no persistence/business command. */
 @Composable fun NativeWorldDebugSettings(value:NativeWorldDebug,onChange:(NativeWorldDebug)->Unit,onPreviewCelebration:(Boolean)->Unit={}){
     val ui=LocalNativeUi.current
-    NativeToggle(ui.text("画面调试"),ui.text("关闭后恢复；不改变专注记录"),value.enabled){onChange(value.copy(enabled=it))}
+    NativeToggle(ui.text("画面调试"),value=value.enabled){onChange(value.copy(enabled=it))}
     AnimatedVisibility(value.enabled,enter=expandVertically(tween(if(ui.reduceMotion)0 else 200))+fadeIn(),
         exit=shrinkVertically(tween(if(ui.reduceMotion)0 else 180))+fadeOut()){
         Column(Modifier.fillMaxWidth().padding(bottom=12.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){

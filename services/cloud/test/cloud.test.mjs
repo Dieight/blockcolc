@@ -5,6 +5,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {CloudStore} from '../src/store.mjs';
 import {createCloudServer} from '../src/server.mjs';
+import {FocusViewerStore} from '../src/focus-viewer-store.mjs';
 import {createInitialState,execute} from '../build/domain.mjs';
 import {canonical,sha,splitDomain} from '../src/wire.mjs';
 import {request as httpRequest} from 'node:http';
@@ -34,6 +35,94 @@ test('authentication, device revocation and hashed credentials',async t=>{
   await assert.rejects(store.login({username:'alice',password:'wrong password',deviceId:'device_b_12345678',deviceName:'tablet'}),{code:'LOGIN_FAILED'});
   const b=await otherDevice(store);store.claim(b,{generation:0});store.revokeDevice(session,b.device);
   assert.throws(()=>store.claim(b,{generation:1}),{code:'UNAUTHORIZED'});assert.throws(()=>push(store,b,splitDomain(createInitialState()).entries),{code:'UNAUTHORIZED'});assert.equal(store.head(session.user).owner,null);
+});
+test('logout hides the signed-out device, preserves the other device, and fences replacement',async t=>{
+  const {store}=fixture(t),{session:a}=await user(store),{entries}=seed(store,a),b=await otherDevice(store);
+  store.logout(a);
+  assert.deepEqual(store.devices(b).map(d=>[d.id,d.current]),[[b.device,true]]);
+  const head=store.workspace(b);
+  assert.equal(head.execution.owner,null);
+  const claimed=store.claim(b,{generation:head.execution.generation});
+  store.revokeDevice(b,a.device);
+  assert.deepEqual(store.workspace(b).execution,claimed);
+  const input={revision:head.revision,entries,execution:claimed.generation,requestId:'owned-replacement-123'};
+  assert.throws(()=>store.replace(a,input),{code:'UNAUTHORIZED'});
+  const replaced=store.replace(b,input);
+  assert.notEqual(replaced.epoch,head.epoch);
+  assert.deepEqual(replaced.execution,{owner:b.device,generation:claimed.generation+1});
+  assert.deepEqual(store.replace(b,input),replaced);
+  assert.deepEqual(store.workspace(b),replaced);
+  assert.throws(()=>store.replace(b,{...input,revision:replaced.revision,requestId:'stale-owned-replacement-123'}),{code:'EXECUTION_CHANGED'});
+});
+test('extended focus stays live without a fixed end and respects friend time sharing',async t=>{
+  const {store,setNow}=fixture(t),{session:a}=await user(store),{session:b}=await user(store,'bob');
+  const {generation}=store.claim(a,{generation:0});
+  const policy={status:true,name:true,time:true,daily:false};
+  store.updateAccount(a,{friendsEnabled:true,sharing:policy});store.updateAccount(b,{friendsEnabled:true});
+  store.invite(b,store.account(a.user).friendCode);store.relation(a,b.user,'accept');
+  const snapshot={currentName:'专注中',startedAt:'2026-11-15T09:00:00.000Z',estimatedEndsAt:null,estimatedElapsedMs:3600000,todayActualFocusMs:0};
+  store.presence(a,snapshot,generation);
+  const viewer=new FocusViewerStore(store,{owner:a.user,from:'2026-11-14'});
+  const live=viewer.snapshot().live.snapshot;
+  assert.equal(live.waitingForEnd,true);assert.equal(live.estimatedEndsAt,null);assert.equal(live.currentName,'专注中');
+  const friend=()=>store.friends(b).find(row=>row.id===a.user);
+  assert.equal(friend().waitingForEnd,true);assert.equal(friend().focusing,true);
+  store.updateAccount(a,{sharing:{...policy,time:false}});assert.equal(friend().waitingForEnd,undefined);
+  setNow('2026-11-15T10:01:31Z');
+  assert.equal(viewer.snapshot().live.snapshot.currentName,null);assert.equal(friend().stale,true);
+});
+test('the workspace and viewer retain the planned round when a short extension is synced',async t=>{
+  const {store,setNow}=fixture(t),{session}=await user(store);
+  const {generation}=store.claim(session,{generation:0});
+  let domain=createInitialState();
+  const run=(command,time)=>{
+    const result=execute(domain,command,{now:()=>new Date(time)});
+    assert.equal(result.ok,true,result.error);domain=result.state;
+  };
+  const originalStart='2026-11-15T09:59:00.000Z';
+  const extensionStart='2026-11-15T10:00:00.000Z';
+  const firstId='session:short-extension:1:initial';
+  const extensionId='session:short-extension:extension:MINIMAL:1';
+  run({type:'CreateProject',projectId:'project',title:'Focus',blueprintId:'cottage',subtasks:[{id:'task',title:'Task'}]},originalStart);
+  const start=(id,at)=>run({type:'StartFocus',sessionId:id,projectId:'project',subtaskId:null,
+    plannedDurationMs:60000,marathon:true,deferredSettlement:true},at);
+  start(firstId,originalStart);
+  const basePlan={id:'short-extension',projectId:'project',subtaskId:null,mode:'MINIMAL',totalRounds:1,completedSessionIds:[],
+    phase:'FOCUS',focusDurationMs:60000,restDurationMs:0,currentSessionId:firstId,phaseEndsAt:extensionStart,exactEndAt:extensionStart,
+    terminalRest:false,cancelled:false,cancellationCategory:null,cancellationNote:null,hasStarted:true,extendAfterPlan:true};
+  let previous={};
+  const commit=plan=>{
+    const {entries}=splitDomain(domain);
+    entries['@plan']=canonical({plan,automaticEnabled:false});
+    push(store,session,entries,previous);
+    previous=entries;
+  };
+  setNow('2026-11-15T09:59:30Z');commit(basePlan);
+  store.presence(session,{currentName:'专注中',startedAt:originalStart,estimatedEndsAt:extensionStart,
+    estimatedElapsedMs:30000,todayActualFocusMs:0},generation);
+  const viewer=new FocusViewerStore(store,{owner:session.user,from:'2026-11-15'});
+  assert.equal(viewer.snapshot().live.snapshot.estimatedEndsAt,extensionStart);
+
+  run({type:'CompleteFocus'},extensionStart);start(extensionId,extensionStart);
+  const extending={...basePlan,completedSessionIds:[firstId],currentSessionId:extensionId,phaseEndsAt:domain.activeFocusSession.endsAt,
+    extensionStartedAt:extensionStart,extensionRounds:0};
+  setNow('2026-11-15T10:00:10Z');commit(extending);
+  store.presence(session,{currentName:'专注中',startedAt:extensionStart,estimatedEndsAt:null,
+    estimatedElapsedMs:10000,todayActualFocusMs:60000},generation);
+  const live=viewer.snapshot().live.snapshot;
+  assert.equal(live.waitingForEnd,true);
+  assert.equal(live.todayActualFocusMs,60000);
+
+  const stop='2026-11-15T10:00:23.000Z';
+  run({type:'CancelFocus'},stop);
+  setNow(stop);commit({...extending,phase:'REPORT',currentSessionId:null,phaseEndsAt:null});
+  store.presence(session,{currentName:null,startedAt:null,estimatedEndsAt:null,estimatedElapsedMs:0,todayActualFocusMs:83000},generation);
+  assert.equal(viewer.snapshot().live.snapshot.currentName,null);
+  assert.equal(viewer.snapshot().live.snapshot.todayActualFocusMs,83000);
+  const saved=store.workspace(session).entries;
+  assert.equal(JSON.parse(saved['focusHistory/'+firstId]).value.status,'completed');
+  assert.equal(JSON.parse(saved['focusHistory/'+extensionId]).value.actualDurationMs,23000);
+  assert.equal(JSON.parse(saved['@plan']).plan.extensionRounds,0);
 });
 test('disjoint device edits merge; same record conflicts without partial writes',async t=>{
   const {store}=fixture(t),{session:a}=await user(store),{domain,entries:base}=seed(store,a),b=await otherDevice(store);

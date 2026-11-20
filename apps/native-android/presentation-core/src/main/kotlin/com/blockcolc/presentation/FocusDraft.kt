@@ -52,7 +52,7 @@ data class FocusDraft(val projectId:String,val subtaskId:String?,val mode:PlanMo
                 require(result.rounds<=24){"A plan cannot exceed 24 rounds"};result.rounds
             }
         }
-        return PlanRequest(id,owner.id,task,mode,rounds,minutes*60000L,preferences.breakMinutes*60000L,end?.let(DomainTime::format))
+        return PlanRequest(id,owner.id,task,mode,rounds,minutes*60000L,preferences.breakMinutes*60000L,end?.let(DomainTime::format),preferences.autoExtendFocus)
     }
 }
 data class EndTimeSchedule(val rounds:Int,val breaks:Int,val usableMs:Long) {

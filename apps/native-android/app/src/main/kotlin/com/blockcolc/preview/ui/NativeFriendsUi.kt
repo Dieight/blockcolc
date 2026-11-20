@@ -3,6 +3,8 @@ package com.blockcolc.preview.ui
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -18,6 +20,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
@@ -27,6 +30,7 @@ import com.blockcolc.preview.CloudView
 import com.blockcolc.preview.NativeCloudController
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.time.Instant
@@ -46,7 +50,12 @@ import java.util.Locale
     val keyboard=LocalSoftwareKeyboardController.current
     var invite by rememberSaveable(accountId){mutableStateOf("")}
     var adding by rememberSaveable(accountId){mutableStateOf(accepted.isEmpty())}
-    LaunchedEffect(accountId){controller.refreshFriends()}
+    LaunchedEffect(accountId){
+        while(true){
+            controller.refreshFriends()
+            delay(6_000)
+        }
+    }
 
     if(accepted.isEmpty()){
         Text(cloudText("还没有好友","No friends yet"),style=MaterialTheme.typography.bodyMedium)
@@ -103,6 +112,43 @@ import java.util.Locale
     }
 }
 
+@Composable internal fun NativeMinimalFriends(view:CloudView,visible:Boolean,refresh:()->Unit,onOpen:()->Unit){
+    val account=view.account?.optString("id")
+    LaunchedEffect(account,visible){
+        if(visible&&account!=null)while(true){
+            refresh()
+            delay(6_000)
+        }
+    }
+    val friends=remember(view.friends){view.friends.filter{it.optString("status")=="accepted"}
+        .sortedWith(compareByDescending<JSONObject>{it.optBoolean("focusing")}.thenBy{it.optString("name")})}
+    Column(Modifier.fillMaxSize().testTag("minimal-friends")){
+        Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
+            Text(cloudText("好友","Friends"),Modifier.weight(1f),style=MaterialTheme.typography.titleMedium)
+            NativeIconAction(cloudText("查看好友","View friends"),"friends",onOpen)
+        }
+        if(friends.isEmpty())Text(
+            if(view.friendsError!=null)cloudText("好友暂不可用","Friends are unavailable")else cloudText("还没有好友","No friends yet"),
+            style=MaterialTheme.typography.bodyMedium,
+        )
+        Column(Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState())){
+            for((index,friend) in friends.withIndex())key(friend.optString("id")){
+                if(index>0)NativeSeparator()
+                Row(Modifier.fillMaxWidth().padding(vertical=8.dp),verticalAlignment=Alignment.CenterVertically,
+                    horizontalArrangement=Arrangement.spacedBy(10.dp)){
+                    val focusing=friend.optBoolean("focusing")&&!friend.optBoolean("stale")
+                    Box(Modifier.size(7.dp).background(if(focusing)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline))
+                    Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(4.dp)){
+                        Text(friend.optString("name"),style=MaterialTheme.typography.bodyMedium)
+                        friendStatus(friend)?.let{Text(it,style=MaterialTheme.typography.bodySmall)}
+                        friendPeriod(friend)?.let{Text(it,style=MaterialTheme.typography.bodySmall)}
+                    }
+                }
+            }
+        }
+    }
+}
+
 @Composable internal fun NativeFriendCard(
     friend:JSONObject,
     defaultSharing:JSONObject,
@@ -137,19 +183,7 @@ import java.util.Locale
         }
     }
 
-    val status=when{
-        friend.optString("focusState")=="paused"->cloudText("已暂停","Paused")
-        friend.optBoolean("stale")->cloudText("实时状态暂不可用","Live status unavailable")
-        friend.optBoolean("focusing")->cloudText("专注中","Focusing")
-        friend.has("focusing")->cloudText("暂未专注","Not focusing")
-        else->null
-    }
-    val task=(friend.opt("currentName") as? String)?.takeIf{it.isNotBlank()}
-    val summary=when{
-        task!=null&&friend.optString("focusState")=="paused"->"$task · $status"
-        task!=null->task
-        else->status
-    }
+    val summary=friendStatus(friend)
     val time=friendPeriod(friend)
     val description=listOfNotNull(summary,time).joinToString("\n").ifEmpty{null}
     Column(Modifier.fillMaxWidth().border(1.dp,MaterialTheme.colorScheme.outlineVariant)
@@ -174,12 +208,24 @@ import java.util.Locale
                 if(readOnly)Text(cloudText("Mutsumi Focus · 公开只读数据","Mutsumi Focus · public, read-only"),style=MaterialTheme.typography.bodySmall)
                 else NativeDisclosure(cloudText("对该好友可见","Visible to this friend"),expanded=sharingOpen,
                     onExpandedChange={sharingOpen=it},rowHeight=44.dp){
-                    CloudSharing(friend.optJSONObject("sharing")?:defaultSharing,enabled,changeSharing)
+                    CloudSharing(friend.optJSONObject("sharing")?:defaultSharing,enabled,onChange=changeSharing)
                     NativeAction(cloudText("使用默认设置","Use defaults"),{changeSharing(null)},Modifier.fillMaxWidth(),enabled=enabled,primary=false)
                 }
                 NativeAction(cloudText("移除好友","Remove friend"),remove,Modifier.fillMaxWidth(),enabled=enabled,primary=false,icon="close")
             }
         }
+    }
+}
+
+@Composable private fun friendStatus(friend:JSONObject):String?{
+    if(friend.optBoolean("stale"))return cloudText("实时状态暂不可用","Live status unavailable")
+    val task=(friend.opt("currentName") as? String)?.takeIf{it.isNotBlank()}
+    return when{
+        friend.optString("focusState")=="paused"->listOfNotNull(task,cloudText("已暂停","Paused")).joinToString(" · ")
+        task!=null->task
+        friend.optBoolean("focusing")->cloudText("专注中","Focusing")
+        friend.has("focusing")->cloudText("暂未专注","Not focusing")
+        else->null
     }
 }
 
@@ -190,9 +236,9 @@ import java.util.Locale
     val zone=ZoneId.systemDefault()
     val today=LocalDate.now(zone)
     val english=LocalNativeUi.current.language=="en"
-    val dateTime=remember(english){
-        if(english)DateTimeFormatter.ofPattern("MMM d, HH:mm",Locale.ENGLISH)
-        else DateTimeFormatter.ofPattern("M月d日 HH:mm",Locale.SIMPLIFIED_CHINESE)
+    val datePattern=cloudText("M月d日 HH:mm","MMM d, HH:mm")
+    val dateTime=remember(datePattern,english){
+        DateTimeFormatter.ofPattern(datePattern,if(english)Locale.ENGLISH else Locale.SIMPLIFIED_CHINESE)
     }
     val clock=remember{DateTimeFormatter.ofPattern("HH:mm",Locale.ROOT)}
     fun format(value:Instant):String{
@@ -200,6 +246,7 @@ import java.util.Locale
         return if(local.toLocalDate()==today)clock.format(local)else dateTime.format(local)
     }
     if(start!=null&&end!=null)return "${format(start)} – ${format(end)}"
+    if(start!=null&&friend.optBoolean("waitingForEnd"))return "${format(start)} · ${cloudText("等待用户结束","Waiting for manual finish")}"
     return if(start!=null)cloudText("${format(start)} 开始","Started ${format(start)}")
         else cloudText("${format(checkNotNull(end))} 结束","Ends ${format(checkNotNull(end))}")
 }

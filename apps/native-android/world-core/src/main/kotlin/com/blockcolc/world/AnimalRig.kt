@@ -5,7 +5,7 @@ import kotlin.math.*
 
 /** Original source cuboid rig, written into reusable six-texel rows. No
  * Object3D per bone and no per-frame geometry or texture allocation. */
-class AnimalRig {
+class AnimalRig(private val paper:Boolean=false) {
     companion object {val capacities=listOf(1536,64,32,32)}
     private val rows=capacities.mapIndexed{kind,capacity->FloatArray(capacity*24).apply{for(i in 0 until capacity){this[i*24]=1f;this[i*24+5]=1f;this[i*24+10]=1f;this[i*24+15]=1f;this[i*24+20]=i.toFloat();this[i*24+21]=kind.toFloat()}}}
     private val previous=IntArray(4);val counts=IntArray(4)
@@ -39,12 +39,16 @@ class AnimalRig {
         val rgb=color(c);for(i in 0..2)out[at+16+i]=rgb[i];out[at+19]=1f;out[at+20]=slot.toFloat();out[at+21]=kind.toFloat();out[at+22]=1f;out[at+23]=0f;ids[kind][slot]=a.id
     }
     private fun cube(a:NativeAnimalAgent,parent:DoubleArray,x:Double,y:Double,z:Double,sx:Double,sy:Double,sz:Double,c:Int,rx:Double=0.0,ry:Double=0.0,rz:Double=0.0)=put(a,0,parent,x,y,z,sx,sy,sz,c,rx,ry,rz)
-    fun update(agents:List<NativeAnimalAgent>,time:Double,visible:Set<Int>?=null){
+    fun update(agents:List<NativeAnimalAgent>,time:Double,visible:Set<Int>?=null, silhouette:Boolean=false){
         require(time.isFinite());for(k in 0..3){previous[k]=counts[k];counts[k]=0}
         for(a in agents){if(visible!=null&&a.id !in visible)continue
             val c=colors[a.species]?:error("Unknown animal rig");val moving=a.activity in setOf("walk","swim","jump","takeoff","fly","land");val response=a.response>0
             val pulse=if(response)sin((1.3-a.response)*5)else 0.0;val gait=a.traveled*6
             compose(base,a.position.x,a.position.y,a.position.z,rx=if(a.kind=="fish"&&a.activity=="jump")-cos((a.route?.t?:0.0)*PI)*.6 else 0.0,ry=a.heading)
+            if(paper){
+                paperPose(a,c,time,gait,moving,pulse,silhouette)
+                continue
+            }
             if(a.kind=="land"){
                 val horse=a.species=="horse";val cow=a.species=="cow";val pig=a.species=="pig"
                 val bodyY=if(horse)1.22 else if(cow).91 else if(pig).55 else .76;val bodyZ=if(horse)1.3 else if(cow)1.05 else if(pig).9 else .75;val bodyW=if(horse).72 else if(cow).76 else if(pig).62 else .64
@@ -95,6 +99,44 @@ class AnimalRig {
             }
         }
         for(k in 0..3)for(i in counts[k] until previous[k]){rows[k][i*24+22]=0f;ids[k][i]=0}
+    }
+    private fun paperPose(a:NativeAnimalAgent,color:Int,time:Double,gait:Double,moving:Boolean,pulse:Double,silhouette:Boolean){
+        when(a.kind){
+            "land"->{
+                val height=when(a.species){"horse"->1.26;"cow"->.9;"sheep"->.76;else->.56}
+                val length=when(a.species){"horse"->1.36;"cow"->1.14;else->.86}
+                val rest=if(a.activity=="rest")height*.26 else 0.0
+                val bodyY=height-rest
+                val headY=bodyY+if(a.activity=="graze"&&a.response<=0).06 else height*.44
+                cube(a,base,0.0,bodyY,0.0,.65,height*.65,length,color)
+                cube(a,base,0.0,headY,length*.47,.36,.38,.38,if(a.species=="pig")0xf0beba else color,ry=pulse*.36)
+                if(!silhouette){
+                    for(leg in 0..3){
+                        val x=if(leg%2==0)-.21 else .21
+                        val z=if(leg<2)-length*.31 else length*.31
+                        val bend=if(moving)sin(gait+if(leg==0||leg==3)0.0 else PI)*.4 else 0.0
+                        cube(a,base,x,bodyY*.34,z,.15,bodyY*.74,.17,0x78634f,rx=bend)
+                    }
+                    cube(a,base,0.0,headY-.052,length*.47+.226,.24,.123,.11,0x948173,ry=pulse*.36)
+                }
+            }
+            "fish"->{
+                val tail=sin(time*(if(a.response>0)19 else 8)+a.phase)*.53
+                cube(a,base,0.0,0.0,0.0,.24,.30,.69,color)
+                cube(a,base,0.0,.025,-.43,.095,.30,.26,if(a.species=="tropicalfish")0xeddca8 else color,ry=tail)
+                if(a.ripple>0&&a.waterY!=null)put(a,3,base,0.0,a.waterY!!-a.position.y+.04,0.0,
+                    (1.2-a.ripple)*1.8,1.0,(1.2-a.ripple)*1.8,0xffffff)
+            }
+            "bird"->{
+                val wings=if(a.activity=="perch") .64 else sin(time*10+a.phase)*.64
+                cube(a,base,0.0,.25,0.0,.28,.24,.56,color,ry=pulse*.23)
+                for(side in listOf(-1,1)){
+                    attach(base,side*.13,.29,0.0)
+                    cube(a,head,side*.23,0.0,-.045,.51,.075,.29,color,rz=side*wings)
+                }
+                if(!silhouette)cube(a,base,0.0,.33,.32,.1,.1,.18,0xc29847)
+            }
+        }
     }
     fun actorId(kind:Int,slot:Int)=ids[kind][slot]
     fun value(kind:Int,slot:Int,channel:Int)=rows[kind][slot*24+channel]

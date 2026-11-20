@@ -6,11 +6,16 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.AnnotatedString
@@ -39,7 +44,7 @@ import java.util.concurrent.atomic.AtomicReference
         NativeSeparator()
     }
 }
-@Composable private fun CloudGroup(title:String,description:String,content:@Composable ColumnScope.()->Unit){
+@Composable private fun CloudGroup(title:String,description:String?=null,content:@Composable ColumnScope.()->Unit){
     var expanded by rememberSaveable(title){mutableStateOf(false)}
     NativeDisclosure(title,description,expanded,{expanded=it},rowHeight=60.dp,contentSpacing=0.dp,content=content)
 }
@@ -59,14 +64,84 @@ import java.util.concurrent.atomic.AtomicReference
         "EXECUTION_CHANGED","EXECUTING_ELSEWHERE"->if(english)"Another device controls this plan. Refresh or take over."else"计划由另一台设备执行，请刷新或主动接管。"
         "FRIEND_NOT_FOUND"->if(english)"Friend not found or friends are disabled."else"没有找到好友，或对方未开启好友功能。"
         "LOCAL_CHANGED"->if(english)"Local changes were kept; syncing will retry."else"本机新改动已保留，将重新同步。"
+        "REQUEST_TIMEOUT"->if(english)"The cloud request timed out. Sync again to check its result."else"云端请求超时，请重新同步核对结果。"
+        "TLS_UNAVAILABLE"->if(english)"Unable to verify the cloud connection. Check the device date and time."else"无法验证云端连接，请检查设备日期和时间。"
+        "CLOUD_EMPTY"->if(english)"The cloud workspace is empty. Your local records are kept."else"云端暂无记录，本机内容已保留。"
+        "CLOUD_DEVICE_MEMORY_LIMIT"->if(english)"This device ran out of memory while syncing."else"同步时设备可用内存不足。"
+        "CLOUD_ASSET_DIGEST","CLOUD_RESPONSE_TOO_LARGE"->if(english)"The cloud data did not pass verification."else"云端数据未通过校验。"
         else->if(english)"Sync is unavailable. Local focus and data remain usable; try again later."else"同步暂不可用，本地专注和记录仍可使用，请稍后重试。"
     }
     Text(message,color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodySmall)
 }
 
+@Composable private fun CloudWorkspaceFeedback(view:CloudView){
+    val receipt=view.receipt
+    val label=when(receipt?.result){
+        CloudResult.WORKING->when(receipt.action){
+            CloudAction.MERGE->cloudText("正在合并…","Merging…")
+            CloudAction.USE_CLOUD,CloudAction.REPLACE_CLOUD->cloudText("正在替换工作区…","Replacing workspace…")
+            else->cloudText("正在处理…","Working…")
+        }
+        CloudResult.COMPLETE->when(receipt.action){
+            CloudAction.SYNC->cloudText("同步完成","Sync complete")
+            CloudAction.MERGE->cloudText("合并并同步完成","Merged and synced")
+            CloudAction.USE_CLOUD->cloudText("已使用云端内容","Cloud workspace applied")
+            CloudAction.REPLACE_CLOUD->cloudText("已用本机内容替换云端","Cloud workspace replaced")
+            CloudAction.TAKEOVER->cloudText("已接管计划","Plan taken over")
+            CloudAction.BACKUP->cloudText("云端备份已保存","Cloud backup saved")
+            CloudAction.RESTORE->cloudText("云端备份已恢复","Cloud backup restored")
+            CloudAction.REVOKE_DEVICE->cloudText("设备已移除","Device removed")
+        }
+        CloudResult.NEEDS_CHOICE->cloudText("同步暂停，请选择处理方式","Sync paused. Choose how to continue.")
+        CloudResult.RETRY_PENDING->cloudText("本机有新改动，稍后继续同步","Local changes pending. Sync will retry.")
+        CloudResult.FAILED->null
+        null->when{
+            view.choiceRequired->cloudText("等待选择同步方式","Choose how to sync")
+            view.busy->cloudText("正在连接云端…","Connecting to cloud…")
+            view.error!=null->null
+            view.accountPending->cloudText("账户设置已保存，等待同步","Account settings saved; sync pending")
+            view.lastSync!=null->cloudText("已同步","Synced")
+            else->cloudText("尚未同步","Not synced yet")
+        }
+    }
+    Column(Modifier.fillMaxWidth().semantics{liveRegion=LiveRegionMode.Polite}){
+        if(label!=null)Text(label,style=MaterialTheme.typography.bodySmall)
+        CloudError(receipt?.error)
+        if(view.error!=receipt?.error)CloudError(view.error)
+    }
+}
+
 @Composable internal fun NativeCloudSettings(view:CloudView,onOpen:()->Unit){
-    NativeSettingLink(if(view.account==null)cloudText("登录或创建账户","Sign in or create account")else cloudText("管理账户","Manage account"),onOpen)
-    Text(if(view.account==null)cloudText("可选开启，离线照常使用","Optional; works offline")else view.account.optString("username"),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+    NativeSettingLink(if(view.account==null)cloudText("登录或创建账户","Sign in or create account")else cloudText("管理账户","Manage account"),onOpen,
+        description=if(view.account==null)cloudText("可选开启，离线照常使用","Optional; works offline")else view.account.optString("username"))
+}
+
+@Composable private fun NativeCloudPolicySheet(open:Boolean,onClose:()->Unit){
+    val english=LocalNativeUi.current.language=="en"
+    val context=LocalContext.current
+    val uri=LocalUriHandler.current
+    val heading=cloudText("云服务条款与隐私说明","Cloud terms & privacy")
+    NativeSheet(Unit.takeIf{open},{heading},onClose,initiallyExpanded=true){
+        val file=if(english)"en" else "zh-CN"
+        val parts by produceState<List<String>?>(null,file){
+            value=kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){
+                runCatching{context.assets.open("cloud-policy/$file.md").bufferedReader().use{it.readText()}
+                    .trim().split(Regex("\\r?\\n\\r?\\n")).drop(1)}.getOrElse{emptyList()}
+            }
+        }
+        val content=parts
+        when{
+            content==null->NativeBusy(Modifier.size(20.dp))
+            content.isEmpty()->Text(cloudText("暂时无法读取说明","Notice unavailable"))
+            else->for(part in content){
+                if(part.startsWith("## "))Text(part.removePrefix("## "),style=MaterialTheme.typography.titleMedium)
+                else Text(part,style=MaterialTheme.typography.bodyMedium)
+            }
+        }
+        NativeSettingLink(cloudText("联系项目维护者","Contact the maintainers"),{
+            runCatching{uri.openUri("https://github.com/Dieight/blockcolc")}
+        })
+    }
 }
 
 @Composable internal fun NativeCloudPanels(controller:NativeCloudController,view:CloudView,accountOpen:Boolean,friendsOpen:Boolean,onCloseAccount:()->Unit,onCloseFriends:()->Unit){
@@ -78,6 +153,7 @@ import java.util.concurrent.atomic.AtomicReference
     var restoreConfirm by remember{mutableStateOf(false)};var logoutConfirm by remember{mutableStateOf(false)}
     var passwordOpen by remember{mutableStateOf(false)}
     var passwordPending by remember{mutableStateOf(false)}
+    var policyOpen by rememberSaveable{mutableStateOf(false)}
     val clipboard=LocalClipboardManager.current
     val commitAccount=remember{AtomicReference<()->Unit>({})}
     NativeSheet(Unit.takeIf{accountOpen},{tr("账户与云同步","Account & cloud")},onCloseAccount,onHidden={commitAccount.getAndSet({}).invoke()},initiallyExpanded=true){
@@ -91,18 +167,21 @@ import java.util.concurrent.atomic.AtomicReference
             if(view.error=="LOCAL_CREDENTIALS_UNAVAILABLE")NativeAction(tr("退出本机账户","Sign out on this device"),controller::logout,Modifier.fillMaxWidth(),primary=false)
         }else{
             val account=view.account
-            Text(account.optString("username"),style=MaterialTheme.typography.titleMedium)
-            Text(if(view.accountPending)tr("账户设置已保存，等待同步","Account settings saved; sync pending")else if(view.lastSync==null)tr("正在连接云端","Connecting to cloud")else tr("本机优先保存，联网自动同步","Saved locally first; synced when connected"),style=MaterialTheme.typography.bodySmall)
-            Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(12.dp)){
-                NativeAction(tr("立即同步","Sync now"),controller::refresh,Modifier.weight(1f),pending=view.busy,primary=false,icon="reset")
-                NativeAction(tr("退出登录","Sign out"),{logoutConfirm=true},Modifier.weight(1f),enabled=!view.busy,primary=false)
-            }
-            NativeSettingLink(tr("修改密码","Change password")){passwordOpen=true}
+            NativeInlineAction(account.optString("username"),controller::refresh,"reset",tr("立即同步","Sync now"),
+                pending=view.working(CloudAction.SYNC),enabled=!view.busy)
+            CloudWorkspaceFeedback(view)
+            NativeSettingLink(tr("修改密码","Change password"),{passwordOpen=true})
             if(view.choiceRequired){
                 Text(tr("本机与云端都有内容，请选择一次。替换前保留本机回滚点；相同记录的冲突不会擅自覆盖。","Both workspaces have content. Choose once. A local rollback is kept before replacement; conflicting records are not overwritten."),style=MaterialTheme.typography.bodySmall)
-                NativeAction(tr("合并独立改动","Merge independent changes"),{controller.choose("merge")},Modifier.fillMaxWidth(),enabled=!view.busy,primary=false)
-                NativeAction(tr("使用云端内容","Use cloud workspace"),{controller.choose("cloud")},Modifier.fillMaxWidth(),enabled=!view.busy,primary=false)
-                NativeAction(tr("以本机替换云端","Replace cloud with this device"),{controller.choose("local")},Modifier.fillMaxWidth(),enabled=!view.busy,primary=false)
+                val choices=listOf(
+                    Triple("merge",CloudAction.MERGE,tr("合并独立改动","Merge independent changes")),
+                    Triple("cloud",CloudAction.USE_CLOUD,tr("使用云端内容","Use cloud workspace")),
+                    Triple("local",CloudAction.REPLACE_CLOUD,tr("以本机替换云端","Replace cloud with this device"))
+                )
+                for((strategy,action,label)in choices){
+                    val working=view.working(action)
+                    NativeInlineAction(label,{controller.choose(strategy)},"check",enabled=!view.busy,pending=working)
+                }
             }
             NativeSeparator()
             CloudGroup(tr("执行设备","Execution device"),tr("一台执行，其他设备可接管","One executor; other devices can take over")){
@@ -115,9 +194,13 @@ import java.util.concurrent.atomic.AtomicReference
             }
             NativeSeparator()
             CloudGroup(tr("云端备份","Cloud backup"),tr("每日合并，只保留一份","One merged daily recovery snapshot")){
-                Text(view.backup?.optString("date")?:tr("尚无云端备份","No cloud backup yet"),style=MaterialTheme.typography.bodySmall)
-                NativeAction(tr("备份当前内容","Back up now"),controller::captureBackup,Modifier.fillMaxWidth(),enabled=!view.busy,primary=false,icon="chest")
-                NativeAction(tr("恢复云端备份","Restore cloud backup"),{restoreConfirm=true},Modifier.fillMaxWidth(),enabled=!view.busy&&view.backup!=null,primary=false)
+                NativeInlineAction(view.backup?.optString("date")?:tr("尚无云端备份","No cloud backup yet"),
+                    controller::captureBackup,"chest",tr("立即备份","Back up now"),enabled=!view.busy,pending=view.working(CloudAction.BACKUP))
+                if(view.backup!=null){
+                    NativeSeparator()
+                    NativeInlineAction(tr("恢复云端备份","Restore cloud backup"),{restoreConfirm=true},"chest",
+                        enabled=!view.busy,pending=view.working(CloudAction.RESTORE))
+                }
             }
             NativeSeparator()
             if(account.has("friendsEnabled")&&account.has("sharing")){
@@ -129,15 +212,27 @@ import java.util.concurrent.atomic.AtomicReference
                     if(change.length()>0){controller.account(change,accountId);base=chosen}
                 }}
                 val local=JSONObject(chosen)
-                NativeToggle(tr("好友功能","Friends"),tr("由你决定每项可见内容","You control each shared field"),local.getBoolean("friendsEnabled"),true){chosen=JSONObject(chosen).put("friendsEnabled",it).toString()}
-                if(local.getBoolean("friendsEnabled")){
-                    Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){Text(account.optString("friendCode"),Modifier.weight(1f));NativeIconAction(tr("复制好友码","Copy friend code"),"chest",{clipboard.setText(AnnotatedString(account.optString("friendCode")))})}
-                    CloudSharing(local.getJSONObject("sharing"),true){chosen=JSONObject(chosen).put("sharing",it).toString()}
+                val enabled=local.getBoolean("friendsEnabled")&&local.getJSONObject("sharing").optBoolean("status")
+                CloudGroup(tr("好友功能","Friends")){
+                    NativeToggle(tr("专注状态","Focus status"),value=enabled){active->
+                        local.put("friendsEnabled",active).getJSONObject("sharing").put("status",active)
+                        chosen=local.toString()
+                    }
+                    NativeSeparator()
+                    CloudSharing(local.getJSONObject("sharing"),enabled,includeStatus=false){chosen=JSONObject(chosen).put("sharing",it).toString()}
+                    if(enabled)Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.SpaceBetween){
+                        Text(account.optString("friendCode"),Modifier.weight(1f),style=MaterialTheme.typography.bodySmall)
+                        NativeIconAction(tr("复制好友码","Copy friend code"),"chest",{clipboard.setText(AnnotatedString(account.optString("friendCode")))})
+                    }
                 }
-            }else Text(tr("正在读取账户设置","Loading account settings"),style=MaterialTheme.typography.bodySmall)
+            }else if(view.busy)Text(tr("正在读取账户设置","Loading account settings"),style=MaterialTheme.typography.bodySmall)
+            NativeSeparator()
+            NativeInlineAction(tr("退出登录","Sign out"),{logoutConfirm=true},"close",enabled=!view.busy)
         }
-        CloudError(view.error)
+        if(view.account==null)CloudError(view.error)
+        NativeSettingLink(tr("云服务条款与隐私说明","Cloud terms & privacy"),{policyOpen=true})
     }
+    NativeCloudPolicySheet(accountOpen&&policyOpen,{policyOpen=false})
     val passwordAccount=view.account?.optString("id")?.takeIf{accountOpen&&passwordOpen&&it.isNotEmpty()}
     NativeSheet(passwordAccount,{tr("修改密码","Change password")},{passwordOpen=false},
         dismissible=!passwordPending){accountId->
@@ -171,10 +266,13 @@ import java.util.concurrent.atomic.AtomicReference
     NativeSheet(Unit.takeIf{friendsOpen},{tr("好友","Friends")},onCloseFriends,initiallyExpanded=true){
         when{
             view.account==null->Text(tr("请先在设置中登录并开启好友功能。","Sign in and enable friends in Settings first."))
-            !view.account.optBoolean("friendsEnabled")->NativeAction(tr("开启好友功能","Enable friends"),{controller.account(JSONObject().put("friendsEnabled",true))},Modifier.fillMaxWidth(),pending=view.busy)
+            !view.account.optBoolean("friendsEnabled")||view.account.optJSONObject("sharing")?.optBoolean("status")==false->NativeAction(tr("开启好友功能","Enable friends"),{
+                val sharing=JSONObject(view.account.optJSONObject("sharing")?.toString()?:"{}").put("status",true)
+                controller.account(JSONObject().put("friendsEnabled",true).put("sharing",sharing))
+            },Modifier.fillMaxWidth(),pending=view.busy)
             else->NativeFriendsPanel(controller,view)
         }
-        CloudError(view.error)
+        CloudError(view.friendsError?:view.error)
     }
     NativeSheet(Unit.takeIf{restoreConfirm},{tr("恢复云端备份？","Restore cloud backup?")},{restoreConfirm=false}){
         Text(tr("本机当前内容会先保留回滚点。其他设备需重新选择同步方式。","A local rollback is kept first. Other devices must choose how to sync again."))
@@ -186,9 +284,9 @@ import java.util.concurrent.atomic.AtomicReference
     }
 }
 
-@Composable internal fun CloudSharing(value:JSONObject,enabled:Boolean,onChange:(JSONObject)->Unit){
+@Composable internal fun CloudSharing(value:JSONObject,enabled:Boolean,includeStatus:Boolean=true,onChange:(JSONObject)->Unit){
     val labels=listOf("status" to cloudText("专注状态","Focus status"),"name" to cloudText("当前任务","Current task"),"time" to cloudText("开始与结束时间","Start and end times"),"daily" to cloudText("每日专注时长","Daily focus time"))
-    for((key,label)in labels)NativeToggle(label,"",value.optBoolean(key),enabled){checked->
-        onChange(JSONObject().also{out->labels.forEach{(k,_)->out.put(k,if(k==key)checked else value.optBoolean(k))}})
+    for((key,label)in labels)if(includeStatus||key!="status")NativeToggle(label,value=value.optBoolean(key),enabled=enabled){checked->
+        onChange(JSONObject(value.toString()).put(key,checked))
     }
 }

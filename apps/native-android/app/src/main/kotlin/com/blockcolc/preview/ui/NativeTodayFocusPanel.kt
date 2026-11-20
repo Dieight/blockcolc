@@ -35,9 +35,10 @@ import com.blockcolc.presentation.TodayFocusTimeline
                 Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(5.dp)){PixelGlyph("clock",Modifier.size(14.dp),ink);NativeText(ui.text("今日专注"),NativeTextRole.CAPTION)}
                 NativeText(duration(data.totalMs),NativeTextRole.TITLE,accent=true)
             }
-            Row(verticalAlignment=Alignment.Bottom,horizontalArrangement=Arrangement.spacedBy(6.dp)){
-                PixelGlyph("flag",Modifier.size(14.dp),ink);NativeText(data.completedRounds.toString(),NativeTextRole.TITLE,accent=true)
-                NativeText(if(data.targetRounds==null)ui.text("轮")else ui.text(" / {0} 轮",data.targetRounds),NativeTextRole.CAPTION)
+            Row(horizontalArrangement=Arrangement.spacedBy(6.dp)){
+                PixelGlyph("flag",Modifier.size(14.dp).alignBy{it.measuredHeight},ink)
+                NativeText(data.completedRounds.toString(),NativeTextRole.TITLE,Modifier.alignByBaseline(),accent=true)
+                NativeText(if(data.targetRounds==null)ui.text("轮")else ui.text(" / {0} 轮",data.targetRounds),NativeTextRole.CAPTION,Modifier.alignByBaseline())
             }
         }
         Spacer(Modifier.height(8.dp))

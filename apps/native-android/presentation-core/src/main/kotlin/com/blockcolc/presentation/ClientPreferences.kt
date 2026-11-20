@@ -17,10 +17,11 @@ data class ClientPreferences(
     val returnToFocusReminders:Boolean=true,val autoContinueFocus:Boolean=false,val autoCheckUpdates:Boolean=false,
     val realWeatherEnabled:Boolean=false,val minimalMode:Boolean=false,
     val ambience:Ambience=Ambience(),val language:String="zh-CN",val quickNotesEnabled:Boolean=false,
+    val autoExtendFocus:Boolean=false,
 ) {
     fun validate(){
         require(focusMinutes in 1..180&&habitFocusMinutes in 1..180&&habitTargetRounds in 10..30&&breakMinutes in 0..60)
-        require(lightingQuality in setOf("auto","performance","balanced","cinematic")&&constructionOutlineVisibility in setOf("off","current","all"))
+        require(lightingQuality in setOf("auto","paper","performance","balanced","cinematic")&&constructionOutlineVisibility in setOf("off","current","all"))
         require(worldColorAdjustment.saturation in 50..150&&worldColorAdjustment.brightness in 80..120&&worldColorAdjustment.contrast in 80..120)
         require(focusGlassTransparency in 0..100&&themeMode in setOf("system","light","dark")&&fontStyle in setOf("pixel","system","mixed"))
         require(language in setOf("zh-CN","en")&&ambientPrimary(ambience.primary)&&ambience.volume in 0..100)
@@ -34,7 +35,9 @@ data class ClientPreferences(
             .put("showWorldCoordinates",showWorldCoordinates).put("focusGlassTransparency",focusGlassTransparency).put("themeMode",themeMode).put("fontStyle",fontStyle)
             .put("returnToFocusReminders",returnToFocusReminders).put("autoContinueFocus",autoContinueFocus).put("autoCheckUpdates",autoCheckUpdates)
             .put("realWeatherEnabled",realWeatherEnabled).put("minimalMode",minimalMode)
-            .put("ambience",sound).put("language",language).put("quickNotesEnabled",quickNotesEnabled))
+            .put("ambience",sound).put("language",language).put("quickNotesEnabled",quickNotesEnabled).also{
+                if(autoExtendFocus)it.put("autoExtendFocus",true)
+            })
     }
     companion object {
         const val LEGACY_STORAGE_KEY="blockcolc-focus-preferences-v1"
@@ -53,11 +56,11 @@ data class ClientPreferences(
             val primary=raw?.takeIf(::ambientPrimary)?:legacy?:"forest-birds"
             val retired=jsString(sound.opt("primary")) in setOf("evening-lakeside","morning-birdsong","calm-ocean")
             return ClientPreferences(focus,integer(x,"habitFocusMinutes",focus,1,180),integer(x,"habitTargetRounds",10,10,30),integer(x,"breakMinutes",5,0,60),
-                choice(x,"lightingQuality","cinematic","auto","performance","balanced","cinematic"),choice(x,"constructionOutlineVisibility","current","off","current","all"),
+                choice(x,"lightingQuality","cinematic","auto","paper","performance","balanced","cinematic"),choice(x,"constructionOutlineVisibility","current","off","current","all"),
                 WorldColor(integer(color,"saturation",100,50,150),integer(color,"brightness",100,80,120),integer(color,"contrast",100,80,120)),
                 bool(x,"showWorldCoordinates",true),integer(x,"focusGlassTransparency",100,0,100),choice(x,"themeMode","system","light","dark"),choice(x,"fontStyle","pixel","system","mixed"),
                 bool(x,"returnToFocusReminders",true),bool(x,"autoContinueFocus"),bool(x,"autoCheckUpdates"),bool(x,"realWeatherEnabled"),bool(x,"minimalMode"),
-                Ambience(bool(sound,"enabled")&&!retired,primary,bool(sound,"rainEnabled"),integer(sound,"volume",30,0,100)),choice(x,"language","zh-CN","en"),bool(x,"quickNotesEnabled"))
+                Ambience(bool(sound,"enabled")&&!retired,primary,bool(sound,"rainEnabled"),integer(sound,"volume",30,0,100)),choice(x,"language","zh-CN","en"),bool(x,"quickNotesEnabled"),bool(x,"autoExtendFocus"))
         }
         fun parseText(text:String)=parse(StrictJson.parse(text,1024*1024))
         // Only used for the formal retired-recording migration's String(value).

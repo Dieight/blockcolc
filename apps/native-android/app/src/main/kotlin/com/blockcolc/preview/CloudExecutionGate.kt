@@ -10,6 +10,7 @@ internal class CloudExecutionGate(context:Context,private val name:String="cloud
     @Volatile private var bound=prefs.getBoolean("bound",false)
     @Volatile private var owned=prefs.getBoolean("owned",false)
     fun canExecute()=!bound||owned
+    fun ownsAccountExecution()=bound&&owned
     fun update(bound:Boolean,owned:Boolean):Boolean {
         if(this.bound==bound&&this.owned==owned)return false
         check(prefs.edit().putBoolean("bound",bound).putBoolean("owned",owned).commit());this.bound=bound;this.owned=owned;return true

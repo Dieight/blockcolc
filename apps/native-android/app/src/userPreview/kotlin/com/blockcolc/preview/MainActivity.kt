@@ -26,5 +26,5 @@ class MainActivity:ComponentActivity(){
   setContent{NativeApp(runtime,loading,debug,cacheTag)};runtime.start()
  }
  override fun onResume(){super.onResume();PreviewRuntime.get(this).foreground(true)}
- override fun onStop(){PreviewRuntime.get(this).foreground(false,getSystemService(android.app.KeyguardManager::class.java).isKeyguardLocked);super.onStop()}
+ override fun onStop(){PreviewRuntime.get(this).activityStopped(this);super.onStop()}
 }

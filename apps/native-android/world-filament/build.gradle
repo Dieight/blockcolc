@@ -21,6 +21,7 @@ tasks.register('compileWorldMaterials', Exec) {
     inputs.files 'src/main/materials/terminal-color.mat','src/main/materials/color-probe.mat'
     inputs.files 'src/main/materials/bloom-bright.mat','src/main/materials/bloom-blur.mat'
     inputs.files 'src/main/materials/glass-blur.mat','src/main/materials/glass-compose.mat'
+    inputs.file 'src/main/materials/paper.mat.in'
     inputs.file '../tools/compile-materials.mjs'
     inputs.property 'filamentCompilerVersion', '56'
     if(compiler.isPresent())inputs.file rootProject.file(compiler.get())

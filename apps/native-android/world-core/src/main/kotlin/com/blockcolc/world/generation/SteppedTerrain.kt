@@ -15,12 +15,7 @@ object SteppedTerrain {
         checkpoint();require(options.generation==4){"Migrate saved records before generating terrain"}
         require(minimumRadius==null||minimumRadius.x.isFinite()&&minimumRadius.z.isFinite())
         val p=placements.toList();val r=roads.toList();val extra=pads.toList()
-        var minX=0.0;var maxX=0.0;var minZ=0.0;var maxZ=0.0
-        fun cover(x:Double,z:Double){require(x.isFinite()&&z.isFinite());minX=min(minX,x);maxX=max(maxX,x);minZ=min(minZ,z);maxZ=max(maxZ,z)}
-        for(road in r)cover(road.x.toDouble(),road.z.toDouble())
-        for(building in p){cover(building.worldPosition.x-building.footprint.width/2,building.worldPosition.z-building.footprint.depth/2);cover(building.worldPosition.x+building.footprint.width/2,building.worldPosition.z+building.footprint.depth/2)}
-        for(pad in extra){cover(pad.x-pad.width/2,pad.z-pad.depth/2);cover(pad.x+pad.width/2,pad.z+pad.depth/2)}
-        val radius=maxOf(26.0,minimumRadius?.x?:0.0,minimumRadius?.z?:0.0,hypot(max(abs(minX),abs(maxX))+9,max(abs(minZ),abs(maxZ))+9))
+        val radius=radius(p,r,extra,minimumRadius)
         val seed=SourceNumbers.fnv32(options.worldSeed).toInt();val profile=TerrainProfiles.forEnvironment(options.environment,radius,options.refinedFar)
         val ground={x:Double,z:Double->SettlementSupport.groundHeightAt(x,z,options.environment,p,extra)}
         return when(profile) {
@@ -28,6 +23,32 @@ object SteppedTerrain {
             is TerrainProfile.Regional->regional(p,r,extra,radius,seed,profile,ground,options.environment==WorldEnvironment.COAST,::checkpoint)
             is TerrainProfile.Ocean->OceanTerrainGenerator.generate(p,r,extra,radius,seed,profile,ground,::checkpoint)
         }
+    }
+    private fun radius(placements:List<VillagePlacement>,roads:List<RoadCell>,pads:List<TerrainPad>,minimum:Position2?):Double {
+        var extentX=0.0;var extentZ=0.0
+        fun cover(x:Double,z:Double){
+            require(x.isFinite()&&z.isFinite())
+            extentX=max(extentX,abs(x));extentZ=max(extentZ,abs(z))
+        }
+        for(road in roads)cover(road.x.toDouble(),road.z.toDouble())
+        for(building in placements)cover(abs(building.worldPosition.x)+building.footprint.width/2,abs(building.worldPosition.z)+building.footprint.depth/2)
+        for(pad in pads)cover(abs(pad.x)+pad.width/2,abs(pad.z)+pad.depth/2)
+        return maxOf(26.0,minimum?.x?:0.0,minimum?.z?:0.0,hypot(extentX+9,extentZ+9))
+    }
+
+    /**
+     * Allow the irregular rim and the terrain cell grid to extend beyond every
+     * occupied footprint. The reward still sits on the sampled terrain, so
+     * this does not add raised pads or move existing buildings.
+     */
+    fun floatingMinimumRadius(placements:List<VillagePlacement>,roads:List<RoadCell>,pads:List<TerrainPad>,
+        existing:Position2?,rewards:List<DecorationPlacement>):Position2? {
+        if(rewards.isEmpty())return existing
+        val edge=rewards.maxOf{reward->
+            hypot(abs(reward.worldPosition.x)+reward.footprint.width/2,abs(reward.worldPosition.z)+reward.footprint.depth/2)
+        }
+        val required=ceil((edge+3)/.98)
+        return if(required>radius(placements,roads,pads,existing))Position2(required,required) else existing
     }
     private fun floating(radius:Double,seed:Int,profile:TerrainProfile.Floating,ground:(Double,Double)->Double,checkpoint:()->Unit):TerrainMesh {
         require(ceil(radius)<Int.MAX_VALUE)

@@ -39,20 +39,30 @@ class P3NativeWeatherUiTest {
             }
         }}
         fun text(key:String,vararg values:Any?)=resources.text(preferences.language,key,*values)
-        fun status()=text("天气：{0}",text("本地天气 · {0}",text("需要定位权限")))
-        compose.onNodeWithText(status()).assertIsDisplayed()
-        compose.onNodeWithText(text("日月：{0}",text("使用本地日月"))).assertIsDisplayed()
+        fun status(weather:String,astronomy:String)=text("天气：{0}",text(weather))+" · "+text("日月：{0}",text(astronomy))
+        fun fallback()=status("本地天气","本地计算")
+        compose.onNodeWithText(fallback()).assertIsDisplayed()
+        compose.onNodeWithText(text("需要定位权限")).assertIsDisplayed()
+        val openBounds=compose.onNodeWithText(text("同步现实天气")).fetchSemanticsNode().boundsInRoot
+        compose.onNodeWithContentDescription(text("{0}说明",text("天气与天文数据来源"))).performClick()
+        compose.onNodeWithText(text("和风天气")).assertIsDisplayed()
+        androidx.test.uiautomator.UiDevice.getInstance(InstrumentationRegistry.getInstrumentation()).pressBack()
         compose.onNodeWithContentDescription(text("重新同步")).performClick();assertEquals(1,retries.get())
+        compose.onNodeWithText(text("同步现实天气")).performClick()
+        compose.onNodeWithContentDescription(text("重新同步")).assertDoesNotExist()
+        val closedBounds=compose.onNodeWithText(text("同步现实天气")).fetchSemanticsNode().boundsInRoot
+        assertEquals(openBounds.right,closedBounds.right,1f)
+        compose.onNodeWithText(text("同步现实天气")).performClick()
         screenshot("weather-zh-dark")
         compose.runOnIdle{preferences=preferences.copy(language="en",themeMode="light")}
-        compose.onNodeWithText(status()).assertIsDisplayed();screenshot("weather-en-light")
+        compose.onNodeWithText(fallback()).assertIsDisplayed();screenshot("weather-en-light")
         compose.runOnIdle{view=view.copy(weather=WeatherSync.SYNCING,astronomy=AstronomySync.SYNCING)}
-        compose.onNodeWithText(text("天气：{0}",text("正在同步现实天气"))).assertIsDisplayed()
+        compose.onNodeWithText(status("同步中","同步中")).assertIsDisplayed()
         compose.onNodeWithContentDescription(text("重新同步")).assertIsNotEnabled()
         compose.runOnIdle{enabled=false;view=RealWeatherView(clearFailed=true)}
         compose.onNodeWithText(text("位置缓存未能清除")).assertIsDisplayed()
         compose.onNodeWithText(text("重试")).performClick();assertEquals(2,retries.get())
-        compose.onNodeWithText(text("天气：{0}",text("正在同步现实天气"))).assertDoesNotExist()
+        compose.onNodeWithText(status("同步中","同步中")).assertDoesNotExist()
         val label=InstrumentationRegistry.getArguments().getString("p3Group")
         require(label!=null&&label.matches(Regex("[a-z0-9-]{1,60}")))
         File(context.filesDir,"p3-world-weather-ui.json").writeText(JSONObject().put("schema",1).put("caseLabel",label)

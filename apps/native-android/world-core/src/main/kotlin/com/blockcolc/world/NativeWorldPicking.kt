@@ -64,7 +64,8 @@ private class TrianglePickBounds(private val packed:FloatBuffer):PickBounds {
 
 /** Two-level BVH: shared local triangles and world-space instance bounds. It
  * keeps positions, indices and inverse poses only, not textures/old scenes. */
-internal class PickTree(private val boxes:PickBounds,cancelled:()->Boolean) {
+internal class PickTree(private val boxes:PickBounds,spatialOrder:Boolean,cancelled:()->Boolean) {
+    constructor(boxes:PickBounds,cancelled:()->Boolean):this(boxes,false,cancelled)
     constructor(boxes:Array<PickBox>,cancelled:()->Boolean):this(InstancePickBounds(boxes),cancelled)
     private val order=IntArray(boxes.size){it}
     companion object {
@@ -76,14 +77,27 @@ internal class PickTree(private val boxes:PickBounds,cancelled:()->Boolean) {
     private val starts=IntArray(capacity);private val ends=IntArray(capacity)
     private val left=IntArray(capacity){-1};private val right=IntArray(capacity){-1};private var used=0
     private var nodesSinceCheck=0
-    private fun build(from:Int,to:Int,centres:DoubleArray?,cancelled:()->Boolean):Int {
-        // Tiny leaf nodes vastly outnumber large partitions. Check a bounded
-        // batch of nodes; large scans also poll below, so cancellation remains
-        // responsive without a native Thread.isInterrupted call per leaf.
+    private fun node(from:Int,to:Int,cancelled:()->Boolean):Int {
         if(nodesSinceCheck++ and 255==0)checkpoint(cancelled)
-        val node=used++;starts[node]=from;ends[node]=to;val offset=node*3
-        for(axis in 0..2){var lo=Double.POSITIVE_INFINITY;var hi=Double.NEGATIVE_INFINITY
-            for(i in from until to){if((i-from) and 4095==0&&to-from>4096)checkpoint(cancelled);lo=min(lo,boxes.low(order[i],axis));hi=max(hi,boxes.high(order[i],axis))};low[offset+axis]=lo;high[offset+axis]=hi}
+        return used++.also{index->starts[index]=from;ends[index]=to}
+    }
+    private fun bounds(from:Int,to:Int,offset:Int,cancelled:()->Boolean) {
+        for(axis in 0..2){
+            var lo=Double.POSITIVE_INFINITY
+            var hi=Double.NEGATIVE_INFINITY
+            for(i in from until to){
+                if((i-from) and 4095==0&&to-from>4096)checkpoint(cancelled)
+                lo=min(lo,boxes.low(order[i],axis))
+                hi=max(hi,boxes.high(order[i],axis))
+            }
+            low[offset+axis]=lo
+            high[offset+axis]=hi
+        }
+    }
+    private fun build(from:Int,to:Int,centres:DoubleArray?,cancelled:()->Boolean):Int {
+        val node=node(from,to,cancelled)
+        val offset=node*3
+        bounds(from,to,offset,cancelled)
         if(to-from<=8)return node
         var axis=0;for(a in 1..2)if(high[offset+a]-low[offset+a]>high[offset+axis]-low[offset+axis])axis=a
         val mid=(from+to)/2
@@ -101,9 +115,69 @@ internal class PickTree(private val boxes:PickBounds,cancelled:()->Boolean) {
             if(mid<=j)hi=j else if(mid>=i)lo=i else break}
         left[node]=build(from,mid,centres,cancelled);right[node]=build(mid,to,centres,cancelled);return node
     }
+    private fun spreadMortonBits(coordinate:Int):Int {
+        var bits=(coordinate or (coordinate shl 16)) and 0x030000ff
+        bits=(bits or (bits shl 8)) and 0x0300f00f
+        bits=(bits or (bits shl 4)) and 0x030c30c3
+        return (bits or (bits shl 2)) and 0x09249249
+    }
+    /** Spatial keys choose leaf membership. Actual bounds come from the
+     * triangle vertices and are merged bottom-up, with no quantized hit tests. */
+    private fun sortTriangles(cancelled:()->Boolean) {
+        bounds(0,order.size,0,cancelled)
+        val scale=DoubleArray(3){axis->
+            val span=high[axis]-low[axis]
+            if(span==0.0)0.0 else 1023.0/span
+        }
+        val keys=LongArray(order.size)
+        fun coordinate(index:Int,axis:Int):Int {
+            val centre=(boxes.low(index,axis)+boxes.high(index,axis))*.5
+            return ((centre-low[axis])*scale[axis]).toInt().coerceIn(0,1023)
+        }
+        for(i in keys.indices){
+            if(i%1024==0)checkpoint(cancelled)
+            val morton=spreadMortonBits(coordinate(i,0)) or
+                (spreadMortonBits(coordinate(i,1)) shl 1) or (spreadMortonBits(coordinate(i,2)) shl 2)
+            keys[i]=(morton.toLong() shl 32) or i.toLong()
+        }
+        keys.sort()
+        for(i in order.indices){
+            if(i%1024==0)checkpoint(cancelled)
+            order[i]=keys[i].toInt()
+        }
+    }
+    private fun buildSorted(from:Int,to:Int,cancelled:()->Boolean):Int {
+        val node=node(from,to,cancelled)
+        val offset=node*3
+        if(to-from<=8)bounds(from,to,offset,cancelled)
+        else {
+            val middle=(from+to)/2
+            val first=buildSorted(from,middle,cancelled)
+            val second=buildSorted(middle,to,cancelled)
+            left[node]=first
+            right[node]=second
+            for(axis in 0..2){
+                low[offset+axis]=min(low[first*3+axis],low[second*3+axis])
+                high[offset+axis]=max(high[first*3+axis],high[second*3+axis])
+            }
+        }
+        return node
+    }
     // At most 4 MiB of short-lived ART workspace. Larger inputs retain the
     // previous direct-reading path; the array is not retained by the index.
-    private val root=run{checkpoint(cancelled);val result=if(boxes.size==0)-1 else build(0,boxes.size,if(boxes.size<=524288)DoubleArray(boxes.size)else null,cancelled);checkpoint(cancelled);result}
+    private val root=run{
+        checkpoint(cancelled)
+        val result=when{
+            boxes.size==0 -> -1
+            spatialOrder&&boxes.size in 4096..524288 -> {
+                sortTriangles(cancelled)
+                buildSorted(0,boxes.size,cancelled)
+            }
+            else -> build(0,boxes.size,if(boxes.size<=524288)DoubleArray(boxes.size)else null,cancelled)
+        }
+        checkpoint(cancelled)
+        result
+    }
     private fun near(node:Int,ray:NativePickRay,limit:Double):Double {
         var lo=0.0;var hi=limit;val offset=node*3
         for(axis in 0..2){val d=ray.direction[axis];val p=ray.origin[axis]
@@ -138,7 +212,7 @@ internal class PickGeometry(world:WorldPackets,geometry:Geometry,cancelled:()->B
         // Android may map this block outside ART's non-moving array heap.
         val storage=NativePacketBuffers.allocate(vertexBytes+indexBytes+triangles*24).order(ByteOrder.LITTLE_ENDIAN)
         val source=world.section(geometry.vertex)
-        for(i in 0 until geometry.vertexCount){if(i%1024==0)checkpoint(cancelled);for(a in 0..2)storage.putFloat(source.getFloat(i*48+a*4))}
+        for(i in 0 until geometry.vertexCount){if(i%1024==0)checkpoint(cancelled);for(a in 0..2)storage.putFloat(source.getFloat(i*geometry.vertexStride+a*4))}
         val sourceIndices=world.section(geometry.index).asIntBuffer()
         while(sourceIndices.hasRemaining())storage.putInt(sourceIndices.get())
         fun section(at:Int,length:Int)=storage.duplicate().apply{position(at);limit(at+length)}.slice().order(ByteOrder.LITTLE_ENDIAN)
@@ -151,7 +225,7 @@ internal class PickGeometry(world:WorldPackets,geometry:Geometry,cancelled:()->B
         for(i in 0 until triangles){if(i%1024==0)checkpoint(cancelled)
             for(axis in 0..2){val a=vertices[indices[i*3]*3+axis];val b=vertices[indices[i*3+1]*3+axis];val c=vertices[indices[i*3+2]*3+axis]
                 packed.put(i*6+axis,min(a,min(b,c)));packed.put(i*6+axis+3,max(a,max(b,c)))}}
-        tree=PickTree(TrianglePickBounds(packed.asReadOnlyBuffer()),cancelled)
+        tree=PickTree(TrianglePickBounds(packed.asReadOnlyBuffer()),spatialOrder=true,cancelled=cancelled)
     }
     private fun point(index:Int)=BlockPoint(vertices[index*3].toDouble(),vertices[index*3+1].toDouble(),vertices[index*3+2].toDouble())
     fun hit(ray:NativePickRay,side:Int,limit:Double):Double=tree.visit(ray,limit){triangle,before->

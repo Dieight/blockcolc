@@ -8,6 +8,22 @@ import kotlin.math.*
 /** Four-sided rain cylinder follows Three.js CylinderGeometry (MIT), including
  * cap vertices/UVs. Snow shares the existing one-segment cuboid recipe. */
 object NativePrecipitationGeometry {
+    fun paper(snow:Boolean,intensity:Double):BlockGeometry {
+        require(intensity.isFinite()&&intensity in 0.0..1.0)
+        if(snow)return CuboidGeometry.create(.48,.17,.48)
+        val width=(.1+intensity*.03).toFloat()
+        val top=(1.22+intensity*.4).toFloat()
+        val lean=top*.21f
+        // Two thin strips share the same slant. One stays visible as the
+        // orthographic camera turns past the other strip's edge.
+        val position=floatArrayOf(
+            -width,-top,0f,width,-top,0f, lean-width,top,0f,lean+width,top,0f,
+            0f,-top,-width,0f,-top,width,lean,top,-width,lean,top,width)
+        val normals=floatArrayOf(0f,0f,1f,0f,0f,1f,0f,0f,1f,0f,0f,1f,
+            1f,0f,0f,1f,0f,0f,1f,0f,0f,1f,0f,0f)
+        return AttributeBlockGeometry(position,normals,index=intArrayOf(0,1,2,1,3,2,4,5,6,5,7,6))
+    }
+
     fun create(snow:Boolean,visualIntensity:Double):BlockGeometry {
         require(visualIntensity.isFinite()&&visualIntensity in 0.0..1.0)
         if(snow)return CuboidGeometry.create(.36,.22,.36)

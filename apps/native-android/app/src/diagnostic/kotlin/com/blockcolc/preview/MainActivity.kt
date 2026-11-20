@@ -71,6 +71,6 @@ class MainActivity:ComponentActivity() {
     }
     override fun onResume(){super.onResume();world?.resume();reference?.onResume();if(!intent.hasExtra("fixture")||intent.getBooleanExtra("business",false))PreviewRuntime.get(this).foreground(true)}
     override fun onPause(){world?.pause();reference?.onPause();super.onPause()}
-    override fun onStop(){if(!intent.hasExtra("fixture")||intent.getBooleanExtra("business",false))PreviewRuntime.get(this).foreground(false,getSystemService(android.app.KeyguardManager::class.java).isKeyguardLocked);super.onStop()}
+    override fun onStop(){if(!intent.hasExtra("fixture")||intent.getBooleanExtra("business",false))PreviewRuntime.get(this).activityStopped(this);super.onStop()}
     override fun onDestroy(){stopTrace?.invoke();stopTrace=null;world?.close();world=null;reference?.close();reference=null;super.onDestroy()}
 }

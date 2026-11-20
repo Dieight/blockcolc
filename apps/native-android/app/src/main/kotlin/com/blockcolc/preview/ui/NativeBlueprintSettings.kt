@@ -18,6 +18,7 @@ import androidx.compose.ui.unit.dp
 import com.blockcolc.presentation.*
 import com.blockcolc.preview.*
 import com.blockcolc.preview.blueprints.*
+import com.blockcolc.world.importing.NativeLitematicLimits
 
 private val blueprintGroups=listOf("native" to "原生图纸","supplemental" to "补充图纸","user" to "自添加图纸","daily" to "每日奖励","holiday" to "节日奖励","birthday" to "生日礼物")
 
@@ -33,10 +34,14 @@ private val blueprintGroups=listOf("native" to "原生图纸","supplemental" to 
     val request=rememberNativeRequest(s){deleting=null;renaming=null;importer.clear()}
     val available=!s.busy&&!request.busy&&!state.busy
     LaunchedEffect(state.candidate){if(state.candidate!=null)decoration=false}
-    NativeSettingGroup("蓝图库","${library.buildingCount} / ${NativeBlueprintLibrary.MAX_BUILDINGS}"){
-        Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.End,verticalAlignment=Alignment.CenterVertically){
-            NativeAction(ui.text("导入 .litematic"),onImport,Modifier.weight(1f,fill=false),pending=state.busy,enabled=available,primary=false,icon="plus")
-        }
+    NativeSettingGroup("蓝图库","${library.buildingCount} / ${NativeBlueprintLibrary.MAX_BUILDINGS}",trailing={
+        val limits=remember{NativeLitematicLimits()}
+        NativeInfoAction(ui.text("导入 .litematic"),ui.text(
+            "支持 Java 版 .litematic，文件最多 {0} MiB，范围最多 {1} × {2} × {1} 方块。",
+            limits.compressedBytes / (1024 * 1024),limits.horizontal,limits.vertical,
+        ))
+        NativeIconAction(ui.text("导入 .litematic"),"plus",onImport,pending=state.busy,enabled=available)
+    }){
         for((category,label)in blueprintGroups){
             NativeSeparator()
             val entries=library.items.filter{it.category==category}

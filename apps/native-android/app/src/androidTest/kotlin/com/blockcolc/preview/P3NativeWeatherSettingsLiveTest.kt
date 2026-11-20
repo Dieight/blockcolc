@@ -61,16 +61,17 @@ class P3NativeWeatherSettingsLiveTest {
             val value=state();success=value
             assertEquals(WeatherSync.AVAILABLE,value.weather);assertEquals(AstronomySync.CALENDAR,value.astronomy)
             val current=checkNotNull(value.current)
-            compose.onNodeWithText("天气：${current.conditionText}").performScrollTo().assertIsDisplayed()
-            compose.onNodeWithText("日月：日月日历已同步").performScrollTo().assertIsDisplayed()
-            compose.onNodeWithText("数据来源：").performScrollTo().assertIsDisplayed()
-            compose.onNodeWithText("和风天气").performScrollTo().assertIsDisplayed()
+            compose.onNodeWithText("天气：${current.conditionText}",substring=true).performScrollTo().assertIsDisplayed()
+            compose.onNodeWithText("日月：已同步",substring=true).performScrollTo().assertIsDisplayed()
+            compose.onNodeWithContentDescription("天气与天文数据来源说明").performScrollTo().performClick()
+            compose.onNodeWithText("和风天气").assertIsDisplayed()
             assertTrue((current.attributions+value.calendar!!.attributions).distinct().isNotEmpty())
             compose.waitForIdle();device.waitForIdle(1000);android.os.SystemClock.sleep(150)
             check(device.takeScreenshot(File(context.filesDir,"p3-pages-$label-weather-service-success-${UUID.randomUUID()}.png")))
+            device.pressBack()
             compose.onNodeWithText("同步现实天气").performScrollTo().performClick()
             compose.waitUntil(10000){!runtime.latest.preferencesSaving&&!runtime.latest.preferences.realWeatherEnabled&&!state().clearing}
-            compose.onAllNodesWithText("数据来源：").assertCountEquals(0)
+            compose.onNodeWithContentDescription("天气与天文数据来源说明").assertDoesNotExist()
             assertNull(state().current);assertNull(state().calendar);assertNull(state().location);assertFalse(state().clearFailed)
             assertTrue(listOf("qweather-last-location-v1","qweather-last-location-v1.bak","qweather-last-location-v1.new").none{File(context.noBackupFilesDir,it).exists()})
             cleaned=true

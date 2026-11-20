@@ -26,6 +26,8 @@ class NativeAudioController private constructor(context:Context) {
         @Volatile private var instance:NativeAudioController?=null
         fun get(context:Context):NativeAudioController=instance?:synchronized(this){instance?:NativeAudioController(context.applicationContext).also{instance=it}}
         private val imported=Regex("[a-f0-9]{64}")
+        @JvmStatic fun contentDirectory(context:Context):File =
+            File(context.filesDir, if(context.packageName=="com.blockcolc.preview") "ambient-imports" else "native-ambient-imports")
     }
     private val context=context.applicationContext
     private val main=Handler(Looper.getMainLooper())
@@ -33,7 +35,7 @@ class NativeAudioController private constructor(context:Context) {
     private val listeners=CopyOnWriteArrayList<(AudioLibraryState)->Unit>()
     @Volatile private var libraryState=AudioLibraryState()
     private val index=AtomicFile(File(this.context.filesDir,"ambient-library.json"))
-    private val library=AudioLibrary(File(this.context.filesDir,"ambient-imports"),object:AudioIndex{
+    private val library=AudioLibrary(contentDirectory(this.context),object:AudioIndex{
         override fun read():String? {
             if(!index.baseFile.exists()&&!File(index.baseFile.path+".bak").exists())return null
             return index.openRead().use{input->val out=ByteArrayOutputStream();val buffer=ByteArray(1024)
@@ -95,6 +97,28 @@ class NativeAudioController private constructor(context:Context) {
         else{sent=null;dispatch()}}
     fun pause(){checkMain();if(AmbientAudioHost.snapshot().active)context.startService(Intent(context,AmbientAudioService::class.java).setAction("com.blockcolc.app.AMBIENT_PAUSE"))}
     fun refresh(){operate {library.list()}}
+    /** Copy the originals once before the workspace is adopted. The old
+     * player's files and index are available if the previous UI is restored. */
+    fun adoptLegacyImports():Future<Unit> = worker.submit<Unit> {
+        val raw=context.getSharedPreferences("blockcolc_ambient_audio",Context.MODE_PRIVATE).getString("imports","[]")
+            ?: throw AudioFailure("AUDIO_INDEX_INVALID")
+        if(raw.length>32768)throw AudioFailure("AUDIO_INDEX_INVALID")
+        val entries=JSONArray(raw)
+        if(entries.length()>AudioLibrary.MAX_FILES)throw AudioFailure("AUDIO_INDEX_INVALID")
+        val source=File(context.filesDir,"ambient-imports").canonicalFile
+        val adopted=library.list().associateBy { it.id }
+        val seen=mutableSetOf<String>()
+        for(index in 0 until entries.length()){
+            val entry=entries.getJSONObject(index)
+            val id=entry.get("id") as String
+            val bytes=entry.getLong("bytes")
+            if(!imported.matches(id)||!seen.add(id)||bytes !in 1..AudioLibrary.MAX_BYTES)throw AudioFailure("AUDIO_INDEX_INVALID")
+            val file=File(source,id).canonicalFile
+            if(file.parentFile!=source||!file.isFile||file.length()!=bytes)throw AudioFailure("AUDIO_CONTENT_MISSING")
+            if(id in adopted)library.playable(id)
+            else library.importAudio(entry.getString("name"),expectedId=id){file.inputStream()}
+        }
+    }
     fun importAudio(uri:Uri,onSaved:(ImportedAudio)->Unit){
         require(uri.scheme=="content")
         operate(onSaved){
