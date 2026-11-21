@@ -10,6 +10,14 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 class FocusExportTest {
+ @Test fun livePresenceClipsFutureHistoryWithoutDroppingIdleStatus(){
+  val clock=DomainTime.millis("2026-11-21T10:00:00.000Z")
+  val history=JSONArray()
+    .put(JSONObject().put("startedAt","2026-11-21T09:15:00.000Z").put("actualDurationMs",2_700_000))
+    .put(JSONObject().put("startedAt","2026-11-21T09:45:00.000Z").put("actualDurationMs",1_800_000))
+    .put(JSONObject().put("startedAt","2026-11-21T10:30:00.000Z").put("actualDurationMs",1_500_000))
+  assertEquals(2_700_000L,FocusExport.presenceDayDuration(history,clock))
+ }
  @Test fun sourceOracle(){
   val cases=JSONObject(javaClass.getResource("/focus-oracle.json")!!.readText()).getJSONArray("cases")
   assertTrue(cases.length()>80)

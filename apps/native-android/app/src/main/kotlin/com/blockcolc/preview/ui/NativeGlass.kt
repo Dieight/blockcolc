@@ -43,6 +43,8 @@ class NativeBackdrop:AutoCloseable {
     var failed by mutableStateOf(false)
     var preparingSettlement by mutableStateOf(false)
     var preparingQuality by mutableStateOf(false)
+    var requestedSettlement by mutableStateOf<String?>(null)
+    var requestedQuality by mutableStateOf<String?>(null)
     var worldSettingFailed by mutableStateOf(false)
     var retryWorld:()->Unit={}
     fun configure(view:NativeWorldView?,active:Boolean,rect:Rect){
@@ -125,9 +127,12 @@ val LocalNativeAtmosphere=compositionLocalOf<NativeAtmosphereFacts?>{null}
             }
         }
         if(weatherEnabled)NativePanelWeather(Modifier.matchParentSize())
-        CompositionLocalProvider(LocalContentColor provides ink){MaterialTheme(colorScheme=colors.copy(onSurface=ink,onSurfaceVariant=ink,onBackground=ink)){content()}}
+        CompositionLocalProvider(LocalContentColor provides ink){MaterialTheme(colorScheme=colors.withGlassInk(ink)){content()}}
     }
 }
+
+internal fun ColorScheme.withGlassInk(ink: Color) =
+    copy(onSurface=ink,onSurfaceVariant=ink,onBackground=ink)
 
 /** Surface and modal may belong to different windows. Screen coordinates
  * include each window origin, unlike comparing boundsInWindow directly. */

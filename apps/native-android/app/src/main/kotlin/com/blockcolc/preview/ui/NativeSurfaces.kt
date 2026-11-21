@@ -108,7 +108,7 @@ internal val LocalNativeSettingsActions=staticCompositionLocalOf{false}
 /** Holds the outgoing model until the exit finishes. No ancestor of the
  * world or page is transformed, and all exits share the same dismissal. */
 @OptIn(ExperimentalMaterial3Api::class)
-@Composable fun <T:Any> NativeSheet(model:T?,title:(T)->String,onClose:()->Unit,dismissible:Boolean=true,onHidden:()->Unit={},heading:(@Composable RowScope.(T)->Unit)?=null,blurBackground:Boolean=true,initiallyExpanded:Boolean=false,content:@Composable ColumnScope.(T)->Unit){
+@Composable fun <T:Any> NativeSheet(model:T?,title:(T)->String,onClose:()->Unit,dismissible:Boolean=true,onHidden:()->Unit={},heading:(@Composable RowScope.(T)->Unit)?=null,blurBackground:Boolean=true,initiallyExpanded:Boolean=false,contentSpacing:Dp=12.dp,contentScroll:ScrollState?=null,content:@Composable ColumnScope.(T)->Unit){
     val ui=LocalNativeUi.current
     val pageActive=LocalNativePageActive.current
     val drafts=rememberSaveableStateHolder()
@@ -131,14 +131,14 @@ internal val LocalNativeSettingsActions=staticCompositionLocalOf{false}
     LaunchedEffect(model,pageActive){
         if(model==null){
             dismissed=null
-            if(shown!=null){closing=true;try{if(pageActive)sheetState.hide()}finally{shown=null;closing=false;hiddenCallback()}}
+            if(shown!=null){closing=true;try{if(pageActive&&sheetState.isVisible)sheetState.hide()}finally{shown=null;closing=false;hiddenCallback()}}
         }else if(model!=dismissed&&!closing)shown=model
     }
     fun close(){
         if(!canDismiss||closing)return
         closing=true;val outgoing=shown
         scope.launch{
-            try{sheetState.hide()}finally{
+            try{if(sheetState.isVisible)sheetState.hide()}finally{
                 if(shown==outgoing){dismissed=outgoing;shown=null;hiddenCallback()}
                 closing=false;closeCallback()
             }
@@ -164,7 +164,7 @@ internal val LocalNativeSettingsActions=staticCompositionLocalOf{false}
         drafts.SaveableStateProvider(draftKey){NativeFixedSheetGlass(Modifier.fillMaxWidth(),blurBackground){Column(Modifier.fillMaxWidth().padding(start=20.dp,end=20.dp,top=22.dp,bottom=20.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
             Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){if(heading==null)Text(title(held),Modifier.weight(1f),style=MaterialTheme.typography.titleLarge)else heading(held)
                 NativeIconAction(ui.text("返回"),"close",::close,enabled=dismissible&&!closing)}
-            Column(Modifier.fillMaxWidth().weight(1f,fill=false).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(12.dp)){content(held)}
+            Column(Modifier.fillMaxWidth().weight(1f,fill=false).verticalScroll(contentScroll?:rememberScrollState()),verticalArrangement=Arrangement.spacedBy(contentSpacing)){content(held)}
         }}}
     }
 }

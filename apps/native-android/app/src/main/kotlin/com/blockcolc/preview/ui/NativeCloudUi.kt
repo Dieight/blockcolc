@@ -46,7 +46,7 @@ import java.util.concurrent.atomic.AtomicReference
 }
 @Composable private fun CloudGroup(title:String,description:String?=null,content:@Composable ColumnScope.()->Unit){
     var expanded by rememberSaveable(title){mutableStateOf(false)}
-    NativeDisclosure(title,description,expanded,{expanded=it},rowHeight=60.dp,contentSpacing=0.dp,content=content)
+    NativeDisclosure(title,description,expanded,{expanded=it},rowHeight=NativeSettingsRowHeight,contentSpacing=0.dp,content=content)
 }
 @Composable internal fun CloudError(code:String?){if(code==null)return
     val english=LocalNativeUi.current.language=="en"
@@ -156,7 +156,9 @@ import java.util.concurrent.atomic.AtomicReference
     var policyOpen by rememberSaveable{mutableStateOf(false)}
     val clipboard=LocalClipboardManager.current
     val commitAccount=remember{AtomicReference<()->Unit>({})}
-    NativeSheet(Unit.takeIf{accountOpen},{tr("账户与云同步","Account & cloud")},onCloseAccount,onHidden={commitAccount.getAndSet({}).invoke()},initiallyExpanded=true){
+    NativeSheet(Unit.takeIf{accountOpen},{tr("账户与云同步","Account & cloud")},onCloseAccount,
+        onHidden={commitAccount.getAndSet({}).invoke()},initiallyExpanded=true,
+        contentSpacing=if(view.account==null)12.dp else 0.dp){
         if(view.account==null){
             SideEffect{commitAccount.set({})}
             Text(tr("不登录也能完整使用方块钟。登录后同步记录和偏好，导入的材质包、音频留在本机。","All features work without an account. Sync records and preferences; imported textures and audio stay on this device."),style=MaterialTheme.typography.bodySmall)
@@ -170,6 +172,7 @@ import java.util.concurrent.atomic.AtomicReference
             NativeInlineAction(account.optString("username"),controller::refresh,"reset",tr("立即同步","Sync now"),
                 pending=view.working(CloudAction.SYNC),enabled=!view.busy)
             CloudWorkspaceFeedback(view)
+            NativeSeparator()
             NativeSettingLink(tr("修改密码","Change password"),{passwordOpen=true})
             if(view.choiceRequired){
                 Text(tr("本机与云端都有内容，请选择一次。替换前保留本机回滚点；相同记录的冲突不会擅自覆盖。","Both workspaces have content. Choose once. A local rollback is kept before replacement; conflicting records are not overwritten."),style=MaterialTheme.typography.bodySmall)
@@ -185,12 +188,17 @@ import java.util.concurrent.atomic.AtomicReference
             }
             NativeSeparator()
             CloudGroup(tr("执行设备","Execution device"),tr("一台执行，其他设备可接管","One executor; other devices can take over")){
-                Text(if(view.owned)tr("由本机执行","This device executes the plan")else tr("本机仅查看，接管后才能操作专注","View only; take over to control focus"))
-                if(!view.owned)NativeAction(tr("接管当前计划","Take over plan"),controller::takeover,Modifier.fillMaxWidth(),enabled=!view.busy)
-                view.devices.forEach{device->Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){
-                    Text(device.optString("name"),Modifier.weight(1f))
-                    if(device.optBoolean("current"))Text(tr("本机","This device"))else NativeIconAction(tr("移除设备","Revoke device"),"close",{controller.revokeDevice(device.getString("id"))},enabled=!view.busy)
-                }}
+                if(!view.owned)NativeInlineAction(tr("本机仅查看","View only"),controller::takeover,"play",
+                    tr("接管","Take over"),enabled=!view.busy,pending=view.working(CloudAction.TAKEOVER))
+                view.devices.forEach{device->
+                    NativeSeparator()
+                    Row(Modifier.fillMaxWidth().heightIn(min=NativeSettingsRowHeight),
+                        verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(NativeSettingActionGap)){
+                        Text(device.optString("name"),Modifier.weight(1f),style=MaterialTheme.typography.bodyLarge)
+                        if(device.optBoolean("current"))Text(tr("本机","This device"),style=MaterialTheme.typography.bodySmall)
+                        else NativeIconAction(tr("移除设备","Revoke device"),"close",{controller.revokeDevice(device.getString("id"))},enabled=!view.busy)
+                    }
+                }
             }
             NativeSeparator()
             CloudGroup(tr("云端备份","Cloud backup"),tr("每日合并，只保留一份","One merged daily recovery snapshot")){
@@ -230,6 +238,7 @@ import java.util.concurrent.atomic.AtomicReference
             NativeInlineAction(tr("退出登录","Sign out"),{logoutConfirm=true},"close",enabled=!view.busy)
         }
         if(view.account==null)CloudError(view.error)
+        if(view.account!=null)NativeSeparator()
         NativeSettingLink(tr("云服务条款与隐私说明","Cloud terms & privacy"),{policyOpen=true})
     }
     NativeCloudPolicySheet(accountOpen&&policyOpen,{policyOpen=false})

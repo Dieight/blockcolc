@@ -12,6 +12,7 @@ import android.widget.FrameLayout
 import com.google.android.filament.*
 import com.google.android.filament.android.UiHelper
 import com.blockcolc.world.SourceLighting
+import com.blockcolc.world.SourceLight
 import com.blockcolc.world.SourcePost
 import com.blockcolc.world.SourceWorldColor
 import com.blockcolc.world.NativeColorEncoding
@@ -52,6 +53,7 @@ class NativeWorldView(context: Context, private val fixture: String, private val
                       private val generatedFrame:((Long,Long,Long)->Unit)?=null,
                       private val generatedSelection:((Long,Long,Long,String)->Unit)?=null,
                       private val fixedGeneratedCamera:Boolean=false,
+                      private val optimizeRendering:Boolean=false,
                       private val status: (String)->Unit): FrameLayout(context), Choreographer.FrameCallback {
     companion object {
         fun preview(context:Context,input:NativeGeneratedScene,reducedMotion:Boolean,onFrame:(Long,Long,Long)->Unit,status:(String)->Unit)=NativeWorldView(
@@ -61,10 +63,10 @@ class NativeWorldView(context: Context, private val fixture: String, private val
                 else android.provider.Settings.Global.getFloat(context.contentResolver,android.provider.Settings.Global.ANIMATOR_DURATION_SCALE,1f)>0f
             }.getOrDefault(false),weatherOnly=false,animalOnly=false,animalProbe=null,benchmarkRun=null,
             skyProbe=false,moonProbe=false,generatedInput=input,generatedFrame=onFrame,status=status)
-        fun generated(context:Context,input:NativeGeneratedScene,onFrame:(Long,Long,Long)->Unit,status:(String)->Unit,onSelection:((Long,Long,Long,String)->Unit)?=null,fixedCamera:Boolean=false)=NativeWorldView(
+        fun generated(context:Context,input:NativeGeneratedScene,onFrame:(Long,Long,Long)->Unit,status:(String)->Unit,onSelection:((Long,Long,Long,String)->Unit)?=null,fixedCamera:Boolean=false,optimizeRendering:Boolean=true)=NativeWorldView(
             context=context,fixture="native-generated",projectionOnly=false,cullingEnabled=true,surfaceEffects=true,shadowsEnabled=true,colorProbe=false,
             surfaceOptics=true,nightReflections=true,fogEnabled=true,runtimeEnabled=true,weatherOnly=false,animalOnly=false,animalProbe=null,benchmarkRun=null,
-            skyProbe=false,moonProbe=false,generatedInput=input,generatedFrame=onFrame,generatedSelection=onSelection,fixedGeneratedCamera=fixedCamera,status=status)
+            skyProbe=false,moonProbe=false,generatedInput=input,generatedFrame=onFrame,generatedSelection=onSelection,fixedGeneratedCamera=fixedCamera,optimizeRendering=optimizeRendering,status=status)
     }
     private val generatedMode=!BuildConfig.NATIVE_DIAGNOSTICS||generatedInput!=null
     private var pendingGenerated=generatedInput
@@ -117,6 +119,13 @@ class NativeWorldView(context: Context, private val fixture: String, private val
     private var colorPipeline:NativeColorPipeline?=null
     private var desiredGlassRegions:List<com.blockcolc.world.NativeGlassRegion> = emptyList()
     private var sourceLighting:SourceLighting?=null
+    private var directionalShadows: DirectionalShadowCache? = null
+    private var shadowCamera: NativeSceneCamera? = null
+    private var shadowLight: SourceLight? = null
+    private var shadowLightEntity = 0
+    private var useStockDirectionalShadows = false
+    private var frameQueue: WorldFrameQueue? = null
+    private var gestureChangedCamera = false
     private var cameraEntity=0;private val lightEntities=mutableListOf<Int>()
     @Volatile private var active=false;private var failed=false;@Volatile private var closed=false;private var submitted=false
     private var frameRequested=false
@@ -266,7 +275,9 @@ class NativeWorldView(context: Context, private val fixture: String, private val
                 try{surfaceLease.retire{
                     frameRequested=false;Choreographer.getInstance().removeFrameCallback(this)
                     cancelPresentationFence();cancelProjectionFence(false)
+                    gestureChangedCamera=false
                     engine?.let{e->swap?.let{e.destroySwapChain(it)};swap=null;e.flushAndWait()}
+                    frameQueue?.clear()
                 }}catch(error:Throwable){failed=true;failure.set(error)}finally{done.countDown()}
             }
             if(Looper.myLooper()==render.looper)retire.run()else{
@@ -292,6 +303,12 @@ class NativeWorldView(context: Context, private val fixture: String, private val
         v.antiAliasing=com.google.android.filament.View.AntiAliasing.NONE;v.dithering=com.google.android.filament.View.Dithering.NONE
         val generated=pendingGenerated
         val p=PacketRenderer(e,s,context.assets,cullingEnabled,surfaceEffects,surfaceOptics,nightReflections,fogEnabled,initialCloudSeconds=clock.cloudSeconds,initialWeatherElapsedMs=clock.weatherElapsedMs.toFloat());packets=p
+        if (generated != null && cacheDirectionalShadows(generated)) {
+            directionalShadows = DirectionalShadowCache.create(e)
+            p.directionalShadows = directionalShadows
+            if (directionalShadows != null) frameQueue = WorldFrameQueue(e)
+            shadowCamera = generated.camera
+        }
         if(!BuildConfig.NATIVE_DIAGNOSTICS)p.loadGenerated(checkNotNull(generated))
         else if(generated!=null)p.loadGenerated(generated)else p.load(fixture,projectionOnly)
         if(BuildConfig.NATIVE_DIAGNOSTICS)initialConstruction?.let { progress ->
@@ -326,20 +343,42 @@ class NativeWorldView(context: Context, private val fixture: String, private val
             report("NATIVE_PREPARED")
         }else report("P1 prepared · ${p.loadedPackets} real instance packets · custom shader parity pending")
     }
+    private fun cacheDirectionalShadows(input: NativeGeneratedScene): Boolean =
+        optimizeRendering && shadowsEnabled && input.post.bloom && !input.camera.preview && !input.camera.paper
+
+    private fun prepareDirectionalShadows(): Boolean {
+        val cache = directionalShadows ?: return false
+        val useCache = cache.prepare(shadowCamera, shadowLight.takeIf { currentInterior == null && generatedPost?.bloom == true })
+        val useStock = shadowLight != null && (!useCache || cache.needsLiveShadows)
+        if (shadowLightEntity != 0 && useStock != useStockDirectionalShadows) {
+            val manager = checkNotNull(engine).lightManager
+            manager.setShadowCaster(manager.getInstance(shadowLightEntity), useStock)
+            useStockDirectionalShadows = useStock
+        }
+        return useCache
+    }
+
     /** Allocate replacements before retiring live lights. A failed preparation
      * must leave the visible generation and its lighting usable. */
     private fun installLighting(lighting:SourceLighting,hasSky:Boolean,direct:Boolean=false){
         val e=checkNotNull(engine);val s=checkNotNull(scene);val staged=mutableListOf<Int>();var nextIndirect:IndirectLight?=null;var nextSky:Skybox?=null
+        var nextShadowLight: SourceLight? = null
+        var nextShadowEntity = 0
         try {
         for(light in lighting.lights){
             if(light.type=="HemisphereLight")continue
             val entity=EntityManager.get().create();staged+=entity
             val type=if(light.type=="DirectionalLight")LightManager.Type.DIRECTIONAL else LightManager.Type.POINT
+            val castsShadow = light.castShadow && shadowsEnabled && lighting.shadowsEnabled
+            if (type == LightManager.Type.DIRECTIONAL && castsShadow) {
+                nextShadowLight = light
+                nextShadowEntity = entity
+            }
             val options=LightManager.ShadowOptions().apply{
                 mapSize=2048;shadowFar=(sceneDistance()*1.5).toFloat();constantBias=light.shadowBiasWorld
             }
             val builder=LightManager.Builder(type).color(light.color[0],light.color[1],light.color[2])
-                .castShadows(light.castShadow&&shadowsEnabled&&lighting.shadowsEnabled).shadowOptions(options)
+                .castShadows(castsShadow).shadowOptions(options)
             if(type==LightManager.Type.DIRECTIONAL)builder.intensity(light.intensity).direction(light.direction[0],light.direction[1],light.direction[2])
             else builder.intensityCandela(light.intensity).position(light.position[0],light.position[1],light.position[2])
                 .falloff(if(light.distance>0f)light.distance else 10000f)
@@ -354,12 +393,16 @@ class NativeWorldView(context: Context, private val fixture: String, private val
         s.indirectLight=nextIndirect;s.skybox=nextSky;for(entity in staged)s.addEntity(entity)
         for(entity in lightEntities){s.removeEntity(entity);e.destroyEntity(entity);EntityManager.get().destroy(entity)};lightEntities.clear();lightEntities.addAll(staged)
         indirect?.let{e.destroyIndirectLight(it)};indirect=nextIndirect;sky?.let{e.destroySkybox(it)};sky=nextSky;sourceLighting=lighting
+        shadowLight = nextShadowLight
+        shadowLightEntity = nextShadowEntity
+        useStockDirectionalShadows = shadowLight != null
     }
     fun updateGenerated(input:NativeGeneratedScene,resetCamera:Boolean=false){render.post{
         if(closed||failed||!generatedMode||input.generation<generatedGeneration||input.generation==generatedGeneration&&input.revision<generatedRevision)return@post
         val old=packets?:return@post;val changed=input.sources.filter{generatedOwners[it.owner]!=it.ownerIdentity}
         if(BuildConfig.NATIVE_DIAGNOSTICS)generatedAdoptionStartedNs=System.nanoTime()
         var preparedPost:PreparedColorConfiguration?=null
+        var stagedShadows: DirectionalShadowCache? = null
         try {
             val pipeline=checkNotNull(colorPipeline)
             if(input.post!=pipeline.configuration){preparedPost=pipeline.prepareConfiguration(input.post);preparedPost.commit()}
@@ -377,9 +420,23 @@ class NativeWorldView(context: Context, private val fixture: String, private val
             else {
                 val e=checkNotNull(engine);val s=checkNotNull(scene)
                 val next=PacketRenderer(e,s,context.assets,cullingEnabled,surfaceEffects,surfaceOptics,nightReflections,fogEnabled,initialCloudSeconds=clock.cloudSeconds,initialWeatherElapsedMs=clock.weatherElapsedMs.toFloat())
-                try{next.loadGenerated(input);installLighting(input.lighting,next.hasSkyBackdrop,input.post.direct)}catch(error:Throwable){next.close();throw error}
+                val previousShadows = directionalShadows
+                val wantsCache = cacheDirectionalShadows(input)
+                if (wantsCache && previousShadows == null) stagedShadows = DirectionalShadowCache.create(e)
+                val nextShadows = if (wantsCache) previousShadows ?: stagedShadows else null
+                next.directionalShadows = nextShadows
+                try{next.loadGenerated(input);installLighting(input.lighting,next.hasSkyBackdrop,input.post.direct)}catch(error:Throwable){
+                    try{next.close()}catch(cleanup:Throwable){error.addSuppressed(cleanup)}
+                    throw error
+                }
                 packets=next
+                directionalShadows=nextShadows
+                stagedShadows=null
                 try{old.close()}catch(error:Throwable){android.util.Log.w("BlockcolcP3","Retired generated resources need cleanup",error)}
+                if (previousShadows !== nextShadows) {
+                    previousShadows?.close()
+                    if (nextShadows != null && frameQueue == null) frameQueue = WorldFrameQueue(e)
+                }
                 colorPipeline?.exposure(input.lighting.exposure)
             }
             navigation?.adopt(input.camera,input.orbitTargets,resetCamera)
@@ -397,6 +454,7 @@ class NativeWorldView(context: Context, private val fixture: String, private val
             invalidatePicks()
             pickIndex=input.picking;orbitTargets=input.orbitTargets
             sourceCamera=input.camera.volume
+            shadowCamera=input.camera
             generatedPost=input.post
             syncRasterSize()
             preparedPost?.let{if(it.finish()!=0)android.util.Log.w("BlockcolcP3","Retired color targets need cleanup")};preparedPost=null
@@ -405,6 +463,7 @@ class NativeWorldView(context: Context, private val fixture: String, private val
             if(BuildConfig.NATIVE_DIAGNOSTICS)generatedAdoptionEndedNs=System.nanoTime()
             pendingGeneratedFrame=Triple(input.generation,input.revision,input.presentationIdentity);cameraDirty=true;requestFrame()
         }catch(error:Throwable){
+            try{stagedShadows?.close()}catch(cleanup:Throwable){error.addSuppressed(cleanup)}
             try{preparedPost?.discard()}catch(rollback:Throwable){error.addSuppressed(rollback)}
             syncRasterSize()
             android.util.Log.e("BlockcolcP3","Generated scene adoption failed",error);report("NATIVE_UPDATE_ERROR")
@@ -678,7 +737,7 @@ class NativeWorldView(context: Context, private val fixture: String, private val
         if(android.os.Build.VERSION.SDK_INT<24||closed||!surface.isAttachedToWindow||!surface.holder.surface.isValid)return false
         return try{android.view.PixelCopy.request(surface,target,{result->done(result==android.view.PixelCopy.SUCCESS)},handler);true}catch(_:IllegalArgumentException){false}
     }
-    fun pause() {render.post {invalidatePicks();cancelProjectionFence(false);cancelInteriorFence(false);if(interiorReadySequence<interiorSequence)pendingInteriorFrame=true;active=false;clock.pause();navigation?.pauseOpening();packets?.pauseRuntime();frameRequested=false;Choreographer.getInstance().removeFrameCallback(this)}}
+    fun pause() {render.post {invalidatePicks();cancelProjectionFence(false);cancelInteriorFence(false);if(interiorReadySequence<interiorSequence)pendingInteriorFrame=true;active=false;gestureChangedCamera=false;clock.pause();navigation?.pauseOpening();packets?.pauseRuntime();frameRequested=false;Choreographer.getInstance().removeFrameCallback(this)}}
     fun sampleRuntime(){render.post {
         if(closed||failed||!submitted)return@post
         val snapshot=JSONObject().put("fixture",fixture).put("package",context.packageName).put("sampleId",++runtimeSampleId)
@@ -771,6 +830,7 @@ class NativeWorldView(context: Context, private val fixture: String, private val
             if(measure!=null&&!measure.completed){azimuth=orbitStart-measure.angle(System.nanoTime());cameraDirty=true}
             val paper=navigation?.orthographic==true
             if(animated&&!cameraDirty&&timestamp-lastDrawNs<(if(paper)41_000_000L else 32_000_000L)){requestFrame();return}
+            if (frameQueue?.hasSpace() == false) {requestFrame();return}
             val nightActive=!generatedMode||packets?.hasNightAnimation==true
             if(animated&&clock.advance(timestamp,nightActive))packets?.setRuntime(if(weatherOnly||animalOnly)0f else clock.seconds,!weatherOnly&&!animalOnly&&nightActive,
                 if(weatherOnly||animalOnly)0f else clock.cloudSeconds,if(animalOnly)0f else clock.weatherElapsedMs.toFloat(),
@@ -785,13 +845,17 @@ class NativeWorldView(context: Context, private val fixture: String, private val
                 target,fov,viewportWidth.toDouble()/if(paper&&presentationHeight>0)presentationHeight else viewportHeight,
                 if(paper).1-orthographicEyeOffset else frame.near,frame.far,runtimeEnabled&&stormMotionAllowed&&!weatherOnly&&!colorProbe,paper)
             packets?.updateLightning(clock.weatherElapsedMs,sceneDistance(),fov,logicalHeight,runtimeEnabled&&stormMotionAllowed&&!weatherOnly&&!animalOnly&&!colorProbe)
-            cameraDirty=false;lastDrawNs=timestamp
             val viewRadius=radius+orthographicEyeOffset
             val horizontal=viewRadius*cos(pitch)
             c.lookAt(target[0]+horizontal*sin(azimuth),target[1]+viewRadius*sin(pitch),target[2]+horizontal*cos(azimuth),target[0],target[1],target[2],0.0,1.0,0.0)
             packets?.moveSky(target[0]+horizontal*sin(azimuth),target[1]+viewRadius*sin(pitch),target[2]+horizontal*cos(azimuth),frame.skyRadius)
-            if(r.beginFrame(chain,timestamp)){
+            val cached = prepareDirectionalShadows()
+            val accepted = r.beginFrame(chain,timestamp)
+            if (accepted || (cached && gestureChangedCamera && frameQueue?.canContinueDrag == true)) {
+                directionalShadows?.draw(r)
                 colorPipeline?.draw(r)?:r.render(v);r.endFrame()
+                if (cached) frameQueue?.submitted()
+                cameraDirty=false;lastDrawNs=timestamp
                 if(pendingInteriorFrame){pendingInteriorFrame=false;awaitInteriorFrame(surfaceTicket,interiorSequence)}
                 if(pendingProjectionFrame){pendingProjectionFrame=false;awaitProjectionFrame(surfaceTicket)}
                 if(!BuildConfig.NATIVE_DIAGNOSTICS||generatedMode){generatedSubmittedFrames++;pendingGeneratedFrame?.let{identity->
@@ -836,7 +900,8 @@ class NativeWorldView(context: Context, private val fixture: String, private val
         if(BuildConfig.NATIVE_DIAGNOSTICS&&event.actionMasked!=MotionEvent.ACTION_MOVE)android.util.Log.i("BlockcolcTouch","action=${event.actionMasked} pointers=${event.pointerCount} x=${event.x} y=${event.y} bottom=$visibleBottom")
         if(event.actionMasked==MotionEvent.ACTION_DOWN&&(visibleBottom?.let{event.y>=it}==true||event.y<0f))return false
         when(event.actionMasked){
-            MotionEvent.ACTION_DOWN->{downX=event.x;downY=event.y;lastX=event.x;lastY=event.y;touchMoved=false;multiTouch=false;pinchDistance=0.0;parent?.requestDisallowInterceptTouchEvent(true)}
+            MotionEvent.ACTION_DOWN->{downX=event.x;downY=event.y;lastX=event.x;lastY=event.y;touchMoved=false;multiTouch=false;pinchDistance=0.0;parent?.requestDisallowInterceptTouchEvent(true)
+                if(optimizeRendering)render.post{gestureChangedCamera=false}}
             MotionEvent.ACTION_POINTER_DOWN->{multiTouch=true;if(event.pointerCount==2)pinchReference(event)}
             MotionEvent.ACTION_MOVE->{
                 if(event.pointerCount==2){val before=pinchDistance;val beforeCenter=pinchCenter;pinchReference(event);val current=pinchDistance;val delta=(pinchCenter-beforeCenter)/density
@@ -846,11 +911,13 @@ class NativeWorldView(context: Context, private val fixture: String, private val
                     if(touchMoved)render.post{moveCamera{drag(dx,dy)}}}
             }
             MotionEvent.ACTION_UP->{parent?.requestDisallowInterceptTouchEvent(false)
+                if(optimizeRendering)render.post{gestureChangedCamera=false}
                 if(!touchMoved&&!multiTouch&&hypot(event.x-downX,event.y-downY)<=touchSlop){performClick();val x=event.x.toDouble();val y=event.y.toDouble()
                     render.post{if(!closed&&active&&!failed)queryPick(x,y)}
                 }
             }
-            MotionEvent.ACTION_CANCEL->{parent?.requestDisallowInterceptTouchEvent(false);multiTouch=false;touchMoved=false;pinchDistance=0.0}
+            MotionEvent.ACTION_CANCEL->{parent?.requestDisallowInterceptTouchEvent(false);multiTouch=false;touchMoved=false;pinchDistance=0.0
+                if(optimizeRendering)render.post{gestureChangedCamera=false}}
         }
         return true
     }
@@ -860,6 +927,7 @@ class NativeWorldView(context: Context, private val fixture: String, private val
         if(closed||failed)return
         val current=navigation?:return
         current.action()
+        gestureChangedCamera=true
         invalidatePicks();cameraDirty=true;requestFrame()
     }
     private fun invalidatePicks(){pickGate.invalidate();pickFuture?.cancel(true);pickFuture=null}
@@ -902,6 +970,8 @@ class NativeWorldView(context: Context, private val fixture: String, private val
                     retirement?.put("before",p.diagnostics());p.close();e.flushAndWait()
                     retirement?.put("after",p.diagnostics())
                 };packets=null
+                frameQueue?.clear();frameQueue=null
+                directionalShadows?.close();directionalShadows=null
                 swap?.let{e.destroySwapChain(it)};swap=null
                 for(entity in lightEntities){e.destroyEntity(entity);EntityManager.get().destroy(entity)};lightEntities.clear()
                 retireInteriorLamp(interiorLamp);interiorLamp=0;currentInterior=null

@@ -19,7 +19,7 @@ describe('disposable CPU scene cache',()=>{
       const old=fixture();(old as {revision:number}).revision=revision;
       expect(restoreWorldSceneCache(old)).toBeNull();
     }
-    expect(JSON.parse(terrainGenerationInputKey([],[],[],undefined,{}))[0]).toBe(4);
+    expect(JSON.parse(terrainGenerationInputKey([],[],[],undefined,{}))[0]).toBe(5);
   });
   it('keeps shared surface sidecars out of persistent entries and rebuilds them on restore', () => {
     const source=fixture(), before=packWorldSceneCache(source), bytes=worldSceneCacheBytes(source);

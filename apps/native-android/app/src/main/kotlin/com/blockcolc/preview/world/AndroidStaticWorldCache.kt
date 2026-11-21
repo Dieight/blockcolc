@@ -15,8 +15,9 @@ internal class AndroidStaticWorldCache(context: Context, directory: File) : Auto
     private val files = AndroidDerivedFile(context, directory, Format, mapReadOnly = true)
     internal val stats get() = files.stats
 
-    fun key(world: WorldTerrainPlan, occlusion: Float): String = StrictJson.sha(
-        listOf(install, world.input.spatial.key, world.cacheKey, world.sceneryKey, occlusion.toRawBits()).joinToString("\n")
+    fun key(world: WorldTerrainPlan, occlusion: Float, compactGeometry: Boolean = false): String = StrictJson.sha(
+        listOf(install, world.input.spatial.key, world.cacheKey, world.sceneryKey, occlusion.toRawBits(),
+            compactGeometry).joinToString("\n")
     )
 
     fun read(key: String, cancelled: () -> Boolean) = files.read(key, cancelled)

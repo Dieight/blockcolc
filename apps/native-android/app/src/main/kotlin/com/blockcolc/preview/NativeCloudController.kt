@@ -29,7 +29,8 @@ internal data class CloudReceipt(val action:CloudAction,val result:CloudResult,v
 internal data class CloudView(val ready:Boolean=false,val requestBusy:Boolean=false,val account:JSONObject?=null,val error:String?=null,
     val choiceRequired:Boolean=false,val conflicts:List<String> = emptyList(),val owner:String?=null,val owned:Boolean=false,
     val devices:List<JSONObject> = emptyList(),val friends:List<JSONObject> = emptyList(),val backup:JSONObject?=null,val lastSync:Long?=null,
-    val accountPending:Boolean=false,val receipt:CloudReceipt?=null,val friendsError:String?=null){
+    val accountPending:Boolean=false,val receipt:CloudReceipt?=null,val friendsError:String?=null,
+    val friendOrder:List<String> = emptyList()){
     val busy get()=requestBusy||receipt?.result==CloudResult.WORKING
     fun working(action:CloudAction)=receipt?.action==action&&receipt.result==CloudResult.WORKING
 }
@@ -42,6 +43,7 @@ internal class NativeCloudController private constructor(private val context:Con
     private val main=Handler(Looper.getMainLooper())
     private val worker=Executors.newSingleThreadScheduledExecutor{Thread(it,"blockcolc-cloud-io")}
     private val presenceWorker=Executors.newSingleThreadScheduledExecutor{Thread(it,"blockcolc-cloud-presence")}
+    private val friendsWorker=Executors.newSingleThreadExecutor{Thread(it,"blockcolc-cloud-friends")}
     private val presenceQueued=AtomicBoolean()
     private val friendsQueued=AtomicBoolean()
     private val storage=CloudSessionStorage(context,directory)
@@ -56,6 +58,7 @@ internal class NativeCloudController private constructor(private val context:Con
     @Volatile private var value=CloudView()
     @Volatile private var session:CloudSession?=null
     @Volatile private var execution=0L
+    @Volatile private var presenceConfirmedAt=0L
     @Volatile private var started=false
     private var unsubscribeFocus:(()->Unit)?=null
     private var delayed:ScheduledFuture<*>?=null
@@ -66,14 +69,31 @@ internal class NativeCloudController private constructor(private val context:Con
         synchronized(viewGate){
             val next=update(value)
             val account=next.account?.let(accountOutbox::overlay)
+            val accountId=account?.optString("id")
+            val order=when{
+                accountId==null->emptyList()
+                accountId==value.account?.optString("id")->next.friendOrder
+                else->readFriendOrder(accountId)
+            }
             value=next.copy(account=account,accountPending=account?.optString("id")?.let{accountOutbox.pending(it)!=null}?:false,
-                friends=if(account?.optBoolean("friendsEnabled")==false)emptyList()else next.friends)
+                friends=if(account?.optBoolean("friendsEnabled")==false)emptyList()else next.friends,friendOrder=order)
         }
         // A queued server reply must not repaint over a newer local choice.
         notifyView()
     }
     private fun notifyView(){
         main.post{val current=value;listeners.forEach{it(current)}}
+    }
+    private fun readFriendOrder(account:String):List<String> = runCatching{
+        val stored=JSONArray(prefs.getString("friends-order/$account","[]"))
+        List(stored.length()){stored.getString(it)}
+    }.getOrDefault(emptyList())
+    fun saveFriendOrder(account:String,ids:List<String>){
+        if(session?.account!=account)return
+        val accepted=value.friends.filter{it.optString("status")=="accepted"}.map{it.getString("id")}.toSet()
+        val ordered=ids.distinct().filter{it in accepted}
+        prefs.edit().putString("friends-order/$account",JSONArray(ordered).toString()).apply()
+        publish{if(it.account?.optString("id")==account)it.copy(friendOrder=ordered)else it}
     }
     @Synchronized fun start(){if(started||!runtime.cloudIoAllowed(isolatedTransport))return
         started=true;unsubscribeFocus=runtime.subscribeCloudFocus(::focusChanged);worker.execute{
@@ -101,6 +121,7 @@ internal class NativeCloudController private constructor(private val context:Con
             if(session!==login||!runtime.cloudIoAllowed(isolatedTransport))return
             transport.request("/v1/presence","POST",login.token,StrictJson.render(
                 JSONObject().put("execution",generation).put("snapshot",snapshot)),timeoutMillis=8000)
+            if(session===login)presenceConfirmedAt=android.os.SystemClock.elapsedRealtime()
         }catch(error:Exception){
             // Heartbeats keep retrying after a network interruption. The
             // workspace lane owns conflicts and authentication UI feedback.
@@ -195,8 +216,10 @@ internal class NativeCloudController private constructor(private val context:Con
     }
     private var remotePlanHint:String?=null
     private fun adoptHead(remote:JSONObject){val owner=remote.getJSONObject("execution").opt("owner") as? String;execution=remote.getJSONObject("execution").getLong("generation")
+        val previouslyOwned=value.owned
         val owned=owner==session?.device;runtime.cloudPermission(owned).get()
         val devices=remote.getJSONArray("devices");publish{it.copy(owner=owner,owned=owned,devices=List(devices.length()){index->devices.getJSONObject(index)},backup=remote.optJSONObject("backup"))}
+        if(owned&&!previouslyOwned){presenceConfirmedAt=0L;focusChanged()}
     }
     fun takeover()=runAction(CloudAction.TAKEOVER){
         val head=api("workspace");adoptHead(head)
@@ -253,6 +276,8 @@ internal class NativeCloudController private constructor(private val context:Con
             if(remote.getJSONObject("execution").isNull("owner")&&idleCloud){
                 val claim=api("execution/claim","POST",JSONObject().put("generation",execution));execution=claim.getLong("generation")
                 runtime.cloudPermission(true).get();publish{it.copy(owner=device,owned=true)}
+                presenceConfirmedAt=0L
+                focusChanged()
                 local=runtime.cloudCapture(login.account).get();encoded=localEntries(local)
             }
             if(selected=="local"&&entries(remote).isNotEmpty()){
@@ -337,24 +362,40 @@ internal class NativeCloudController private constructor(private val context:Con
         if(account.optBoolean("friendsEnabled"))refreshFriends()
         return CloudResult.COMPLETE
     }
-    private fun loadFriends(){
+    private fun loadFriends(login:CloudSession){
         if(value.account?.optBoolean("friendsEnabled")!=true){publish{it.copy(friends=emptyList(),friendsError=null)};return}
-        val rows=api("friends/summary",timeoutMillis=15000).getJSONArray("friends")
-        publish{it.copy(friends=List(rows.length()){index->rows.getJSONObject(index)},friendsError=null)}
+        val rows=transport.request("/v1/friends/summary","GET",login.token,null,timeoutMillis=8000).getJSONArray("friends")
+        publish{current->
+            if(session!==login)current else current.copy(friends=List(rows.length()){index->rows.getJSONObject(index)},friendsError=null)
+        }
     }
     fun refreshFriends(){
+        val login=session?:return
+        if(value.owned&&(presenceConfirmedAt==0L||android.os.SystemClock.elapsedRealtime()-presenceConfirmedAt>=25_000))focusChanged()
         if(!friendsQueued.compareAndSet(false,true))return
-        worker.execute{
-            try{if(session!=null&&runtime.cloudIoAllowed(isolatedTransport))loadFriends()}
-            catch(error:Exception){publish{it.copy(friendsError=errorCode(error))}}
+        friendsWorker.execute{
+            try{if(session===login&&runtime.cloudIoAllowed(isolatedTransport))loadFriends(login)}
+            catch(error:Exception){publish{if(session===login)it.copy(friendsError=errorCode(error))else it}}
             finally{friendsQueued.set(false)}
         }
     }
+    private fun refreshChangedFriends(){
+        val login=session?:return
+        friendsWorker.execute{
+            if(session===login&&runtime.cloudIoAllowed(isolatedTransport)){
+                try{loadFriends(login)}catch(error:Exception){
+                    publish{if(session===login)it.copy(friendsError=errorCode(error))else it}
+                }
+            }
+        }
+    }
     suspend fun friendHistory(account:String,friend:String):JSONObject=suspendCancellableCoroutine{continuation->
-        val request=worker.submit{
+        val request=friendsWorker.submit{
             if(continuation.isActive)continuation.resumeWith(runCatching{
-                if(session?.account!=account)throw CloudFailure("UNAUTHORIZED")
-                api("friends/history/"+friend)
+                val login=session?.takeIf{it.account==account&&runtime.cloudIoAllowed(isolatedTransport)}?:throw CloudFailure("UNAUTHORIZED")
+                val result=transport.request("/v1/friends/history/$friend","GET",login.token,null,timeoutMillis=15000)
+                if(session!==login)throw CloudFailure("UNAUTHORIZED")
+                result
             })
         }
         continuation.invokeOnCancellation{request.cancel(false)}
@@ -371,9 +412,9 @@ internal class NativeCloudController private constructor(private val context:Con
         accountOutbox.stage(account,change);publish{it}
         worker.execute{perform(false){if(session?.account==account){refreshAccount();refreshFriends()}}}
     }
-    fun invite(code:String)=worker.execute{perform{api("friends/invite","POST",JSONObject().put("code",code.trim().uppercase()));loadFriends()}}
-    fun respond(id:String,action:String)=worker.execute{perform{api("friends/respond","POST",JSONObject().put("id",id).put("action",action));loadFriends()}}
-    fun sharing(id:String,policy:JSONObject?)=worker.execute{perform{api("friends/sharing","POST",JSONObject().put("id",id).put("sharing",policy?:JSONObject.NULL));loadFriends()}}
+    fun invite(code:String)=worker.execute{perform{api("friends/invite","POST",JSONObject().put("code",code.trim().uppercase()));refreshChangedFriends()}}
+    fun respond(id:String,action:String)=worker.execute{perform{api("friends/respond","POST",JSONObject().put("id",id).put("action",action));refreshChangedFriends()}}
+    fun sharing(id:String,policy:JSONObject?)=worker.execute{perform{api("friends/sharing","POST",JSONObject().put("id",id).put("sharing",policy?:JSONObject.NULL));refreshChangedFriends()}}
     fun revokeDevice(id:String)=runAction(CloudAction.REVOKE_DEVICE){api("devices/revoke","POST",JSONObject().put("id",id));sync()}
     fun captureBackup()=runAction(CloudAction.BACKUP){api("backup/capture","POST",JSONObject());sync()}
     fun restoreBackup()=runAction(CloudAction.RESTORE){
@@ -393,8 +434,8 @@ internal class NativeCloudController private constructor(private val context:Con
         main.post{onResult(code)}
     }
     internal fun testClose(){check(BuildConfig.NATIVE_DIAGNOSTICS);synchronized(this){
-        started=false;unsubscribeFocus?.invoke();unsubscribeFocus=null;worker.shutdownNow();presenceWorker.shutdownNow()}
-        worker.awaitTermination(5,TimeUnit.SECONDS);presenceWorker.awaitTermination(5,TimeUnit.SECONDS)}
+        started=false;unsubscribeFocus?.invoke();unsubscribeFocus=null;worker.shutdownNow();presenceWorker.shutdownNow();friendsWorker.shutdownNow()}
+        worker.awaitTermination(5,TimeUnit.SECONDS);presenceWorker.awaitTermination(5,TimeUnit.SECONDS);friendsWorker.awaitTermination(5,TimeUnit.SECONDS)}
     companion object {
         @Volatile private var instance:NativeCloudController?=null
         fun get(context:Context,runtime:PreviewRuntime):NativeCloudController=instance?:synchronized(this){instance?:NativeCloudController(context.applicationContext,runtime).also{instance=it}}

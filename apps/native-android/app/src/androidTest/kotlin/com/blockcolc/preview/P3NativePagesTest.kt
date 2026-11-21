@@ -1,5 +1,7 @@
 package com.blockcolc.preview
 
+import com.blockcolc.preview.ui.CountdownPreference
+
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.toPixelMap
@@ -669,13 +671,16 @@ class P3NativePagesTest {
             val diagnostic=worldDiagnostic(world);diagnostic.remove("resources")
             throw AssertionError("Default world did not become visible: $diagnostic",error)
         }
-        compose.waitUntil(10000){worldDiagnostic(world).getLong("environmentUpdates")>0}
+        compose.waitUntil(10000){worldDiagnostic(world,false).getLong("environmentUpdates")>0}
         val before=worldDiagnostic(world)
         assertFalse(before.getBoolean("failed"));assertTrue(before.getLong("gpuReadyFrames")>0)
         compose.onNodeWithContentDescription("聚落世界").assert(SemanticsMatcher.expectValue(androidx.compose.ui.semantics.SemanticsProperties.StateDescription,"世界已就绪"))
         assertEquals("native-generated",before.getString("sourceKind"))
         val waitingAt=android.os.SystemClock.elapsedRealtime()
-        compose.waitUntil(70000){worldDiagnostic(world).getLong("environmentUpdates")>before.getLong("environmentUpdates")}
+        compose.waitUntil(70000){
+            val current=worldDiagnostic(world,false)
+            current.getLong("environmentUpdates")>before.getLong("environmentUpdates")&&current.optJSONObject("navigation")?.optBoolean("opening")==false
+        }
         val timed=worldDiagnostic(world)
         assertEquals(0L,timed.getLong("environmentFailures"))
         for(key in listOf("owners","geometries","textures"))assertEquals(key,before.getJSONObject("resources").getJSONObject(key).toString(),timed.getJSONObject("resources").getJSONObject(key).toString())
@@ -709,7 +714,7 @@ class P3NativePagesTest {
         assertEquals(before.getLong("windowChanges"),after.getLong("windowChanges"))
         assertTrue(world.isEnabled)
         assertEquals(before.getLong("presentationIdentity"),after.getLong("presentationIdentity"))
-        assertEquals(before.getJSONObject("camera").toString(),after.getJSONObject("camera").toString())
+        assertEquals(timed.getJSONObject("camera").toString(),after.getJSONObject("camera").toString())
         for(key in listOf("owners","geometries","textures"))assertEquals(key,before.getJSONObject("resources").getJSONObject(key).toString(),after.getJSONObject("resources").getJSONObject(key).toString())
         val environmentFile=java.io.File(context.filesDir,"p3-world-host-environment.json")
         environmentFile.writeText(JSONObject(environmentFile.readText()).put("frameCountBeforeReturn",leaving.getLong("frames")).put("frameCountAfterReturn",after.getLong("frames"))
@@ -728,10 +733,15 @@ class P3NativePagesTest {
         compose.onNodeWithTag("workspace-ready").assertExists()
         compose.waitUntil(60000){renderedWorld()?.let{it!==world}==true}
         compose.waitUntil(60000){compose.onAllNodesWithText("正在建造世界").fetchSemanticsNodes().isEmpty()}
-        val recovered=checkNotNull(renderedWorld());val recovery=worldDiagnostic(recovered)
+        val recovered=checkNotNull(renderedWorld())
+        compose.waitUntil(30000){
+            val current=worldDiagnostic(recovered,false)
+            current.getLong("gpuReadyFrames")>0&&current.optJSONObject("navigation")?.optBoolean("opening")==false
+        }
+        val recovery=worldDiagnostic(recovered)
         assertTrue(recovery.getLong("gpuReadyFrames")>0);assertFalse(recovery.getBoolean("failed"))
         compose.onNodeWithContentDescription("聚落世界").assert(SemanticsMatcher.expectValue(androidx.compose.ui.semantics.SemanticsProperties.StateDescription,"世界已就绪"))
-        assertEquals(before.getJSONObject("camera").toString(),recovery.getJSONObject("camera").toString())
+        assertEquals(timed.getJSONObject("camera").toString(),recovery.getJSONObject("camera").toString())
         InstrumentationRegistry.getInstrumentation().runOnMainSync{retiredStatus("ERROR: retired test callback")}
         compose.waitForIdle();compose.onNodeWithText("世界暂未准备好").assertDoesNotExist()
         screen("generated-world-recovered")
@@ -1200,6 +1210,64 @@ class P3NativePagesTest {
     @Test fun approvedUiUsesConsistentControlsAndReachableSheets()=consistentUiReview("zh-CN","dark","pixel",1f)
     @Test fun approvedUiKeepsLargeEnglishTextAndActionsReadable()=consistentUiReview("en","light","mixed",2f)
 
+    @Test fun endingAnExtendedSessionKeepsItsOwnControlsWhileTheSheetCloses()=run{
+        runtime.testOperation{focus->
+            focus.begin("begin-overtime-sheet",PlanRequest("overtime-sheet","work","first",PlanMode.ROUNDS,1,5_000,0,
+                extendAfterPlan=true),false,System.currentTimeMillis())
+        }.get(30,TimeUnit.SECONDS)
+        compose.waitUntil(10000){runtime.latest.timer?.extensionStartedAt!=null}
+        val exit=compose.onNodeWithContentDescription("专注操作区")
+        compose.waitUntilAtLeastOneExists(hasContentDescription("专注操作区"),10000)
+        val actions=exit.fetchSemanticsNode().config[SemanticsActions.CustomActions]
+        compose.runOnIdle{assertTrue(actions.single{it.label=="显示结束操作"}.action())}
+        compose.onNodeWithText("结束本次专注").performSemanticsAction(SemanticsActions.OnClick){it()}
+        val finish=compose.onNodeWithText("结束并完成本次专注")
+        finish.assertIsDisplayed()
+        try{
+            compose.mainClock.autoAdvance=false
+            finish.performSemanticsAction(SemanticsActions.OnClick){it()}
+            compose.waitUntil(10000){
+                compose.mainClock.advanceTimeByFrame()
+                compose.onNodeWithText("中断本轮").assertDoesNotExist()
+                runtime.latest.timer?.extensionStartedAt==null||runtime.latest.phase=="REPORT"
+            }
+            repeat(24){
+                compose.mainClock.advanceTimeByFrame()
+                compose.onNodeWithText("中断本轮").assertDoesNotExist()
+            }
+        }finally{compose.mainClock.autoAdvance=true}
+        finish.assertDoesNotExist()
+    }
+
+    @Test fun countdownDatesFitTogetherAndAfterSavingShowTheEventAndRemainingDays(){
+        val storage=CountdownPreference(context)
+        val previous=storage.value
+        val today=java.time.LocalDate.now()
+        val target=today.plusDays(3)
+        storage.save(null)
+        try{run{
+            nav("设置")
+            compose.onNodeWithTag("setting-日期倒计时").performScrollTo()
+            compose.onNodeWithText("日期倒计时").performClick()
+            compose.onNode(hasText("事件名称") and hasSetTextAction()).performScrollTo().performTextInput("Beta countdown")
+            compose.onNodeWithText("目标日期").performScrollTo().performClick()
+            val dateField={label:String->compose.onNode(hasText(label) and hasSetTextAction() and hasAnyAncestor(isDialog()))}
+            for(label in listOf("年份","月份","日期（日）"))dateField(label).assertIsDisplayed()
+            dateField("年份").performTextReplacement(target.year.toString())
+            dateField("月份").performTextReplacement(target.monthValue.toString())
+            dateField("日期（日）").performTextReplacement(target.dayOfMonth.toString())
+            compose.onNodeWithText("确定").performScrollTo().performClick()
+            compose.onNodeWithText("保存").performScrollTo().performClick()
+            compose.onNodeWithText("Beta countdown").performScrollTo().assertIsDisplayed()
+            compose.onAllNodesWithText("还有 3 天").assertCountEquals(2)
+            screen("countdown-saved")
+            nav("计时")
+            compose.onNodeWithText("Beta countdown").assertIsDisplayed()
+            compose.onNodeWithText("还有 3 天").assertIsDisplayed()
+            screen("countdown-timer")
+        }}finally{storage.save(previous)}
+    }
+
     private fun integrityStopReturnsToInitialTimer(mode: PlanMode) = run(configure = { it.copy(minimalMode = mode == PlanMode.MINIMAL) }) {
         val now = System.currentTimeMillis()
         runtime.testOperation { c ->
@@ -1531,13 +1599,14 @@ class P3NativePagesTest {
     @Test fun firstUseCanRestoreAnActualBackupThroughTheDocumentPickerWithoutCreatingAnything(){
         val imported=initial();val backup=BackupCodec.write(imported,DomainTime.format(System.currentTimeMillis())).toByteArray()
         withOwnedDocument("json","application/json",backup){stem->run(initialDocument=DomainEngine.initial("UTC"),firstUse=true){
-            finishFirstTutorial()
+            compose.onNodeWithText("新手教程").assertDoesNotExist()
             compose.onNodeWithText("恢复备份").performScrollTo().performClick();chooseOwnedDocument(stem)
             compose.waitUntil(15000){runtime.latest.importSummary!=null&&!runtime.latest.busy}
             compose.onNodeWithText("确认恢复").performScrollTo().performClick()
             compose.waitUntil(20000){!runtime.latest.setupRequired&&runtime.latest.importSummary==null&&!runtime.latest.busy}
             assertEquals(setOf("work","habit"),runtime.latest.projects.map{it.id}.toSet())
             compose.onNodeWithText("开始建造你的世界").assertDoesNotExist()
+            finishFirstTutorial()
             compose.waitUntilDoesNotExist(isDialog(),15000)
             compose.onNodeWithTag("fixed-sheet-glass").assertDoesNotExist()
             nav("任务");compose.onNodeWithTag("native-page-tasks").assertExists()
@@ -1554,7 +1623,7 @@ class P3NativePagesTest {
         val report=JSONObject().put("wireBytes",source.length()).put("completed",false)
         try{withStreamedOwnedDocument("json","application/json",{out->source.inputStream().use{it.copyTo(out,65536)}}){stem->
             run(initialDocument=DomainEngine.initial("UTC"),firstUse=true){
-                finishFirstTutorial();compose.waitUntilAtLeastOneExists(hasText("恢复备份"),10000);compose.mainClock.autoAdvance=false
+                compose.waitUntilAtLeastOneExists(hasText("恢复备份"),10000);compose.mainClock.autoAdvance=false
                 try{
                     compose.onNodeWithText("恢复备份").performScrollTo().performClick();chooseOwnedDocument(stem)
                     compose.waitUntil(120000){compose.mainClock.advanceTimeByFrame();android.os.SystemClock.sleep(10)
@@ -1582,7 +1651,7 @@ class P3NativePagesTest {
     fun rejectedBackupHasAVisiblePersistentFailureUntilDismissed(){
         withOwnedDocument("json","application/json","{}".toByteArray()){stem->
             run(initialDocument=DomainEngine.initial("UTC"),firstUse=true){
-                finishFirstTutorial();compose.waitUntilAtLeastOneExists(hasText("恢复备份"),10000)
+                compose.waitUntilAtLeastOneExists(hasText("恢复备份"),10000)
                 try{
                     compose.onNodeWithText("恢复备份").performScrollTo().performClick();chooseOwnedDocument(stem)
                     compose.waitUntil(15000){runtime.latest.backupImportIssue!=null&&!runtime.latest.busy}
@@ -1614,7 +1683,6 @@ class P3NativePagesTest {
         val evidence=JSONObject().put("completed",false).put("wireBytes",source.length())
         try{withStreamedOwnedDocument("json","application/json",{out->source.inputStream().use{it.copyTo(out,65536)}}){stem->
             run(initialDocument=DomainEngine.initial("UTC"),firstUse=true,configure={it.copy()}){
-                finishFirstTutorial()
                 // A large world's real worker must not race a test clock
                 // through years of loading frames while Espresso seeks idle.
                 compose.waitUntilAtLeastOneExists(hasText("恢复备份"),10000)
@@ -1634,6 +1702,8 @@ class P3NativePagesTest {
                 compose.waitUntil(120000){compose.mainClock.advanceTimeByFrame();android.os.SystemClock.sleep(10);!runtime.latest.setupRequired&&runtime.latest.importSummary==null&&!runtime.latest.busy&&runtime.latest.ready}
                 assertEquals(expectedProjects,runtime.latest.projects.size)
                 evidence.put("stage","sheet-exit")
+                compose.mainClock.autoAdvance=true
+                finishFirstTutorial()
                 compose.waitUntil(15000){compose.mainClock.advanceTimeByFrame();android.os.SystemClock.sleep(10);compose.onAllNodes(isDialog()).fetchSemanticsNodes().isEmpty()}
                 compose.onNodeWithTag("fixed-sheet-glass").assertDoesNotExist()
                 evidence.put("domainRestored",true).put("importSheetClosed",true).put("stage","imported-world")
@@ -1725,16 +1795,22 @@ class P3NativePagesTest {
             val group=InstrumentationRegistry.getArguments().getString("p3Group")?:"local"
             var host:NativeWorldView?=null;var last=JSONObject()
             fun frame(environment:String,after:Long=-1,previousIdentity:Long=-1):JSONObject{
+                var requested:Pair<NativeWorldView,AtomicReference<JSONObject?>>?=null
                 try{compose.waitUntil(180000){
                     check(compose.onAllNodesWithText("世界暂未准备好").fetchSemanticsNodes().isEmpty()){"World preparation failed: $environment"}
-                    val view=renderedWorld();if(view!=null)host=view
-                    if(host==null)false else{
-                        last=worldDiagnostic(host!!,false)
-                        check(!last.getBoolean("failed")){"World rendering failed: $environment"}
-                        last.getBoolean("active")&&last.getBoolean("surfaceShown")&&last.getBoolean("swapReady")&&
-                            last.getLong("gpuReadyFrames")>after&&last.getLong("presentationIdentity")!=previousIdentity&&last.isNull("pendingPresentation")&&runtime.latest.workspace?.settings?.environment==environment&&
-                            compose.onAllNodesWithText("正在建造世界").fetchSemanticsNodes().isEmpty()
+                    val view=renderedWorld()?:return@waitUntil false
+                    host=view
+                    if(requested?.first!==view){
+                        val next=AtomicReference<JSONObject?>()
+                        requested=view to next
+                        view.generatedDiagnostics(false){next.set(it)}
                     }
+                    last=requested!!.second.getAndSet(null)?:return@waitUntil false
+                    requested=null
+                    check(!last.getBoolean("failed")){"World rendering failed: $environment"}
+                    last.getBoolean("active")&&last.getBoolean("surfaceShown")&&last.getBoolean("swapReady")&&
+                        last.getLong("gpuReadyFrames")>after&&last.getLong("presentationIdentity")!=previousIdentity&&last.isNull("pendingPresentation")&&runtime.latest.workspace?.settings?.environment==environment&&
+                        compose.onAllNodesWithText("正在建造世界").fetchSemanticsNodes().isEmpty()
                 }}catch(error:Throwable){
                     val threads=Thread.getAllStackTraces().entries.filter{it.key.name.startsWith("blockcolc-world")||it.key.name=="main"}.take(8)
                     File(context.filesDir,"p3-world-large-workspace-failure.json").writeText(JSONObject().put("schema",1).put("caseLabel",group)
@@ -1748,7 +1824,7 @@ class P3NativePagesTest {
             val coast=frame("mosaic-coast");screen("large-workspace-coast")
             nav("设置");compose.onNodeWithText("山谷").performScrollTo().performClick()
             compose.waitUntil(15000){!runtime.latest.busy&&runtime.latest.workspace?.settings?.environment=="natural-valley"}
-            assertEquals(coast.getLong("presentationIdentity"),worldDiagnostic(host!!,false).getLong("presentationIdentity"))
+            assertSame(host,renderedWorld())
             nav("计时");val valley=frame("natural-valley",coast.getLong("gpuReadyFrames"),coast.getLong("presentationIdentity"));screen("large-workspace-valley")
             assertNotEquals(coast.getJSONObject("ownerIdentities").getString("world"),valley.getJSONObject("ownerIdentities").getString("world"))
             nav("设置");compose.onNodeWithText("海岸").performScrollTo().performClick()
@@ -1904,28 +1980,30 @@ class P3NativePagesTest {
         }
     }
     private fun finishFirstTutorial(){
-        compose.onNodeWithText("新手教程").assertIsDisplayed()
+        compose.waitUntilAtLeastOneExists(hasText("新手教程") and hasAnyAncestor(isDialog()),15000)
+        compose.onNode(hasText("新手教程") and hasAnyAncestor(isDialog())).assertIsDisplayed()
         repeat(8){index->
             if(index==2){
                 compose.onNodeWithContentDescription("专注操作区").performScrollTo().performTouchInput{doubleClick()}
-                compose.onNodeWithText("结束本次专注").performScrollTo().performClick()
-                compose.onNodeWithText("已学会唤出结束入口").assertIsDisplayed()
+                compose.onNodeWithText("结束本次专注").performScrollTo().performSemanticsAction(SemanticsActions.OnClick){it()}
+                compose.waitUntilAtLeastOneExists(hasText("已学会唤出结束入口"),3000)
+                compose.onNodeWithText("已学会唤出结束入口").performScrollTo().assertIsDisplayed()
                 assertNull(runtime.latest.planId)
             }
             if(index==4){
                 compose.onNode(hasContentDescription("重置视角") and hasAnyAncestor(isDialog())).performScrollTo().performClick()
-                compose.onNodeWithText("视角已复位，仍围绕所选建筑").assertIsDisplayed()
+                compose.onNodeWithText("视角已复位，仍围绕所选建筑").performScrollTo().assertIsDisplayed()
                 compose.onNode(hasContentDescription("重置地图") and hasAnyAncestor(isDialog())).performClick()
-                compose.onNodeWithText("已返回整个聚落的总览").assertIsDisplayed()
+                compose.onNodeWithText("已返回整个聚落的总览").performScrollTo().assertIsDisplayed()
             }
             compose.onNodeWithText("下一页").performScrollTo().performClick()
         }
         compose.onNodeWithText("开始使用").performScrollTo().performClick()
         compose.waitUntil(10000){!runtime.latest.tutorialPending}
     }
-    @Test fun firstUseTeachesHiddenControlsThenRequiresOnlyOneOfTheThreeSetupChoices()=run(DomainEngine.initial("UTC"),firstUse=true){
-        finishFirstTutorial()
-        listOf("创建大型任务","创建习惯任务","恢复备份").forEach{compose.onNodeWithText(it).assertIsDisplayed()}
+    @Test fun firstUseRequiresSetupBeforeTeachingTheWorkbench()=run(DomainEngine.initial("UTC"),firstUse=true){
+        compose.onNodeWithText("新手教程").assertDoesNotExist()
+        listOf("创建大型任务","创建习惯任务","恢复备份","登录账户并恢复云端").forEach{compose.onNodeWithText(it).assertIsDisplayed()}
         androidx.test.uiautomator.UiDevice.getInstance(InstrumentationRegistry.getInstrumentation()).pressBack()
         compose.onNodeWithText("开始建造你的世界").assertIsDisplayed()
         compose.onNodeWithText("创建习惯任务").performClick()
@@ -1935,6 +2013,7 @@ class P3NativePagesTest {
         assertEquals("habit",runtime.latest.projects.single().kind)
         assertEquals("窗前的习惯",runtime.latest.projects.single().title)
         compose.onNodeWithText("开始建造你的世界").assertDoesNotExist()
+        finishFirstTutorial()
         assertNull(runtime.latest.planId)
         screen("first-use-completed")
     }
@@ -2148,7 +2227,10 @@ class P3NativePagesTest {
         screen("settings-library-jump")
     }
     @Test fun studyUsesResidentWorldAndAutomaticallyPlacesEachEarnedItemOnce()=run(partlyBuilt()){
-        compose.waitUntil(60000){renderedWorld()?.let{worldDiagnostic(it).optLong("gpuReadyFrames")>0}==true}
+        compose.waitUntil(60000){renderedWorld()?.let{worldDiagnostic(it)}?.let{value->
+            val navigation=value.optJSONObject("navigation")
+            value.optLong("gpuReadyFrames")>0&&navigation!=null&&!navigation.optBoolean("opening")&&!navigation.isNull("selected")
+        }==true}
         val world=checkNotNull(renderedWorld());val before=worldDiagnostic(world)
         compose.onNodeWithContentDescription("室内视角").performClick()
         compose.waitUntil(15000){worldDiagnostic(world).getJSONObject("interior").let{it.optBoolean("active")&&it.optLong("presentedSequence")>0&&it.optLong("presentedSequence")==it.optLong("sequence")}}
@@ -2194,7 +2276,9 @@ class P3NativePagesTest {
         screen("study-room")
         compose.onNodeWithContentDescription("书房摆设").assertDoesNotExist()
         compose.onNodeWithContentDescription("返回聚落").performClick()
-        compose.waitUntil(10000){!worldDiagnostic(world).getJSONObject("interior").getBoolean("active")}
+        compose.waitUntil(10000){worldDiagnostic(world).getJSONObject("interior").let{
+            !it.getBoolean("active")&&it.getLong("presentedSequence")==it.getLong("sequence")
+        }}
         val after=worldDiagnostic(world)
         assertEquals(before.getJSONObject("camera").toString(),after.getJSONObject("camera").toString())
         assertEquals(before.getJSONObject("ownerIdentities").getString("world"),after.getJSONObject("ownerIdentities").getString("world"))

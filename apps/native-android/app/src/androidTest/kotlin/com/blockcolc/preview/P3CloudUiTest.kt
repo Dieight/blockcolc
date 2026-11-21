@@ -1,7 +1,11 @@
 package com.blockcolc.preview
 
-import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.*
+import androidx.compose.material3.Text
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.test.platform.app.InstrumentationRegistry
@@ -9,6 +13,7 @@ import androidx.test.uiautomator.UiDevice
 import com.blockcolc.cloud.CloudTransport
 import com.blockcolc.cloud.CloudSessionStorage
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.unit.dp
 import com.blockcolc.presentation.ClientPreferences
 import com.blockcolc.presentation.UiResources
 import com.blockcolc.preview.ui.*
@@ -30,6 +35,36 @@ import android.view.Choreographer
 /** Actual account form -> TLS API -> native writer, with isolated app data. */
 class P3CloudUiTest {
     @get:Rule val compose=createComposeRule()
+    @Test fun longPressDragSavesTheAcceptedFriendOrder(){
+        var order by mutableStateOf(emptyList<String>())
+        var shown by mutableStateOf(true)
+        fun friend(id:String,name:String,status:String="accepted")=JSONObject().put("id",id).put("name",name).put("status",status)
+        val friends=listOf(friend("a","Alice"),friend("b","Bella"),friend("pending","Pending","pending"))
+        compose.setContent{NativeTheme(ClientPreferences(),UiResources.load(),reduceMotion=true){
+            if(shown)Column{
+                NativeOrderedFriendList("account",CloudView(friends=friends,friendOrder=order),{order=it}){item,gesture,dragging->
+                    Box(gesture.fillMaxWidth().height(80.dp),contentAlignment=Alignment.Center){
+                        Text(if(dragging)"Moving" else item.getString("name"))
+                    }
+                }
+            }
+        }}
+        val a=compose.onNodeWithText("Alice")
+        val b=compose.onNodeWithText("Bella")
+        val travel=b.fetchSemanticsNode().boundsInRoot.center.y-a.fetchSemanticsNode().boundsInRoot.center.y+12
+        a.performTouchInput{down(center)}
+        val hold=android.view.ViewConfiguration.getLongPressTimeout().toLong()+100
+        compose.mainClock.advanceTimeBy(hold)
+        val moving=compose.onNodeWithText("Moving")
+        compose.waitUntil(3000){compose.onAllNodesWithText("Moving").fetchSemanticsNodes().isNotEmpty()}
+        moving.performTouchInput{advanceEventTime(hold);moveBy(Offset(0f,travel));up()}
+        compose.waitUntil(3000){order==listOf("b","a")}
+        compose.runOnIdle{shown=false}
+        compose.runOnIdle{shown=true}
+        assertTrue(b.fetchSemanticsNode().boundsInRoot.top<a.fetchSemanticsNode().boundsInRoot.top)
+        compose.onNodeWithText("Pending").assertDoesNotExist()
+    }
+
     @Test fun minimalFriendsOnlyShowAcceptedSummariesAndRefreshWhenVisible(){
         val refreshes=AtomicInteger()
         val opened=AtomicInteger()
@@ -137,7 +172,8 @@ class P3CloudUiTest {
             assertNull(controller.snapshot().error)
             File(context.filesDir,"p3-cloud-ui-account.json").writeText(JSONObject().put("syntheticUsername",username).put("syntheticAccount",controller.snapshot().account!!.getString("id")).toString())
             compose.onNodeWithText("Execution device").performScrollTo().performClick()
-            compose.onNodeWithText("This device executes the plan").performScrollTo().assertIsDisplayed()
+            compose.onNodeWithText("This device").performScrollTo().assertIsDisplayed()
+            assertTrue(controller.snapshot().owned)
             compose.onNodeWithText("Friends").performScrollTo().performClick()
             compose.onNodeWithText("Focus status").performScrollTo().assertIsDisplayed()
             assertFalse("An open form must not send its draft",controller.snapshot().account!!.getBoolean("friendsEnabled"))

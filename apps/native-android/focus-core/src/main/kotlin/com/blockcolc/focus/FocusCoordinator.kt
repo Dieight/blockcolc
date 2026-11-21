@@ -159,6 +159,10 @@ class FocusCoordinator(private val store: NativeStateStore, val databaseIdentity
         }
         val previous = m.active()
         val reporting=m.context.plan
+        if(prepared.has("partialExtensionSessionId")){
+            require(reporting?.phase==PlanPhase.REPORT&&reporting.extensionStartedAt!=null&&
+                prepared.getString("partialExtensionSessionId")==reporting.extensionSessionId(reporting.extensionRounds+1))
+        }
         if(type=="ReportMarathonFocus") {
             if(reporting?.phase!=PlanPhase.REPORT)throw FocusFailure("PLAN_NOT_REPORTING")
             val ids=command.getJSONArray("focusSessionIds")

@@ -9,7 +9,8 @@ import java.util.concurrent.TimeUnit
 /** Android composition-root owner for CPU generation and its optional derived
  * file cache. Feature pages do not receive it; the host supplies immutable
  * committed documents and its delivery dispatcher. GPU ownership is separate. */
-class NativeWorldSession(context:Context,deliver:(Runnable)->Unit,directory:File=File(context.cacheDir,"native-world")):AutoCloseable {
+class NativeWorldSession(context:Context,deliver:(Runnable)->Unit,directory:File=File(context.cacheDir,"native-world"),
+    compactGeometry:Boolean=true):AutoCloseable {
     private val gate=Any()
     private var closed=false
     private var caches:CacheFiles?=null
@@ -37,7 +38,9 @@ class NativeWorldSession(context:Context,deliver:(Runnable)->Unit,directory:File
         WorldPlanBuilder(sources=NativeBlueprintSources(renderCache=blueprints),terrainCache=terrain,sceneryCache=scenery,
             structures=com.blockcolc.world.generation.OriginalStructureCache(storage=structures))
     },resourcePreparation=resources::prepare,closeResourcePreparation=resources::close,packetAllocator=packetAllocator,
-        packetCompilerFactory={synchronized(gate){NativeWorldPacketCompiler(signRasterizer,packetAllocator,true,caches?.staticWorld,caches?.paperWorld)}})
+        packetCompilerFactory={synchronized(gate){
+            NativeWorldPacketCompiler(signRasterizer,packetAllocator,true,caches?.staticWorld,caches?.paperWorld,compactGeometry)
+        }})
     fun request(identity:WorldRequestIdentity,document:DomainDocument,options:WorldTerrainOptions=WorldTerrainOptions(),
         onReady:(PreparedWorldRequest)->Unit,onFailure:(Exception)->Unit)=worker.request(identity,document,options,onReady,onFailure)
     fun cancelPending()=worker.cancelPending()

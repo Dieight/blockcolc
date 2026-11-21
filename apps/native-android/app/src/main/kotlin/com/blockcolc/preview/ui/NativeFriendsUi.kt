@@ -3,6 +3,7 @@ package com.blockcolc.preview.ui
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
@@ -15,16 +16,21 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
 import com.blockcolc.cloud.CloudFailure
 import com.blockcolc.preview.CloudView
 import com.blockcolc.preview.NativeCloudController
@@ -40,27 +46,103 @@ import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
 import java.util.Locale
 
+private fun CloudView.orderedFriends(preferred:List<String> = friendOrder):List<JSONObject>{
+    val ranks=preferred.withIndex().associate{(index,id)->id to index}
+    return friends.filter{it.optString("status")=="accepted"}.sortedWith(
+        compareBy<JSONObject>{ranks[it.getString("id")]?:Int.MAX_VALUE}.thenBy{it.optString("name")}.thenBy{it.getString("id")},
+    )
+}
+
+@Composable internal fun NativeOrderedFriendList(
+    accountId:String,view:CloudView,onOrder:(List<String>)->Unit,
+    card:@Composable (JSONObject,Modifier,Boolean)->Unit,
+){
+    var previewOrder by remember(accountId){mutableStateOf<List<String>?>(null)}
+    var dragging by remember(accountId){mutableStateOf<String?>(null)}
+    val centers=remember(accountId){mutableMapOf<String,Float>()}
+    val accepted=view.orderedFriends(previewOrder?:view.friendOrder)
+    val ids=accepted.map{it.getString("id")}
+    val latestIds by rememberUpdatedState(ids)
+    var dragOffset by remember(accountId){mutableFloatStateOf(0f)}
+    val moveUp=cloudText("上移","Move up")
+    val moveDown=cloudText("下移","Move down")
+    val saveOrder by rememberUpdatedState(onOrder)
+    LaunchedEffect(view.friendOrder){
+        if(previewOrder==view.friendOrder)previewOrder=null
+    }
+
+    fun move(id:String,to:Int):Boolean{
+        val order=latestIds
+        val from=order.indexOf(id)
+        if(from<0||to !in order.indices||to==from)return false
+        val next=order.toMutableList().apply{add(to,removeAt(from))}
+        previewOrder=next
+        saveOrder(next)
+        return true
+    }
+
+    for((index,friend) in accepted.withIndex())key(accountId,friend.getString("id")){
+        val id=friend.getString("id")
+        val reorder=if(ids.size<2)Modifier else Modifier
+            .onGloballyPositioned{coordinates->
+                centers[id]=coordinates.positionInRoot().y+coordinates.size.height/2f
+            }
+            .pointerInput(accountId,id){
+                var startCenter:Float?=null
+                var startPositions=emptyMap<String,Float>()
+                detectDragGesturesAfterLongPress(
+                    onDragStart={
+                        startPositions=centers.toMap()
+                        startCenter=startPositions[id]
+                        dragOffset=0f
+                        dragging=id
+                    },
+                    onDragEnd={
+                        val order=latestIds
+                        val from=order.indexOf(id)
+                        startCenter?.let{center->
+                            val y=center+dragOffset
+                            val target=if(dragOffset>0f)order.indices.lastOrNull{it>from&&(startPositions[order[it]]?:Float.MAX_VALUE)<=y}
+                                else order.indices.firstOrNull{it<from&&(startPositions[order[it]]?:Float.NEGATIVE_INFINITY)>=y}
+                            if(target!=null)move(id,target)
+                        }
+                        dragging=null
+                    },
+                    onDragCancel={dragging=null},
+                ){change,amount->
+                    change.consume()
+                    dragOffset+=amount.y
+                }
+            }.zIndex(if(dragging==id)1f else 0f)
+            .graphicsLayer{translationY=if(dragging==id)dragOffset else 0f}
+            .semantics{
+                customActions=buildList{
+                    if(index>0)add(CustomAccessibilityAction(moveUp){move(id,index-1)})
+                    if(index<ids.lastIndex)add(CustomAccessibilityAction(moveDown){move(id,index+1)})
+                }
+            }
+        card(friend,reorder,dragging==id)
+    }
+}
+
 @Composable internal fun NativeFriendsPanel(controller:NativeCloudController,view:CloudView){
     val account=checkNotNull(view.account)
     val accountId=account.getString("id")
-    val accepted=view.friends.filter{it.optString("status")=="accepted"}.sortedBy{it.optString("name")}
     val pending=view.friends.filter{it.optString("status")=="pending"}
+    val empty=view.friends.none{it.optString("status")=="accepted"}
     val clipboard=LocalClipboardManager.current
     val focus=LocalFocusManager.current
     val keyboard=LocalSoftwareKeyboardController.current
     var invite by rememberSaveable(accountId){mutableStateOf("")}
-    var adding by rememberSaveable(accountId){mutableStateOf(accepted.isEmpty())}
+    var adding by rememberSaveable(accountId){mutableStateOf(empty)}
     LaunchedEffect(accountId){
         while(true){
             controller.refreshFriends()
             delay(6_000)
         }
     }
-
-    if(accepted.isEmpty()){
-        Text(cloudText("还没有好友","No friends yet"),style=MaterialTheme.typography.bodyMedium)
-    }
-    for(friend in accepted)key(accountId,friend.getString("id")){
+    if(empty)Text(cloudText("还没有好友","No friends yet"),style=MaterialTheme.typography.bodyMedium)
+    NativeOrderedFriendList(accountId,view,{controller.saveFriendOrder(accountId,it)}){friend,modifier,dragging->
         NativeFriendCard(
             friend=friend,
             defaultSharing=account.optJSONObject("sharing")?:JSONObject(),
@@ -68,6 +150,8 @@ import java.util.Locale
             fetchHistory={controller.friendHistory(accountId,friend.getString("id"))},
             changeSharing={controller.sharing(friend.getString("id"),it)},
             remove={controller.respond(friend.getString("id"),"remove")},
+            modifier=modifier,
+            dragging=dragging,
         )
     }
 
@@ -120,8 +204,7 @@ import java.util.Locale
             delay(6_000)
         }
     }
-    val friends=remember(view.friends){view.friends.filter{it.optString("status")=="accepted"}
-        .sortedWith(compareByDescending<JSONObject>{it.optBoolean("focusing")}.thenBy{it.optString("name")})}
+    val friends=remember(view.friends,view.friendOrder){view.orderedFriends()}
     Column(Modifier.fillMaxSize().testTag("minimal-friends")){
         Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
             Text(cloudText("好友","Friends"),Modifier.weight(1f),style=MaterialTheme.typography.titleMedium)
@@ -156,6 +239,8 @@ import java.util.Locale
     fetchHistory:suspend ()->JSONObject,
     changeSharing:(JSONObject?)->Unit,
     remove:()->Unit,
+    modifier:Modifier=Modifier,
+    dragging:Boolean=false,
 ){
     val name=friend.optString("name")
     val readOnly=friend.optBoolean("readOnly")
@@ -186,7 +271,7 @@ import java.util.Locale
     val summary=friendStatus(friend)
     val time=friendPeriod(friend)
     val description=listOfNotNull(summary,time).joinToString("\n").ifEmpty{null}
-    Column(Modifier.fillMaxWidth().border(1.dp,MaterialTheme.colorScheme.outlineVariant)
+    Column(modifier.fillMaxWidth().border(1.dp,if(dragging)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant)
         .background(MaterialTheme.colorScheme.surface).padding(horizontal=14.dp)){
         NativeDisclosure(name,description,expanded,{expanded=it},rowHeight=64.dp,
             titleStyle=MaterialTheme.typography.titleMedium,descriptionStyle=MaterialTheme.typography.bodyMedium,contentSpacing=10.dp,
@@ -288,10 +373,7 @@ private fun parseFriendCalendar(data:JSONObject):FriendCalendar{
     val count=(ChronoUnit.DAYS.between(start,today)/7+1).toInt()
     val complete=data.complete
     val list=rememberLazyListState(initialFirstVisibleItemIndex=count-1)
-    val palette=MaterialTheme.colorScheme.let{colors->
-        listOf(colors.surfaceVariant,colors.primary.copy(alpha=.32f),colors.primary.copy(alpha=.55f),colors.primary.copy(alpha=.78f),colors.primary)
-    }
-    val outline=MaterialTheme.colorScheme.outlineVariant
+    val palette=nativeFocusHeatmapColors()
     val title=cloudText("专注热力图","Focus heatmap")
     Text(cloudText("累计专注","Total focus"),style=MaterialTheme.typography.bodySmall)
     Text(formatDuration(data.total),style=MaterialTheme.typography.titleMedium)
@@ -305,23 +387,11 @@ private fun parseFriendCalendar(data:JSONObject):FriendCalendar{
                     if(date<earliest||date>today)continue
                     val duration=data.days[date]
                     val origin=Offset(0f,row*12.dp.toPx())
-                    if(duration==null&&!complete)drawRect(outline,origin,Size(edge,edge),style=Stroke(1.dp.toPx()))
-                    else{
-                        val ms=duration?:0
-                        val band=when{
-                            ms<=0->0
-                            ms<3*3_600_000L->1
-                            ms<6*3_600_000L->2
-                            ms<9*3_600_000L->3
-                            else->4
-                        }
-                        drawRect(palette[band],origin,Size(edge,edge))
-                    }
+                    if(duration!=null||complete)drawFocusHeatmapCell(palette,heatmapBand(duration?:0L),origin,edge)
                 }
             }
         }
     }
-    if(data.hasMissing){
-        Text(cloudText("空框表示来源未提供该日数据","Outlined cells show dates without shared data"),style=MaterialTheme.typography.bodySmall)
-    }
+    NativeFocusHeatmapLegend(palette)
+    if(data.hasMissing)Text(cloudText("留白日期未提供数据","Blank dates have no shared data"),style=MaterialTheme.typography.bodySmall)
 }

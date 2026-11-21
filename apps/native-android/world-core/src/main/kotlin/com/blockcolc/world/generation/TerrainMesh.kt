@@ -18,7 +18,7 @@ data class OceanMain(val radius:Double,val beach:Double)
 
 /** Immutable CPU mesh. Source-precision coordinates narrow only at upload;
  * callers get read-only independent buffer views, never mutable cache arrays. */
-class TerrainMesh private constructor(private val coordinates:DoubleBuffer,private val tops:Array<IntBuffer>,private val sides:Array<IntBuffer>,
+class TerrainMesh internal constructor(private val coordinates:DoubleBuffer,private val tops:Array<IntBuffer>,private val sides:Array<IntBuffer>,
     val cellCount:Int,val bounds:TerrainBounds,val framingBounds:TerrainPlanBounds,val nearDetailBounds:TerrainPlanBounds,
     trees:List<TerrainTree>,val lod:TerrainLodCounts,val hydrology:TerrainWaterStats,islets:List<OceanIslet>?,val oceanMain:OceanMain?) {
     internal constructor(coordinates:DoubleArray,tops:Array<IntArray>,sides:Array<IntArray>,cellCount:Int,bounds:TerrainBounds,framingBounds:TerrainPlanBounds,
@@ -55,7 +55,15 @@ internal class TerrainDoubles {
         if(size+next.size>values.size)values=values.copyOf(max(size+next.size,values.size*2))
         next.copyInto(values,size);size+=next.size
     }
-    fun freeze()=values.copyOf(size)
+    fun freeze():DoubleBuffer {
+        if(!NativePacketBuffers.hasPlatformAllocator)return DoubleBuffer.wrap(values.copyOf(size)).asReadOnlyBuffer()
+        // Publish straight to the Android backing store. An exact-size heap
+        // copy of the growable array would coexist with it at peak usage.
+        val out=NativePacketBuffers.doubles(size)
+        out.put(values,0,size)
+        (out as java.nio.Buffer).rewind()
+        return out.asReadOnlyBuffer()
+    }
 }
 internal class TerrainInts {
     private var values=IntArray(1024);var size=0;private set
@@ -65,7 +73,13 @@ internal class TerrainInts {
         if(size+next.size>values.size)values=values.copyOf(max(size+next.size,values.size*2))
         next.copyInto(values,size);size+=next.size
     }
-    fun freeze()=values.copyOf(size)
+    fun freeze():IntBuffer {
+        if(!NativePacketBuffers.hasPlatformAllocator)return IntBuffer.wrap(values.copyOf(size)).asReadOnlyBuffer()
+        val out=NativePacketBuffers.ints(size)
+        out.put(values,0,size)
+        (out as java.nio.Buffer).rewind()
+        return out.asReadOnlyBuffer()
+    }
 }
 
 internal class TerrainMeshBuilder(private val checkpoint:()->Unit) {
@@ -120,7 +134,10 @@ internal class TerrainMeshBuilder(private val checkpoint:()->Unit) {
     fun finish(cellCount:Int,bounds:TerrainBounds,framing:TerrainPlanBounds,near:TerrainPlanBounds,trees:List<TerrainTree>,lod:TerrainLodCounts,hydrology:TerrainWaterStats,
         islets:List<OceanIslet>?=null,main:OceanMain?=null):TerrainMesh {
         closeCornerSlits()
-        return TerrainMesh(positions.freeze(),Array(tops.size){tops[it].freeze()},Array(sides.size){sides[it].freeze()},cellCount,bounds,framing,near,trees,lod,hydrology,islets,main)
+        val coordinates=positions.freeze()
+        val top=Array(tops.size){checkpoint();tops[it].freeze()}
+        val side=Array(sides.size){checkpoint();sides[it].freeze()}
+        return TerrainMesh(coordinates,top,side,cellCount,bounds,framing,near,trees,lod,hydrology,islets,main)
     }
 }
 

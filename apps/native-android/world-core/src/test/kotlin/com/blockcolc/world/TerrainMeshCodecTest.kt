@@ -12,6 +12,18 @@ import java.util.concurrent.CancellationException
 class TerrainMeshCodecTest {
     private val key="12".repeat(32)
     private fun simple()=SteppedTerrain.generate(emptyList(),emptyList())
+    @Test fun freshlyGeneratedTerrainPublishesDirectlyWithoutChangingItsEncodedMesh(){
+        val expected=TerrainMeshCodec.encode(key,simple())!!
+        val generated=NativePacketBuffers.using(NativePacketAllocator{ByteBuffer.allocateDirect(it)}){
+            val terrain=simple()
+            assertTrue(terrain.positions().isDirect)
+            assertTrue(terrain.positions().isReadOnly)
+            assertTrue(terrain.topIndices(TerrainMaterial.GRASS).isDirect)
+            assertSame(terrain,terrain.inNativeStorage())
+            terrain
+        }
+        assertArrayEquals(expected,TerrainMeshCodec.encode(key,generated))
+    }
     @Test fun scopedTerrainStorageKeepsEveryEncodedBitAndOwnsIndependentReadOnlyViews(){
         for(environment in WorldEnvironment.entries){
         val support=SettlementSupport.align(VillageLayout.generate(listOf(VillageInput(0,FootprintBounds(-3,3,-4,4)))),environment)

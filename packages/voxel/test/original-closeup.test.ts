@@ -1,4 +1,5 @@
 import {describe,it,expect} from 'vitest';
+import {Buffer} from 'node:buffer';
 import * as THREE from 'three';
 import {connectedGlassSurface,connectedGlassPixels,isConnectedOriginalGlass,addConnectedOriginalGlass} from '../src/connected-original-glass';
 import {ORIGINAL_DETAIL_IDS,originalDetailParts,originalDetailPixels,addOriginalBlockDetails} from '../src/original-block-details';
@@ -25,7 +26,9 @@ describe('original close-up surfaces',()=>{
   for(const id of ORIGINAL_DETAIL_IDS){
    const voxel={x:0,y:0,z:0,buildOrder:10000,materialId:'accent' as const,sourceBlockId:id};
    expect(originalDetailParts(voxel)?.length).toBeGreaterThan(0);
-   const pixels=originalDetailPixels(voxel);expect(pixels).toEqual(originalDetailPixels(voxel));expect(pixels).toHaveLength(128*64*4);
+   const pixels=originalDetailPixels(voxel);
+   expect(pixels).toHaveLength(128*64*4);
+   expect(Buffer.compare(pixels,originalDetailPixels(voxel))).toBe(0);
   }
   expect(originalDetailParts({sourceBlockId:'mod:chest'})).toBeNull();
   expect(originalDetailParts({sourceBlockId:'minecraft:sea_pickle',sourceBlockState:{pickles:'8'}})).toBeNull();

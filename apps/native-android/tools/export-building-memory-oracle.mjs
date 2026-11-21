@@ -7,8 +7,17 @@ import {fileURLToPath} from 'node:url';
 const repo=fileURLToPath(new URL('../../../',import.meta.url)),out=path.resolve(process.argv[2]??'');
 assert.ok(out.startsWith(path.join(repo,'apps/native-android/presentation-core/build/generated')+path.sep));
 const hashes={},sha=file=>crypto.createHash('sha256').update(fs.readFileSync(path.join(repo,file))).digest('hex');
+const realDependencies=fs.realpathSync(path.join(repo,'node_modules'));
+function inputPath(input) {
+ const absolute=path.resolve(input),dependency=path.relative(realDependencies,absolute);
+ const insideDependencies=!path.isAbsolute(dependency)&&dependency!=='..'&&!dependency.startsWith(`..${path.sep}`);
+ const relative=insideDependencies?path.join('node_modules',dependency):path.relative(repo,absolute);
+ const normalized=relative.replaceAll('\\','/');
+ assert.ok(!path.isAbsolute(relative)&&!normalized.startsWith('../'));
+ return normalized;
+}
 async function load(file){const compiled=await build({entryPoints:[path.join(repo,file)],bundle:true,write:false,platform:'node',format:'esm',metafile:true,logLevel:'silent'});
- for(const input of Object.keys(compiled.metafile.inputs)){const p=path.relative(repo,path.resolve(input)).replaceAll('\\','/');assert.ok(!p.startsWith('../'));hashes[p]=sha(p);}
+ for(const input of Object.keys(compiled.metafile.inputs)){const p=inputPath(input);hashes[p]=sha(p);}
  return import(`data:text/javascript;base64,${Buffer.from(compiled.outputFiles[0].text).toString('base64')}`);}
 const world=JSON.parse(fs.readFileSync(path.join(repo,'apps/native-android/presentation-core/build/generated/world-projection-oracle/world-projection-oracle.json'),'utf8'));
 for(const [file,hash]of Object.entries(world.sourceHashes)){assert.equal(sha(file),hash);hashes[file]=hash;}

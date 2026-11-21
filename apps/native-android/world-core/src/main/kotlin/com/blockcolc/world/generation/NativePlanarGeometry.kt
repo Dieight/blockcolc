@@ -94,7 +94,83 @@ object NativePlanarGeometry {
             }
         }).also{checkpoint()}
     }
-    fun terrain(input:TerrainMesh,cancelled:()->Boolean={false}):List<BlockGeometry?> = groups(input.positions(),
-        TerrainMaterial.entries.map{input.topIndices(it)}+listOf(input.sideIndices(TerrainMaterial.DIRT),input.sideIndices(TerrainMaterial.STONE)),cancelled=cancelled)
+    fun terrain(input:TerrainMesh,cancelled:()->Boolean={false},compactOpaqueTops:Boolean=false):List<BlockGeometry?> {
+        val points=input.positions()
+        val tops=TerrainMaterial.entries.map{material->
+            val indices=input.topIndices(material)
+            if(compactOpaqueTops&&material!=TerrainMaterial.WATER)mergeFlatTops(points,indices,cancelled)else indices
+        }
+        return groups(points,tops+listOf(input.sideIndices(TerrainMaterial.DIRT),input.sideIndices(TerrainMaterial.STONE)),cancelled=cancelled)
+    }
+
+    // Merge only exact shared edges of flat quads in a single material.
+    // Keep their exterior vertices for the existing world-space UV mapping.
+    private class FlatTop(val y:Double,val minX:Double,var maxX:Double,val minZ:Double,var maxZ:Double,
+        val a:Int,var b:Int,var c:Int,var d:Int)
+
+    private fun mergeFlatTops(points:DoubleBuffer,indices:IntBuffer,cancelled:()->Boolean):IntBuffer {
+        val count=indices.remaining()/6
+        if(count<2||indices.remaining()%6!=0)return indices
+        fun checkpoint(){if(cancelled()||Thread.currentThread().isInterrupted)throw CancellationException("Planar geometry superseded")}
+        val patches=ArrayList<FlatTop>(count)
+        val read=indices.duplicate()
+        for(i in 0 until count){
+            if(i%1024==0)checkpoint()
+            val a=read.get();val b=read.get();val c=read.get()
+            val otherA=read.get();val otherC=read.get();val d=read.get()
+            if(a<0||a>points.remaining()/3-4||a%4!=0||b!=a+1||c!=a+2||d!=a+3||otherA!=a||otherC!=c)return indices
+            val at=points.position()+a*3
+            val x0=points[at];val y=points[at+1];val z0=points[at+2]
+            val x1=points[at+6];val z1=points[at+8]
+            if(x0>=x1||z0>=z1||points[at+3]!=x0||points[at+9]!=x1||points[at+5]!=z1||points[at+11]!=z0||
+                points[at+4]!=y||points[at+7]!=y||points[at+10]!=y)return indices
+            patches.add(FlatTop(y,x0,x1,z0,z1,a,b,c,d))
+        }
+        fun sweep(alongX:Boolean) {
+            checkpoint()
+            patches.sortWith{a,b->
+                val height=a.y.compareTo(b.y)
+                if(height!=0)height else if(alongX){
+                    var order=a.minZ.compareTo(b.minZ)
+                    if(order==0)order=a.maxZ.compareTo(b.maxZ)
+                    if(order==0)order=a.minX.compareTo(b.minX)
+                    order
+                }else{
+                    var order=a.minX.compareTo(b.minX)
+                    if(order==0)order=a.maxX.compareTo(b.maxX)
+                    if(order==0)order=a.minZ.compareTo(b.minZ)
+                    order
+                }
+            }
+            var used=0
+            for(i in patches.indices){
+                if(i%1024==0)checkpoint()
+                val next=patches[i]
+                val last=if(used==0)null else patches[used-1]
+                if(last!=null&&last.y==next.y){
+                    if(alongX&&last.minZ==next.minZ&&last.maxZ==next.maxZ&&last.maxX==next.minX){
+                        last.maxX=next.maxX;last.c=next.c;last.d=next.d
+                        continue
+                    }
+                    if(!alongX&&last.minX==next.minX&&last.maxX==next.maxX&&last.maxZ==next.minZ){
+                        last.maxZ=next.maxZ;last.b=next.b;last.c=next.c
+                        continue
+                    }
+                }
+                patches[used++]=next
+            }
+            patches.subList(used,patches.size).clear()
+        }
+        sweep(true)
+        sweep(false)
+        if(patches.size==count)return indices
+        val compact=NativePacketBuffers.ints(patches.size*6)
+        for((i,patch)in patches.withIndex()){
+            if(i%1024==0)checkpoint()
+            compact.put(patch.a).put(patch.b).put(patch.c).put(patch.a).put(patch.c).put(patch.d)
+        }
+        compact.flip()
+        return compact
+    }
     fun roads(input:RoadGeometry,cancelled:()->Boolean={false}):BlockGeometry?=groups(input.positions(),listOf(input.indices()),cancelled=cancelled).single()
 }

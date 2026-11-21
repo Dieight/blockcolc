@@ -18,6 +18,7 @@ tasks.register('compileWorldMaterials', Exec) {
     inputs.file 'src/main/materials/instanced.mat.in'
     inputs.file 'src/main/materials/night-field.glsl.in'
     inputs.file 'src/main/materials/source-color.glsl.in'
+    inputs.file 'src/main/materials/directional-shadow.glsl.in'
     inputs.files 'src/main/materials/terminal-color.mat','src/main/materials/color-probe.mat'
     inputs.files 'src/main/materials/bloom-bright.mat','src/main/materials/bloom-blur.mat'
     inputs.files 'src/main/materials/glass-blur.mat','src/main/materials/glass-compose.mat'

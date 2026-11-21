@@ -8,7 +8,7 @@ import kotlin.math.*
 
 /** Static terrain/scenery owns its material and geometry caches. It never
  * shares a mutable compiler with building/entity preparation. */
-internal class NativeWorldRootCompiler {
+internal class NativeWorldRootCompiler(private val compactGeometry:Boolean = true) {
     private val materials=NativeOriginalMaterials()
     private val originals=NativeOriginalPackets(materials)
     private val compiler=OriginalStructureCompiler()
@@ -27,7 +27,7 @@ internal class NativeWorldRootCompiler {
     }
     private fun build(world:WorldTerrainPlan,state:NativeSurfaceState,retainManifest:Boolean,cancelled:()->Boolean):NativePacketSource {
         val target=NativePacketBuilder("world",retainManifest=retainManifest);val coast=world.input.spatial.environment==WorldEnvironment.COAST
-        val geometries=NativePlanarGeometry.terrain(world.terrain,cancelled)
+        val geometries=NativePlanarGeometry.terrain(world.terrain,cancelled,compactOpaqueTops=compactGeometry)
         for((i,geometry)in geometries.withIndex()){check(cancelled);if(geometry==null)continue
             val side=i>=TerrainMaterial.entries.size;val material=if(side)if(i==TerrainMaterial.entries.size)TerrainMaterial.DIRT else TerrainMaterial.STONE else TerrainMaterial.entries[i]
             val surface=resourceAssets?.terrain?.material(material,state,side)

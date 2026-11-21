@@ -58,7 +58,8 @@ import kotlin.math.sin
 
 @Composable fun NativeSeparator(){HorizontalDivider(color=MaterialTheme.colorScheme.outlineVariant)}
 
-internal val NativeSettingActionGap = 4.dp
+internal val NativeSettingActionGap = 2.dp
+internal val NativeSettingsRowHeight = 60.dp
 
 @Composable fun NativeDisclosure(title:String,description:String?=null,expanded:Boolean,onExpandedChange:(Boolean)->Unit,valueLabel:String?=null,leading:(@Composable ()->Unit)?=null,rowHeight:androidx.compose.ui.unit.Dp=52.dp,titleStyle:androidx.compose.ui.text.TextStyle=MaterialTheme.typography.bodyLarge,indicator:(@Composable ()->Unit)?=null,valueStyle:androidx.compose.ui.text.TextStyle=MaterialTheme.typography.bodyLarge,rowPadding:androidx.compose.ui.unit.Dp=8.dp,contentSpacing:androidx.compose.ui.unit.Dp=8.dp,indicatorSize:androidx.compose.ui.unit.Dp=24.dp,trailing:(@Composable ()->Unit)?=null,descriptionStyle:androidx.compose.ui.text.TextStyle=MaterialTheme.typography.bodySmall,enabled:Boolean=true,content:@Composable ColumnScope.()->Unit){
     val ui=LocalNativeUi.current;var turns by remember{mutableIntStateOf(if(expanded)1 else 0)}
@@ -66,7 +67,7 @@ internal val NativeSettingActionGap = 4.dp
     LaunchedEffect(expanded){visibility.targetState=expanded}
     var previous by remember{mutableStateOf(expanded)}
     LaunchedEffect(expanded){if(previous!=expanded){turns++;previous=expanded}}
-    val angle by animateFloatAsState(turns*180f,tween(if(ui.reduceMotion)0 else 200),label="disclosure")
+    val angle by animateFloatAsState(turns*180f,tween(if(ui.reduceMotion)0 else 165),label="disclosure")
     BoxWithConstraints(Modifier.fillMaxWidth()){
       val density=LocalDensity.current;val measure=rememberTextMeasurer()
       val stackValue=valueLabel!=null&&measure.measure(valueLabel,valueStyle,softWrap=false,maxLines=1).size.width>with(density){maxWidth.toPx()}*.4f
@@ -88,7 +89,7 @@ internal val NativeSettingActionGap = 4.dp
         }
         AnimatedVisibility(visibility,modifier=Modifier.graphicsLayer{clip=!visibility.isIdle||!visibility.currentState},
             enter=expandVertically(tween(if(ui.reduceMotion)0 else 200),expandFrom=Alignment.Top,clip=false)+fadeIn(tween(if(ui.reduceMotion)0 else 100)),
-            exit=shrinkVertically(tween(if(ui.reduceMotion)0 else 180),shrinkTowards=Alignment.Top,clip=false)+fadeOut(tween(if(ui.reduceMotion)0 else 80))){
+            exit=shrinkVertically(tween(if(ui.reduceMotion)0 else 165,easing=LinearEasing),shrinkTowards=Alignment.Top,clip=false)+fadeOut(tween(if(ui.reduceMotion)0 else 130))){
             // No unconditional inset: an empty list has zero content height.
             // Clip only in flight, so an idle physical slider can leave its row.
             Column(Modifier.fillMaxWidth(),verticalArrangement=Arrangement.spacedBy(contentSpacing),content=content)

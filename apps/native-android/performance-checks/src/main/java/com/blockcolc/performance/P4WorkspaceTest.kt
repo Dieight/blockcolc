@@ -152,8 +152,18 @@ class P4WorkspaceTest {
                     val dismissed=SystemClock.elapsedRealtimeNanos()
                     shell("cmd statusbar collapse")
                     val available=until(10000){device.currentPackageName==pkg&&world()?.stateDescription?.toString()=="世界已就绪"}
+                    // ColorOS returns accessibility focus before SystemUI stops
+                    // intercepting touches. Check the input window independently.
+                    val shadeWindow=Regex("""name=[^,]*NotificationShade,.*touchableRegion=\[""")
+                    val deadline=SystemClock.elapsedRealtime()+5000
+                    while (shell("dumpsys input").lineSequence().any(shadeWindow::containsMatchIn)) {
+                        check(SystemClock.elapsedRealtime()<deadline) { "Notification shade still owns the touch region" }
+                        SystemClock.sleep(20)
+                    }
+                    val inputReady=SystemClock.elapsedRealtimeNanos()
                     val again=android.graphics.Rect();checkNotNull(world()).getBoundsInScreen(again)
                     report.put("shadeDismissBootNs",dismissed.toString()).put("shadeWorldMs",(available-dismissed)/1e6)
+                        .put("shadeInputReadyMs",(inputReady-dismissed)/1e6)
                         .put("firstShadeBounds",again.toShortString())
                     assertTrue(again.width()>100&&again.height()>100)
                     val x=again.left+again.width()/3

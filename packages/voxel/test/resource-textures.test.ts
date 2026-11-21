@@ -526,7 +526,7 @@ describe("resource-pack voxel texture planning", () => {
     expect(shader.vertexShader).toContain("blockcolcUvFluidAngle");
     expect(shader.vertexShader).toContain("vBlockcolcFluidFlowing");
     expect(shader.vertexShader).toContain("blockcolcFaceSlot > 0.5 && blockcolcFaceSlot < 1.5");
-    expect(shader.vertexShader).toContain("blockcolcFaceFluidMeta > 0.5 ? 0.0");
+    expect(shader.vertexShader).toContain("blockcolcFaceFluidMeta >= 0.0 ? 0.0");
     expect(shader.vertexShader).toContain("blockcolcTintDivisor");
     expect(shader.fragmentShader).toContain("diffuseColor.rgb *= vBlockcolcTint;");
     expect(shader.vertexShader).toContain("/ 2047.0");

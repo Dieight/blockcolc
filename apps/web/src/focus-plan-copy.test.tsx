@@ -9,7 +9,8 @@ it('describes direct habit marathons and deferred allocation truthfully',()=>{
       mode:'marathon' as const,endAtDraft:'12:00',onModeChange:()=>{},onEndAtDraftChange:()=>{},onSelect:()=>{},
       onRoundsChange:()=>{},onClose:()=>{},onConfirm:()=>{},onCancelPlan:async()=>true};
     const direct=renderToStaticMarkup(<FocusPlanSheet {...props}/>);
-    expect(direct).toContain('轮习惯专注，每轮');expect(direct).toContain('45');expect(direct).toContain('完成即推进建筑');
+    expect(direct).toContain('3 轮专注');expect(direct).toContain('按选定时刻结束，末轮可缩短');
+    expect(direct).toContain('完成即推进建筑');
     expect(direct).not.toContain('结束后统一汇报');
     const deferred=renderToStaticMarkup(<FocusPlanSheet {...props} deferredSettlement/>);
     expect(deferred).toContain('结束后统一汇报');expect(deferred).not.toContain('完成即推进建筑');

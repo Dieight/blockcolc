@@ -124,6 +124,7 @@ internal object FocusCommands {
                 if (wouldSeal && focus() != null) fail("ACTIVE_FOCUS_PREVENTS_SEALING")
                 t.put("progressBasisPoints", progress)
                 array("progressReports").put(JSONObject().put("id", reportId).put("projectId", p.getString("id")).put("subtaskId", t.getString("id")).put("focusSessionIds", JSONArray(supporting)).put("progressBasisPoints", progress).put("reportedAt", now))
+                if(settleExtensionTail(m,history,p.getString("id")))supporting.forEach{id->history.getValue(id).put("settledAt",now)}
                 event("SubtaskProgressReported", "subtaskId" to t.getString("id"), "progressBasisPoints" to progress); lock(m, p, progress)
                 if (wouldSeal) seal(m, p)
             }
@@ -190,5 +191,15 @@ internal object FocusCommands {
             array("progressReports").put(r); event("SubtaskProgressReported", "subtaskId" to task.getString("id"), "progressBasisPoints" to progress); lock(m, p, progress)
         }
         entries.forEach { seal(m, project(it.getString("projectId"))!!) }; sessions.forEach { if (!it.has("settledAt")) it.put("settledAt", now) }
+        settleExtensionTail(m,history,host)
+    }
+
+    private fun settleExtensionTail(m:DomainMutation,history:Map<String,JSONObject>,host:String):Boolean=with(m){
+        if(!c.has("partialExtensionSessionId"))return@with false
+        val tail=history[str("partialExtensionSessionId")]?:fail("FOCUS_NOT_FOUND")
+        require(tail.getString("projectId")==host&&tail.getString("status")=="interrupted"&&
+            tail.optString("interruptionReason")=="user-cancelled"&&!tail.has("settledAt"))
+        tail.put("settledAt",now)
+        true
     }
 }

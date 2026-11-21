@@ -10,18 +10,31 @@ if(version!=='56')throw Error('Filament 1.56.0 requires matc 56, got '+version);
 const compilerSha256=createHash('sha256').update(await readFile(compiler)).digest('hex');
 const template=await readFile(path.join(root,'world-filament/src/main/materials/instanced.mat.in'),'utf8');
 const sourceColor=await readFile(path.join(root,'world-filament/src/main/materials/source-color.glsl.in'),'utf8');
+const directionalShading=await readFile(path.join(root,'world-filament/src/main/materials/directional-shadow.glsl.in'),'utf8');
 let field=await readFile(path.join(root,'world-filament/src/main/materials/night-field.glsl.in'),'utf8');
 field=field.replace(/^uniform .*;\r?\n/gm,'');
 for(const [source,target] of Object.entries({bcSkyStars:'skyStars',bcSkyGalaxy:'skyGalaxy',bcSkyAurora:'skyAurora',bcSkyDensity:'skyDensity',bcSkyColdDirection:'skyColdDirection',bcSkyGalaxyNormal:'skyGalaxyNormal'}))
   field=field.replaceAll(source,'materialParams.'+target);
 field=field.replaceAll('bcSkyTime','sourceSkyTime()').replaceAll('bcSkyMeteor','sourceSkyMeteor()');
 await mkdir(output,{recursive:true});
-for(const shading of ['lit','unlit'])for(const blending of ['opaque','masked','transparent','additive']) {
+for(const program of ['lit','unlit','lit-cached-shadow'])for(const blending of ['opaque','masked','transparent','additive']) {
+  const cachedShadow = program === 'lit-cached-shadow';
+  const shading = cachedShadow ? 'lit' : program;
   if(shading==='lit'&&blending==='additive')continue; // No source lit-additive material has been reviewed.
-  const name=shading+'-'+blending;
+  const name=program+'-'+blending;
   // Three NormalBlending attenuates diffuse, specular and emissive by alpha.
   // Filament transparent leaves specular unattenuated; fade matches that source.
   const code=template.replaceAll('@NAME@',name).replaceAll('@SHADING@',shading).replaceAll('@BLENDING@',blending==='transparent'?'fade':blending==='additive'?'add':blending)
+    .replaceAll('@CUSTOM_SHADING@',cachedShadow?'customSurfaceShading : true,':'')
+    .replaceAll('@CACHED_SHADOW_DEFINE@',cachedShadow?'#define BLOCKCOLC_CACHED_SHADOW':'')
+    .replaceAll('@DIRECTIONAL_SHADING@',cachedShadow?directionalShading:'')
+    .replaceAll('@LIGHT_PARAMETERS@',cachedShadow?`
+        ,{ type : sampler2d, name : directionalDepth, precision : high }
+        ,{ type : mat4, name : directionalProjection, precision : high }`:`
+        ,{ type : sampler2d, name : weatherGround, precision : high }
+        ,{ type : mat4, name : lambertHemisphere, precision : high }
+        ,{ type : float3, name : lambertDirection, precision : high }
+        ,{ type : float3, name : lambertDirect, precision : high }`)
     .replaceAll('@STORM_COLOR@','float3(0.693871761,0.799102738,1.0)')
     .replaceAll('@NIGHT_FIELD@',field)
     .replaceAll('@SOURCE_COLOR@',sourceColor)

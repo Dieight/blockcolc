@@ -76,17 +76,17 @@ import java.util.UUID
         }
         NativeSection(ui.text(SettingsCatalog.group("appearance").title)){
             NativeSettingAnchor("主题"){
-            Text(ui.text("主题"),Modifier.padding(top=8.dp),style=MaterialTheme.typography.bodyLarge)
+            NativeSettingsOptionTitle(ui.text("主题"))
             NativeSegments(listOf("system" to ui.text("跟随系统"),"light" to ui.text("浅色"),"dark" to ui.text("深色")),prefs.themeMode,{v->update{it.copy(themeMode=v)}},!s.preferencesReadFailed)
             }
             NativeSeparator()
             NativeSettingAnchor("界面语言"){
-            Text(ui.text("界面语言"),Modifier.padding(top=8.dp),style=MaterialTheme.typography.bodyLarge)
+            NativeSettingsOptionTitle(ui.text("界面语言"))
             NativeSegments(listOf("zh-CN" to "简体中文","en" to "English"),prefs.language,{v->update{it.copy(language=v)}},!s.preferencesReadFailed)
             }
             NativeSeparator()
             NativeSettingAnchor("字体"){
-            Text(ui.text("字体"),Modifier.padding(top=8.dp),style=MaterialTheme.typography.bodyLarge)
+            NativeSettingsOptionTitle(ui.text("字体"))
             NativeSegments(listOf("pixel" to ui.text("像素字体"),"system" to ui.text("系统字体"),"mixed" to ui.text("混合字体")),prefs.fontStyle,{v->update{it.copy(fontStyle=v)}},!s.preferencesReadFailed)
             }
             NativeSeparator()
@@ -96,13 +96,17 @@ import java.util.UUID
         }
         NativeSection(ui.text(SettingsCatalog.group("world").title)){
             NativeSettingAnchor("聚落环境"){
-                val pending=settlement.busy||backdrop?.preparingSettlement==true
-                Row(Modifier.fillMaxWidth().heightIn(min=40.dp),verticalAlignment=Alignment.CenterVertically){
-                    Text(ui.text("聚落环境"),Modifier.weight(1f),style=MaterialTheme.typography.bodyLarge)
+                val pending=settlement.busy||backdrop?.preparingSettlement==true||
+                    backdrop?.let{it.requestedSettlement!=null&&!it.worldSettingFailed}==true
+                LaunchedEffect(settlement.error){if(settlement.error!=null)backdrop?.requestedSettlement=null}
+                NativeSettingsOptionTitle(ui.text("聚落环境")){
                     if(pending)WorldSettingProgress()
                 }
                 NativeSegments(listOf("classic-island" to ui.text("空岛"),"natural-valley" to ui.text("山谷"),"ocean-island" to ui.text("海岛"),"mosaic-coast" to ui.text("海岸")),workspace.settings.environment,{v->
-                    if(v!=workspace.settings.environment)settlement.submit{runtime.dispatch(WorkspaceMutation.Environment(v),it)}
+                    if(v!=workspace.settings.environment)settlement.submit{
+                        backdrop?.requestedSettlement=v
+                        runtime.dispatch(WorkspaceMutation.Environment(v),it)
+                    }
                 },!settlement.busy&&!s.busy)
                 NativeRequestError(settlement)
             }
@@ -118,19 +122,24 @@ import java.util.UUID
                     else if(selectedQuality!=null&&s.message!=null&&!s.preferencesSaving){
                         qualityFailure=s.message
                         selectedQuality=null
+                        backdrop?.requestedQuality=null
                     }
                 }
-                Row(Modifier.fillMaxWidth().heightIn(min=40.dp),verticalAlignment=Alignment.CenterVertically,
-                    horizontalArrangement=Arrangement.spacedBy(NativeSettingActionGap)){
-                    Text(ui.text("光影质量"),Modifier.weight(1f),style=MaterialTheme.typography.bodyLarge)
-                    if(selectedQuality!=null||backdrop?.preparingQuality==true)WorldSettingProgress()
+                NativeSettingsOptionTitle(ui.text("光影质量")){
+                    if(selectedQuality!=null||backdrop?.preparingQuality==true||
+                        backdrop?.let{it.requestedQuality!=null&&!it.worldSettingFailed}==true)WorldSettingProgress()
                     NativeInfoAction(ui.text("光影质量"),ui.text(
-                        "自动根据设备是否低内存及应用堆上限选择画质。此设备自动选择：{0}。",
+                        "根据设备内存和图形能力选择。本机：{0}。",
                         tiers.first{it.first==automatic}.second,
                     ))
                 }
                 NativeSegments(tiers,prefs.lightingQuality,{v->
-                    if(v!=prefs.lightingQuality){qualityFailure=null;selectedQuality=v;update{it.copy(lightingQuality=v)}}
+                    if(v!=prefs.lightingQuality){
+                        qualityFailure=null
+                        selectedQuality=v
+                        backdrop?.requestedQuality=if(v=="auto")automatic else v
+                        update{it.copy(lightingQuality=v)}
+                    }
                 },!s.preferencesReadFailed&&selectedQuality==null)
                 qualityFailure?.let{Text(ui.text(it),color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodySmall)}
             }
@@ -142,7 +151,7 @@ import java.util.UUID
             }
                 NativeSeparator()
             NativeSettingAnchor("施工轮廓"){
-                Text(ui.text("施工轮廓"),Modifier.padding(top=8.dp),style=MaterialTheme.typography.bodyLarge)
+                NativeSettingsOptionTitle(ui.text("施工轮廓"))
                 NativeSegments(listOf("off" to ui.text("关闭"),"current" to ui.text("当前"),"all" to ui.text("全部")),prefs.constructionOutlineVisibility,{v->update{it.copy(constructionOutlineVisibility=v)}},!s.preferencesReadFailed)
             }
                 NativeSeparator()
@@ -213,6 +222,14 @@ import java.util.UUID
     }
 }
 
+@Composable private fun NativeSettingsOptionTitle(title:String,actions:@Composable RowScope.()->Unit={}){
+    Row(Modifier.fillMaxWidth().heightIn(min=48.dp).padding(bottom=4.dp),verticalAlignment=Alignment.CenterVertically,
+        horizontalArrangement=Arrangement.spacedBy(NativeSettingActionGap)){
+        Text(title,Modifier.weight(1f),style=MaterialTheme.typography.bodyLarge)
+        actions()
+    }
+}
+
 @Composable private fun WorldSettingProgress(){
     val ui=LocalNativeUi.current
     Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(6.dp),
@@ -228,7 +245,7 @@ import java.util.UUID
     LaunchedEffect(jump?.serial){if(jump?.opens(key)==true)expanded=true}
     NativeSettingAnchor(key){
         NativeDisclosure(LocalNativeUi.current.text(key),description,expanded,{expanded=it},
-            rowHeight=if(trailing==null)60.dp else 64.dp,contentSpacing=0.dp,trailing=if(expanded||showTrailingWhenCollapsed)trailing else null,content=content)
+            rowHeight=if(trailing==null)NativeSettingsRowHeight else 64.dp,contentSpacing=0.dp,trailing=if(expanded||showTrailingWhenCollapsed)trailing else null,content=content)
     }
 }
 @Composable internal fun NativeSettingSlider(key:String,value:Int,min:Int,max:Int,enabled:Boolean,saving:Boolean=false,error:String?=null,collapsible:Boolean=true,onCommit:(Int)->Unit){

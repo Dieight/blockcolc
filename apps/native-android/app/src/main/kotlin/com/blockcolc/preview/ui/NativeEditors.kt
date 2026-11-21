@@ -137,21 +137,34 @@ private data class SubtaskDraft(val id:String,val value:TextFieldValue)
     }
 }
 
+private data class ManualFocusSheet(val planId:String,val timer:TimerPresentation,val habit:Boolean){
+    val resting get()=timer.surface==TimerSurface.REST
+    val extending get()=timer.extensionStartedAt!=null
+    val deferred get()=timer.mode in setOf(PlanMode.MINIMAL,PlanMode.MARATHON)
+}
+
 @Composable fun NativeManualEditor(open:Boolean,s:WorkspaceUiState,runtime:WorkspaceActions,onClose:()->Unit){
     val ui=LocalNativeUi.current;val request=rememberNativeRequest(s,onClose)
-    var operation by rememberSaveable(s.planId){mutableStateOf<String?>(null)}
-    val timer=s.timer;val resting=timer?.surface==TimerSurface.REST
-    val extending=timer?.extensionStartedAt!=null
-    val deferred=timer?.mode in setOf(PlanMode.MINIMAL,PlanMode.MARATHON)
-    val habit=s.choices.find{it.id==timer?.projectId}?.habit==true
+    var operation by rememberSaveable(open,s.planId){mutableStateOf<String?>(null)}
+    val entry=remember(open,s.planId){
+        val planId=s.planId
+        val timer=s.timer
+        if(open&&planId!=null&&timer!=null)ManualFocusSheet(planId,timer,s.choices.any{it.id==timer.projectId&&it.habit})else null
+    }
     val options=listOf("external-interruption" to "外部打扰","task-blocked" to "任务受阻","fatigue" to "需要休息","priority-changed" to "优先级变化","device-or-app" to "设备或应用问题","other" to "其他")
-    NativeSheet(if(open)s.planId else null,{ui.text(when{
-        extending->"加时专注"
+    NativeSheet(entry,{item->ui.text(when{
+        item.extending->"加时专注"
         operation=="interrupt"->"这次为什么中断？"
         operation=="cancel"->"取消整个多轮计划？"
-        resting->"结束休息"
+        item.resting->"结束休息"
         else->"如何结束这次专注？"
-    })},onClose,!request.busy){planId->
+    })},onClose,!request.busy){item->
+        val planId=item.planId
+        val timer=item.timer
+        val resting=item.resting
+        val extending=item.extending
+        val deferred=item.deferred
+        val habit=item.habit
         var category by rememberSaveable(planId){mutableStateOf<String?>(null)}
         var note by rememberSaveable(planId,stateSaver=TextFieldValue.Saver){mutableStateOf(TextFieldValue())}
         val enabled=!request.busy&&!s.busy

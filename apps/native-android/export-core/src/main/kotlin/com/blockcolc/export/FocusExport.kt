@@ -15,8 +15,29 @@ object FocusExport {
     fun project(state:StoredState,from:LocalDate,now:Long):Pair<JSONObject,JSONArray>{
         return projectData(state.domain.focusControlJson(),state.recovery,from,now)
     }
-    fun presence(state:StoredState,now:Long):JSONObject=
-        projectData(state.domain.focusControlJson(),state.recovery,date(now),now,cloudPresence=true).first.getJSONObject("value")
+    fun presence(state:StoredState,now:Long):JSONObject {
+        val data=state.domain.focusControlJson()
+        return liveSnapshot(data,state.recovery,now,presenceDayDuration(data.getJSONArray("focusHistory"),now),cloudPresence=true)
+    }
+
+    internal fun presenceDayDuration(history:JSONArray,now:Long):Long {
+        val since=date(now).atStartOfDay().toInstant(zone).toEpochMilli()
+        val ranges=buildList{
+            for(index in 0 until history.length()){
+                val session=history.getJSONObject(index)
+                val start=DomainTime.millis(session.getString("startedAt"))
+                val end=minOf(now,start+session.getLong("actualDurationMs"))
+                val from=maxOf(since,start)
+                if(end>from)add(from to end)
+            }
+        }.sortedBy{it.first}
+        var total=0L
+        var cursor=since
+        for((from,to) in ranges){
+            if(to>cursor){total+=to-maxOf(cursor,from);cursor=to}
+        }
+        return total
+    }
 
     internal fun projectData(data:JSONObject,recovery:RecoveryContext,from:LocalDate,now:Long,cloudPresence:Boolean=false):Pair<JSONObject,JSONArray>{
         val today=date(now);require(!from.isAfter(today))
@@ -40,7 +61,13 @@ object FocusExport {
             val unresolved=active!=null&&DomainTime.millis(active.getString("startedAt"))<upper&&DomainTime.millis(active.getString("endsAt"))>lower
             days.put(JSONObject().put("date",day.toString()).put("actualFocusMs",totals[day]?:0).put("confirmed",upper<=now&&!unresolved));day=day.plusDays(1)
         }
+        val snapshot=liveSnapshot(data,recovery,now,totals[today]?:0,cloudPresence)
+        return JSONObject().put("capturedAt",DomainTime.format(now)).put("value",snapshot) to days
+    }
+
+    private fun liveSnapshot(data:JSONObject,recovery:RecoveryContext,now:Long,todayDuration:Long,cloudPresence:Boolean):JSONObject {
         var start:Long?=null;var end:Long?=null;var name:String?=null
+        val active=data.optJSONObject("activeFocusSession")
         if(active!=null){
             start=DomainTime.millis(active.getString("startedAt"));end=DomainTime.millis(active.getString("endsAt"))
             name=when{active.optBoolean("deferredSettlement")->"极简模式";active.optBoolean("marathon")->"马拉松";else->"专注中"}
@@ -63,8 +90,7 @@ object FocusExport {
             }
         }
         if(start!=null)require((end==null||end>start)&&start<=now)
-        val snapshot=JSONObject().put("currentName",name?:JSONObject.NULL).put("startedAt",start?.let(DomainTime::format)?:JSONObject.NULL)
-            .put("estimatedElapsedMs",if(start==null)0 else minOf(now,end?:now)-start).put("estimatedEndsAt",end?.let(DomainTime::format)?:JSONObject.NULL).put("todayActualFocusMs",totals[today]?:0)
-        return JSONObject().put("capturedAt",DomainTime.format(now)).put("value",snapshot) to days
+        return JSONObject().put("currentName",name?:JSONObject.NULL).put("startedAt",start?.let(DomainTime::format)?:JSONObject.NULL)
+            .put("estimatedElapsedMs",if(start==null)0 else minOf(now,end?:now)-start).put("estimatedEndsAt",end?.let(DomainTime::format)?:JSONObject.NULL).put("todayActualFocusMs",todayDuration)
     }
 }

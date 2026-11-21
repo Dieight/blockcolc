@@ -51,6 +51,42 @@ class NativeOriginalPacketsTest {
         assertEquals(2.2f,coast.surface.optics.night.gain,0f)
         val top=factory.terrain(TerrainMaterial.DIRT,state);val side=factory.terrain(TerrainMaterial.DIRT,state,side=true);assertEquals(top.color.red*.65f,side.color.red,0f)
     }
+    @Test fun opaqueContactsKeepAoAndRetainNewlyExposedFacesAfterAnOwnerUpdate(){
+        val neighbors = listOf(1 to 0, -1 to 0, 0 to 1, 0 to -1)
+        val voxels = listOf(RenderVoxel(0.0,0.0,0.0,"stone",0),
+            RenderVoxel(0.0,1.0,0.0,"stone",0), RenderVoxel(0.0,-1.0,0.0,"stone",0)) +
+            neighbors.map { (x,z) -> RenderVoxel(x.toDouble(),0.0,z.toDouble(),"stone",0) }
+        val recipe = BuildingPreparation.staticStructure(voxels,"occluded-center")
+        val mesh = OriginalStructureCompiler().compile(recipe)
+        val packets = NativeOriginalPackets()
+        fun packed(excluded: Set<Int>, compact: Boolean): Map<Triple<Float,Float,Float>,Int> {
+            val result = NativePacketBuilder("building:contact").also { builder ->
+                packets.append(builder,mesh,NativeStructurePlacement(BlockPoint(0.0,0.0,0.0)),state,
+                    skippedMembers=excluded,cubeContacts=voxels.takeIf { compact })
+            }.build().world!!
+            return buildMap {
+                for (packet in result.packets) {
+                    val rows = result.instanceRows(packet)
+                    repeat(packet.count) { index ->
+                        val offset = index*96
+                        put(Triple(rows.getFloat(offset+48),rows.getFloat(offset+52),rows.getFloat(offset+56)),
+                            rows.getFloat(offset+80).toInt())
+                        assertEquals(0f,rows.getFloat(offset+88),0f)
+                        assertEquals(0f,rows.getFloat(offset+92),0f)
+                    }
+                }
+            }
+        }
+        val center = Triple(0f,0f,0f)
+        val stock = packed(emptySet(),false)
+        val compact = packed(emptySet(),true)
+        assertEquals(stock.keys-center,compact.keys)
+        compact.forEach { (position,ao) -> assertEquals(stock[position],ao and 4095) }
+        val removed = setOf(1)
+        val exposed = packed(removed,true)
+        assertEquals(packed(removed,false).keys,exposed.keys)
+        assertEquals(4,(exposed.getValue(center)-524288) shr 12)
+    }
     @Test fun cancelledPackingDoesNotReturnAPartialOwner(){
         val recipe=BuildingPreparation.staticStructure(listOf(RenderVoxel(0.0,0.0,0.0,"stone",0)),"cancellation");val mesh=OriginalStructureCompiler().compile(recipe)
         assertThrows(CancellationException::class.java){NativeOriginalPackets().build("building:cancelled",mesh,NativeStructurePlacement(BlockPoint(0.0,0.0,0.0)),state,cancelled={true})}

@@ -15,7 +15,13 @@ class NativePaletteTest {
                 colors.onError to colors.error,colors.onErrorContainer to colors.errorContainer,colors.error to colors.surface,
                 colors.inverseOnSurface to colors.inverseSurface)
             for((ink,paper)in pairs)assertTrue("Insufficient semantic contrast: $ink on $paper",contrast(ink,paper)>=4.5f)
-            assertEquals("Glass descriptions use the same high-contrast ink",colors.onSurface,colors.onSurfaceVariant)
+            for(ink in listOf(Color.Black,Color.White)){
+                val glass=colors.withGlassInk(ink)
+                assertEquals(ink,glass.onSurface)
+                assertEquals(ink,glass.onSurfaceVariant)
+                assertEquals(ink,glass.onBackground)
+                assertEquals(colors.primary,glass.primary)
+            }
         }
     }
     @Test fun nativeControlsDoNotInheritUnspecifiedMaterialAccentOrContainerRoles(){

@@ -67,7 +67,7 @@ data class PlanEditorModel(val token:String=UUID.randomUUID().toString(),val pro
     NativeSheet(model,{ui.text("调整")},onClose,dismissible=pending==null,heading={
         if(choosingTask)NativeIconAction(ui.text("返回计划"),"back",{choosingTask=false})
         NativeText(ui.text(if(choosingTask)"本次专注"else"调整"),NativeTextRole.TITLE,Modifier.weight(1f))
-    }){entry->
+    },contentSpacing=if(choosingTask)0.dp else 12.dp){entry->
         var project by rememberSaveable(entry.token){mutableStateOf(entry.projectId?:s.activeProject)}
         var task by rememberSaveable(entry.token){mutableStateOf(entry.taskId)}
         var mode by rememberSaveable(entry.token){mutableStateOf(entry.mode.name)}
@@ -76,14 +76,17 @@ data class PlanEditorModel(val token:String=UUID.randomUUID().toString(),val pro
         val owner=s.choices.find{it.id==project};val type=PlanMode.valueOf(mode)
         if(choosingTask){
             androidx.activity.compose.BackHandler{choosingTask=false}
-            for(p in s.choices){key(p.id){
-                NativeSeparator()
+            for((index,p) in s.choices.withIndex()){key(p.id){
+                if(index>0)NativeSeparator()
                 if(p.habit)FormalFocusChoice(p.title,null,project==p.id,pending==null&&p.canStart,habit=true){project=p.id;task=null;choosingTask=false}
                 else {
                     var expanded by rememberSaveable(entry.token,p.id){mutableStateOf(p.id==project)}
-                    NativeDisclosure(p.title,null,expanded,{expanded=it},titleStyle=MaterialTheme.typography.titleMedium,rowPadding=8.dp,contentSpacing=0.dp){
-                        if(p.tasks.isNotEmpty())Column(Modifier.padding(start=12.dp,bottom=8.dp)){
-                            for(t in p.tasks)FormalFocusChoice(t.title,ui.text("进度 {0}%",(t.progress+50)/100),project==p.id&&task==t.id,pending==null){project=p.id;task=t.id;choosingTask=false}
+                    NativeDisclosure(p.title,null,expanded,{expanded=it},rowHeight=NativeSettingsRowHeight,contentSpacing=0.dp){
+                        if(p.tasks.isNotEmpty())Column(Modifier.padding(start=12.dp)){
+                            for(t in p.tasks){
+                                NativeSeparator()
+                                FormalFocusChoice(t.title,ui.text("进度 {0}%",(t.progress+50)/100),project==p.id&&task==t.id,pending==null){project=p.id;task=t.id;choosingTask=false}
+                            }
                         }
                     }
                 }
@@ -117,10 +120,10 @@ data class PlanEditorModel(val token:String=UUID.randomUUID().toString(),val pro
 
 @Composable private fun FormalFocusChoice(title:String,detail:String?,selected:Boolean,enabled:Boolean,habit:Boolean=false,onClick:()->Unit){
     val ink=LocalContentColor.current
-    Row(Modifier.fillMaxWidth().heightIn(min=if(habit)52.dp else 48.dp).drawBehind{if(selected&&!habit)drawRect(ink,Offset.Zero,androidx.compose.ui.geometry.Size(2.dp.toPx(),size.height))}
+    Row(Modifier.fillMaxWidth().heightIn(min=NativeSettingsRowHeight).drawBehind{if(selected&&!habit)drawRect(ink,Offset.Zero,androidx.compose.ui.geometry.Size(2.dp.toPx(),size.height))}
         .clickable(enabled=enabled,role=Role.RadioButton,interactionSource=remember{MutableInteractionSource()},indication=null,onClick=onClick).semantics{this.selected=selected}.padding(horizontal=if(habit)0.dp else 10.dp,vertical=8.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(8.dp)){
         Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(3.dp)){
-            if(habit)Text(title,style=MaterialTheme.typography.titleMedium,color=if(enabled)ink else MaterialTheme.colorScheme.onSurfaceVariant)
+            if(habit)Text(title,style=MaterialTheme.typography.bodyLarge,color=if(enabled)ink else MaterialTheme.colorScheme.onSurfaceVariant)
             else NativeText(title,NativeTextRole.BODY,color=if(enabled)ink else MaterialTheme.colorScheme.onSurfaceVariant)
             if(detail!=null)NativeText(detail,NativeTextRole.CAPTION)
         }
@@ -178,6 +181,10 @@ data class PlanEditorModel(val token:String=UUID.randomUUID().toString(),val pro
     val ordinary=pool.mode==PlanMode.ROUNDS
     val valid=runCatching{draft.validate(pool)}.isSuccess
     val assigned=runCatching{draft.assignedDurations(pool)}.getOrDefault(emptyMap())
+    @Composable fun assignedTime(key:String):String{
+        val ms=assigned[key]?:0L
+        return if(ms%60_000L==0L)formatDuration(ms)else formalClock(ms,countUp=true)
+    }
     if(ordinary){
         val target=pool.targets.singleOrNull()?:return
         var selected by rememberNativePageState<Int?>("report/${pool.planId}/selected"){null}
@@ -207,7 +214,7 @@ data class PlanEditorModel(val token:String=UUID.randomUUID().toString(),val pro
     }
     var help by rememberNativePageState("report/${pool.planId}/help"){false}
     NativeDisclosure(ui.text("轮次如何记录"),null,help,{help=it},rowHeight=44.dp,titleStyle=MaterialTheme.typography.bodySmall,indicator={NativeText(if(help)"−"else"+",NativeTextRole.CAPTION)}){
-        NativeText(ui.text("每轮只计入一个目标，按完成顺序记录时长。未选择则记为未分配；保持进度也可计入轮次。"),NativeTextRole.CAPTION)
+        NativeText(ui.text("每轮只计入一个目标。不足一轮的时长均分到已分配轮次；保持进度也可计入轮次。"),NativeTextRole.CAPTION)
     }
     fun progress(target:ReportTarget,value:Int){
         val existing=draft.tasks.find{it.taskId==target.taskId}
@@ -227,7 +234,7 @@ data class PlanEditorModel(val token:String=UUID.randomUUID().toString(),val pro
                         val current=draft.habits.find{it.projectId==project}?.rounds?:0
                         val maximum=minOf(target.maxRounds,pool.totalRounds-(draft.allocated-current).toInt()).coerceAtLeast(0)
                         FormalRoundStepper(ui.text("计入轮数"),current,0,maximum,!pending&&!delivered){next->draft=draft.copy(habits=draft.habits.filterNot{it.projectId==project}+if(next==0)emptyList()else listOf(HabitAllocation(project,next)))}
-                        NativeText((if(current>0)ui.text("预计实际投入 {0}",formatDuration(assigned["habit:$project"]?:0))else ui.text("默认 0 轮；展开不会自动分配"))+" · "+if(draft.allocated>=pool.totalRounds)ui.text("全部轮次已分配")else ui.text("还剩 {0} 轮",pool.totalRounds-draft.allocated),NativeTextRole.CAPTION)
+                        NativeText((if(current>0)ui.text("预计实际投入 {0}",assignedTime("habit:$project"))else ui.text("默认 0 轮；展开不会自动分配"))+" · "+if(draft.allocated>=pool.totalRounds)ui.text("全部轮次已分配")else ui.text("还剩 {0} 轮",pool.totalRounds-draft.allocated),NativeTextRole.CAPTION)
                     }else{
                         if(!ordinary){NativeSeparator();NativeText(target.title,NativeTextRole.BODY);NativeText(ui.text("当前")+" ${target.progress/100}%（"+ui.text(if(target.progress==0)"尚未推进"else"已有建筑进度")+"）",NativeTextRole.CAPTION)}
                         val allocation=draft.tasks.find{it.taskId==target.taskId}
@@ -240,7 +247,7 @@ data class PlanEditorModel(val token:String=UUID.randomUUID().toString(),val pro
                         }
                         if(!ordinary&&allocation!=null){
                             FormalRoundStepper(ui.text("计入轮数"),allocation.rounds,0,(pool.totalRounds-draft.allocated+allocation.rounds).toInt().coerceAtLeast(0),!pending&&!delivered){next->draft=draft.copy(tasks=draft.tasks.map{if(it.taskId==target.taskId)it.copy(rounds=next)else it})}
-                            if(allocation.rounds>0)NativeText(ui.text("预计实际投入 {0}",formatDuration(assigned["task:${target.taskId}"]?:0)),NativeTextRole.CAPTION)
+                            if(allocation.rounds>0)NativeText(ui.text("预计实际投入 {0}",assignedTime("task:${target.taskId}")),NativeTextRole.CAPTION)
                         }
                     }
                 }}

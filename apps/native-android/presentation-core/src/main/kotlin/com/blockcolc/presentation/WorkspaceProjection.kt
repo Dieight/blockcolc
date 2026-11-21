@@ -70,13 +70,13 @@ data class WorkspaceProjection(val today:String,val settings:WorkspaceSettings,v
  * memories can then be computed independently from the same snapshot. */
 class WorkspacePreparation internal constructor(val summary:WorkspaceProjection,private val state:JSONObject,private val sessionDates:Map<String,String>){
     fun complete():WorkspaceProjection{
-        val attribution=FocusProjection.attribution(state).getJSONArray("sessions").let{a->List(a.length()){a.getJSONObject(it)}}
+        val attribution=FocusProjection.reportedAttribution(state).getJSONArray("sessions").let{a->List(a.length()){a.getJSONObject(it)}}
         val byDate=attribution.groupBy{sessionDates.getValue(it.getString("sessionId"))}
         val days=summary.days.map{day->
             val targets=byDate[day.date].orEmpty().groupBy{a->if(a.getString("kind")=="unallocated")"unknown" else a.getString("kind")+":"+a.getString("targetId")}.map{(key,items)->
                 val first=items.first();val unknown=first.getString("kind")=="unallocated"
                 TimeTarget(key,if(first.isNull("projectId"))null else first.getString("projectId"),if(first.isNull("subtaskId"))null else first.getString("subtaskId"),
-                    first.getString("projectTitle"),if(first.isNull("targetTitle"))null else first.getString("targetTitle"),items.sumOf{it.getLong("actualDurationMs")},unknown)
+                    first.getString("projectTitle"),if(first.isNull("targetTitle"))null else first.getString("targetTitle"),items.sumOf(FocusProjection::reportedDuration),unknown)
             }.sortedByDescending{it.durationMs}
             day.copy(targets=targets)
         }

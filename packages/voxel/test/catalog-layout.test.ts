@@ -140,11 +140,9 @@ describe("built-in blueprint catalog", () => {
     }
   });
 
-  it("gives the checked-in buildings exterior torch light for the night scene", () => {
+  it("keeps the three starter blueprints free of added exterior torches", () => {
     for (const { blueprint } of CORE_BUILTIN_BLUEPRINT_CATALOG) {
-      const lights = blueprint.voxels.filter((voxel) => voxel.emissiveLevel && voxel.emissiveLevel > 0);
-      expect(lights.length).toBeGreaterThanOrEqual(2);
-      expect(lights.every((voxel) => voxel.sourceBlockId === "minecraft:torch")).toBe(true);
+      expect(blueprint.voxels.some((voxel) => voxel.sourceBlockId === "minecraft:torch" && (voxel.emissiveLevel ?? 0) > 0)).toBe(false);
     }
   });
 

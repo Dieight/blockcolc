@@ -1,6 +1,7 @@
 material {
     name : "blockcolc-@NAME@",
     shadingModel : @SHADING@,
+    @CUSTOM_SHADING@
     blending : @BLENDING@,
     vertexDomain : object,
     flipUV : false,
@@ -55,15 +56,13 @@ material {
         ,{ type : float2, name : viewportSize, precision : high }
         ,{ type : int, name : motionKind }
         ,{ type : mat4, name : motionData, precision : high }
-        ,{ type : sampler2d, name : weatherGround, precision : high }
-        ,{ type : mat4, name : lambertHemisphere, precision : high }
-        ,{ type : float3, name : lambertDirection, precision : high }
-        ,{ type : float3, name : lambertDirect, precision : high }
+        @LIGHT_PARAMETERS@
         ,{ type : float4, name : stormFlash, precision : high }
         ,{ type : mat4, name : nativeSkyData, precision : high }
     ]
 }
 vertex {
+    @CACHED_SHADOW_DEFINE@
     precision highp float;
     void materialVertex(inout MaterialVertexInputs material) {
         // The source patch intentionally shades object-space cube faces, not
@@ -72,6 +71,18 @@ vertex {
         material.sourceAtlas = float4(0.0);
         @SOURCE_NORMAL@
         int row = int(getInstanceIndex());
+        float4 auxiliary = texelFetch(materialParams_instanceData, ivec2(5, row), 0);
+        if (materialParams.motionKind == 0 && auxiliary.x >= 524288.0 && auxiliary.x < 786432.0) {
+            int faces = (int(auxiliary.x) - 524288) >> 12;
+            float3 normal = material.sourceNormal.xyz;
+            int face = abs(normal.x) > 0.5 ? (normal.x > 0.0 ? 0 : 1)
+                : abs(normal.y) > 0.5 ? (normal.y > 0.0 ? 2 : 3) : (normal.z > 0.0 ? 4 : 5);
+            if ((faces & (1 << face)) == 0) {
+                // The adjoining opaque cube covers this face in both color and depth passes.
+                material.worldPosition = vec4(0.0, 0.0, 0.0, 1.0);
+                return;
+            }
+        }
         mat4 transform = mat4(
             texelFetch(materialParams_instanceData, ivec2(0, row), 0),
             texelFetch(materialParams_instanceData, ivec2(1, row), 0),
@@ -80,7 +91,6 @@ vertex {
         // Apply the instance in model space BEFORE Filament's camera-relative origin.
         // Rotating an already shifted worldPosition moves repeated buildings off-map.
         float4 localPosition = getPosition();
-        float4 auxiliary = texelFetch(materialParams_instanceData, ivec2(5, row), 0);
         if (materialParams.motionKind == 2 || materialParams.motionKind == 3) {
             if (materialParams.motionKind == 3) localPosition.xyz *= materialParams.motionData[1].x * (0.65 + auxiliary.x * 0.9);
             else localPosition.xz *= materialParams.motionData[1].x;
@@ -112,6 +122,7 @@ vertex {
             material.worldPosition.xz += center - cloud.xy;
             material.sourceNormal = float4(normalize(getWorldFromModelNormalMatrix() * transpose(inverse(mat3(transform))) * getCustom0().xyz), 0.0);
         }
+        #ifndef BLOCKCOLC_CACHED_SHADOW
         if (materialParams.motionKind == 2 || materialParams.motionKind == 3) {
             // Same per-vertex ground lookup as source. Instance base y is a
             // seed pose, not the ground. Camera motion updates only this field.
@@ -132,6 +143,7 @@ vertex {
             if (material.sourcePosition.w < 0.5) p=vec3(0.0);
             material.worldPosition = getWorldFromModelMatrix() * vec4(p,1.0);
         }
+        #endif
         if (materialParams.billboardMode != 0) {
             mat4 model = getWorldFromModelMatrix() * transform;
             vec3 center = model[3].xyz;
@@ -202,6 +214,8 @@ fragment {
     }
     @NIGHT_FIELD@
     @SOURCE_COLOR@
+    @CACHED_SHADOW_DEFINE@
+    @DIRECTIONAL_SHADING@
     float3 sourceReflection(float roughness, float3 incident, float3 normal) {
         float reflective = 1.0 - smoothstep(0.34, 0.6, roughness);
         if (reflective <= 0.001) return float3(0.0);
@@ -242,6 +256,7 @@ fragment {
         }
         if (base.a < materialParams.alphaCutoff) discard;
         @ALPHA@
+        #ifndef BLOCKCOLC_CACHED_SHADOW
         if (materialParams.motionKind == 1) {
             float3 n=normalize(variable_sourceNormal.xyz);
             float3 light=materialParams.lambertHemisphere[0].xyz + materialParams.lambertHemisphere[3].xyz*n.x
@@ -263,6 +278,7 @@ fragment {
             }
             base.rgb *= light;
         }
+        #endif
         material.baseColor = base;
         if (materialParams.skyBackdrop) {
             material.baseColor.rgb += materialParams.floatingSky

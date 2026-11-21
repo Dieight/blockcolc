@@ -41,10 +41,10 @@ class P3GeneratedWorldTest {
             "subtasks" to JSONArray().put(JSONObject().put("id","task-$id").put("title","P3 task $id")))
         return state
     }
-    private fun present(scene:NativeGeneratedScene):JSONObject {
+    private fun present(scene:NativeGeneratedScene,fixedCamera:Boolean=false):JSONObject {
         val done=CountDownLatch(1);val error=AtomicReference<String>()
         foreground.scenario.onActivity{activity->activity.onGeneratedFrame={id->if(id==scene.presentationIdentity)done.countDown()}
-            activity.onGeneratedError={error.set(it);done.countDown()};activity.presentGenerated(scene)}
+            activity.onGeneratedError={error.set(it);done.countDown()};activity.presentGenerated(scene,fixedCamera)}
         assertTrue("Native generated world did not submit a frame",done.await(80,TimeUnit.SECONDS));assertNull(error.get())
         val result=AtomicReference<JSONObject>();val diagnostic=CountDownLatch(1)
         foreground.scenario.onActivity{it.generatedWorld!!.generatedDiagnostics{value->result.set(value);diagnostic.countDown()}}
@@ -281,10 +281,12 @@ class P3GeneratedWorldTest {
         }finally{builder.clear();compiler.clear()}
     }
     @Test fun advancingOneActualBuildingKeepsOtherOwnersAndTheirGpuResources(){
-        val builder=WorldPlanBuilder();val compiler=NativeWorldPacketCompiler();var state=facts();var revision=0L
+        val builder=WorldPlanBuilder();val compiler=NativeWorldPacketCompiler()
+        var state=apply(facts(),"SwitchActiveProject","projectId" to "a")
+        var revision=0L
         fun render():NativeWorldFrame=compiler.prepare(WorldRequestIdentity("synthetic-local.db",0,revision++),builder.terrain(builder.prepare(WorldFacts.from(state))),options)
         try{val first=render();val before=present(first.scene)
-            state=apply(state,"SwitchActiveProject","projectId" to "a");state=apply(state,"StartFocus","sessionId" to "s","subtaskId" to "task-a","plannedDurationMs" to 1000)
+            state=apply(state,"StartFocus","sessionId" to "s","subtaskId" to "task-a","plannedDurationMs" to 1000)
             state=apply(state,"CompleteFocus",at=now+1000);state=apply(state,"ReportSubtaskProgress","reportId" to "report","subtaskId" to "task-a","focusSessionIds" to JSONArray(listOf("s")),"progressBasisPoints" to 5000,at=now+1000)
             val next=render();assertSame(first.scene.sources.first(),next.scene.sources.first());val after=present(next.scene)
             val old=before.getJSONObject("resources");val current=after.getJSONObject("resources")
@@ -335,7 +337,27 @@ class P3GeneratedWorldTest {
                 for(i in 1..16){send(android.view.MotionEvent.ACTION_MOVE,200f+dx*i/16,300f+dy*i/16);android.os.SystemClock.sleep(35)}
                 send(android.view.MotionEvent.ACTION_UP,200f+dx,300f+dy)
             }
-            drag(240f,0f);val orbit=diagnostic(view);drag(0f,220f)
+            fun zoomOut() {
+                val down=android.os.SystemClock.uptimeMillis()
+                val properties=Array(2){index->android.view.MotionEvent.PointerProperties().apply{id=index;toolType=android.view.MotionEvent.TOOL_TYPE_FINGER}}
+                fun send(action:Int, count:Int, span:Float) {
+                    val points=Array(2){index->android.view.MotionEvent.PointerCoords().apply{
+                        x=360f+(if(index==0)-span else span)/2;y=320f;pressure=1f;size=1f
+                    }}
+                    instrumentation.runOnMainSync {
+                        val event=android.view.MotionEvent.obtain(down,android.os.SystemClock.uptimeMillis(),action,count,properties,points,
+                            0,0,1f,1f,0,0,android.view.InputDevice.SOURCE_TOUCHSCREEN,0)
+                        try{assertTrue(view.onTouchEvent(event))}finally{event.recycle()}
+                    }
+                }
+                val pointer=1 shl android.view.MotionEvent.ACTION_POINTER_INDEX_SHIFT
+                send(android.view.MotionEvent.ACTION_DOWN,1,360f)
+                send(android.view.MotionEvent.ACTION_POINTER_DOWN or pointer,2,360f)
+                for(i in 1..16){send(android.view.MotionEvent.ACTION_MOVE,2,360f-i*9f);android.os.SystemClock.sleep(35)}
+                send(android.view.MotionEvent.ACTION_POINTER_UP or pointer,2,216f)
+                send(android.view.MotionEvent.ACTION_UP,1,216f)
+            }
+            drag(240f,0f);val orbit=diagnostic(view);zoomOut()
             val zoom=awaitDiagnostic(view){it.getJSONObject("camera").getDouble("distance")>orbit.getJSONObject("camera").getDouble("distance")*1.2}
             assertNotEquals(before.getJSONObject("camera").getDouble("azimuth"),orbit.getJSONObject("camera").getDouble("azimuth"))
             for(state in listOf(orbit,zoom)){
@@ -526,7 +548,7 @@ class P3GeneratedWorldTest {
             val eye=BlockPoint(0.0,60.0,30.0);val direction=checkNotNull(day.environment.sky).sunDirection
             val camera=NativeSceneCamera(BlockPoint(eye.x+direction.x*100,eye.y+direction.y*100,eye.z+direction.z*100),eye,220.0,40.0,day.scene.camera.volume)
             val scene=day.scene.withPresentation(camera=camera)
-            val before=present(scene);assertEquals(3,before.getJSONObject("resources").getInt("skyPackets"))
+            val before=present(scene,fixedCamera=true);assertEquals(3,before.getJSONObject("resources").getInt("skyPackets"))
             val reference=AtomicReference<com.blockcolc.world.filament.NativeWorldView>();foreground.scenario.onActivity{reference.set(it.generatedWorld)};val view=checkNotNull(reference.get())
             val visible=before.getJSONObject("resources").getJSONObject("nativeSkyVisible")
             assertTrue(visible.getBoolean("DOME"));assertTrue(visible.getBoolean("SUN"));assertFalse(visible.getBoolean("MOON"));assertEquals(0.0,before.getDouble("nightClockSeconds"),0.0)

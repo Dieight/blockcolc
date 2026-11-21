@@ -20,6 +20,7 @@ class PacketRenderer(private val engine: Engine, private val scene: Scene, priva
                      private val cullingEnabled: Boolean = true, private val surfaceEffectsEnabled: Boolean = true,
                      private val surfaceOpticsEnabled: Boolean = true, private val nightReflectionsEnabled:Boolean = true,
                      private val fogEnabled:Boolean=true,initialCloudSeconds:Float=0f,initialWeatherElapsedMs:Float=0f) {
+    internal var directionalShadows: DirectionalShadowCache? = null
     private data class GeometryGpu(val vertex: VertexBuffer, val index: IndexBuffer)
     private var vertexUploadChunks=0L
     private var peakVertexUploadBytes=0
@@ -29,13 +30,16 @@ class PacketRenderer(private val engine: Engine, private val scene: Scene, priva
                                  val atlasKeys:List<String> = emptyList(),var coverage:SurfaceCoverage,val fog:Boolean,
                                  val environment:NativeMaterialBinding?=null,val emission:LinearRgb=LinearRgb.BLACK,val emissionStrength:Float=0f,
                                  val roughness:Float=.9f,val metallic:Float=0f,val lit:Boolean=true,val cloudOriginSeconds:Float?=null,val weatherOriginMs:Float?=null,var skyVisible:Boolean=true,val toneMapped:Boolean=true,
-                                 val paper:Boolean=false)
+                                 val paper:Boolean=false,val staticCaster:Boolean=false,val casterDepthOverride:Boolean=false)
     private data class Source(val metadata: JSONObject, val world: WorldPackets, val geometryKeys: List<String>,
                               val surfaceCoverage: List<SurfaceCoverage>,val lighting:SourceLighting,val footprint:GpuFootprint,
                               val weather:SourceWeatherContext?,val groundImages:Map<Int,GroundHeights>,val animalInput:AnimalHabitatInput?,val animalInitial:AnimalInitialState?,val animalScale:Double,
                               val atlasTimelines:List<AtlasTimeline>,val nativePixels:Map<Int,NativePixelTexture> = emptyMap(),
                               val nativeBindings:List<NativeMaterialBinding?> = emptyList(),val nativeSurfaceState:NativeSurfaceState?=null,
-                              val nativeCloudColor:LinearRgb?=null,val nativeLayer:NativePacketLayer?=null,val nativeGround:NativeGroundTexture?=null,val nativeSkyState:NativeSkyState?=null,val nativeDirect:Boolean=false,val nativeOwner:String?=null)
+                              val nativeCloudColor:LinearRgb?=null,val nativeLayer:NativePacketLayer?=null,val nativeGround:NativeGroundTexture?=null,val nativeSkyState:NativeSkyState?=null,val nativeDirect:Boolean=false,val nativeOwner:String?=null) {
+        val animatedShadowGeometry by lazy(LazyThreadSafetyMode.NONE) { mutableMapOf<Pair<Int, Int>, Boolean>() }
+        val shadowMasks by lazy(LazyThreadSafetyMode.NONE) { atlasTimelines.associate { it.texture to ShadowAtlasMask(it) } }
+    }
     private class AtlasGpu(val timeline:AtlasTimeline,val framesKey:String,val blendKey:String,val owner:String?=null){
         val frames=AtlasByteUploads(timeline.pixels.size);val blends=AtlasByteUploads(timeline.blendPixels.size)
         fun close(){frames.close();blends.close()}
@@ -409,15 +413,18 @@ class PacketRenderer(private val engine: Engine, private val scene: Scene, priva
         val a=(if(kind=="land")agents.lastOrNull()else agents.firstOrNull())?:error("No native animal kind $kind")
         return doubleArrayOf(a.position.x,a.position.y+.35,a.position.z)
     }
-    private fun attach(draw:PacketGpu,visible:Boolean){
+    private fun attach(draw:PacketGpu,visible:Boolean,updateShadows:Boolean=true){
         val next=visible&&draw.skyVisible
+        if (updateShadows && draw.packet.castShadow && draw.packet.lod?.detail != "distant") {
+            directionalShadows?.setCaster(draw.entity, next, draw.staticCaster, draw.material.takeIf { draw.casterDepthOverride })
+        }
         if(draw.attached==next)return
         if(next)scene.addEntity(draw.entity)else scene.removeEntity(draw.entity)
         draw.attached=next
     }
     fun selectLod(eye:DoubleArray,target:DoubleArray,fov:Double,cssHeight:Double){
         for((id,full) in lodSelector?.update(eye,target,fov,cssHeight).orEmpty())
-            for(draw in lodPackets.getValue(id))attach(draw,(draw.packet.lod!!.detail=="full")==full)
+            for(draw in lodPackets.getValue(id))attach(draw,(draw.packet.lod!!.detail=="full")==full,updateShadows=false)
     }
     fun moveSky(x:Double,y:Double,z:Double,radius:Double){
         if(closed||skyPackets.isEmpty())return
@@ -833,6 +840,24 @@ class PacketRenderer(private val engine: Engine, private val scene: Scene, priva
             setWrapModeT(wrap(item.getInt("wrapT")));setAnisotropy(item.optDouble("anisotropy",1.0).toFloat().coerceIn(1f,4f))
         }
     }
+    private fun hasMovingShadow(source: Source, geometryIndex: Int, atlas: SourceAtlas, textureId: Int?): Boolean {
+        return source.animatedShadowGeometry.getOrPut(atlas.lookup to geometryIndex) {
+            val mask = source.shadowMasks[atlas.lookup] ?: return@getOrPut false
+            val color = source.nativePixels[textureId]
+            val geometry = source.world.geometries[geometryIndex]
+            val vertices = source.world.section(geometry.vertex)
+            repeat(geometry.vertexCount) { index ->
+                // Packed source UV0 follows position and normal. Match the
+                // atlas tile lookup in materialVertex, before its Y flip.
+                val uv = index * geometry.vertexStride + 24
+                val column = floor(vertices.getFloat(uv) * atlas.size[0] / atlas.cell).toInt()
+                val row = floor(vertices.getFloat(uv + 4) * atlas.size[1] / atlas.cell).toInt()
+                if (mask.varies(column + row * atlas.columns.toInt(), atlas, color)) return@getOrPut true
+            }
+            false
+        }
+    }
+
     private fun createPacket(source:Source,packet:DrawPacket):PacketGpu{
         val key=source.geometryKeys[packet.geometry]
         val m=JSONObject(source.world.materials[packet.material])
@@ -858,7 +883,10 @@ class PacketRenderer(private val engine: Engine, private val scene: Scene, priva
             val lookupTextures=if(atlas?.animated==true)listOf(atlas.lookup,atlas.blend).map{id->val k=textureKey(source,id)
                 textures.acquire(k){createTexture(source,id)}.also{atlasKeys+=k}}else listOf(baseMap,baseMap)
             val shading=if(m.getBoolean("unlit")||optics.cloud!=null)"unlit" else "lit"
-            val instance=program("$shading-$blending").createInstance();material=instance
+            val shadowCache = directionalShadows
+            val cachedReceiver = shadowCache != null && packet.receiveShadow && shading == "lit" && weather == null
+            val materialName = if (cachedReceiver) "lit-cached-shadow-$blending" else "$shading-$blending"
+            val instance=program(materialName).createInstance();material=instance
             val rows=Texture.Builder().width(6).height(packet.count).levels(1).sampler(Texture.Sampler.SAMPLER_2D).format(Texture.InternalFormat.RGBA32F).build(engine);data=rows
             entity=EntityManager.get().create();engine.transformManager.create(entity)
             // One bounded staging buffer per packet, not an expanded world-sized array.
@@ -870,7 +898,7 @@ class PacketRenderer(private val engine: Engine, private val scene: Scene, priva
             instance.setParameter("baseMap",baseMap,sampler(source,textureId))
             instance.setParameter("atlasLookup",lookupTextures[0],TextureSampler(TextureSampler.MinFilter.NEAREST,TextureSampler.MagFilter.NEAREST,TextureSampler.WrapMode.CLAMP_TO_EDGE))
             instance.setParameter("atlasBlend",lookupTextures[1],TextureSampler(TextureSampler.MinFilter.NEAREST,TextureSampler.MagFilter.NEAREST,TextureSampler.WrapMode.CLAMP_TO_EDGE))
-            instance.setParameter("weatherGround",ground,TextureSampler(TextureSampler.MinFilter.NEAREST,TextureSampler.MagFilter.NEAREST,TextureSampler.WrapMode.CLAMP_TO_EDGE))
+            if (!cachedReceiver) instance.setParameter("weatherGround",ground,TextureSampler(TextureSampler.MinFilter.NEAREST,TextureSampler.MagFilter.NEAREST,TextureSampler.WrapMode.CLAMP_TO_EDGE))
             val color=m.getJSONArray("color");val cloudColor=if(environmentBinding?.cloud==true)checkNotNull(source.nativeCloudColor)else null
             instance.setParameter("baseColor",cloudColor?.red?:color.getDouble(0).toFloat(),cloudColor?.green?:color.getDouble(1).toFloat(),cloudColor?.blue?:color.getDouble(2).toFloat(),m.getDouble("opacity").toFloat())
             val skyVisible=applySkyUniforms(instance,environmentBinding?.sky,source.nativeSkyState,source.lighting.exposure,source.nativeDirect,m.optBoolean("toneMapped",true))
@@ -895,7 +923,7 @@ class PacketRenderer(private val engine: Engine, private val scene: Scene, priva
             if(weatherOrigin!=null)motion[0]-=weatherOrigin
             instance.setParameter("motionData",MaterialInstance.FloatElement.MAT4,motion,0,1)
             val lambert=cloud?.let{SourceLambert.read(source.lighting,packet.bounds)}
-            applyLambert(instance,lambert)
+            if (!cachedReceiver) applyLambert(instance,lambert)
             instance.setParameter("stormFlash",stormFlash.position.x.toFloat(),stormFlash.position.y.toFloat(),stormFlash.position.z.toFloat(),stormFlash.intensity)
             if(cloud!=null||night.stars>0f||weather!=null||animalKind!=null||cascade!=null||atlas?.animated==true)hasAnimation=true
             instance.setParameter("skyBackdrop",optics.sky);instance.setParameter("floatingSky",optics.floatingSky)
@@ -929,13 +957,20 @@ class PacketRenderer(private val engine: Engine, private val scene: Scene, priva
             if(animalKind!=null){val aux=source.world.section(packet.aux!!);animalSlots[entity]=animalKind to IntArray(packet.count){aux.getFloat(it*16).toInt()};animalUploads[entity]=AnimalRowUploads(packet.count)}
             if(boundSurface.optics.lightning)stormUploads[entity]=InstanceRowUploads(packet.count)
             val emission=m.getJSONArray("emissive")
+            val staticCaster = shadowCache != null && packet.castShadow && blending != "additive" &&
+                m.getBoolean("depthTest") && m.getInt("depthFunc") in 2..3 &&
+                m.getInt("billboard") == 0 && !optics.distanceOpacity && weather == null && cloud == null &&
+                cascade == null && animalKind == null && packet.layer != "sky" &&
+                !(m.getDouble("alphaTest") > 0.0 && atlas?.animated == true && hasMovingShadow(source, packet.geometry, atlas, textureId))
+            if (cachedReceiver) checkNotNull(shadowCache).addReceiver(instance)
             return PacketGpu(packet,entity,rows,instance,key,textureKey,groundKey,weather,minimum,atlasKeys=atlasKeys.toList(),coverage=boundSurface,fog=m.getBoolean("fog"),
                 environment=environmentBinding,emission=LinearRgb(emission.getDouble(0).toFloat(),emission.getDouble(1).toFloat(),emission.getDouble(2).toFloat()),
-                emissionStrength=m.getDouble("emissiveIntensity").toFloat(),roughness=m.getDouble("roughness").toFloat(),metallic=m.getDouble("metalness").toFloat(),lit=shading=="lit",cloudOriginSeconds=cloudOrigin,weatherOriginMs=weatherOrigin,skyVisible=skyVisible,toneMapped=m.optBoolean("toneMapped",true))
+                emissionStrength=m.getDouble("emissiveIntensity").toFloat(),roughness=m.getDouble("roughness").toFloat(),metallic=m.getDouble("metalness").toFloat(),lit=shading=="lit",cloudOriginSeconds=cloudOrigin,weatherOriginMs=weatherOrigin,skyVisible=skyVisible,toneMapped=m.optBoolean("toneMapped",true),
+                staticCaster=staticCaster,casterDepthOverride=staticCaster&&!m.getBoolean("depthWrite"))
         }catch(error:Throwable){
             animalUploads.remove(entity)?.close();animalSlots.remove(entity);stormUploads.remove(entity)?.close()
             if(entity!=0){engine.destroyEntity(entity);EntityManager.get().destroy(entity)}
-            material?.let{engine.destroyMaterialInstance(it)};data?.let{engine.destroyTexture(it)}
+            material?.let{directionalShadows?.removeReceiver(it);engine.destroyMaterialInstance(it)};data?.let{engine.destroyTexture(it)}
             for(k in atlasKeys.asReversed())textures.release(k)
             if(acquiredGround)textures.release(groundKey!!);if(acquiredTexture)textures.release(textureKey);geometry.release(key);throw error
         }
@@ -997,6 +1032,7 @@ class PacketRenderer(private val engine: Engine, private val scene: Scene, priva
     private fun destroyPacket(draw:PacketGpu){
         attach(draw,false);engine.destroyEntity(draw.entity);EntityManager.get().destroy(draw.entity)
         animalUploads.remove(draw.entity)?.close();animalSlots.remove(draw.entity);stormUploads.remove(draw.entity)?.close()
+        directionalShadows?.removeReceiver(draw.material)
         engine.destroyMaterialInstance(draw.material);draw.data?.let(engine::destroyTexture)
         geometry.release(draw.geometryKey);draw.textureKey?.let(textures::release)
         draw.groundKey?.let{textures.release(it)}

@@ -168,11 +168,8 @@ import java.time.LocalDate
     var width by remember{mutableFloatStateOf(1f)}
     val progress=remember{Animatable(if(ui.reduceMotion)26f else 0f)};val active=LocalNativePageActive.current
     LaunchedEffect(active,ui.reduceMotion){if(active)progress.animateTo(26f,tween(if(ui.reduceMotion)0 else ((26f-progress.value).coerceAtLeast(0f)/26f*900).toInt(),easing=LinearEasing))}
-    val dark=MaterialTheme.colorScheme.background.luminance()<.5f
-    val palette=if(dark)listOf(Color(0xff24382c),Color(0xff294c38),Color(0xff417d57),Color(0xff5ba671),Color(0xff87d59c))
-        else listOf(Color(0xfff5f8f6),Color(0xffc8dbd2),Color(0xff99b8aa),Color(0xff639780),Color(0xff276749))
+    val palette=nativeFocusHeatmapColors()
     val longest=days.values.filter{it.date<=workspace.today}.maxByOrNull{it.durationMs}?.date
-    fun level(duration:Long)=when{duration<=0->0;duration<180*60000L->1;duration<360*60000L->2;duration<540*60000L->3;else->4}
     fun move(offset:Int,extend:Boolean):Boolean{
         val next=LocalDate.parse(cursor).plusDays(offset.toLong()).coerceIn(start,today).toString()
         if(extend){if(keyboardAnchor==null)keyboardAnchor=cursor;onSelection(keyboardAnchor!!,next)}else{keyboardAnchor=null;onSelection(next,next)};cursor=next;return true
@@ -218,17 +215,14 @@ import java.time.LocalDate
         labels.forEachIndexed{index,layout->drawText(layout,color=muted,topLeft=Offset(left-8.dp.toPx()-layout.size.width,top+rowHeight*index+(rowHeight-layout.size.height)/2))}
         val side=minOf(8.dp.toPx(),step*.68f,rowHeight*.68f)
         for((index,date)in dates.withIndex()){
-            val column=index/7;val row=index%7;val actual=if(date>workspace.today)0 else level(days[date]?.durationMs?:0)
-            val color=palette[if(column<progress.value)actual else 0].copy(alpha=if(band==null||band==actual)1f else .18f)
+            if(date>workspace.today)continue
+            val column=index/7;val row=index%7;val actual=heatmapBand(days[date]?.durationMs?:0)
             val origin=Offset(left+column*step+(step-side)/2,top+row*rowHeight+(rowHeight-side)/2)
-            drawRect(color,origin,Size(side,side))
+            drawFocusHeatmapCell(palette,if(column<progress.value)actual else 0,origin,side,if(band==null||band==actual)1f else .18f)
             if(band==4&&date==longest&&actual==4){val path=androidx.compose.ui.graphics.Path().apply{moveTo(origin.x,origin.y-2.dp.toPx());lineTo(origin.x+side,origin.y-2.dp.toPx());lineTo(origin.x+side/2,origin.y-side/2-2.dp.toPx());close()};drawPath(path,ink)}
         }
     }
-    FlowRow(Modifier.fillMaxWidth().padding(top=8.dp),horizontalArrangement=Arrangement.spacedBy(8.dp,androidx.compose.ui.Alignment.End)){
-        for(value in 1..4)Row(Modifier.sizeIn(minWidth=44.dp,minHeight=44.dp).clickable(role=Role.Button,interactionSource=remember{androidx.compose.foundation.interaction.MutableInteractionSource()},indication=null){band=if(band==value)null else value}.semantics{contentDescription=ui.text("高亮 {0}","${(value-1)*3}–${value*3}H");selected=band==value}.padding(horizontal=4.dp),verticalAlignment=androidx.compose.ui.Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(4.dp)){
-            Box(Modifier.size(8.dp).background(palette[value]));NativeText("${(value-1)*3}–${value*3}H",NativeTextRole.CAPTION)
-        }
+    NativeFocusHeatmapLegend(palette,band,{value->band=if(band==value)null else value}){
         NativeInfoAction(ui.text("专注日历"),ui.text("按住拖动，可选多天"))
     }
     if(band==4&&longest!=null)NativeText(ui.text("最长一天 ·")+longest,NativeTextRole.CAPTION)

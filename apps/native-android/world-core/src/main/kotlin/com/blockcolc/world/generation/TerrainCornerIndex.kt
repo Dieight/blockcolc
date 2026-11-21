@@ -63,6 +63,12 @@ internal class TerrainCornerIndex {
         for(end in order.lastIndex downTo 1){val swap=order[0];order[0]=order[end];order[end]=swap;sift(0,end)}
     }
     private fun span(point:Int,bottom:Double,top:Double){
+        val covered=lows[point]
+        val high=highs[point]
+        // Fold connected coverage into the endpoint immediately. Only
+        // disconnected spans can contribute additional coverage at close.
+        if(covered>=high-.011||top<=covered||bottom>high)return
+        if(bottom<=covered+.011){lows[point]=min(high,top);return}
         if(spans==bottoms.size){val capacity=twice(spans);bottoms=bottoms.copyOf(capacity);tops=tops.copyOf(capacity);next=next.copyOf(capacity)}
         bottoms[spans]=bottom;tops[spans]=top;next[spans]= -1
         if(heads[point]<0)heads[point]=spans else next[tails[point]]=spans

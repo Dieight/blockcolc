@@ -34,6 +34,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
 import com.blockcolc.domain.DomainTime
 import com.blockcolc.presentation.*
@@ -117,11 +118,11 @@ private val NATIVE_UI_PROCESS=java.util.UUID.randomUUID().toString()
             NativeProjectEditor(editor,s,runtime){editor=null}
         }
     }
-    NativeTutorial(s.tutorialPending,initiallyExpanded=true,onClose=runtime::finishTutorial)
-    val choices=!s.tutorialPending&&editor==null&&s.importSummary==null&&s.backupImportIssue==null&&!accountOpen
+    val choices=editor==null&&s.importSummary==null&&s.backupImportIssue==null&&!accountOpen
     NativeSheet(true.takeIf{choices},{ui.text("开始建造你的世界")},{},dismissible=false,initiallyExpanded=true){
-        Text(if(ui.language=="en")"Create a task, or restore local or cloud data."else"创建任务，或恢复本地／云端内容。")
+        Text(ui.text("首次使用可以创建任务。有旧记录时，选本地备份或登录原有账户。"),style=MaterialTheme.typography.bodyMedium)
         NativeAction(ui.text("创建大型任务"),{editor=ProjectEditor()},Modifier.fillMaxWidth(),enabled=!s.busy,icon="plus")
+        Text(ui.text("大型任务按小任务推进，习惯任务按专注轮次建造。"),style=MaterialTheme.typography.bodySmall)
         NativeAction(ui.text("创建习惯任务"),{editor=ProjectEditor(initialHabit=true)},Modifier.fillMaxWidth(),enabled=!s.busy,primary=false,icon="repeat")
         NativeAction(ui.text("恢复备份"),onImport,Modifier.fillMaxWidth(),pending=s.busy,primary=false,icon="chest")
         NativeAction(if(ui.language=="en")"Sign in & restore cloud"else"登录账户并恢复云端",{accountOpen=true},Modifier.fillMaxWidth(),primary=false,icon="chest")
@@ -287,6 +288,8 @@ private val NATIVE_UI_PROCESS=java.util.UUID.randomUUID().toString()
     var titleEditor by remember{mutableStateOf<TitleEditor?>(null)}
     var goal by rememberSaveable{mutableStateOf(false)};var manual by rememberSaveable{mutableStateOf(false)}
     var tutorial by rememberSaveable{mutableStateOf(false)};var about by rememberSaveable{mutableStateOf(false)}
+    var tutorialReturnPage by rememberSaveable{mutableStateOf<String?>(null)}
+    var tutorialReturnMinimal by rememberSaveable{mutableStateOf<Boolean?>(null)}
     var heldReport by remember(s.generation){mutableStateOf<ReportPool?>(null)}
     var delivered by remember(s.generation){mutableStateOf(false)}
     val submit=rememberNativeRequest(s){delivered=true}
@@ -485,7 +488,7 @@ private val NATIVE_UI_PROCESS=java.util.UUID.randomUUID().toString()
     BackHandler(enabled=!immersive&&page=="timer"&&worldInteraction.memory!=null){worldInteraction.closeMemory()}
     Box(Modifier.fillMaxSize().testTag(if(startupOpen)"workspace-ready"else"workspace-preparing")){
     Surface(Modifier.fillMaxSize(),color=MaterialTheme.colorScheme.background){
-      Box(Modifier.fillMaxSize().onPreviewKeyEvent{if(pagesPrepared.size<4)lastPageInteraction=android.os.SystemClock.uptimeMillis();false}.pointerInput(Unit){
+      BoxWithConstraints(Modifier.fillMaxSize().onPreviewKeyEvent{if(pagesPrepared.size<4)lastPageInteraction=android.os.SystemClock.uptimeMillis();false}.pointerInput(Unit){
           awaitPointerEventScope{while(true){val event=awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
               if(pagesPrepared.size<4){pageTouchActive=event.changes.any{it.pressed};lastPageInteraction=android.os.SystemClock.uptimeMillis()}
           }}
@@ -496,13 +499,19 @@ private val NATIVE_UI_PROCESS=java.util.UUID.randomUUID().toString()
               if(target==null)false else{swipeTarget=target;pagesPrepared=pagesPrepared+target;true}
           },onDrag={dx->swipeTarget?.let{target->swipeOffset.floatValue=if(pageOrder.indexOf(target)>pageOrder.indexOf(settledPage))dx.coerceIn(-viewportWidth.toFloat(),0f)else dx.coerceIn(0f,viewportWidth.toFloat())}},
           onEnd={finishSwipe(it)},onCancel={if(!swipeSettling)finishSwipe(0f,true)})
-        .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal)).onSizeChanged{viewportHeight=it.height;viewportWidth=it.width}){
+        .onSizeChanged{viewportHeight=it.height;viewportWidth=it.width}){
+                 val safeSides=WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal)
+                 val sides=safeSides.asPaddingValues()
+                 val direction=LocalLayoutDirection.current
+                 val left=sides.calculateLeftPadding(direction)
+                 val right=sides.calculateRightPadding(direction)
+                 val wideWorldWidth=left+(maxWidth-left-right).coerceAtLeast(0.dp)*WIDE_WORLD_FRACTION
                  if(corePresented)worldHost(worldVisible&&!pageMoving,s.ready&&s.error==null&&!s.refreshRequired&&projectEditor==null&&!immersive&&(page!="timer"||pageMoving),s.preferences.lightingQuality,
                     // Keep the separately composited SurfaceView stationary.
                     // Sliding the ordinary pages over it avoids native surface
                     // placement transactions on every navigation frame, and
                     // keeps its touch coordinates at the real screen origin.
-                     Modifier.fillMaxHeight().fillMaxWidth(if(wideTimer&&!projectedImmersive)WIDE_WORLD_FRACTION else 1f).clipToBounds().drawWithContent{clipRect(bottom=if(immersive&&transition.value>=1f)size.height else normalReferenceHeight.toFloat().coerceAtLeast(1f)+(size.height-normalReferenceHeight.toFloat().coerceAtLeast(1f))*transition.value){this@drawWithContent.drawContent()}}){}
+                     Modifier.fillMaxHeight().width(if(wideTimer&&!projectedImmersive)wideWorldWidth else maxWidth).clipToBounds().drawWithContent{clipRect(bottom=if(immersive&&transition.value>=1f)size.height else normalReferenceHeight.toFloat().coerceAtLeast(1f)+(size.height-normalReferenceHeight.toFloat().coerceAtLeast(1f))*transition.value){this@drawWithContent.drawContent()}}){}
                  else if(worldVisible){
                      val worldSize=when{
                          immersive->Modifier.fillMaxHeight()
@@ -510,7 +519,7 @@ private val NATIVE_UI_PROCESS=java.util.UUID.randomUUID().toString()
                          else->Modifier.fillMaxHeight(NORMAL_WORLD_FRACTION)
                      }
                      val loading=ui.text("正在建造世界")
-                     NativeLoadingScene(loading,Modifier.fillMaxWidth(if(wideTimer&&!immersive)WIDE_WORLD_FRACTION else 1f).then(worldSize).semantics{
+                     NativeLoadingScene(loading,Modifier.width(if(wideTimer&&!immersive)wideWorldWidth else maxWidth).then(worldSize).semantics{
                          contentDescription=ui.text("聚落世界");stateDescription=loading
                      },embedded=true)
                  }
@@ -519,7 +528,7 @@ private val NATIVE_UI_PROCESS=java.util.UUID.randomUUID().toString()
         // Measure/preload the real pages while the opaque loader is visible,
         // without painting their glass, weather and text beneath that loader.
         // The separate SurfaceView above continues building and presenting.
-        Column(Modifier.fillMaxSize().imePadding().drawWithContent{if(modeMotion){uiLayer.record{this@drawWithContent.drawContent()};uiRecordedSerial.set(uiCaptureSerial);drawLayer(uiLayer)}else if(startupOpen)drawContent()}.then(if(startupOpen&&!modeMotion)Modifier else Modifier.clearAndSetSemantics{})){
+        Column(Modifier.fillMaxSize().windowInsetsPadding(safeSides).imePadding().drawWithContent{if(modeMotion){uiLayer.record{this@drawWithContent.drawContent()};uiRecordedSerial.set(uiCaptureSerial);drawLayer(uiLayer)}else if(startupOpen)drawContent()}.then(if(startupOpen&&!modeMotion)Modifier else Modifier.clearAndSetSemantics{})){
             Box(Modifier.weight(1f)){
                 if(s.refreshRequired)NativePageScroll{
                     val refresh=rememberNativeRequest(s)
@@ -614,7 +623,26 @@ private val NATIVE_UI_PROCESS=java.util.UUID.randomUUID().toString()
     key(s.generation,runtime.committedWorld?.identity?.database){
         NativeAchievementUnlock(s.workspace?.achievements.orEmpty(),runtime,achievementSafe&&completion==null&&!completionClosing,page=="statistics",s.achievementAttention)
     }
-    NativeTutorial(tutorial||s.tutorialPending){tutorial=false;if(s.tutorialPending)runtime.finishTutorial()}
+    val tutorialVisible=(tutorial||s.tutorialPending)&&startupOpen&&!ongoing&&!s.setupRequired&&
+        editor==null&&projectEditor==null&&s.importSummary==null&&s.backupImportIssue==null&&!accountOpen
+    NativeTutorial(tutorialVisible,replay=tutorial,onPage={destination->
+        if(tutorialReturnPage==null){
+            tutorialReturnPage=page
+            tutorialReturnMinimal=minimalSelection.value
+        }
+        if(minimalSelection.value==true)minimalSelection.value=false
+        clearSwipe()
+        pagesPrepared=pagesPrepared+destination
+        page=destination
+    },onHidden={
+        tutorialReturnMinimal?.let{minimalSelection.value=it}
+        tutorialReturnPage?.let{page=it}
+        tutorialReturnPage=null
+        tutorialReturnMinimal=null
+    }){
+        tutorial=false
+        if(s.tutorialPending)runtime.finishTutorial()
+    }
     NativeBackupConfirmation(s,onConfirmImport,onImport)
     NativeAboutSheet(about,updateView,updates){about=false}
 }
@@ -646,23 +674,37 @@ private data class BackupSheetContent(val summary:String?,val issue:BackupImport
     }
 }
 
-@Composable private fun NativeTutorial(open:Boolean,initiallyExpanded:Boolean=false,onClose:()->Unit){
+private data class TutorialStep(val page:String,val title:String,val description:String)
+
+@Composable private fun NativeTutorial(open:Boolean,replay:Boolean,onPage:(String)->Unit,onHidden:()->Unit,onClose:()->Unit){
     val ui=LocalNativeUi.current
-    NativeSheet(if(open)true else null,{ui.text("新手教程")},onClose,initiallyExpanded=initiallyExpanded){
+    val lesson=remember(replay){
+        val intro=if(replay)listOf(TutorialStep("settings","首次使用","首次使用可以创建任务。有旧记录时，选本地备份或登录原有账户。"))else emptyList()
+        intro+listOf(
+            TutorialStep("timer","从一轮专注开始","选择小任务，确认计划后开始。计时按实际结束时间恢复。"),
+            TutorialStep("tasks","把任务建成世界","大任务对应建筑，小任务的推进决定施工；习惯任务按轮次积累。"),
+            TutorialStep("timer","专注、休息与汇报","专注时双击面板下方空白显示结束按钮，再双击可收起。休息后双击时间继续。提前完成或中止后，由你确认再开始。"),
+            TutorialStep("timer","极简与便签","开启极简后左右滑动面板查看统计和便签；双击时间确认结束计划。"),
+            TutorialStep("timer","世界的两种复位","复位视角仍围绕所选建筑；地图按钮返回整个聚落的总览。"),
+            TutorialStep("timer","窗前的小书房","切换室内视角，从窗前看同一个聚落。成就解锁的摆设会自动放进书房。"),
+            TutorialStep("statistics","回看每一天","点选或拖选热力图查看投入，展开纪念建筑和成就。"),
+            TutorialStep("settings","让记录留在本机","设置可搜索并定位，恢复和导出备份，调整世界、字体、天气与声音。"),
+            TutorialStep("settings","账户、同步与好友","账户可选，离线照常专注。登录后同步记录与设备偏好；导入的材质和音频留在本机。好友能看见什么，由你单独决定；其他设备可查看或接管计划。"),
+        )
+    }
+    val navigate by rememberUpdatedState(onPage)
+    val scroll=rememberScrollState()
+    NativeSheet(true.takeIf{open},{ui.text("新手教程")},onClose,onHidden=onHidden,blurBackground=false,contentScroll=scroll){
         var index by rememberSaveable{mutableIntStateOf(0)}
-        val pages=listOf("从一轮专注开始" to "选择小任务，确认计划后开始。计时按实际结束时间恢复。",
-            "把任务建成世界" to "大任务对应建筑，小任务的推进决定施工；习惯任务按轮次积累。",
-            "专注、休息与汇报" to "专注时双击面板下方空白显示结束按钮，再双击可收起。休息后双击时间继续。提前完成或中止后，由你确认再开始。",
-            "极简与便签" to "开启极简后左右滑动面板查看统计和便签；双击时间确认结束计划。",
-            "世界的两种复位" to "复位视角仍围绕所选建筑；地图按钮返回整个聚落的总览。",
-            "窗前的小书房" to "切换室内视角，从窗前看同一个聚落。成就解锁的摆设会自动放进书房。",
-            "回看每一天" to "点选或拖选热力图查看投入，展开纪念建筑和成就。",
-            "让记录留在本机" to "设置可搜索并定位，恢复和导出备份，调整世界、字体、天气与声音。",
-            "账户、同步与好友" to "账户可选，离线照常专注。登录后同步记录与设备偏好；导入的材质和音频留在本机。好友能看见什么，由你单独决定；其他设备可查看或接管计划。")
-        Text("${index+1} / ${pages.size}",style=MaterialTheme.typography.bodySmall)
-        Text(ui.text(pages[index].first),style=MaterialTheme.typography.titleLarge)
-        Text(ui.text(pages[index].second),style=MaterialTheme.typography.bodyLarge)
-        if(index==2){
+        val step=lesson[index.coerceIn(0,lesson.lastIndex)]
+        LaunchedEffect(open,step){
+            if(open){scroll.scrollTo(0);navigate(step.page)}
+        }
+        val pageLabel=when(step.page){"tasks"->"任务";"statistics"->"统计";"settings"->"设置";else->"计时"}
+        Text("${ui.text(pageLabel)} · ${index+1} / ${lesson.size}",style=MaterialTheme.typography.bodySmall)
+        Text(ui.text(step.title),style=MaterialTheme.typography.titleLarge)
+        Text(ui.text(step.description),style=MaterialTheme.typography.bodyLarge)
+        if(step.title=="专注、休息与汇报"){
             var practiced by rememberSaveable{mutableStateOf(false)}
             Text(ui.text("在下方试一试。这里只是演示，不会开始或结束真实专注。"),style=MaterialTheme.typography.bodySmall)
             Box(Modifier.fillMaxWidth().heightIn(min=96.dp).background(MaterialTheme.colorScheme.surfaceVariant).padding(12.dp),contentAlignment=Alignment.Center){
@@ -670,7 +712,7 @@ private data class BackupSheetContent(val summary:String?,val issue:BackupImport
                 else NativeFocusExitControl(true,{practiced=true})
             }
         }
-        if(index==4){
+        if(step.title=="世界的两种复位"){
             var result by rememberSaveable{mutableStateOf<String?>(null)}
             Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(12.dp)){
                 NativeIconAction(ui.text("重置视角"),"reset",{result="视角已复位，仍围绕所选建筑"})
@@ -679,7 +721,7 @@ private data class BackupSheetContent(val summary:String?,val issue:BackupImport
             result?.let{Text(ui.text(it),style=MaterialTheme.typography.bodySmall)}
         }
         if(index>0)NativeAction(ui.text("上一页"),{index--},primary=false,icon="chevron")
-        NativeAction(ui.text(if(index==pages.lastIndex)"开始使用" else "下一页"),{if(index==pages.lastIndex)onClose()else index++},Modifier.fillMaxWidth())
+        NativeAction(ui.text(if(index>=lesson.lastIndex)"开始使用" else "下一页"),{if(index>=lesson.lastIndex)onClose()else index++},Modifier.fillMaxWidth())
     }
 }
 

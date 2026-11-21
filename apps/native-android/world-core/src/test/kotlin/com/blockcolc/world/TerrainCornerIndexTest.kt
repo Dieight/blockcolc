@@ -5,6 +5,22 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class TerrainCornerIndexTest {
+    @Test fun connectedSpansExtendCoverageWithoutStoringFlatOrAlreadyClosedCorners(){
+        val points=TerrainCornerIndex()
+        for(x in 0..512){
+            points.addHeight(x.toDouble(),0.0,0.0)
+            if(x>0)points.addHeight(x.toDouble(),0.0,3.0)
+        }
+        points.prepareLines()
+        points.spanAt(1.0,0.0,2.0,3.0)
+        val before=points.storageBytes
+        points.spansAlong(false,0.0,0.0,512.0,0.0,1.0)
+        points.spansAlong(false,0.0,0.0,512.0,1.0,2.0)
+        assertNull(points.uncoveredStart(0))
+        assertNull(points.uncoveredStart(1))
+        assertEquals(2.0,points.uncoveredStart(2)!!,0.0)
+        assertEquals(before,points.storageBytes)
+    }
     @Test fun crossedLinesCloseOnlyTheirActualCornersAndKeepInsertionOrder(){
         val points=TerrainCornerIndex()
         points.addHeight(-0.0,2.0,0.0);points.addHeight(0.0,2.0,3.0)

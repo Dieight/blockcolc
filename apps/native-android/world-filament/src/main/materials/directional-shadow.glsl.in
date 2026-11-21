@@ -1,0 +1,63 @@
+    // Match the Filament 1.56 standard isotropic BRDF (Apache-2.0).
+    // Only the directional light visibility is sourced from our depth view.
+    #if defined(VARIANT_HAS_DIRECTIONAL_LIGHTING) || defined(VARIANT_HAS_DYNAMIC_LIGHTING)
+    float distribution(float roughness, float NoH, const vec3 h);
+    float visibility(float roughness, float NoV, float NoL);
+    vec3 fresnel(const vec3 f0, float LoH);
+    float diffuse(float roughness, float NoV, float NoL, float LoH);
+    vec3 prefilteredDFG(float perceptualRoughness, float NoV);
+    #endif
+
+    #if defined(VARIANT_HAS_DIRECTIONAL_LIGHTING)
+    highp float directionalDepthAt(ivec2 pixel, ivec2 limit) {
+        return texelFetch(materialParams_directionalDepth, clamp(pixel, ivec2(0), limit), 0).r;
+    }
+
+    float directionalVisibility(float NoL) {
+        highp mat4 projection = materialParams.directionalProjection;
+        highp vec3 receiver = getUserWorldPosition();
+        receiver += getWorldGeometricNormalVector() * projection[1].w * sqrt(max(0.0, 1.0 - NoL * NoL));
+        highp vec3 uvz = (projection * vec4(receiver, 1.0)).xyz;
+        if (any(lessThanEqual(uvz, vec3(0.0))) || any(greaterThanEqual(uvz, vec3(1.0)))) return 1.0;
+        highp float reference = min(1.0, uvz.z + projection[0].w);
+        ivec2 size = textureSize(materialParams_directionalDepth, 0);
+        highp vec2 footprint = uvToRenderTargetUV(uvz.xy) * vec2(size) - 0.5;
+        highp vec2 weight = fract(footprint);
+        ivec2 base = ivec2(floor(footprint));
+        ivec2 limit = size - 1;
+        vec2 lower = step(vec2(directionalDepthAt(base, limit),
+                              directionalDepthAt(base + ivec2(1, 0), limit)), vec2(reference));
+        vec2 upper = step(vec2(directionalDepthAt(base + ivec2(0, 1), limit),
+                              directionalDepthAt(base + ivec2(1), limit)), vec2(reference));
+        return mix(mix(lower.x, lower.y, weight.x), mix(upper.x, upper.y, weight.x), weight.y);
+    }
+    #endif
+
+    vec3 surfaceShading(const MaterialInputs material, const ShadingData surface, const LightData light) {
+    #if defined(VARIANT_HAS_DIRECTIONAL_LIGHTING) || defined(VARIANT_HAS_DYNAMIC_LIGHTING)
+        vec3 h = normalize(getWorldViewVector() + light.l);
+        float NoV = getNdotV();
+        float NoL = saturate(light.NdotL);
+        float incoming = light.visibility;
+    #if defined(VARIANT_HAS_DIRECTIONAL_LIGHTING)
+        bool directional = true;
+    #if defined(VARIANT_HAS_DYNAMIC_LIGHTING)
+        directional = light.attenuation == 1.0 && dot(light.l, frameUniforms.lightDirection) > 0.999 &&
+            distance(light.colorIntensity, frameUniforms.lightColorIntensity) < 0.001;
+    #endif
+        if (directional && materialParams.directionalProjection[3].w > 0.5) incoming *= directionalVisibility(NoL);
+    #endif
+        float NoH = saturate(dot(getWorldNormalVector(), h));
+        float LoH = saturate(dot(light.l, h));
+        float D = distribution(surface.roughness, NoH, h);
+        float V = visibility(surface.roughness, NoV, NoL);
+        vec3 F = fresnel(surface.f0, LoH);
+        vec3 diffuseColor = surface.diffuseColor * diffuse(surface.roughness, NoV, NoL, LoH);
+        float dfg = prefilteredDFG(surface.perceptualRoughness, NoV).y;
+        vec3 energy = 1.0 + surface.f0 * (1.0 / dfg - 1.0);
+        vec3 color = diffuseColor + (D * V) * F * energy;
+        return (color * light.colorIntensity.rgb) * (light.colorIntensity.w * light.attenuation * NoL * incoming);
+    #else
+        return vec3(0.0);
+    #endif
+    }

@@ -25,6 +25,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.blockcolc.preview.CommittedWorldInput
+import com.blockcolc.preview.BuildConfig
 import com.blockcolc.preview.PreviewRuntime
 import com.blockcolc.preview.resources.ResourceWorldSelection
 import com.blockcolc.preview.ui.*
@@ -73,14 +74,21 @@ internal val LocalColdWorldCacheTag=staticCompositionLocalOf<String?>{null}
     val projectionTop=backdrop?.projectionTop?:0
     val density=androidx.compose.ui.platform.LocalDensity.current
     val preparingHidden=retainSurface&&foreground&&(owner.settlementChanging||owner.qualityChanging)&&!owner.error
+    val wantedSettlement=backdrop?.requestedSettlement?:input?.environmentStyle
+    val wantedQuality=backdrop?.requestedQuality?:effectiveQuality
+    val appearanceReady=owner.presentedAppearance(wantedSettlement,wantedQuality)
     SideEffect{
-        backdrop?.ready=owner.hasScene&&!owner.loading&&!owner.error
+        backdrop?.ready=owner.hasScene&&!owner.loading&&!owner.error&&appearanceReady
         backdrop?.opening=owner.opening
         backdrop?.failed=owner.error
         backdrop?.preparingSettlement=owner.settlementChanging&&!owner.error
         backdrop?.preparingQuality=owner.qualityChanging&&!owner.error
         backdrop?.worldSettingFailed=owner.error&&(owner.settlementChanging||owner.qualityChanging)
         backdrop?.retryWorld=owner::retry
+        if(appearanceReady&&backdrop!=null){
+            if(input?.environmentStyle==backdrop.requestedSettlement)backdrop.requestedSettlement=null
+            if(effectiveQuality==backdrop.requestedQuality)backdrop.requestedQuality=null
+        }
         val current=runtime.latest
         owner.openingTarget=if(backdrop?.immersive==true)null else current.activeProject?.takeIf{id->
             current.projects.any{it.id==id&&it.status!="deleted"}&&current.workspace?.projects?.find{it.id==id}?.awaitingBuilding!=true
@@ -93,7 +101,7 @@ internal val LocalColdWorldCacheTag=staticCompositionLocalOf<String?>{null}
     DisposableEffect(lifecycle){val observer=androidx.lifecycle.LifecycleEventObserver{_,event->
         if(event==androidx.lifecycle.Lifecycle.Event.ON_START)foreground=true else if(event==androidx.lifecycle.Lifecycle.Event.ON_STOP)foreground=false
     };lifecycle?.addObserver(observer);onDispose{lifecycle?.removeObserver(observer)}}
-    val ready=visible&&foreground&&owner.hasScene&&!owner.loading&&!owner.roomLoading&&!owner.error
+    val ready=visible&&foreground&&owner.hasScene&&!owner.loading&&!owner.roomLoading&&!owner.error&&appearanceReady
     val readyCallback by rememberUpdatedState(onReady)
     LaunchedEffect(ready){readyCallback(ready)}
     DisposableEffect(owner){onDispose{readyCallback(false)}}
@@ -112,8 +120,8 @@ internal val LocalColdWorldCacheTag=staticCompositionLocalOf<String?>{null}
     }
     Box(modifier.then(if(visible)Modifier.semantics{
         contentDescription=ui.text("聚落世界")
-        stateDescription=ui.text(if(owner.currentScene(input,effectiveQuality,buildingCondition,outlineVisibility,resourceSelection))"世界已就绪" else "正在建造世界")
-        customActions=owner.targetIds.map{id->CustomAccessibilityAction(ui.text("查看 {0}",labels[id]?:id)){interaction.pick(id);true}}
+        stateDescription=ui.text(if(appearanceReady&&owner.currentScene(input,effectiveQuality,buildingCondition,outlineVisibility,resourceSelection))"世界已就绪" else "正在建造世界")
+        if(appearanceReady)customActions=owner.targetIds.map{id->CustomAccessibilityAction(ui.text("查看 {0}",labels[id]?:id)){interaction.pick(id);true}}
     }else Modifier.clearAndSetSemantics{}).onGloballyPositioned{measuredBounds=it.nativeScreenBounds(nativeView)}.onSizeChanged{owner.resize(it.width,it.height)}){
         // Create the SurfaceView hierarchy inside AndroidView's factory. Adding
         // it later to an already measured, otherwise empty native container can
@@ -122,18 +130,18 @@ internal val LocalColdWorldCacheTag=staticCompositionLocalOf<String?>{null}
             AndroidView(factory={owner.createView(it,viewKey)},modifier=Modifier.fillMaxSize(),
                 update={
                     it.visibility=if(visible||preparingHidden||retainSurface&&owner.hasScene&&!owner.error)View.VISIBLE else View.INVISIBLE
-                    it.isEnabled=visible
+                    it.isEnabled=visible&&appearanceReady
                     it.importantForAccessibility=if(visible)View.IMPORTANT_FOR_ACCESSIBILITY_AUTO else View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
                 })
         }}
-        if(visible&&(owner.loading||!owner.hasScene||owner.roomLoading||owner.roomError||owner.error))Box(Modifier.fillMaxWidth().padding(top=with(density){projectionTop.toDp()}).height(with(density){projectionHeight.coerceAtLeast(1).toDp()}).background(MaterialTheme.colorScheme.background.copy(alpha=if(owner.hasScene).88f else 1f)),contentAlignment=Alignment.Center){
+        if(visible&&(!appearanceReady||owner.loading||!owner.hasScene||owner.roomLoading||owner.roomError||owner.error))Box(Modifier.fillMaxWidth().padding(top=with(density){projectionTop.toDp()}).height(with(density){projectionHeight.coerceAtLeast(1).toDp()}).background(MaterialTheme.colorScheme.background.copy(alpha=if(owner.hasScene&&appearanceReady).88f else 1f)),contentAlignment=Alignment.Center){
             Column(horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.spacedBy(12.dp)){
                 if(owner.error){Text(ui.text("世界暂未准备好"));NativeAction(ui.text("重试"),owner::retry,primary=false,icon="reset")}
                 else if(owner.roomError){Text(ui.text("书房暂未准备好"));NativeAction(ui.text("重试"),owner::retryRoom,primary=false,icon="reset")}
                 else NativeLoadingScene(ui.text("正在建造世界"),Modifier.fillMaxSize(),embedded=true)
             }
         }
-        val hudReady=visible&&foreground&&owner.hasScene&&!owner.loading&&!owner.error
+        val hudReady=visible&&foreground&&owner.hasScene&&!owner.loading&&!owner.error&&appearanceReady
         val immersive=backdrop?.immersive==true
         var showedColdControls by remember{mutableStateOf(false)}
         var show by remember{mutableStateOf(false)};var lastReveal by remember{mutableLongStateOf(0)}
@@ -149,10 +157,11 @@ internal val LocalColdWorldCacheTag=staticCompositionLocalOf<String?>{null}
         if(hudReady){
             val alpha by androidx.compose.animation.core.animateFloatAsState(if(show)1f else 0f,androidx.compose.animation.core.tween(if(ui.reduceMotion)0 else 180),label="world-hud")
             val top=maxOf(12.dp+with(density){projectionTop.toDp()},WindowInsets.statusBars.asPaddingValues().calculateTopPadding())
-            Box(Modifier.align(Alignment.TopEnd).padding(top=top).size(112.dp,88.dp).clickable(interactionSource=remember{androidx.compose.foundation.interaction.MutableInteractionSource()},indication=null){
+            val sides=WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal)
+            Box(Modifier.align(Alignment.TopEnd).windowInsetsPadding(sides).padding(top=top).size(112.dp,88.dp).clickable(interactionSource=remember{androidx.compose.foundation.interaction.MutableInteractionSource()},indication=null){
                 if(show)show=false else{show=true;lastReveal=android.os.SystemClock.uptimeMillis();revealSequence++}
             }.semantics{contentDescription=ui.text("显示世界操作")})
-            if(alpha>0f)Row(Modifier.fillMaxWidth().align(Alignment.TopCenter).padding(start=12.dp,end=12.dp,top=top).graphicsLayer{this.alpha=alpha},verticalAlignment=Alignment.Top,horizontalArrangement=Arrangement.spacedBy(8.dp)){
+            if(alpha>0f)Row(Modifier.fillMaxWidth().align(Alignment.TopCenter).windowInsetsPadding(sides).padding(start=12.dp,end=12.dp,top=top).graphicsLayer{this.alpha=alpha},verticalAlignment=Alignment.Top,horizontalArrangement=Arrangement.spacedBy(8.dp)){
                 if(!immersive){
                     val settlement=ui.text(when(runtime.latest.workspace?.settings?.environment){"natural-valley"->"山谷";"ocean-island"->"海岛";"mosaic-coast"->"海岸";else->"空岛"})
                     val title=interaction.selected?.let{labels[it]}
@@ -172,8 +181,10 @@ internal val LocalColdWorldCacheTag=staticCompositionLocalOf<String?>{null}
  * stays in NativeWorldView. A failed build keeps the prior rendered world. */
 internal class NativeWorldHostOwner(context:Context,private val interaction:NativeWorldInteractionState=NativeWorldInteractionState(),coldCacheTag:String?=null):AutoCloseable {
     private val main=Handler(Looper.getMainLooper())
+    private val compactGeometry = BuildConfig.BUILD_TYPE != "benchmark" ||
+        (context as? android.app.Activity)?.intent?.getBooleanExtra("p4UncompactedGeometry", false) != true
     private val session=NativeWorldSession(context,{main.post(it)},java.io.File(context.cacheDir,
-        if(coldCacheTag!=null)"p4-cold-"+coldCacheTag else "native-world"))
+        if(coldCacheTag!=null)"p4-cold-"+coldCacheTag else "native-world"),compactGeometry=compactGeometry)
     private var view:NativeWorldView?=null;private var database:String?=null;private var spatial:String?=null
     private var closed=false;private var active=false;private var target:CommittedWorldInput?=null;private var quality="cinematic"
     private var visible=false
@@ -220,7 +231,7 @@ internal class NativeWorldHostOwner(context:Context,private val interaction:Nati
     }
     fun retryRoom(){if(!closed)prepareRoom()}
     var targetIds by mutableStateOf<List<String>>(emptyList());private set
-    private data class PreparationKey(val request:WorldRequestIdentity,val quality:String,val buildingCondition:Int?,val outlines:String,val resources:ResourceWorldSelection)
+    private data class PreparationKey(val request:WorldRequestIdentity,val environment:String,val quality:String,val buildingCondition:Int?,val outlines:String,val resources:ResourceWorldSelection)
     private var buildingCondition:Int?=null
     private var outlineVisibility="current"
     private var resourceSelection:ResourceWorldSelection?=ResourceWorldSelection()
@@ -230,10 +241,13 @@ internal class NativeWorldHostOwner(context:Context,private val interaction:Nati
     private val paperResources=ResourceWorldSelection()
     // An interactive retained scene can still belong to the previous commit.
     // Only its own GPU acknowledgement makes the requested scene current.
+    fun presentedAppearance(environment:String?,quality:String):Boolean=
+        residentKey?.let{it.environment==environment&&it.quality==quality}==true
+
     fun currentScene(input:CommittedWorldInput?,quality:String,condition:Int?,outlines:String,resources:ResourceWorldSelection?):Boolean =
         input!=null&&hasScene&&!loading&&!error&&!roomLoading&&!roomError&&residentKey==queued&&
             (if(quality=="paper")paperResources else resources)?.let{
-                residentKey==PreparationKey(input.sceneIdentity,quality,condition,outlines,it)
+                residentKey==PreparationKey(input.sceneIdentity,input.environmentStyle,quality,condition,outlines,it)
             }==true
     private var pendingPresentation=-1L
     private var pendingView:NativeGeneratedScene?=null
@@ -283,6 +297,9 @@ internal class NativeWorldHostOwner(context:Context,private val interaction:Nati
     private fun createViewNow(context:Context,key:Long):NativeWorldView {
         check(!closed&&key==viewKey&&view==null)
         val input=checkNotNull(pendingView)
+        // Same signed performance build, with the stock renderer as control.
+        val stockShadows = BuildConfig.BUILD_TYPE == "benchmark" &&
+            (context as? android.app.Activity)?.intent?.getBooleanExtra("p4StockShadows", false) == true
         val next=NativeWorldView.generated(context,input,{generation,revision,presentation->
             if(!closed&&key==viewKey&&active&&presentation==pendingPresentation&&queued==pendingKey&&target?.sceneIdentity?.let{
                     it.replacementGeneration==generation&&it.revision==revision}==true){residentKey=pendingKey;loading=false;hasScene=true
@@ -302,7 +319,7 @@ internal class NativeWorldHostOwner(context:Context,private val interaction:Nati
         },{generation,revision,presentation,id->
             val resident=residentKey?.request
             if(!closed&&key==viewKey&&active&&hasScene&&!loading&&!error&&!interaction.indoors&&interaction.resetVersion==resetVersion&&interaction.selected==selected&&presentation==pendingPresentation&&resident==target?.sceneIdentity&&resident?.replacementGeneration==generation&&resident.revision==revision&&id in targetIds)interaction.pick(id)
-        })
+        }, optimizeRendering = !stockShadows)
         view=next;roomScene?.let{candidate->val ticket=roomEpoch;next.interior(candidate,onPresented={if(!closed&&roomEpoch==ticket&&view===next)roomLoading=false})};val windowTicket=projectionEpoch;val window=projectionHeight to projectionTop
         next.projectionWindow(window.first,window.second){if(!closed&&view===next&&projectionEpoch==windowTicket)backdrop?.presentedWindow=window};next.visibleRegion(clipBottom);pendingView=null;next.navigate(selected);if(!openingConsumed)next.prepareOpening(openingTarget);next.worldColor(worldColor);if(active)next.resume();return next
     }
@@ -344,7 +361,7 @@ internal class NativeWorldHostOwner(context:Context,private val interaction:Nati
         // CPU preparation may finish before the first Compose measurement.
         // Do not fit the initial camera to an arbitrary fallback aspect ratio.
         if(width<=0||height<=0||projectionHeight<=0){loading=!hasScene||changingAppearance;return}
-        val key=PreparationKey(input.sceneIdentity,quality,buildingCondition,outlineVisibility,selectedResources);if(queued==key)return
+        val key=PreparationKey(input.sceneIdentity,input.environmentStyle,quality,buildingCondition,outlineVisibility,selectedResources);if(queued==key)return
         if(hasScene&&view!=null&&!recreateNeeded&&!error&&residentKey==key&&pendingKey==key){
             queued=key;loading=false;settlementChanging=false;qualityChanging=false
             if(visible){playOpening();startEnvironment(pendingPresentation)}else view?.pause()

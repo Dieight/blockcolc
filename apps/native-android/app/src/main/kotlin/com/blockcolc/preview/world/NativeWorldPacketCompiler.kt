@@ -21,7 +21,8 @@ class NativeWorldFrame(val identity:WorldRequestIdentity,val scene:NativeGenerat
  * changes; every business building/reward keeps an independently replaceable
  * owner. CPU preparation never opens an engine or reads business storage. */
 class NativeWorldPacketCompiler internal constructor(signRasterizer:NativeSignRasterizer?,private val allocator:NativePacketAllocator?,parallel:Boolean,
-    private val staticWorldCache:AndroidStaticWorldCache?,private val paperWorldCache:AndroidStaticWorldCache?=null):AutoCloseable {
+    private val staticWorldCache:AndroidStaticWorldCache?,private val paperWorldCache:AndroidStaticWorldCache?=null,
+    private val compactGeometry:Boolean=true):AutoCloseable {
     constructor(signRasterizer:NativeSignRasterizer?=null,allocator:NativePacketAllocator?=null,parallel:Boolean=false):
         this(signRasterizer,allocator,parallel,null)
     private val preparation=WorldPacketPreparation(allocator,parallel)
@@ -86,7 +87,7 @@ class NativeWorldPacketCompiler internal constructor(signRasterizer:NativeSignRa
         val key=RootKey(world.input.spatial.key,world.cacheKey,world.sceneryKey,materialState,paper)
         val cachedRoot=root?.takeIf{it.first==key}?.second
         val cache=if(paper)paperWorldCache else staticWorldCache?.takeIf{options.resources==null}
-        val diskKey=cache?.key(world,materialState.ambientOcclusion)
+        val diskKey=cache?.key(world,materialState.ambientOcclusion,compactGeometry && !paper)
         val rootTask=batch.submit{com.blockcolc.preview.NativeStartupTrace.measure("packets-root",benchmark=true){
             val reused=cachedRoot?:diskKey?.let{cache?.read(it,cancelled)?.also{
                 com.blockcolc.preview.NativeStartupTrace.point(if(paper)"paper-packets-cache-hit" else "root-packets-cache-hit")
@@ -97,7 +98,7 @@ class NativeWorldPacketCompiler internal constructor(signRasterizer:NativeSignRa
                 PaperWorldMesh.appendRoot(target,world,allocator,cancelled)
                 target.build(cancelled) to (diskKey!=null)
             } else {
-                val compiler=rootCompiler?:NativeWorldRootCompiler().also{rootCompiler=it}
+                val compiler=rootCompiler?:NativeWorldRootCompiler(compactGeometry).also{rootCompiler=it}
                 compiler.prepare(world,materialState,options.resources,diskKey!=null,cancelled) to (diskKey!=null)
             }
         }}
@@ -199,7 +200,12 @@ class NativeWorldPacketCompiler internal constructor(signRasterizer:NativeSignRa
     private fun appendStructure(target:NativePacketBuilder,owner:String,recipe:BuildingInputRecipe,original:OriginalStructure?,placement:NativeStructurePlacement,
         state:NativeSurfaceState,weathering:Double=0.0,excluded:Set<Int> = emptySet(),lod:SceneryLod?=null,origin:BlockPoint=original?.origin?:BlockPoint(0.0,0.0,0.0),cancelled:()->Boolean){
         val pack=resourceCompiler
-        if(pack==null){originals.append(target,original?:compiler.compile(recipe,origin,cancelled),placement,state,weathering,lod,excluded,cancelled);return}
+        val cubeContacts = recipe.intact.takeIf { compactGeometry }
+        if(pack==null){
+            originals.append(target,original?:compiler.compile(recipe,origin,cancelled),placement,state,weathering,lod,excluded,cancelled,
+                cubeContacts=cubeContacts)
+            return
+        }
         val resource=preparedResources[owner]?.takeIf{it.recipeKey==recipe.key&&it.origin==origin}?:pack.compile(recipe,origin,cancelled,excluded)
         // Static entity bodies still use their explicit renderer route. Model
         // replacement must not erase an overlay's metadata or duplicate a body.
@@ -207,7 +213,7 @@ class NativeWorldPacketCompiler internal constructor(signRasterizer:NativeSignRa
         check(resource.acceptedMembers.none{it in reserved})
         resourcePackets!!.append(target,owner,resource,placement,state,weathering,lod,cancelled)
         val fallback=compiler.compile(recipe,origin,cancelled,NativeSourceIndices.unionView(resource.acceptedMembers,excluded),resource.fluids?.plan?.acceptedFree.orEmpty(),resource.fluids?.plan?.acceptedWaterlogged.orEmpty())
-        originals.append(target,fallback,placement,state,weathering,lod,cancelled=cancelled)
+        originals.append(target,fallback,placement,state,weathering,lod,cancelled=cancelled,cubeContacts=cubeContacts)
     }
     fun clear(){rootCompiler?.clear();rootCompiler=null;root=null;owners.clear();compiler.clear();preparedResources.clear();resourceCompiler?.clear();resourceCompiler=null;resourcePackets=null;resourceAssets=null;materials.clear();clouds.clear();precipitation.clear();sky.clear();lightning.clear();picking.clear();entities.clear();animals.clear();ground=null}
     override fun close(){try{clear()}finally{preparation.close()}}

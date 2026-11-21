@@ -9,7 +9,11 @@ import kotlin.math.floor
 object FocusProjection {
     fun attribution(doc: DomainDocument): JSONObject = attribution(doc.focusControlJson())
     /** Read an actor-owned snapshot without retaining or mutating it. */
-    fun attribution(s: JSONObject): JSONObject {
+    fun attribution(s: JSONObject): JSONObject=project(s,false)
+    fun reportedAttribution(doc:DomainDocument):JSONObject=reportedAttribution(doc.focusControlJson())
+    fun reportedAttribution(s:JSONObject):JSONObject=project(s,true)
+
+    private fun project(s:JSONObject,redistributeShortTime:Boolean):JSONObject {
         fun objects(name: String) = s.getJSONArray(name).let { a -> List(a.length()) { a.getJSONObject(it) } }
         fun ids(x: JSONObject, key: String) = x.getJSONArray(key).let { a -> List(a.length()) { a.getString(it) } }
         val projects = objects("projects").associateBy { it.getString("id") }
@@ -42,7 +46,8 @@ object FocusProjection {
                 }
             }[taskId]
         }
-        val rows = objects("focusHistory").sortedWith(compareBy<JSONObject> { it.getString(if (it.getString("status") == "interrupted") "interruptedAt" else "completedAt") }.thenBy { it.getString("id") }).map { f ->
+        val history=objects("focusHistory")
+        val rows = history.sortedWith(compareBy<JSONObject> { it.getString(if (it.getString("status") == "interrupted") "interruptedAt" else "completedAt") }.thenBy { it.getString("id") }).map { f ->
             val sessionId=f.getString("id")
             var candidate:JSONObject?=null
             var conflict=false
@@ -79,9 +84,26 @@ object FocusProjection {
                 for (key in listOf("projectId", "subtaskId", "subtaskTitle", "targetId", "targetTitle")) out.put(key, JSONObject.NULL)
             }; out
         }
+        if(redistributeShortTime)attributeReportTimes(history,rows)
         val unknown = rows.filter { it.getString("kind") == "unallocated" }
         val completed = unknown.count { it.getString("status") != "interrupted" && it.getLong("actualDurationMs") > 0 }
-        val interrupted = unknown.count { it.getString("status") == "interrupted" && it.getLong("actualDurationMs") > 0 }
-        return JSONObject().put("sessions", JSONArray(rows)).put("unallocated", JSONObject().put("rounds", completed + interrupted).put("completedRounds", completed).put("interruptedRounds", interrupted).put("minutes", floor(unknown.sumOf { it.getLong("actualDurationMs") } / 60000.0 + .5).toLong()))
+        val interrupted = unknown.count { it.getString("status") == "interrupted" && reportedDuration(it) > 0 }
+        return JSONObject().put("sessions", JSONArray(rows)).put("unallocated", JSONObject().put("rounds", completed + interrupted).put("completedRounds", completed).put("interruptedRounds", interrupted).put("minutes", floor(unknown.sumOf(::reportedDuration) / 60000.0 + .5).toLong()))
     }
+
+    private fun attributeReportTimes(history:List<JSONObject>,rows:List<JSONObject>){
+        val byId=rows.associateBy{it.getString("sessionId")}
+        val batches=history.filter{it.has("settledAt")}.groupBy{it.getString("projectId") to it.getString("settledAt")}
+        for(sessions in batches.values){
+            val recipients=sessions.filter{item->
+                item.getString("status")!="interrupted"&&byId.getValue(item.getString("id")).getString("kind")!="unallocated"
+            }.sortedWith(compareBy<JSONObject>{DomainTime.millis(it.getString("completedAt"))}.thenBy{it.getString("id")})
+            val durations=FocusReportTime.distribute(sessions.map{
+                ReportedFocusTime(it.getString("id"),it.getLong("actualDurationMs"),it.getLong("plannedDurationMs"))
+            },recipients.map{it.getString("id")})
+            for((id,ms) in durations)byId.getValue(id).put("reportedDurationMs",ms)
+        }
+    }
+
+    fun reportedDuration(row:JSONObject)=row.optLong("reportedDurationMs",row.getLong("actualDurationMs"))
 }

@@ -3,18 +3,21 @@ package com.blockcolc.presentation
 import com.blockcolc.domain.DomainDocument
 import com.blockcolc.domain.DomainEngine
 import com.blockcolc.domain.DomainTime
+import com.blockcolc.domain.FocusReportTime
+import com.blockcolc.domain.ReportedFocusTime
 import com.blockcolc.storage.PlanMode
 import com.blockcolc.storage.PlanPhase
 import com.blockcolc.storage.RecoveryContext
 import org.json.JSONArray
 import org.json.JSONObject
 
-data class ReportSession(val id:String,val durationMs:Long)
+data class ReportSession(val id:String,val durationMs:Long,val plannedMs:Long)
 data class ReportTarget(val projectId:String,val projectTitle:String,val taskId:String?,val title:String,val progress:Int,val maxRounds:Int,
     val projectProgress:Int=0,val habitCycle:Int?=null,val habitCompleted:Int?=null,val habitTarget:Int?=null)
 data class ReportPool(val planId:String,val mode:PlanMode,val sessions:List<ReportSession>,val targets:List<ReportTarget>,
-    val partialExtensionMs:Long=0){
+    val partialExtension:ReportSession?=null){
     val totalRounds get()=sessions.size
+    val partialExtensionMs get()=partialExtension?.durationMs?:0L
     val totalDurationMs get()=sessions.sumOf{it.durationMs}+partialExtensionMs
     companion object {
         fun from(domain:DomainDocument,recovery:RecoveryContext):ReportPool? {
@@ -30,15 +33,16 @@ data class ReportPool(val planId:String,val mode:PlanMode,val sessions:List<Repo
                 rows("habitBuildings").flatMap{ids(it,"focusSessionIds")}+
                 projects.flatMap{it.optJSONObject("habit")?.let{h->ids(h,"completedFocusSessionIds")}.orEmpty()}).toSet()
             val history=rows("focusHistory")
+            fun session(row:JSONObject)=ReportSession(row.getString("id"),row.getLong("actualDurationMs"),row.getLong("plannedDurationMs"))
             val sessions=history.filter{plan.completed(it.getString("id"))&&it.getString("id") !in used&&
                 it.getString("status")!="interrupted"&&!it.has("settledAt")}
                 .sortedWith(compareBy<JSONObject>{DomainTime.millis(it.getString("completedAt"))}.thenBy{it.getString("id")})
-                .map{ReportSession(it.getString("id"),it.getLong("actualDurationMs"))}
-            val partialExtensionMs=plan.extensionStartedAt?.let{
+                .map(::session)
+            val partialExtension=plan.extensionStartedAt?.let{
                 val tailId=plan.extensionSessionId(plan.extensionRounds+1)
                 history.firstOrNull{row->row.getString("id")==tailId&&row.getString("status")=="interrupted"&&
-                    row.optString("interruptionReason")=="user-cancelled"}?.getLong("actualDurationMs")
-            }?:0L
+                    row.optString("interruptionReason")=="user-cancelled"&&!row.has("settledAt")}?.let(::session)
+            }
             val targets=projects.filter{it.getString("status")!="deleted"}.flatMap{p->
                 val projectId=p.getString("id");val title=p.getString("title")
                 if(plan.mode==PlanMode.ROUNDS&&projectId!=plan.projectId)emptyList()
@@ -54,7 +58,7 @@ data class ReportPool(val planId:String,val mode:PlanMode,val sessions:List<Repo
                         .map{ReportTarget(projectId,title,it.getString("id"),it.getString("title"),it.getInt("progressBasisPoints"),sessions.size,projectProgress=progress)}
                 }
             }
-            return ReportPool(plan.id,plan.mode,sessions,targets,partialExtensionMs)
+            return ReportPool(plan.id,plan.mode,sessions,targets,partialExtension)
         }
     }
 }
@@ -86,18 +90,27 @@ data class ReportDraft(val planId:String,val tasks:List<TaskAllocation> = emptyL
     fun command(pool:ReportPool,newId:()->String):JSONObject {
         validate(pool)
         if(pool.mode==PlanMode.ROUNDS){val t=tasks.single();return DomainEngine.command("ReportSubtaskProgress","reportId" to newId(),
-            "subtaskId" to t.taskId,"focusSessionIds" to JSONArray(pool.sessions.map{it.id}),"progressBasisPoints" to t.progress)}
+            "subtaskId" to t.taskId,"focusSessionIds" to JSONArray(pool.sessions.map{it.id}),"progressBasisPoints" to t.progress)
+            .also{command->pool.partialExtension?.let{command.put("partialExtensionSessionId",it.id)}}}
         val entries=JSONArray(tasks.filter{it.rounds>0}.map{t->JSONObject().put("reportId",newId()).put("projectId",t.projectId)
             .put("subtaskId",t.taskId).put("progressBasisPoints",t.progress).put("rounds",t.rounds)})
         val habitEntries=JSONArray(habits.map{JSONObject().put("projectId",it.projectId).put("rounds",it.rounds)})
         return DomainEngine.command("ReportMarathonFocus","focusSessionIds" to JSONArray(pool.sessions.map{it.id}),"entries" to entries,"habitAllocations" to habitEntries)
+            .also{command->if(allocated>0)pool.partialExtension?.let{command.put("partialExtensionSessionId",it.id)}}
     }
-    /** Preview follows the formal habit-first, then ordinary-target assignment
-     * order. Partial final rounds keep their actual duration, not a mean. */
     fun assignedDurations(pool:ReportPool):Map<String,Long>{
         validate(pool);val result=linkedMapOf<String,Long>();var offset=0
-        for(h in habits){result["habit:${h.projectId}"]=pool.sessions.drop(offset).take(h.rounds).sumOf{it.durationMs};offset+=h.rounds}
-        for(t in tasks){if(t.rounds>0){result["task:${t.taskId}"]=pool.sessions.drop(offset).take(t.rounds).sumOf{it.durationMs};offset+=t.rounds}}
+        val assigned=pool.sessions.take(allocated.toInt()).map{it.id}
+        val durations=FocusReportTime.distribute(
+            (pool.sessions+listOfNotNull(pool.partialExtension)).map{ReportedFocusTime(it.id,it.durationMs,it.plannedMs)},assigned,
+        )
+        fun duration(rounds:Int):Long{
+            val sum=pool.sessions.subList(offset,offset+rounds).sumOf{durations[it.id]?:it.durationMs}
+            offset+=rounds
+            return sum
+        }
+        for(h in habits)result["habit:${h.projectId}"]=duration(h.rounds)
+        for(t in tasks)if(t.rounds>0)result["task:${t.taskId}"]=duration(t.rounds)
         return result
     }
 }

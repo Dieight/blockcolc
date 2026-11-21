@@ -207,7 +207,7 @@ import java.util.*
 @Composable private fun NativeTimerFrame(wide:Boolean,immersive:Boolean,onWorldHeight:(Int)->Unit,panel:@Composable (Modifier)->Unit){
     if(wide)Row(Modifier.fillMaxSize()){
         Spacer(Modifier.weight(WIDE_WORLD_FRACTION).fillMaxHeight().onSizeChanged{onWorldHeight(it.height)})
-        panel(Modifier.weight(1f-WIDE_WORLD_FRACTION).fillMaxHeight())
+        panel(Modifier.weight(1f-WIDE_WORLD_FRACTION).fillMaxHeight().then(if(immersive)Modifier else Modifier.statusBarsPadding()))
     }else Column(Modifier.fillMaxSize()){
         Spacer(Modifier.fillMaxWidth().weight(if(immersive)1f else NORMAL_WORLD_FRACTION).onSizeChanged{onWorldHeight(it.height)})
         panel(if(immersive)Modifier.fillMaxWidth()else Modifier.fillMaxWidth().weight(1f-NORMAL_WORLD_FRACTION))

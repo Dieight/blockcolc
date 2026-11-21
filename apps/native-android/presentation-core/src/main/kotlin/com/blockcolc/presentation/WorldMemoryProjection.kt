@@ -27,14 +27,14 @@ object WorldMemoryProjection {
         fun ids(row:JSONObject,key:String)=row.getJSONArray(key).let{a->List(a.length()){a.getString(it)}}
         val projects=rows("projects");val habits=rows("habitBuildings");val reports=rows("progressReports");val history=rows("focusHistory")
         val historyById=history.associateBy{it.getString("id")}
-        val attribution=knownAttribution?:FocusProjection.attribution(state).getJSONArray("sessions").let{a->List(a.length()){a.getJSONObject(it)}}
+        val attribution=knownAttribution?:FocusProjection.reportedAttribution(state).getJSONArray("sessions").let{a->List(a.length()){a.getJSONObject(it)}}
         val bySession=attribution.associateBy{it.getString("sessionId")}
         val projectsById=projects.associateBy{it.getString("id")}
         val reportsByProject=reports.groupBy{it.getString("projectId")}
         fun known(row:JSONObject)=row.getString("kind")!="unallocated"
         fun complete(row:JSONObject)=row.getString("status")!="interrupted"&&row.getLong("actualDurationMs")>0
         fun interrupted(row:JSONObject)=row.getString("status")=="interrupted"&&row.getLong("actualDurationMs")>0
-        fun duration(rows:List<JSONObject>)=rows.sumOf{it.getLong("actualDurationMs")}
+        fun duration(rows:List<JSONObject>)=rows.sumOf(FocusProjection::reportedDuration)
         val knownRows=attribution.filter(::known)
         val finiteByProject=knownRows.filter{it.getString("kind")=="finite-subtask"}.groupBy{it.optString("projectId")}
         val attributedByTarget=knownRows.groupBy{it.optString("targetId")}
@@ -56,9 +56,10 @@ object WorldMemoryProjection {
                 for(session in ids(report,"focusSessionIds"))if(bySession[session]?.let(::known)!=true)unknown+=session
             for(session in marathonByProject[id].orEmpty()){
                 val row=bySession[session.getString("id")]
-                if(row?.let(::known)!=true&&row?.optString("reason")!="discarded")unknown+=session.getString("id")
+                if(row?.let(::known)!=true&&row?.optString("reason")!="discarded"&&
+                    (row==null||FocusProjection.reportedDuration(row)>0))unknown+=session.getString("id")
             }
-            val unknownMs=unknown.mapNotNull{historyById[it]}.sumOf{it.getLong("actualDurationMs")};val total=duration(sessions)
+            val unknownMs=unknown.sumOf{id->bySession[id]?.let(FocusProjection::reportedDuration)?:historyById[id]?.getLong("actualDurationMs")?:0L};val total=duration(sessions)
             val byTask=sessions.groupBy{it.optString("subtaskId")}
             val tasks=project.getJSONArray("subtasks").let{a->List(a.length()){a.getJSONObject(it)}}.map{task->
                 val own=byTask[task.getString("id")].orEmpty();val spent=duration(own)

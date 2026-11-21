@@ -22,15 +22,17 @@ class ReportDraftTest {
         }
         return doc to RecoveryContext(SavedPlan("plan","first",null,PlanMode.MINIMAL,3,listOf("f0","f1","f2"),PlanPhase.REPORT,120000,0))
     }
-    @Test fun partialAllocationUsesActualDurationsKeepsUnchangedProgressAndLeavesTheRestUnknown(){
+    @Test fun partiallyAllocatedReportSharesShortTimeAndLeavesUnassignedFullRoundsUnknown(){
         val(doc,recovery)=state();val pool=ReportPool.from(doc,recovery)!!
         val draft=ReportDraft("plan",listOf(TaskAllocation("second","two",0,1)),listOf(HabitAllocation("habit",1)))
-        assertEquals(mapOf("habit:habit" to 60000L,"task:two" to 90000L),draft.assignedDurations(pool))
+        assertEquals(mapOf("habit:habit" to 75000L,"task:two" to 75000L),draft.assignedDurations(pool))
         val result=DomainEngine.execute(doc,draft.command(pool){"report"},now+400000)
         assertTrue(result.error,result.ok)
-        val a=FocusProjection.attribution(result.state).getJSONArray("sessions")
+        val a=FocusProjection.reportedAttribution(result.state).getJSONArray("sessions")
         assertEquals("habit-project",a.getJSONObject(0).getString("kind"));assertEquals("habit",a.getJSONObject(0).getString("projectId"))
         assertEquals("two",a.getJSONObject(1).getString("subtaskId"));assertEquals("unallocated",a.getJSONObject(2).getString("kind"))
+        assertEquals(listOf(75000L,75000L,120000L),(0 until a.length()).map{FocusProjection.reportedDuration(a.getJSONObject(it))})
+        assertEquals(listOf(60000L,90000L,120000L),(0 until a.length()).map{a.getJSONObject(it).getLong("actualDurationMs")})
         assertTrue(ReportPool.from(result.state,recovery)!!.sessions.isEmpty())
     }
     @Test fun advancingWithoutRoundsIsRejectedButKeepingProgressWithoutRoundsAndDiscardingAreValid(){
@@ -60,10 +62,17 @@ class ReportDraftTest {
             assertEquals(270000L+tail,pool.totalDurationMs)
             assertEquals(3+credited,pool.totalRounds)
             val draft=ReportDraft(plan.id,listOf(TaskAllocation("first","one",2500,3+credited)))
-            assertEquals(270000L+tail*credited,draft.assignedDurations(pool)["task:one"])
+            assertEquals(270000L+tail,draft.assignedDurations(pool)["task:one"])
             val ids=draft.command(pool){"report"}.getJSONArray("focusSessionIds")
             assertEquals(3+credited,ids.length())
             if(credited==1)assertEquals(id,ids.getString(3))
+            val saved=DomainEngine.execute(stopped.state,draft.command(pool){"report"},start+tail+1)
+            assertTrue(saved.error,saved.ok)
+            val allocations=FocusProjection.reportedAttribution(saved.state).getJSONArray("sessions")
+            val rows=List(allocations.length()){allocations.getJSONObject(it)}
+            assertEquals(270000L+tail,rows.sumOf(FocusProjection::reportedDuration))
+            assertEquals(270000L+tail,rows.filter{it.optString("subtaskId")=="one"}.sumOf(FocusProjection::reportedDuration))
+            assertEquals(3+credited,rows.count{it.optString("subtaskId")=="one"})
         }
     }
     @Test fun stalePoolDuplicateTargetsOverAllocationAndExceedingHabitCapacityFailBeforeAnyCommand(){
