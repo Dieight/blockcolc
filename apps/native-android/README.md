@@ -2,7 +2,7 @@
 
 这个工程提供方块钟的原生 Android 应用。业务、SQLite 存储、Compose 界面和 Filament 世界渲染在同一应用内运行。迁移分阶段记录在[总规划](../../docs/research/3.0.0-native-migration-plan.md)。
 
-公开的 3.0 Beta 使用正式包名与证书。当前覆盖升级、性能和兼容性证据见 [P4 验收记录](../../docs/versions/3.0.0-p4.md)，发布方式见 [Beta 通道](#beta-通道)。
+3.0.0 正式版及公开 Beta 使用同一包名与证书。覆盖升级、性能和兼容性见 [3.0.0 交付记录](../../docs/versions/V112.md)及 [P4 验收记录](../../docs/versions/3.0.0-p4.md)。测试版发布见 [Beta 通道](#beta-通道)。
 
 ## 本地构建
 
