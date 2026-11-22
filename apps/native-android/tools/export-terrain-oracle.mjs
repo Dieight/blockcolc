@@ -14,8 +14,8 @@ const plugin={name:'expose-existing-pure-terrain-fields',setup(b){b.onLoad({filt
  contents:readFileSync(args.path,'utf8')+'\nexport {terrainSurfaceTable} from "./terrain-surface-table";',loader:'ts',resolveDir:path.dirname(args.path)
 }));}};
 async function load(relative){
- const compiled=await build({entryPoints:[path.join(root,relative)],bundle:true,write:false,platform:'node',format:'esm',metafile:true,plugins:[plugin]});
- for(const input of Object.keys(compiled.metafile.inputs)){const absolute=path.resolve(input),name=path.relative(root,absolute).replaceAll('\\','/');assert(!name.startsWith('../'));hashes[name]=sha(readFileSync(absolute));}
+ const compiled=await build({absWorkingDir:root,entryPoints:[relative],bundle:true,write:false,platform:'node',format:'esm',metafile:true,preserveSymlinks:true,plugins:[plugin]});
+ for(const input of Object.keys(compiled.metafile.inputs)){const absolute=path.resolve(root,input),name=path.relative(root,absolute).replaceAll('\\','/');assert(!name.startsWith('../'));hashes[name]=sha(readFileSync(absolute));}
  return import('data:text/javascript;base64,'+Buffer.from(compiled.outputFiles[0].text).toString('base64'));
 }
 const terrain=await load('packages/voxel/src/terrain.ts'),profile=await load('packages/voxel/src/terrain-profile.ts');

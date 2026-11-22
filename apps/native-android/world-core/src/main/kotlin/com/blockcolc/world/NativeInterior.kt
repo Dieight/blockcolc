@@ -55,7 +55,7 @@ class NativeInteriorCompiler {
             rows.getOrPut(m){ArrayList()}+=BlockTransform.translation(origin.x,origin.y,origin.z)*objectTransform*BlockTransform.translation(x,y,z)*scale
         }
         val blocks=NativeInteriorBlocks.layout(items)
-        val recipe=BuildingPreparation.staticStructure(blocks,"study-blocks-v3",cancelled=cancelled)
+        val recipe=BuildingPreparation.staticStructure(blocks,"study-blocks-v4",cancelled=cancelled)
         val builder=NativePacketBuilder(PacketOwners.INTERIOR)
         val placement=NativeStructurePlacement(origin);val state=NativeSurfaceState(ambientOcclusion=.3f)
         val compiler=OriginalStructureCompiler()

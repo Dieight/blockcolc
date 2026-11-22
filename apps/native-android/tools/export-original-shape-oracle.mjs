@@ -10,7 +10,7 @@ const hashes={},sha=b=>createHash('sha256').update(b).digest('hex');
 const plugin={name:'expose-formal-original-box-mesher',setup(b){b.onLoad({filter:/[\\/]voxel[\\/]src[\\/]original-static-shapes\.ts$/},args=>({
  contents:readFileSync(args.path,'utf8')+'\nexport {VANILLA_SHAPE_PATHS as oracleRegistry,createGeometryFromBoxes as oracleBoxes};',loader:'ts',resolveDir:path.dirname(args.path)
 }));}};
-const compiled=await build({entryPoints:[path.join(root,'packages/voxel/src/original-static-shapes.ts')],bundle:true,write:false,platform:'node',format:'esm',metafile:true,plugins:[plugin]});
+const compiled=await build({entryPoints:[path.join(root,'packages/voxel/src/original-static-shapes.ts')],bundle:true,write:false,platform:'node',format:'esm',metafile:true,preserveSymlinks:true,plugins:[plugin]});
 for(const input of Object.keys(compiled.metafile.inputs)){const absolute=path.resolve(input),name=path.relative(root,absolute).replaceAll('\\','/');assert(!name.startsWith('../'));hashes[name]=sha(readFileSync(absolute));}
 const source=await import('data:text/javascript;base64,'+Buffer.from(compiled.outputFiles[0].text).toString('base64'));
 const registry=Object.fromEntries(Object.entries(source.oracleRegistry).map(([family,ids])=>[family,[...ids]]));

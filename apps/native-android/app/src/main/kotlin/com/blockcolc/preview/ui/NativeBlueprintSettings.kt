@@ -42,17 +42,20 @@ private val blueprintGroups=listOf("native" to "原生图纸","supplemental" to 
         ))
         NativeIconAction(ui.text("导入 .litematic"),"plus",onImport,pending=state.busy,enabled=available)
     }){
-        for((category,label)in blueprintGroups){
-            NativeSeparator()
+        for((index,group)in blueprintGroups.withIndex()){
+            val (category,label)=group
+            if(index>0)NativeSeparator()
             val entries=library.items.filter{it.category==category}
             var expanded by rememberNativePageState("blueprints/library/$category"){false}
-            NativeDisclosure(ui.text(label),expanded=expanded,onExpandedChange={expanded=it},valueLabel=entries.size.toString()){
+            NativeDisclosure(ui.text(label),expanded=expanded,onExpandedChange={expanded=it},valueLabel=entries.size.toString(),contentSpacing=0.dp){
                 if(entries.isEmpty())Text(ui.text("暂无图纸"),style=MaterialTheme.typography.bodySmall)
                 entries.forEachIndexed{i,item->key(item.id){
                     if(i>0)NativeSeparator()
                     Row(Modifier.fillMaxWidth().testTag("blueprint-library-${item.id}"),verticalAlignment=Alignment.CenterVertically){
-                        Row(Modifier.weight(1f).heightIn(min=56.dp).clickable(enabled=available,
-                            interactionSource=remember{MutableInteractionSource()},indication=null){preview=item},verticalAlignment=Alignment.CenterVertically){
+                        val interaction=remember{MutableInteractionSource()}
+                        Row(Modifier.weight(1f).heightIn(min=NativeSettingsRowHeight).clickable(enabled=available,
+                            interactionSource=interaction,indication=null){preview=item}.nativePressMotion(interaction,available),
+                            verticalAlignment=Alignment.CenterVertically){
                             if(item.locked)Text("?",Modifier.width(36.dp),style=MaterialTheme.typography.titleLarge)
                             else PixelGlyph("cube",Modifier.size(24.dp).padding(end=4.dp))
                             Column(Modifier.weight(1f)){
@@ -129,16 +132,21 @@ private val blueprintGroups=listOf("native" to "原生图纸","supplemental" to 
     val ui=LocalNativeUi.current;val entry=library.items.firstOrNull{it.id==selected&&it.selectable}
             if(entry!=null){NativeBlueprintPreview(entry);Text(ui.text(entry.description),style=MaterialTheme.typography.bodySmall)}
     else Text(ui.text("请选择可用的建筑蓝图。"),color=MaterialTheme.colorScheme.error)
-    for((category,label)in blueprintGroups.take(3)){
-        val items=library.items.filter{it.category==category&&it.selectable}
-        var expanded by rememberSaveable(category){mutableStateOf(category=="native")}
-        NativeDisclosure(ui.text(label),expanded=expanded,onExpandedChange={expanded=it},valueLabel=items.size.toString()){
-            for(item in items){
-                NativeChoice(if(item.localized)ui.text(item.displayName)else item.displayName,item.id==selected,enabled,"cube"){onSelect(item.id)}
-                Text("${item.width} × ${item.depth} ${ui.text("方块 ·")} ${ui.text(when(item.complexity){"simple"->"紧凑";"moderate"->"适中";else->"丰富"})}",style=MaterialTheme.typography.bodySmall)
+    Column{
+        for((index,group)in blueprintGroups.take(3).withIndex()){
+            val (category,label)=group
+            if(index>0)NativeSeparator()
+            val items=library.items.filter{it.category==category&&it.selectable}
+            var expanded by rememberSaveable(category){mutableStateOf(category=="native")}
+            NativeDisclosure(ui.text(label),expanded=expanded,onExpandedChange={expanded=it},valueLabel=items.size.toString(),contentSpacing=0.dp){
+                for((itemIndex,item)in items.withIndex()){
+                    if(itemIndex>0)NativeSeparator()
+                    val complexity=ui.text(when(item.complexity){"simple"->"紧凑";"moderate"->"适中";else->"丰富"})
+                    val description="${item.width} × ${item.depth} ${ui.text("方块 ·")} $complexity"
+                    NativeChoice(if(item.localized)ui.text(item.displayName)else item.displayName,item.id==selected,enabled,"cube",description){onSelect(item.id)}
+                }
             }
         }
-        NativeSeparator()
     }
     Text(ui.text("蓝图在创建后不可更换，请确认完整预览。"),style=MaterialTheme.typography.bodySmall)
 }

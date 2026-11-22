@@ -25,6 +25,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import kotlin.math.roundToInt
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.*
@@ -38,7 +39,7 @@ import java.util.*
 
 /** Same workbench and symmetric FocusFace slots as the formal WorldScreenV7.
  * The application owns planning and recovery; this page only presents them. */
-@Composable internal fun NativeTimerPage(s:WorkspaceUiState,runtime:WorkspaceActions,minimal:Boolean,immersive:Boolean,pool:ReportPool?,reportPending:Boolean,delivered:Boolean,reportError:String?,selectedTask:String?,onMinimal:(Boolean)->Unit,onAdjust:(PlanEditorModel)->Unit,onManual:()->Unit,onCreate:()->Unit,onSubmit:(ReportDraft)->Unit,onWorldHeight:(Int)->Unit,memory:String?,onCloseMemory:()->Unit,panelOpacity:Float=1f,active:Boolean=true,onPanelTop:(Int)->Unit={},wide:Boolean=false,minimalFriends:(@Composable (Boolean)->Unit)?=null){
+@Composable internal fun NativeTimerPage(s:WorkspaceUiState,runtime:WorkspaceActions,minimal:Boolean,immersive:Boolean,pool:ReportPool?,reportPending:Boolean,delivered:Boolean,reportError:String?,selectedTask:String?,onMinimal:(Boolean)->Unit,onAdjust:(PlanEditorModel)->Unit,onManual:()->Unit,onCreate:()->Unit,onSubmit:(ReportDraft)->Unit,onWorldHeight:(Int)->Unit,memory:String?,onCloseMemory:()->Unit,panelVisibility:State<Float>?=null,active:Boolean=true,onPanelTop:(Int)->Unit={},wide:Boolean=false,wideWorld:Dp=0.dp,minimalFriends:(@Composable (Boolean)->Unit)?=null){
     val ui=LocalNativeUi.current;val timer=s.timer?:return
     var now by remember(timer.planId,timer.surface,timer.deadline){mutableLongStateOf(System.currentTimeMillis())}
     LaunchedEffect(active,timer.planId,timer.surface,timer.deadline){while(active&&isActive){now=System.currentTimeMillis();delay(250)}}
@@ -62,16 +63,34 @@ import java.util.*
         .onFocusChanged{if(it.hasFocus)revealed=true}.semantics{customActions=listOf(CustomAccessibilityAction(ui.text("显示结束操作")){revealed=true;true})}
     BoxWithConstraints(Modifier.fillMaxSize()){
       val reportMax=maxHeight*.76f
-      val focusPanelHeight=minOf(266.dp,maxHeight*.85f)
+      val focusPanelHeight=minimalPanelHeight(maxHeight)
       val memoryHeight=maxHeight
+      val panelInsets=WindowInsets.safeDrawing.only(if(wide)WindowInsetsSides.End+WindowInsetsSides.Top else WindowInsetsSides.Horizontal)
+      // System bars may still be retreating when the first immersive clock
+      // is drawn. Only permanent cutouts can move its content.
+      val immersiveInsets=WindowInsets.displayCutout.union(WindowInsets.waterfall)
+      val focusInsets=immersiveInsets.only(if(wide)WindowInsetsSides.End+WindowInsetsSides.Vertical else WindowInsetsSides.Horizontal+WindowInsetsSides.Bottom)
+      val panelMotion=Modifier.graphicsLayer{
+          val progress=panelVisibility?.value?:1f
+          alpha=progress
+          if(wide)translationX=(1f-progress)*24.dp.toPx()
+          else translationY=(1f-progress)*20.dp.toPx()
+      }
       val reward=s.workspace?.memories?.rewards?.find{it.id==memory}
-      NativeTimerFrame(wide,immersive,onWorldHeight){panel->
-        if(!immersive&&memory!=null&&reward==null){NativeBuildingMemory(s,runtime,memory,onCloseMemory,panel);return@NativeTimerFrame}
+      val insets=(if(immersive)immersiveInsets else WindowInsets.safeDrawing).asPaddingValues()
+      val direction=LocalLayoutDirection.current
+      val leftInset=insets.calculateLeftPadding(direction)
+      val rightInset=insets.calculateRightPadding(direction)
+      val safeWidth=(maxWidth-leftInset-rightInset).coerceAtLeast(0.dp)
+      val panelWidth=if(immersive)minimalPanelWidth(safeWidth)+rightInset else maxWidth-wideWorld
+      NativeTimerFrame(wide,immersive,panelWidth,onWorldHeight){panel->
+        if(!immersive&&memory!=null&&reward==null){NativeBuildingMemory(s,runtime,memory,onCloseMemory,panel.windowInsetsPadding(panelInsets).then(panelMotion));return@NativeTimerFrame}
         if(!immersive){
-          BoxWithConstraints(panel.background(MaterialTheme.colorScheme.background).testTag("formal-normal-workbench").onGloballyPositioned{onPanelTop(it.positionInRoot().y.roundToInt())}){
+          BoxWithConstraints(panel.background(MaterialTheme.colorScheme.background).windowInsetsPadding(panelInsets)
+              .testTag("formal-normal-workbench").onGloballyPositioned{onPanelTop(it.positionInRoot().y.roundToInt())}){
             val panelHeight=maxHeight
             if(wide&&project!=null){
-                Column(Modifier.fillMaxSize().padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
+                Column(Modifier.fillMaxSize().then(panelMotion).padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
                     Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
                         NativeText(if(timer.mode==PlanMode.MARATHON)ui.text("本场安排")else project.title,NativeTextRole.CAPTION,Modifier.weight(1f),maxLines=2)
                         if(s.preferences.minimalMode)FormalTextAction(ui.text("极简"),"expand",{onMinimal(true)})
@@ -92,7 +111,7 @@ import java.util.*
                 }
                 return@BoxWithConstraints
             }
-            Column(Modifier.fillMaxWidth().verticalScroll(LocalNativePageScroll.current?:rememberScrollState()).heightIn(min=panelHeight).padding(start=20.dp,end=20.dp,top=14.dp,bottom=16.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){
+            Column(Modifier.fillMaxWidth().then(panelMotion).verticalScroll(LocalNativePageScroll.current?:rememberScrollState()).heightIn(min=panelHeight).padding(start=20.dp,end=20.dp,top=14.dp,bottom=16.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){
                 if(project==null){
                     NativeText(ui.text("其他任务"),NativeTextRole.SECTION)
                     if(s.choices.isEmpty())NativeText(ui.text("暂无其他任务"),NativeTextRole.BODY)
@@ -120,7 +139,9 @@ import java.util.*
                         }
                         s.workspace?.let{NativeOccasionEmblems(it.today,0,it.settings.birthday)}
                     }
-                    Row(Modifier.fillMaxWidth().heightIn(min=44.dp).clickable(enabled=!s.busy,interactionSource=remember{MutableInteractionSource()},indication=null,onClick=::adjust),verticalAlignment=Alignment.CenterVertically){
+                    val adjustInteraction=remember{MutableInteractionSource()}
+                    Row(Modifier.fillMaxWidth().heightIn(min=44.dp).clickable(enabled=!s.busy,interactionSource=adjustInteraction,indication=null,onClick=::adjust)
+                        .nativePressMotion(adjustInteraction,!s.busy),verticalAlignment=Alignment.CenterVertically){
                         NativeText(planSummary,NativeTextRole.CAPTION,Modifier.weight(1f))
                         FormalTextAction(ui.text("调整"),"edit",::adjust,Modifier.widthIn(min=80.dp),!s.busy)
                     }
@@ -136,15 +157,15 @@ import java.util.*
             }
           }
         }else if(pool!=null){
-            NativeGlass(s.preferences.focusGlassTransparency,panel.then(if(wide)Modifier else Modifier.heightIn(max=reportMax)).onGloballyPositioned{onPanelTop(it.positionInRoot().y.roundToInt())}.graphicsLayer{alpha=panelOpacity}){
-                Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(start=20.dp,end=20.dp,top=24.dp,bottom=16.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){
+            NativeGlass(s.preferences.focusGlassTransparency,panel.then(if(wide)Modifier else Modifier.heightIn(max=reportMax)).onGloballyPositioned{onPanelTop(it.positionInRoot().y.roundToInt())}){
+                Column(Modifier.fillMaxWidth().windowInsetsPadding(focusInsets).then(panelMotion).verticalScroll(rememberScrollState()).padding(start=20.dp,end=20.dp,top=24.dp,bottom=16.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){
                     NativeReportPanel(pool,reportPending,delivered,onSubmit)
                     if(reportError!=null)Text(ui.text("保存失败，请重试。"),color=MaterialTheme.colorScheme.error)
                 }
             }
         }else{
-          NativeGlass(s.preferences.focusGlassTransparency,panel.then(if(wide)Modifier else Modifier.height(focusPanelHeight)).testTag("formal-minimal-panel").onGloballyPositioned{onPanelTop(it.positionInRoot().y.roundToInt())}.graphicsLayer{alpha=panelOpacity}.then(reveal)){
-            Box(Modifier.fillMaxSize().padding(horizontal=20.dp,vertical=16.dp)){
+          NativeGlass(s.preferences.focusGlassTransparency,panel.then(if(wide)Modifier else Modifier.height(focusPanelHeight)).testTag("formal-minimal-panel").onGloballyPositioned{onPanelTop(it.positionInRoot().y.roundToInt())}.then(reveal)){
+            Box(Modifier.fillMaxSize().windowInsetsPadding(focusInsets).then(panelMotion).padding(horizontal=20.dp,vertical=16.dp)){
               if(minimal&&timer.surface==TimerSurface.IDLE){
                 val pages=remember(s.preferences.quickNotesEnabled,minimalFriends!=null){
                     buildList{
@@ -160,7 +181,7 @@ import java.util.*
                     val key=pages[index]
                     when(key){
                         "notes"->NativeQuickNotes(s,runtime,compact=true)
-                        "statistics"->Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.Center){
+                        "statistics"->Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())){
                             val timeline=s.workspace?.todayTimeline
                             if(timeline!=null)NativeTodayFocusPanel(timeline)else NativeHistoryDetailsStatus(s,runtime)
                         }
@@ -200,14 +221,14 @@ import java.util.*
           }
         }
       }
-      if(!immersive&&reward!=null)NativeRewardMemoryPlate(reward,onCloseMemory,if(wide)Modifier.fillMaxWidth(WIDE_WORLD_FRACTION).align(Alignment.BottomStart).padding(12.dp)else Modifier.align(Alignment.TopCenter).padding(start=12.dp,end=12.dp,top=(memoryHeight*NORMAL_WORLD_FRACTION-76.dp).coerceAtLeast(0.dp)))
+      if(!immersive&&reward!=null)NativeRewardMemoryPlate(reward,onCloseMemory,if(wide)Modifier.width(wideWorld).align(Alignment.BottomStart).padding(12.dp)else Modifier.align(Alignment.TopCenter).padding(start=12.dp,end=12.dp,top=(memoryHeight*NORMAL_WORLD_FRACTION-76.dp).coerceAtLeast(0.dp)))
     }
 }
 
-@Composable private fun NativeTimerFrame(wide:Boolean,immersive:Boolean,onWorldHeight:(Int)->Unit,panel:@Composable (Modifier)->Unit){
+@Composable private fun NativeTimerFrame(wide:Boolean,immersive:Boolean,panelWidth:Dp,onWorldHeight:(Int)->Unit,panel:@Composable (Modifier)->Unit){
     if(wide)Row(Modifier.fillMaxSize()){
-        Spacer(Modifier.weight(WIDE_WORLD_FRACTION).fillMaxHeight().onSizeChanged{onWorldHeight(it.height)})
-        panel(Modifier.weight(1f-WIDE_WORLD_FRACTION).fillMaxHeight().then(if(immersive)Modifier else Modifier.statusBarsPadding()))
+        Spacer(Modifier.weight(1f).fillMaxHeight().onSizeChanged{onWorldHeight(it.height)})
+        panel(Modifier.width(panelWidth).fillMaxHeight())
     }else Column(Modifier.fillMaxSize()){
         Spacer(Modifier.fillMaxWidth().weight(if(immersive)1f else NORMAL_WORLD_FRACTION).onSizeChanged{onWorldHeight(it.height)})
         panel(if(immersive)Modifier.fillMaxWidth()else Modifier.fillMaxWidth().weight(1f-NORMAL_WORLD_FRACTION))

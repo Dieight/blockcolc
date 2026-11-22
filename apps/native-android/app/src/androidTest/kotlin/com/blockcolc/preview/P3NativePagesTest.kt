@@ -331,7 +331,13 @@ class P3NativePagesTest {
             runtime.updatePreferences{configure(it.copy(quickNotesEnabled=true,focusMinutes=1,breakMinutes=0,themeMode="dark")).also(desiredPreferences::set)}
             compose.waitUntil(10000){desiredPreferences.get()?.let{runtime.latest.preferences==it&&!runtime.latest.preferencesSaving}==true}
             InstrumentationRegistry.getArguments().getString("p3ExpectedOrientation")?.let{expected->
-                val orientation=if(expected=="landscape")android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE else android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                val orientation=when(expected){
+                    "portrait"->android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                    "landscape"->android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+                    "reverse-landscape"->android.content.pm.ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE
+                    else->error("Unknown test orientation: $expected")
+                }
+                val configuration=if(expected=="portrait")android.content.res.Configuration.ORIENTATION_PORTRAIT else android.content.res.Configuration.ORIENTATION_LANDSCAPE
                 // Select the test Activity's orientation before setting its
                 // Compose content. ActivityScenario may recreate the host;
                 // its provider resolves the replacement at setContent time.
@@ -341,7 +347,7 @@ class P3NativePagesTest {
                 instrumentation.runOnMainSync{checkNotNull(host()).requestedOrientation=orientation}
                 compose.waitUntil(15000){
                     var correct=false
-                    instrumentation.runOnMainSync{correct=host()?.resources?.configuration?.orientation==(if(expected=="landscape")android.content.res.Configuration.ORIENTATION_LANDSCAPE else android.content.res.Configuration.ORIENTATION_PORTRAIT)}
+                    instrumentation.runOnMainSync{correct=host()?.resources?.configuration?.orientation==configuration}
                     correct
                 }
             }
@@ -359,15 +365,15 @@ class P3NativePagesTest {
                 compose.mainClock.autoAdvance=true;compose.waitForIdle()
             }else compose.waitUntil(60000){compose.onAllNodesWithTag("workspace-ready").fetchSemanticsNodes().isNotEmpty()}
             InstrumentationRegistry.getArguments().getString("p3ExpectedOrientation")?.let{expected->
-                require(expected in setOf("portrait","landscape"))
                 val root=compose.onRoot().fetchSemanticsNode().boundsInRoot
                 val device=androidx.test.uiautomator.UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
                 val group=InstrumentationRegistry.getArguments().getString("p3Group")?:"local"
                 require(group.matches(Regex("[a-z0-9-]{1,60}")))
                 File(context.filesDir,"p3-ui-window-$group.json").writeText(JSONObject().put("expected",expected).put("rootWidthPx",root.width)
-                    .put("rootHeightPx",root.height).put("displayWidthPx",device.displayWidth).put("displayHeightPx",device.displayHeight).put("fontScale",fontScale?:context.resources.configuration.fontScale).toString())
-                assertEquals("Check the measured Compose window, not the saved rotation option",expected=="landscape",root.width>root.height)
-                assertEquals("The physical display must agree with the app window",expected=="landscape",device.displayWidth>device.displayHeight)
+                    .put("rootHeightPx",root.height).put("displayWidthPx",device.displayWidth).put("displayHeightPx",device.displayHeight)
+                    .put("rotation",device.displayRotation).put("fontScale",fontScale?:context.resources.configuration.fontScale).toString())
+                assertEquals("Check the measured Compose window, not the saved rotation option",expected!="portrait",root.width>root.height)
+                assertEquals("The physical display must agree with the app window",expected!="portrait",device.displayWidth>device.displayHeight)
             }
             try{block(name)}catch(error:Throwable){runCatching{screen("failure")};throw error}
         }finally{
@@ -734,13 +740,15 @@ class P3NativePagesTest {
         compose.waitUntil(60000){renderedWorld()?.let{it!==world}==true}
         compose.waitUntil(60000){compose.onAllNodesWithText("正在建造世界").fetchSemanticsNodes().isEmpty()}
         val recovered=checkNotNull(renderedWorld())
+        val readyState=SemanticsMatcher.expectValue(androidx.compose.ui.semantics.SemanticsProperties.StateDescription,"世界已就绪")
         compose.waitUntil(30000){
             val current=worldDiagnostic(recovered,false)
-            current.getLong("gpuReadyFrames")>0&&current.optJSONObject("navigation")?.optBoolean("opening")==false
+            current.getLong("gpuReadyFrames")>0&&current.optJSONObject("navigation")?.optBoolean("opening")==false&&
+                compose.onAllNodes(hasContentDescription("聚落世界") and readyState).fetchSemanticsNodes().size==1
         }
         val recovery=worldDiagnostic(recovered)
         assertTrue(recovery.getLong("gpuReadyFrames")>0);assertFalse(recovery.getBoolean("failed"))
-        compose.onNodeWithContentDescription("聚落世界").assert(SemanticsMatcher.expectValue(androidx.compose.ui.semantics.SemanticsProperties.StateDescription,"世界已就绪"))
+        compose.onNodeWithContentDescription("聚落世界").assert(readyState)
         assertEquals(timed.getJSONObject("camera").toString(),recovery.getJSONObject("camera").toString())
         InstrumentationRegistry.getInstrumentation().runOnMainSync{retiredStatus("ERROR: retired test callback")}
         compose.waitForIdle();compose.onNodeWithText("世界暂未准备好").assertDoesNotExist()
@@ -779,11 +787,12 @@ class P3NativePagesTest {
         val paper=compose.onNodeWithText("纸雕").performScrollTo()
         val smooth=compose.onNodeWithText("流畅")
         assertTrue(paper.fetchSemanticsNode().boundsInRoot.left<smooth.fetchSemanticsNode().boundsInRoot.left)
-        paper.performClick()
-        compose.waitUntil(10000){!runtime.latest.preferencesSaving&&runtime.latest.preferences.lightingQuality=="paper"}
         compose.onNodeWithText("极简模式").performScrollTo().performClick()
         compose.waitUntil(10000){!runtime.latest.preferencesSaving&&runtime.latest.preferences.minimalMode}
-        nav("计时")
+        paper.performScrollTo().performClick()
+        // Return before waiting for a disk receipt or for the world to finish.
+        compose.onNodeWithContentDescription("计时").performClick()
+        compose.waitUntil(10000){!runtime.latest.preferencesSaving&&runtime.latest.preferences.lightingQuality=="paper"}
         compose.onNodeWithTag("formal-normal-workbench").assertIsDisplayed()
         fun ready():JSONObject {
             var selected=JSONObject()
@@ -815,6 +824,22 @@ class P3NativePagesTest {
         assertSame(world,renderedWorld())
         assertEquals(ordinary.getLong("presentationIdentity"),ready().getLong("presentationIdentity"))
         compose.waitUntilDoesNotExist(hasText("准备世界…"),20000)
+    }
+    @Test fun returningToTimerAfterASettlementChangePresentsTheNewWorld()=run(configure={it.copy(lightingQuality="performance")}){
+        val initialEnvironment=runtime.latest.workspace?.settings?.environment
+        val target=if(initialEnvironment=="mosaic-coast") "山谷" else "海岸"
+        val expected=if(initialEnvironment=="mosaic-coast") "natural-valley" else "mosaic-coast"
+        val worldReady=SemanticsMatcher.expectValue(SemanticsProperties.StateDescription,"世界已就绪")
+        compose.waitUntilAtLeastOneExists(worldReady,60000)
+        nav("设置")
+        compose.onNodeWithText(target).performScrollTo().performClick()
+        val timerTab=compose.onNodeWithContentDescription("计时")
+        compose.waitUntil(10000){runCatching{timerTab.assertIsEnabled()}.isSuccess}
+        timerTab.performClick()
+        compose.waitUntil(60000){runtime.latest.workspace?.settings?.environment==expected}
+        compose.waitUntilAtLeastOneExists(worldReady,90000)
+        compose.onNodeWithTag("formal-normal-workbench").assertIsDisplayed()
+        screen("settlement-after-quick-return")
     }
     @Test fun debugWeatherAndClockRestoreNormalFactsWithoutReplacingStaticWorldOwners()=run{
         compose.waitUntil(60000){renderedWorld()!=null}
@@ -1164,7 +1189,7 @@ class P3NativePagesTest {
     private fun consistentUiReview(language:String,theme:String,font:String,scale:Float)=run(formalCollectionInitial(),fontScale=scale,
         configure={it.copy(language=language,themeMode=theme,fontStyle=font)}){
         fun caption(key:String,vararg values:Any?)=com.blockcolc.presentation.UiResources.load().text(language,key,*values)
-        if(InstrumentationRegistry.getArguments().getString("p3ExpectedOrientation")=="landscape"){
+        if(InstrumentationRegistry.getArguments().getString("p3ExpectedOrientation") in setOf("landscape","reverse-landscape")){
             val root=compose.onRoot().fetchSemanticsNode().boundsInRoot
             val panel=compose.onNodeWithTag("formal-normal-workbench").fetchSemanticsNode().boundsInRoot
             assertTrue("Landscape timer docks beside the world",panel.left>root.width*.45f)
@@ -2213,7 +2238,13 @@ class P3NativePagesTest {
         nav("设置")
         val original=runtime.testRead().get(30,TimeUnit.SECONDS).domain.sha256
         val preferences=runtime.latest.preferences
-        compose.onNodeWithTag("settings-search").performScrollTo().performTextInput("字体")
+        val search=compose.onNodeWithTag("settings-search").performScrollTo()
+        val label=compose.onNodeWithText("搜索设置",useUnmergedTree=true)
+        fun labelInset()=label.fetchSemanticsNode().boundsInRoot.top-search.fetchSemanticsNode().boundsInRoot.top
+        val restingInset=labelInset()
+        search.performClick()
+        compose.waitUntil(10000){runCatching{labelInset()<restingInset-8f}.getOrDefault(false)}
+        search.performTextInput("字体")
         compose.onNodeWithText("外观与阅读 · 字体").performClick()
         compose.waitUntil(10000){runCatching{compose.onNodeWithText("混合字体").assertIsDisplayed()}.isSuccess}
         compose.onNodeWithText("混合字体").assertIsDisplayed()
@@ -2232,7 +2263,16 @@ class P3NativePagesTest {
             value.optLong("gpuReadyFrames")>0&&navigation!=null&&!navigation.optBoolean("opening")&&!navigation.isNull("selected")
         }==true}
         val world=checkNotNull(renderedWorld());val before=worldDiagnostic(world)
-        compose.onNodeWithContentDescription("室内视角").performClick()
+        fun worldHud(label:String){
+            if(compose.onAllNodesWithContentDescription(label).fetchSemanticsNodes().isEmpty()){
+                compose.onNodeWithContentDescription("显示世界操作").performClick()
+                compose.waitUntilAtLeastOneExists(hasContentDescription(label),10000)
+                // The HUD suppresses the tap that revealed it and immediate follow-up input.
+                android.os.SystemClock.sleep(420)
+            }
+            compose.onNodeWithContentDescription(label).performClick()
+        }
+        worldHud("室内视角")
         compose.waitUntil(15000){worldDiagnostic(world).getJSONObject("interior").let{it.optBoolean("active")&&it.optLong("presentedSequence")>0&&it.optLong("presentedSequence")==it.optLong("sequence")}}
         val indoors=worldDiagnostic(world);val eye=indoors.getJSONObject("navigation").getJSONArray("eye").toString()
         assertEquals(before.getJSONObject("ownerIdentities").getString("world"),indoors.getJSONObject("ownerIdentities").getString("world"))
@@ -2275,14 +2315,14 @@ class P3NativePagesTest {
         assertEquals(eye,worldDiagnostic(world).getJSONObject("navigation").getJSONArray("eye").toString())
         screen("study-room")
         compose.onNodeWithContentDescription("书房摆设").assertDoesNotExist()
-        compose.onNodeWithContentDescription("返回聚落").performClick()
+        worldHud("返回聚落")
         compose.waitUntil(10000){worldDiagnostic(world).getJSONObject("interior").let{
             !it.getBoolean("active")&&it.getLong("presentedSequence")==it.getLong("sequence")
         }}
         val after=worldDiagnostic(world)
         assertEquals(before.getJSONObject("camera").toString(),after.getJSONObject("camera").toString())
         assertEquals(before.getJSONObject("ownerIdentities").getString("world"),after.getJSONObject("ownerIdentities").getString("world"))
-        compose.onNodeWithContentDescription("室内视角").performClick()
+        worldHud("室内视角")
         compose.waitUntil(15000){worldDiagnostic(world).getJSONObject("interior").getBoolean("active")}
         nav("任务");compose.onAllNodesWithText("查看建筑").onFirst().performScrollTo().performClick()
         compose.waitUntil(15000){!worldDiagnostic(world).getJSONObject("interior").getBoolean("active")}
@@ -2344,6 +2384,7 @@ class P3NativePagesTest {
         compose.onNodeWithText("已完成 0 / 3 项").assertIsDisplayed();compose.onNodeWithText("管理任务").assertDoesNotExist()
         screen("formal-tasks")
         nav("统计")
+        compose.onNodeWithText("专注热力图").assertIsDisplayed()
         compose.onNodeWithText("今天的投入").assertIsDisplayed();compose.onNodeWithText("有效完成轮次 / 目标完成轮次").assertIsDisplayed()
         compose.onNodeWithContentDescription("专注日历").assertIsDisplayed();screen("formal-statistics")
         nav("设置");compose.onNodeWithText("设置目录").assertDoesNotExist();screen("formal-settings")
@@ -2354,7 +2395,8 @@ class P3NativePagesTest {
         compose.waitUntilDoesNotExist(hasTestTag("mode-transition"),15000)
         compose.waitUntil(15000){runCatching{compose.onNodeWithTag("formal-minimal-panel").assertIsDisplayed()}.isSuccess}
         val glass=compose.onNodeWithTag("formal-minimal-panel").fetchSemanticsNode().boundsInRoot
-        assertEquals(266f*density,glass.height,2f)
+        val available=context.resources.displayMetrics.heightPixels/density
+        assertEquals((available*.34f).coerceIn(266f,304f).coerceAtMost(available*.85f)*density,glass.height,2f)
         compose.onNodeWithText("返回普通模式").assertDoesNotExist();screen("formal-minimal-idle")
         // Core controls are intentionally usable before any world View exists.
         // Observe the actual scene, not the time spent visiting the other tabs.
@@ -2483,15 +2525,53 @@ class P3NativePagesTest {
     }
     @Test fun hiddenSheetAlwaysReleasesItsWindowEvenIfTheParentCloseIsDelayed(){
         val resources=com.blockcolc.presentation.UiResources.load()
-        var model by mutableStateOf<String?>("first");var closes by mutableIntStateOf(0)
+        var model by mutableStateOf<String?>(null);var closes by mutableIntStateOf(0)
         compose.setContent{com.blockcolc.preview.ui.NativeTheme(com.blockcolc.presentation.ClientPreferences(themeMode="dark"),resources){
+            Box(Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Color.White))
             com.blockcolc.preview.ui.NativeSheet(model,{"测试弹页"},{closes++}){
                 androidx.compose.foundation.layout.Box(Modifier.fillMaxWidth().height(300.dp).testTag("sheet-swipe-area"))
             }
         }}
+        val automation=InstrumentationRegistry.getInstrumentation().uiAutomation
+        fun backdropBrightness():Int{
+            compose.waitForIdle()
+            val frame=checkNotNull(automation.takeScreenshot())
+            return try{android.graphics.Color.red(frame.getPixel(frame.width/2,frame.height/5))}finally{frame.recycle()}
+        }
+        val unobscured=backdropBrightness()
+        compose.runOnIdle{model="first"}
         compose.waitUntilAtLeastOneExists(isDialog(),10000)
-        compose.onNodeWithTag("sheet-swipe-area").performTouchInput{swipeDown(startY=10f,endY=height-1f,durationMillis=150)}
+        // Dialog semantics precede the physical window's opening frame.
+        compose.mainClock.advanceTimeBy(500)
+        var open=unobscured
+        var settledSamples=0
+        compose.waitUntil(3000){
+            val brightness=backdropBrightness()
+            settledSamples=if(brightness<unobscured-15&&kotlin.math.abs(brightness-open)<=2)settledSamples+1 else 0
+            open=brightness
+            settledSamples>=2
+        }
+        val drag=compose.onNodeWithTag("sheet-swipe-area")
+        val originalTop=drag.fetchSemanticsNode().boundsInWindow.top
+        drag.performTouchInput{
+            down(Offset(centerX,10f))
+            moveBy(Offset(0f,height*.4f),120)
+        }
+        // Wait for the compositor to present the held drag before sampling it.
+        var moving=open
+        try{
+            compose.waitUntil(1500){
+                moving=backdropBrightness()
+                moving>open+12&&moving<unobscured-5
+            }
+        }catch(error:androidx.compose.ui.test.ComposeTimeoutException){
+            val movedTop=drag.fetchSemanticsNode().boundsInWindow.top
+            throw AssertionError("Sheet drag moved from $originalTop to $movedTop. Screen red: clear=$unobscured, open=$open, held=$moving",error)
+        }
+        drag.performTouchInput{moveBy(Offset(0f,height*.45f),80);up()}
         compose.waitUntilDoesNotExist(isDialog(),10000)
+        // The dialog semantics disappear before SurfaceFlinger presents the next frame.
+        compose.waitUntil(500){backdropBrightness()>=unobscured-1}
         assertEquals(1,closes);assertEquals("first",model)
         compose.runOnIdle{model=null};compose.waitForIdle();compose.runOnIdle{model="second"}
         compose.waitUntilAtLeastOneExists(isDialog(),10000)
@@ -2553,13 +2633,19 @@ class P3NativePagesTest {
         compose.setContent{com.blockcolc.preview.ui.NativeTheme(com.blockcolc.presentation.ClientPreferences(themeMode="light"),resources){
             androidx.compose.foundation.layout.Column(androidx.compose.ui.Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Color.White)){
                 androidx.compose.foundation.layout.Column(androidx.compose.ui.Modifier.testTag("animated-disclosure")){
-                    com.blockcolc.preview.ui.NativeDisclosure("内容",null,open,{open=it}){androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxWidth().height(96.dp).background(magenta))}
+                    com.blockcolc.preview.ui.NativeDisclosure("内容",null,open,{open=it},
+                        trailing={com.blockcolc.preview.ui.NativeIconAction("操作","reset",{})},showTrailing=open,contentBottomSpacing=8.dp){
+                        androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxWidth().height(96.dp).background(magenta))
+                    }
                 }
                 com.blockcolc.preview.ui.NativeDisclosure("空列表",null,empty,{empty=it}){}
                 androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxWidth().height(64.dp).background(androidx.compose.ui.graphics.Color.Blue).testTag("after-empty"))
             }
         }}
         val baseline=compose.onNodeWithTag("after-empty").fetchSemanticsNode().boundsInRoot.top
+        val header=compose.onNodeWithText("内容",useUnmergedTree=true)
+        val headingTop=header.fetchSemanticsNode().boundsInRoot.top
+        compose.onNodeWithContentDescription("操作").assertIsNotDisplayed()
         compose.mainClock.autoAdvance=false
         try{
             compose.onNodeWithText("空列表").performClick();compose.mainClock.advanceTimeBy(260)
@@ -2573,6 +2659,12 @@ class P3NativePagesTest {
                 for(y in bottom until minOf(pixels.height,bottom+70) step 3)for(x in 4 until pixels.width-4 step 17)assertNotEquals("Expanded content leaked below its animated clip",magenta,pixels[x,y])
             }
             compose.mainClock.advanceTimeBy(200)
+            assertEquals(headingTop,header.fetchSemanticsNode().boundsInRoot.top,.5f)
+            compose.onNodeWithContentDescription("操作").assertIsDisplayed()
+            compose.onNodeWithText("内容").performClick()
+            compose.mainClock.advanceTimeBy(230)
+            assertEquals(baseline,compose.onNodeWithTag("after-empty").fetchSemanticsNode().boundsInRoot.top,.5f)
+            compose.onNodeWithContentDescription("操作").assertIsNotDisplayed()
         }finally{compose.mainClock.autoAdvance=true}
     }
 

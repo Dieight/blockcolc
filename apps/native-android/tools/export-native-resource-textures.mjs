@@ -8,7 +8,7 @@ import {zipSync,zlibSync,strToU8} from 'fflate';
 const repo=fileURLToPath(new URL('../../../',import.meta.url)),out=path.resolve(process.argv[2]??'');
 assert.ok(out.startsWith(path.join(repo,'apps/native-android/world-core/build/generated')+path.sep));
 const entry=path.join(repo,'packages/resource-pack/src/index.ts');
-const bundle=buildSync({absWorkingDir:repo,stdin:{contents:fs.readFileSync(entry,'utf8')+'\nexport {normalizeTextureAnimation};',resolveDir:path.dirname(entry),sourcefile:entry,loader:'ts'},bundle:true,platform:'node',format:'esm',metafile:true,write:false});
+const bundle=buildSync({absWorkingDir:repo,stdin:{contents:fs.readFileSync(entry,'utf8')+'\nexport {normalizeTextureAnimation};',resolveDir:path.dirname(entry),sourcefile:entry,loader:'ts'},bundle:true,platform:'node',format:'esm',metafile:true,preserveSymlinks:true,write:false});
 const {decodePngRgba,inspectPngDimensions,normalizeTextureAnimation,parseJava16xResourcePack}=await import('data:text/javascript;base64,'+Buffer.from(bundle.outputFiles[0].text).toString('base64'));
 const sha=bytes=>crypto.createHash('sha256').update(bytes).digest('hex'),b64=bytes=>Buffer.from(bytes).toString('base64');
 const json=v=>strToU8(JSON.stringify(v));

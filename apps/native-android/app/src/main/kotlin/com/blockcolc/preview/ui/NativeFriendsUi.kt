@@ -1,5 +1,9 @@
 package com.blockcolc.preview.ui
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -11,6 +15,8 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
@@ -37,6 +43,7 @@ import com.blockcolc.preview.NativeCloudController
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.time.Instant
@@ -53,17 +60,51 @@ private fun CloudView.orderedFriends(preferred:List<String> = friendOrder):List<
     )
 }
 
+private data class FriendRowBounds(val top:Float,val height:Int){
+    val center get()=top+height/2f
+    val bottom get()=top+height
+}
+
+private class FriendDrag(val id:String,val order:List<String>,val rows:Map<String,FriendRowBounds>){
+    val from=order.indexOf(id)
+    private val row=rows.getValue(id)
+    private val gap=(rows.getValue(order[1]).top-rows.getValue(order[0]).bottom).coerceAtLeast(0f)
+    fun target(offset:Float):Int{
+        val center=row.center+offset
+        val index=if(offset>0)order.indices.lastOrNull{it>from&&rows.getValue(order[it]).center<=center}
+            else order.indices.firstOrNull{it<from&&rows.getValue(order[it]).center>=center}
+        return index?:from
+    }
+    fun offset(index:Int,target:Int):Float{
+        val step=row.height+gap
+        return when {
+            target>from&&index in from+1..target -> -step
+            target<from&&index in target until from -> step
+            else -> 0f
+        }
+    }
+    fun landing(target:Int):Float{
+        val destination=rows.getValue(order[target])
+        return if(target>from)destination.bottom-row.bottom else destination.top-row.top
+    }
+    fun orderAt(target:Int)=order.toMutableList().apply{add(target,removeAt(from))}
+}
+
 @Composable internal fun NativeOrderedFriendList(
     accountId:String,view:CloudView,onOrder:(List<String>)->Unit,
     card:@Composable (JSONObject,Modifier,Boolean)->Unit,
 ){
+    val reduced=LocalNativeUi.current.reduceMotion
     var previewOrder by remember(accountId){mutableStateOf<List<String>?>(null)}
-    var dragging by remember(accountId){mutableStateOf<String?>(null)}
-    val centers=remember(accountId){mutableMapOf<String,Float>()}
-    val accepted=view.orderedFriends(previewOrder?:view.friendOrder)
+    var drag by remember(accountId){mutableStateOf<FriendDrag?>(null)}
+    var landing by remember(accountId){mutableStateOf(false)}
+    var target by remember(accountId){mutableIntStateOf(0)}
+    val rowBounds=remember(accountId){mutableMapOf<String,FriendRowBounds>()}
+    val accepted=view.orderedFriends(drag?.order?:previewOrder?:view.friendOrder)
     val ids=accepted.map{it.getString("id")}
     val latestIds by rememberUpdatedState(ids)
-    var dragOffset by remember(accountId){mutableFloatStateOf(0f)}
+    val dragOffset=remember(accountId){mutableFloatStateOf(0f)}
+    val scope=rememberCoroutineScope()
     val moveUp=cloudText("上移","Move up")
     val moveDown=cloudText("下移","Move down")
     val saveOrder by rememberUpdatedState(onOrder)
@@ -71,57 +112,83 @@ private fun CloudView.orderedFriends(preferred:List<String> = friendOrder):List<
         if(previewOrder==view.friendOrder)previewOrder=null
     }
 
+    fun start(id:String):FriendDrag?{
+        val order=latestIds
+        if(drag!=null||order.size<2||id !in order||order.any{it !in rowBounds})return null
+        return FriendDrag(id,order,rowBounds.toMap()).also{
+            dragOffset.floatValue=0f
+            target=it.from
+            drag=it
+        }
+    }
+
+    fun land(to:Int){
+        val held=drag?:return
+        if(landing)return
+        landing=true
+        target=to
+        if(to!=held.from){
+            val next=held.orderAt(to)
+            previewOrder=next
+            saveOrder(next)
+        }
+        scope.launch{
+            val motion=Animatable(dragOffset.floatValue)
+            motion.animateTo(held.landing(to),tween(if(reduced)0 else 250,easing=FastOutSlowInEasing)){
+                dragOffset.floatValue=value
+            }
+            drag=null
+            landing=false
+        }
+    }
+
     fun move(id:String,to:Int):Boolean{
         val order=latestIds
-        val from=order.indexOf(id)
-        if(from<0||to !in order.indices||to==from)return false
-        val next=order.toMutableList().apply{add(to,removeAt(from))}
-        previewOrder=next
-        saveOrder(next)
+        if(to !in order.indices||order.getOrNull(to)==id||start(id)==null)return false
+        land(to)
         return true
     }
 
     for((index,friend) in accepted.withIndex())key(accountId,friend.getString("id")){
         val id=friend.getString("id")
+        val held=drag
+        val currentIndex=held?.order?.indexOf(id)?:index
+        val offset=key(held){
+            animateFloatAsState(held?.offset(currentIndex,target)?:0f,
+                tween(if(reduced)0 else 190,easing=FastOutSlowInEasing),label="friend-row-move")
+        }
+        val pickup=animateFloatAsState(if(held?.id==id&&!landing&&!reduced)1.014f else 1f,
+            tween(if(reduced)0 else 150,easing=FastOutSlowInEasing),label="friend-row-pickup")
         val reorder=if(ids.size<2)Modifier else Modifier
             .onGloballyPositioned{coordinates->
-                centers[id]=coordinates.positionInRoot().y+coordinates.size.height/2f
+                rowBounds[id]=FriendRowBounds(coordinates.positionInRoot().y,coordinates.size.height)
             }
             .pointerInput(accountId,id){
-                var startCenter:Float?=null
-                var startPositions=emptyMap<String,Float>()
                 detectDragGesturesAfterLongPress(
-                    onDragStart={
-                        startPositions=centers.toMap()
-                        startCenter=startPositions[id]
-                        dragOffset=0f
-                        dragging=id
-                    },
-                    onDragEnd={
-                        val order=latestIds
-                        val from=order.indexOf(id)
-                        startCenter?.let{center->
-                            val y=center+dragOffset
-                            val target=if(dragOffset>0f)order.indices.lastOrNull{it>from&&(startPositions[order[it]]?:Float.MAX_VALUE)<=y}
-                                else order.indices.firstOrNull{it<from&&(startPositions[order[it]]?:Float.NEGATIVE_INFINITY)>=y}
-                            if(target!=null)move(id,target)
-                        }
-                        dragging=null
-                    },
-                    onDragCancel={dragging=null},
+                    onDragStart={start(id)},
+                    onDragEnd={if(drag?.id==id)land(target)},
+                    onDragCancel={drag?.takeIf{it.id==id}?.let{land(it.from)}},
                 ){change,amount->
-                    change.consume()
-                    dragOffset+=amount.y
+                    val current=drag
+                    if(current!=null&&current.id==id&&!landing){
+                        change.consume()
+                        dragOffset.floatValue+=amount.y
+                        target=current.target(dragOffset.floatValue)
+                    }
                 }
-            }.zIndex(if(dragging==id)1f else 0f)
-            .graphicsLayer{translationY=if(dragging==id)dragOffset else 0f}
+            }.zIndex(if(held?.id==id)1f else 0f)
+            .graphicsLayer{
+                translationY=if(held?.id==id)dragOffset.floatValue else offset.value
+                scaleX=pickup.value
+                scaleY=pickup.value
+            }
             .semantics{
                 customActions=buildList{
                     if(index>0)add(CustomAccessibilityAction(moveUp){move(id,index-1)})
                     if(index<ids.lastIndex)add(CustomAccessibilityAction(moveDown){move(id,index+1)})
                 }
             }
-        card(friend,reorder,dragging==id)
+        card(friend,reorder,held?.id==id)
     }
 }
 
@@ -196,7 +263,7 @@ private fun CloudView.orderedFriends(preferred:List<String> = friendOrder):List<
     }
 }
 
-@Composable internal fun NativeMinimalFriends(view:CloudView,visible:Boolean,refresh:()->Unit,onOpen:()->Unit){
+@Composable internal fun NativeMinimalFriends(view:CloudView,visible:Boolean,refresh:()->Unit){
     val account=view.account?.optString("id")
     LaunchedEffect(account,visible){
         if(visible&&account!=null)while(true){
@@ -205,18 +272,16 @@ private fun CloudView.orderedFriends(preferred:List<String> = friendOrder):List<
         }
     }
     val friends=remember(view.friends,view.friendOrder){view.orderedFriends()}
+    val divider=LocalContentColor.current.copy(alpha=.18f)
     Column(Modifier.fillMaxSize().testTag("minimal-friends")){
-        Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
-            Text(cloudText("好友","Friends"),Modifier.weight(1f),style=MaterialTheme.typography.titleMedium)
-            NativeIconAction(cloudText("查看好友","View friends"),"friends",onOpen)
-        }
+        NativeMinimalPanelLabel(cloudText("好友","Friends"),"friends")
         if(friends.isEmpty())Text(
             if(view.friendsError!=null)cloudText("好友暂不可用","Friends are unavailable")else cloudText("还没有好友","No friends yet"),
             style=MaterialTheme.typography.bodyMedium,
         )
         Column(Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState())){
             for((index,friend) in friends.withIndex())key(friend.optString("id")){
-                if(index>0)NativeSeparator()
+                if(index>0)HorizontalDivider(color=divider)
                 Row(Modifier.fillMaxWidth().padding(vertical=8.dp),verticalAlignment=Alignment.CenterVertically,
                     horizontalArrangement=Arrangement.spacedBy(10.dp)){
                     val focusing=friend.optBoolean("focusing")&&!friend.optBoolean("stale")
@@ -273,8 +338,8 @@ private fun CloudView.orderedFriends(preferred:List<String> = friendOrder):List<
     val description=listOfNotNull(summary,time).joinToString("\n").ifEmpty{null}
     Column(modifier.fillMaxWidth().border(1.dp,if(dragging)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant)
         .background(MaterialTheme.colorScheme.surface).padding(horizontal=14.dp)){
-        NativeDisclosure(name,description,expanded,{expanded=it},rowHeight=64.dp,
-            titleStyle=MaterialTheme.typography.titleMedium,descriptionStyle=MaterialTheme.typography.bodyMedium,contentSpacing=10.dp,
+        NativeDisclosure(name,description,expanded,{expanded=it},
+            titleStyle=MaterialTheme.typography.titleMedium,descriptionStyle=MaterialTheme.typography.bodyMedium,
             leading={
                 val color=if(friend.optBoolean("focusing"))MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
                 Box(Modifier.size(8.dp).background(color))

@@ -1,11 +1,5 @@
 package com.blockcolc.preview.ui
 
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -22,9 +16,8 @@ import kotlin.math.roundToInt
 @Composable fun NativeWorldDebugSettings(value:NativeWorldDebug,onChange:(NativeWorldDebug)->Unit,onPreviewCelebration:(Boolean)->Unit={}){
     val ui=LocalNativeUi.current
     NativeToggle(ui.text("画面调试"),value=value.enabled){onChange(value.copy(enabled=it))}
-    AnimatedVisibility(value.enabled,enter=expandVertically(tween(if(ui.reduceMotion)0 else 200))+fadeIn(),
-        exit=shrinkVertically(tween(if(ui.reduceMotion)0 else 180))+fadeOut()){
-        Column(Modifier.fillMaxWidth().padding(bottom=12.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
+    NativeExpandedOptions(value.enabled){
+        Column(Modifier.fillMaxWidth(),verticalArrangement=Arrangement.spacedBy(NativeOptionSpacing)){
             var weatherOpen by remember{mutableStateOf(false)}
             NativeDisclosure(ui.text("天气"),null,weatherOpen,{weatherOpen=it},valueLabel=ui.text(value.weather.label)){
                 for(choice in NativeDebugWeather.entries)NativeAction(ui.text(choice.label),{onChange(value.copy(weather=choice));weatherOpen=false},

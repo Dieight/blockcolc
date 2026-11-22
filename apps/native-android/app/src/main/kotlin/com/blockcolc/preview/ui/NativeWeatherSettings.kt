@@ -1,11 +1,13 @@
 package com.blockcolc.preview.ui
 
 import android.net.Uri
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.*
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.semantics.contentDescription
@@ -32,13 +34,20 @@ import com.blockcolc.weather.*
     NativeToggle(ui.text("同步现实天气"),description=status,value=enabled,enabled=!saving,trailing={
         if(enabled){
             NativeInfoAction(ui.text("天气与天文数据来源")){
-                val sources=(view.current?.attributions.orEmpty()+view.calendar?.attributions.orEmpty()).map(String::trim).distinct()
-                DropdownMenuItem(text={Text(ui.text("和风天气"),style=MaterialTheme.typography.bodySmall)},onClick={open("https://www.qweather.com")})
-                for((index,text)in sources.withIndex()){
-                    val link=remember(text){runCatching{Uri.parse(text).takeIf{it.scheme=="https"&&!it.host.isNullOrBlank()}?.toString()}.getOrNull()}
-                    if(link!=null)DropdownMenuItem(text={Text(ui.text("数据归因 ↗"),style=MaterialTheme.typography.bodySmall)},onClick={open(link)},
-                        modifier=Modifier.semantics{contentDescription=ui.text("查看天气与天文数据归因 {0}",index+1)})
-                    else if(text.isNotEmpty()&&!Regex("^[a-z][a-z0-9+.-]*:",RegexOption.IGNORE_CASE).containsMatchIn(text))Text(text,Modifier.padding(12.dp),style=MaterialTheme.typography.bodySmall)
+                val provider="https://www.qweather.com"
+                val sources=(view.current?.attributions.orEmpty()+view.calendar?.attributions.orEmpty())
+                    .map(String::trim).filter{it.isNotEmpty()&&it.trimEnd('/')!=provider}.distinct()
+                Row(Modifier.widthIn(max=304.dp).horizontalScroll(rememberScrollState()).padding(horizontal=12.dp),
+                    horizontalArrangement=Arrangement.spacedBy(NativeOptionSpacing),verticalAlignment=Alignment.CenterVertically){
+                    FormalTextAction(ui.text("和风天气"),"",{open(provider)})
+                    for((index,text)in sources.withIndex()){
+                        val link=remember(text){runCatching{Uri.parse(text).takeIf{it.scheme=="https"&&!it.host.isNullOrBlank()}?.toString()}.getOrNull()}
+                        if(link!=null)FormalTextAction(ui.text("数据归因 ↗"),"",{open(link)},
+                            Modifier.semantics{contentDescription=ui.text("查看天气与天文数据归因 {0}",index+1)})
+                        else if(!Regex("^[a-z][a-z0-9+.-]*:",RegexOption.IGNORE_CASE).containsMatchIn(text)){
+                            Text(text,style=MaterialTheme.typography.bodySmall,maxLines=1)
+                        }
+                    }
                 }
             }
             NativeIconAction(ui.text("重新同步"),"reset",onRetry,enabled=!saving,pending=busy)

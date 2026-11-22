@@ -32,3 +32,14 @@ tasks.register('checkAndroidJsonAbi',Exec){
 project(':app').plugins.withId('com.android.application') {
     project(':app').tasks.matching{it.name=='preBuild'}.configureEach{dependsOn rootProject.tasks.named('checkAndroidJsonAbi')}
 }
+
+tasks.register('nativeReleaseHostChecks') {
+    group = 'verification'
+    description = 'Runs native release unit tests, Android lint, and the Android JSON ABI check.'
+    dependsOn 'checkAndroidJsonAbi', ':focus-core:test', ':state-store:test', ':domain-core:test',
+        ':presentation-core:test', ':export-core:test', ':world-core:test'
+    def androidProjects = ['app', 'state-store-android', 'world-filament', 'platform-audio',
+        'platform-weather', 'platform-updates', 'platform-cloud']
+    dependsOn androidProjects.collect { ":${it}:testReleaseUnitTest" }
+    dependsOn androidProjects.collect { ":${it}:lintRelease" }
+}

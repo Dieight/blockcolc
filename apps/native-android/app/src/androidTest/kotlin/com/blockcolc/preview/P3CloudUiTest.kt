@@ -40,7 +40,8 @@ class P3CloudUiTest {
         var shown by mutableStateOf(true)
         fun friend(id:String,name:String,status:String="accepted")=JSONObject().put("id",id).put("name",name).put("status",status)
         val friends=listOf(friend("a","Alice"),friend("b","Bella"),friend("pending","Pending","pending"))
-        compose.setContent{NativeTheme(ClientPreferences(),UiResources.load(),reduceMotion=true){
+        val resources=UiResources.load()
+        compose.setContent{NativeTheme(ClientPreferences(),resources){
             if(shown)Column{
                 NativeOrderedFriendList("account",CloudView(friends=friends,friendOrder=order),{order=it}){item,gesture,dragging->
                     Box(gesture.fillMaxWidth().height(80.dp),contentAlignment=Alignment.Center){
@@ -51,13 +52,17 @@ class P3CloudUiTest {
         }}
         val a=compose.onNodeWithText("Alice")
         val b=compose.onNodeWithText("Bella")
-        val travel=b.fetchSemanticsNode().boundsInRoot.center.y-a.fetchSemanticsNode().boundsInRoot.center.y+12
+        val originalB=b.fetchSemanticsNode().boundsInRoot
+        val travel=originalB.center.y-a.fetchSemanticsNode().boundsInRoot.center.y+12
         a.performTouchInput{down(center)}
         val hold=android.view.ViewConfiguration.getLongPressTimeout().toLong()+100
         compose.mainClock.advanceTimeBy(hold)
         val moving=compose.onNodeWithText("Moving")
         compose.waitUntil(3000){compose.onAllNodesWithText("Moving").fetchSemanticsNodes().isNotEmpty()}
-        moving.performTouchInput{advanceEventTime(hold);moveBy(Offset(0f,travel));up()}
+        moving.performTouchInput{advanceEventTime(hold);moveBy(Offset(0f,travel))}
+        compose.waitUntil(3000){b.fetchSemanticsNode().boundsInRoot.top<originalB.top-originalB.height*.5f}
+        assertTrue("The local order commits on release",order.isEmpty())
+        moving.performTouchInput{up()}
         compose.waitUntil(3000){order==listOf("b","a")}
         compose.runOnIdle{shown=false}
         compose.runOnIdle{shown=true}
@@ -67,7 +72,6 @@ class P3CloudUiTest {
 
     @Test fun minimalFriendsOnlyShowAcceptedSummariesAndRefreshWhenVisible(){
         val refreshes=AtomicInteger()
-        val opened=AtomicInteger()
         val account=JSONObject().put("id","reader").put("friendsEnabled",true)
         val rows=listOf(
             JSONObject().put("id","shared").put("status","accepted").put("name","Shared friend").put("focusing",true).put("currentName","Reading"),
@@ -78,7 +82,7 @@ class P3CloudUiTest {
         val resources=UiResources.load()
         compose.setContent{
             NativeTheme(ClientPreferences(language="en"),resources,reduceMotion=true){
-                NativeMinimalFriends(CloudView(account=account,friends=rows),visible,{refreshes.incrementAndGet()}){opened.incrementAndGet()}
+                NativeMinimalFriends(CloudView(account=account,friends=rows),visible){refreshes.incrementAndGet()}
             }
         }
         compose.onNodeWithText("Shared friend").assertIsDisplayed()
@@ -89,8 +93,8 @@ class P3CloudUiTest {
         assertEquals(0,refreshes.get())
         compose.runOnIdle{visible=true}
         compose.waitUntil(5000){refreshes.get()>0}
-        compose.onNodeWithContentDescription("View friends").performClick()
-        assertEquals(1,opened.get())
+        compose.onNodeWithText("Friends").assertIsDisplayed().assert(hasClickAction().not())
+        compose.onNodeWithContentDescription("View friends").assertDoesNotExist()
     }
 
     @Test fun friendSummariesOpenOnlyTheSelectedSharedHistory(){

@@ -1,7 +1,6 @@
 package com.blockcolc.preview.ui
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
@@ -14,7 +13,6 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -38,11 +36,7 @@ internal fun heatmapBand(durationMs:Long)=when{
 }
 
 internal fun DrawScope.drawFocusHeatmapCell(palette:List<Color>,band:Int,origin:Offset,edge:Float,alpha:Float=1f){
-    val color=palette[band].copy(alpha=alpha)
-    if(band==0){
-        val stroke=1.dp.toPx().coerceAtMost(edge*.25f)
-        drawRect(color,origin+Offset(stroke/2,stroke/2),Size(edge-stroke,edge-stroke),style=Stroke(stroke))
-    }else drawRect(color,origin,Size(edge,edge))
+    if(band>0)drawRect(palette[band].copy(alpha=alpha),origin,Size(edge,edge))
 }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -53,12 +47,13 @@ internal fun DrawScope.drawFocusHeatmapCell(palette:List<Color>,band:Int,origin:
     FlowRow(Modifier.fillMaxWidth().padding(top=4.dp),horizontalArrangement=Arrangement.spacedBy(6.dp,Alignment.End)){
         for(band in palette.indices){
             val label=if(band==0)"0MIN"else "${(band-1)*3}–${band*3}H"
+            val interaction=remember{MutableInteractionSource()}
             val action=if(onBand==null)Modifier else Modifier.sizeIn(minWidth=44.dp,minHeight=44.dp)
-                .clickable(role=Role.Button,interactionSource=remember{MutableInteractionSource()},indication=null){onBand(band)}
+                .clickable(role=Role.Button,interactionSource=interaction,indication=null){onBand(band)}
                 .semantics{contentDescription=ui.text("高亮 {0}",label);selected=band==selectedBand}
-            Row(action.padding(horizontal=2.dp,vertical=4.dp),verticalAlignment=Alignment.CenterVertically,
+            Row(action.nativePressMotion(interaction,onBand!=null).padding(horizontal=2.dp,vertical=4.dp),verticalAlignment=Alignment.CenterVertically,
                 horizontalArrangement=Arrangement.spacedBy(3.dp)){
-                Box(Modifier.size(8.dp).then(if(band==0)Modifier.border(1.dp,palette[band])else Modifier.background(palette[band])))
+                Box(Modifier.size(8.dp).then(if(band==0)Modifier else Modifier.background(palette[band])))
                 NativeText(label,NativeTextRole.CAPTION)
             }
         }

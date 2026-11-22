@@ -26,8 +26,7 @@ import java.util.UUID
     val ui=LocalNativeUi.current;val current=s.projects.find{it.id==s.activeProject};val workspace=s.workspace
     val switch=rememberNativeRequest(s)
     NativePageScroll{
-        Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
-            NativeHeading(ui.text("任务"),modifier=Modifier.weight(1f))
+        NativePageTitle(ui.text("任务")){
             FormalTextAction(ui.text("新增任务"),"plus",onCreate,enabled=!s.busy&&s.planId==null)
             if(friendsEnabled)NativeIconAction(if(ui.language=="en")"Friends"else"好友","friends",onFriends)
         }
@@ -156,10 +155,10 @@ import java.util.UUID
         val u=size.width/12;drawRect(ink,Offset(3*u,2*u),androidx.compose.ui.geometry.Size(u,8*u));drawRect(ink,Offset(4*u,2*u),androidx.compose.ui.geometry.Size(5*u,u));drawRect(ink,Offset(4*u,4*u),androidx.compose.ui.geometry.Size(3*u,u));drawRect(ink,Offset(8*u,3*u),androidx.compose.ui.geometry.Size(u,u))
     }
 }
-@Composable fun NativePageScroll(content:@Composable ColumnScope.()->Unit){
+@Composable fun NativePageScroll(modifier:Modifier=Modifier,content:@Composable ColumnScope.()->Unit){
     val shared=LocalNativePageScroll.current
     val scroll=shared?:rememberScrollState()
-    Column(Modifier.fillMaxSize().verticalScroll(scroll).padding(start=20.dp,end=20.dp,top=22.dp,bottom=32.dp),verticalArrangement=Arrangement.spacedBy(24.dp),content=content)
+    Column(modifier.fillMaxSize().verticalScroll(scroll).padding(start=20.dp,end=20.dp,top=22.dp,bottom=32.dp),verticalArrangement=Arrangement.spacedBy(24.dp),content=content)
 }
 @OptIn(ExperimentalLayoutApi::class)
 @Composable private fun FlowRowForActions(content:@Composable FlowRowScope.()->Unit){FlowRow(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp),content=content)}

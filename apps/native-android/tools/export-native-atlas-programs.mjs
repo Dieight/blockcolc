@@ -1,9 +1,9 @@
 import fs from 'node:fs';import path from 'node:path';import crypto from 'node:crypto';import assert from 'node:assert/strict';import {fileURLToPath} from 'node:url';import {buildSync} from 'esbuild';
 const repo=fileURLToPath(new URL('../../../',import.meta.url)),out=path.resolve(process.argv[2]??'');assert.ok(out.startsWith(path.join(repo,'apps/native-android/world-core/build/generated')+path.sep));
 const entry=path.join(repo,'packages/voxel/src/resource-textures.ts');
-const bundle=buildSync({absWorkingDir:repo,stdin:{contents:fs.readFileSync(entry,'utf8')+'\nexport {createAtlasAnimationLookup};export {sampleAtlasAnimation} from "./atlas-animation";',resolveDir:path.dirname(entry),sourcefile:entry,loader:'ts'},bundle:true,platform:'node',format:'esm',write:false,metafile:true});
+const bundle=buildSync({absWorkingDir:repo,stdin:{contents:fs.readFileSync(entry,'utf8')+'\nexport {createAtlasAnimationLookup};export {sampleAtlasAnimation} from "./atlas-animation";',resolveDir:path.dirname(entry),sourcefile:entry,loader:'ts'},bundle:true,platform:'node',format:'esm',write:false,metafile:true,preserveSymlinks:true});
 const api=await import('data:text/javascript;base64,'+Buffer.from(bundle.outputFiles[0].text).toString('base64'));
-const coreBundle=buildSync({absWorkingDir:repo,entryPoints:['packages/resource-pack/src/index.ts'],bundle:true,platform:'node',format:'esm',write:false,metafile:true});
+const coreBundle=buildSync({absWorkingDir:repo,entryPoints:['packages/resource-pack/src/index.ts'],bundle:true,platform:'node',format:'esm',write:false,metafile:true,preserveSymlinks:true});
 const core=await import('data:text/javascript;base64,'+Buffer.from(coreBundle.outputFiles[0].text).toString('base64'));
 const sha=b=>crypto.createHash('sha256').update(b).digest('hex');
 const sourceHashes=Object.fromEntries([...new Set([...Object.keys(bundle.metafile.inputs),...Object.keys(coreBundle.metafile.inputs)])].filter(p=>!p.startsWith('<')).map(p=>{

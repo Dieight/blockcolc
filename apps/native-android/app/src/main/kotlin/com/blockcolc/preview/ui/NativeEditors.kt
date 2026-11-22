@@ -70,8 +70,10 @@ private data class SubtaskDraft(val id:String,val value:TextFieldValue)
             NativeText(ui.text("每座建筑"),NativeTextRole.CAPTION);NativeText("$target "+ui.text("轮专注"),NativeTextRole.TITLE,accent=true)
             NativeText(ui.text("统一在设置中调整；创建后，本周期内不会改变。"),NativeTextRole.CAPTION,color=colors.onSurfaceVariant)
         }
-        NativeText(ui.text("选择建筑蓝图"),NativeTextRole.BODY)
-        NativeBlueprintPicker(s.blueprints,blueprint,!request.busy){blueprint=it}
+        Column(verticalArrangement=Arrangement.spacedBy(NativeOptionSpacing)){
+            NativeText(ui.text("选择建筑蓝图"),NativeTextRole.BODY)
+            NativeBlueprintPicker(s.blueprints,blueprint,!request.busy){blueprint=it}
+        }
         NativeRequestError(request)
         val valid=s.blueprints.items.any{it.id==blueprint&&it.selectable}&&(entry.nextHabit||title.text.isNotBlank())&&(habit||tasks.isNotEmpty()&&tasks.all{it.value.text.isNotBlank()})
         Row(Modifier.fillMaxWidth(),verticalAlignment=androidx.compose.ui.Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)){
@@ -207,10 +209,13 @@ private data class ManualFocusSheet(val planId:String,val timer:TimerPresentatio
 
 @Composable private fun FormalEndChoice(title:String,detail:String,icon:String,enabled:Boolean,pending:Boolean=false,onClick:()->Unit){
     val ink=LocalContentColor.current
-    Row(Modifier.fillMaxWidth().heightIn(min=72.dp).border(1.dp,ink.copy(alpha=.12f))
-        .clickable(enabled=enabled,role=Role.Button,interactionSource=remember{androidx.compose.foundation.interaction.MutableInteractionSource()},indication=null,onClick=onClick).padding(12.dp),
+    val interaction=remember{androidx.compose.foundation.interaction.MutableInteractionSource()}
+    var motion by remember{mutableIntStateOf(0)}
+    Row(Modifier.fillMaxWidth().heightIn(min=72.dp).clickable(enabled=enabled&&!pending,role=Role.Button,
+        interactionSource=interaction,indication=null){motion++;onClick()}.nativePressMotion(interaction,enabled&&!pending)
+        .border(1.dp,ink.copy(alpha=.12f)).padding(12.dp),
         verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(10.dp)){
-        Box(Modifier.width(30.dp),contentAlignment=Alignment.CenterStart){if(pending)NativeBusy()else PixelGlyph(icon,Modifier.size(23.dp),ink)}
+        Box(Modifier.width(30.dp),contentAlignment=Alignment.CenterStart){if(pending)NativeBusy()else NativeMotionGlyph(icon,motion,Modifier.size(23.dp),ink)}
         Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(4.dp)){NativeText(title,NativeTextRole.BODY);NativeText(detail,NativeTextRole.CAPTION)}
     }
 }

@@ -17,7 +17,7 @@ export function population(input){
  const result={land:habitat.landSeeds,water:habitat.waterSeeds,agents,sequence:community.sequence,time:community.time};
  community.dispose();habitat.cancel();return result;
 }`;
-const bundle=buildSync({absWorkingDir:repo,stdin:{contents:entry,resolveDir:repo,sourcefile:'native-animal-preparation-reference.ts'},bundle:true,platform:'node',format:'esm',metafile:true,write:false});
+const bundle=buildSync({absWorkingDir:repo,stdin:{contents:entry,resolveDir:repo,sourcefile:'native-animal-preparation-reference.ts'},bundle:true,platform:'node',format:'esm',metafile:true,preserveSymlinks:true,write:false});
 const source=await import('data:text/javascript;base64,'+Buffer.from(bundle.outputFiles[0].text).toString('base64'));
 const block=(id,state={})=>({x:0,y:1,z:0,materialId:'stone',stage:'details',buildOrder:0,sourceBlockId:id,...(state?{sourceBlockState:state}:{})});
 const voxels=[block('minecraft:stone'),block('minecraft:oak_slab',{type:'bottom'}),block('minecraft:oak_slab',{type:'top'}),

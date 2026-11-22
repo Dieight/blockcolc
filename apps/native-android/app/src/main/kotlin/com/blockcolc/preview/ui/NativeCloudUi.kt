@@ -44,9 +44,10 @@ import java.util.concurrent.atomic.AtomicReference
         NativeSeparator()
     }
 }
-@Composable private fun CloudGroup(title:String,description:String?=null,content:@Composable ColumnScope.()->Unit){
+@Composable private fun CloudGroup(title:String,explanation:String?=null,content:@Composable ColumnScope.()->Unit){
     var expanded by rememberSaveable(title){mutableStateOf(false)}
-    NativeDisclosure(title,description,expanded,{expanded=it},rowHeight=NativeSettingsRowHeight,contentSpacing=0.dp,content=content)
+    NativeDisclosure(title,expanded=expanded,onExpandedChange={expanded=it},contentSpacing=0.dp,
+        trailing=explanation?.let{hint->@Composable {NativeInfoAction(title,hint)}},content=content)
 }
 @Composable internal fun CloudError(code:String?){if(code==null)return
     val english=LocalNativeUi.current.language=="en"
@@ -123,8 +124,9 @@ import java.util.concurrent.atomic.AtomicReference
     val heading=cloudText("云服务条款与隐私说明","Cloud terms & privacy")
     NativeSheet(Unit.takeIf{open},{heading},onClose,initiallyExpanded=true){
         val file=if(english)"en" else "zh-CN"
-        val parts by produceState<List<String>?>(null,file){
-            value=kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){
+        var parts by remember(context,file){mutableStateOf<List<String>?>(null)}
+        LaunchedEffect(context,file){
+            parts=kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){
                 runCatching{context.assets.open("cloud-policy/$file.md").bufferedReader().use{it.readText()}
                     .trim().split(Regex("\\r?\\n\\r?\\n")).drop(1)}.getOrElse{emptyList()}
             }
@@ -170,8 +172,7 @@ import java.util.concurrent.atomic.AtomicReference
         }else{
             val account=view.account
             NativeInlineAction(account.optString("username"),controller::refresh,"reset",tr("立即同步","Sync now"),
-                pending=view.working(CloudAction.SYNC),enabled=!view.busy)
-            CloudWorkspaceFeedback(view)
+                pending=view.working(CloudAction.SYNC),enabled=!view.busy,description={CloudWorkspaceFeedback(view)})
             NativeSeparator()
             NativeSettingLink(tr("修改密码","Change password"),{passwordOpen=true})
             if(view.choiceRequired){
@@ -190,8 +191,8 @@ import java.util.concurrent.atomic.AtomicReference
             CloudGroup(tr("执行设备","Execution device"),tr("一台执行，其他设备可接管","One executor; other devices can take over")){
                 if(!view.owned)NativeInlineAction(tr("本机仅查看","View only"),controller::takeover,"play",
                     tr("接管","Take over"),enabled=!view.busy,pending=view.working(CloudAction.TAKEOVER))
-                view.devices.forEach{device->
-                    NativeSeparator()
+                view.devices.forEachIndexed{index,device->
+                    if(index>0||!view.owned)NativeSeparator()
                     Row(Modifier.fillMaxWidth().heightIn(min=NativeSettingsRowHeight),
                         verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(NativeSettingActionGap)){
                         Text(device.optString("name"),Modifier.weight(1f),style=MaterialTheme.typography.bodyLarge)

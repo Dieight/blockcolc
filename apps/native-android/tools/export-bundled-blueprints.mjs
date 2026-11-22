@@ -29,8 +29,8 @@ const assetsPlugin={name:'source-blueprint-globs',setup(build){
  });
 }};
 async function load(relative){
- const compiled=await build({entryPoints:[path.join(root,relative)],bundle:true,write:false,platform:'node',format:'esm',plugins:[assetsPlugin],metafile:true});
- for(const input of Object.keys(compiled.metafile.inputs))track(path.resolve(input));
+ const compiled=await build({absWorkingDir:root,entryPoints:[relative],bundle:true,write:false,platform:'node',format:'esm',plugins:[assetsPlugin],metafile:true,preserveSymlinks:true});
+ for(const input of Object.keys(compiled.metafile.inputs))track(input);
  return import('data:text/javascript;base64,'+Buffer.from(compiled.outputFiles[0].text).toString('base64'));
 }
 const blueprint=await load('packages/voxel/src/blueprint.ts');

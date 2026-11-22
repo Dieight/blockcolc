@@ -28,7 +28,7 @@ class NativeBackdrop:AutoCloseable {
     private var sent:List<com.blockcolc.world.NativeGlassRegion> = emptyList()
     private var diagnosticSignature=""
     var glassConsumers by mutableIntStateOf(0)
-    var presentedWindow by mutableStateOf<Pair<Int,Int>?>(null)
+    internal var presentedWindow by mutableStateOf<NativePresentedWindow?>(null)
     var projectionHeight by mutableStateOf(0)
     var projectionTop by mutableStateOf(0)
     var clipBottom by mutableStateOf<Int?>(null)
@@ -76,13 +76,15 @@ class NativeBackdrop:AutoCloseable {
     suspend fun snapshot():Bitmap?=kotlinx.coroutines.suspendCancellableCoroutine{continuation->
         val view=source
         if(closed||view==null||bounds.width<=0||bounds.height<=0||Build.VERSION.SDK_INT<24){continuation.resume(null);return@suspendCancellableCoroutine}
-        val scale=min(1f,1280f/max(bounds.width,bounds.height))
+        val scale=min(1f,960f/max(bounds.width,bounds.height))
         val bitmap=Bitmap.createBitmap(max(1,(bounds.width*scale).roundToInt()),max(1,(bounds.height*scale).roundToInt()),Bitmap.Config.ARGB_8888)
         val accepted=view.copyBackdrop(bitmap,main){success->if(continuation.isActive)continuation.resume(if(success)bitmap else null)}
         if(!accepted&&continuation.isActive)continuation.resume(null)
     }
     override fun close(){if(closed)return;closed=true;source?.glassRegions(emptyList());source=null;panels.clear();sent=emptyList()}
 }
+internal data class NativePresentedWindow(val width:Int,val height:Int,val top:Int)
+
 private val LocalNativePageActivityState=staticCompositionLocalOf<State<Boolean>?>{null}
 object LocalNativePageActive {
     val current:Boolean @Composable get()=LocalNativePageActivityState.current?.value?:true

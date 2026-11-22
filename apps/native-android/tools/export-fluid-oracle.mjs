@@ -11,7 +11,7 @@ const plugin={name:'expose-formal-fluid-geometry',setup(b){b.onLoad({filter:/[\\
  contents:readFileSync(args.path,'utf8')+`\nimport * as THREE from 'three'; export {THREE,isPartialFluidBlock};
  export {encodeFluidCornerHeights,encodeFluidSurfaceMetadata,createTexturedBoxGeometry} from './resource-textures';`,loader:'ts',resolveDir:path.dirname(args.path)
 }));}};
-const built=await build({entryPoints:[path.join(root,'packages/voxel/src/resource-fluids.ts')],bundle:true,write:false,platform:'node',format:'esm',metafile:true,plugins:[plugin]});
+const built=await build({entryPoints:[path.join(root,'packages/voxel/src/resource-fluids.ts')],bundle:true,write:false,platform:'node',format:'esm',metafile:true,preserveSymlinks:true,plugins:[plugin]});
 for(const input of Object.keys(built.metafile.inputs)){const absolute=path.resolve(input),name=path.relative(root,absolute).replaceAll('\\','/');assert(!name.startsWith('../'));hashes[name]=sha(readFileSync(absolute));}
 const source=await import('data:text/javascript;base64,'+Buffer.from(built.outputFiles[0].text).toString('base64'));
 const cases=[],v=(x,y,z,id='water',state={level:'0'})=>({x,y,z,materialId:'stone',buildOrder:0,sourceBlockId:'minecraft:'+id,sourceBlockState:state});

@@ -16,13 +16,18 @@ import kotlin.math.tan
  * of page composition and world generation. A hidden page cancels its motion. */
 @Composable internal fun NativeMotionGlyph(name:String,serial:Int,modifier:Modifier=Modifier,color:Color=LocalContentColor.current){
     val ui=LocalNativeUi.current;val active=LocalNativePageActive.current&&!ui.reduceMotion
-    val icon=ui.resources.iconMotion[name]
+    val countdown=name=="countdown"
+    val glyph=if(countdown)"clock" else name
+    // Reflect the assembled clock across y = -x in Cartesian coordinates.
+    // Mirroring the complete animated layer also reverses both hands.
+    val reflected=if(countdown)modifier.graphicsLayer{rotationZ=90f;scaleY=-1f} else modifier
+    val icon=ui.resources.iconMotion[glyph]
     val time=remember{Animatable(900f)}
     LaunchedEffect(serial,active){if(serial==0||!active)time.snapTo(900f)else{time.snapTo(0f);time.animateTo(900f,tween(900,easing=LinearEasing))}}
-    if(icon==null){PixelGlyph(name,modifier,color);return}
+    if(icon==null){PixelGlyph(glyph,reflected,color);return}
     val paths=remember(icon){icon.layers.map{PathParser().parsePathString(it.path).toPath()}}
     val paper=androidx.compose.material3.MaterialTheme.colorScheme.background
-    Box(modifier.size(24.dp)){
+    Box(reflected.size(24.dp)){
         icon.layers.forEachIndexed{index,layer->val spec=icon.motions[layer.part]
             Canvas(Modifier.fillMaxSize().graphicsLayer{
                 val state=if(time.value>=900f||spec==null)PixelTransform()else spec.at(time.value)

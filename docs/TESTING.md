@@ -170,6 +170,8 @@ UI 方案和公共组件交回前，按 DESIGN 的五档视口核对受影响页
 
 ### 首次正式原生升级与回退
 
-同签名演练用正式签名环境执行 `-PnativeUpgradeCandidate=true :app:recordUpgradeCandidate`。保留冻结源码、APK 摘要、版本及证书回执。先在隔离 Android 实例验证标准和私人旧包的覆盖安装，核对 UID、首次安装时间、用户记录、本地素材及进行中轮次。让暂存和资源采用各发生一次可重试的失败，确认重新打开使用同一份旧数据。
+原生正式版的电脑端门禁在 `apps/native-android` 中运行 `:nativeReleaseHostChecks`，使用与正式候选相同的 Gradle 参数。它覆盖各模块单元测试、Android lint 和 JSON ABI。首轮全量加 `--continue` 收集各任务的失败，返修后去掉该参数，遇错即停。设备矩阵和同签名往返演练另有实际安装与恢复回执；旧 Capacitor 的 `Prepare-Release.ps1` 留给旧实现。
+
+原生候选从 `apps/native-android` 工程构建。正式版和同签名演练使用正式签名环境执行 `-PnativeUpgradeCandidate=true -PnativeReleaseVersionCode=CODE :app:recordUpgradeCandidate`，正式版的 `CODE` 须高于所有已交付的同包名 APK，含 Beta。保留冻结源码、APK 摘要、版本、签名及 16 KiB 对齐证据。先在隔离 Android 实例验证标准和私人旧包的覆盖安装，核对 UID、首次安装时间、用户记录、本地素材及进行中轮次。让暂存和资源采用各发生一次可重试的失败，确认重新打开使用同一份旧数据。
 
 回退前在原生端结算正在进行的计划并导出备份。恢复包沿用正式包名和证书，构建号高于已安装原生版。覆盖后先验证旧库可读，再从旧界面导入原生导出的备份，核对新产生的记录和旧端重新导出的摘要。再次升级时先在回退端导出最新备份，在原生端用备份恢复入口替换，并核对保留的本机回滚点。正式切换前按最终构建号走一遍完整往返，记录采用的备份和实际安装摘要。

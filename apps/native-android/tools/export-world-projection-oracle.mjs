@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 const root=fileURLToPath(new URL('../../../',import.meta.url)),output=process.argv[2];if(!output)throw Error('World projection oracle directory required');
 const sourceHashes={},sha=b=>createHash('sha256').update(b).digest('hex');
 async function load(relative){
- const built=buildSync({entryPoints:[path.join(root,relative)],bundle:true,write:false,platform:'node',format:'esm',metafile:true});
+ const built=buildSync({entryPoints:[path.join(root,relative)],bundle:true,write:false,platform:'node',format:'esm',metafile:true,preserveSymlinks:true});
  for(const input of Object.keys(built.metafile.inputs)){const absolute=path.resolve(input),name=path.relative(root,absolute).replaceAll('\\','/');assert.ok(!name.startsWith('../'));sourceHashes[name]=sha(readFileSync(absolute));}
  return import('data:text/javascript;base64,'+Buffer.from(built.outputFiles[0].text).toString('base64'));
 }

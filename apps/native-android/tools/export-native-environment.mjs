@@ -80,7 +80,7 @@ const entry=`import * as THREE from 'three';
    for(let i=0;i<count;i++){const p=particles[i];packed.set([p.phase,p.offsetX,p.offsetZ,i],i*20+16);}
    return packed;
  }`;
-const result=await build({stdin:{contents:entry,resolveDir:root,loader:'ts'},bundle:true,write:false,platform:'node',format:'esm',metafile:true});
+const result=await build({stdin:{contents:entry,resolveDir:root,loader:'ts'},bundle:true,write:false,platform:'node',format:'esm',metafile:true,preserveSymlinks:true});
 const source=await import('data:text/javascript;base64,'+Buffer.from(result.outputFiles[0].text).toString('base64'));
 const hashes={};for(const file of Object.keys(result.metafile.inputs)){if(file==='<stdin>')continue;const absolute=path.resolve(file);hashes[path.relative(root,absolute).replaceAll('\\','/')]=sha(readFileSync(absolute));}
 hashes['packages/voxel/src/renderer.ts']=sha(rendererText);

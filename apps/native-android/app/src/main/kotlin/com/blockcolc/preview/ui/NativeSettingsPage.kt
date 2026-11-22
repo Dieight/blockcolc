@@ -26,7 +26,7 @@ import java.util.UUID
     val jump=remember{SettingsJump()}
     CompositionLocalProvider(LocalSettingsJump provides jump,LocalNativeSettingsActions provides true){
     NativePageScroll{
-        NativeHeading(ui.text("设置"))
+        NativePageTitle(ui.text("设置"))
         NativeSettingsNavigation(jump)
         NativeSection(ui.text(SettingsCatalog.group("account").title)){NativeSettingAnchor("账户与云同步"){cloudSettings()}}
         if(s.preferencesReadFailed)Text(ui.text("本地设置读取失败，原文件已保留。"),color=MaterialTheme.colorScheme.error)
@@ -61,10 +61,11 @@ import java.util.UUID
                 Row(Modifier.fillMaxWidth()){
                     for(day in 0..6){val planned=day !in workspace.settings.restWeekdays
                         val label=ui.text(listOf("周日","周一","周二","周三","周四","周五","周六")[day])
-                        Column(Modifier.weight(1f).heightIn(min=48.dp).clickable(enabled=!domain.busy&&!s.busy,interactionSource=remember{androidx.compose.foundation.interaction.MutableInteractionSource()},indication=null){
+                        val interaction=remember{androidx.compose.foundation.interaction.MutableInteractionSource()}
+                        Column(Modifier.weight(1f).heightIn(min=48.dp).clickable(enabled=!domain.busy&&!s.busy,interactionSource=interaction,indication=null){
                             val rests=workspace.settings.restWeekdays.toMutableSet();if(planned)rests.add(day)else rests.remove(day)
                             if(rests.size<7)command(WorkspaceMutation.Calendar(workspace.settings.timeZone,rests.sorted()))
-                        },horizontalAlignment=Alignment.CenterHorizontally){Text(label,style=MaterialTheme.typography.bodySmall);if(planned)Text("▪",color=MaterialTheme.colorScheme.primary)}
+                        }.nativePressMotion(interaction,!domain.busy&&!s.busy),horizontalAlignment=Alignment.CenterHorizontally){Text(label,style=MaterialTheme.typography.bodySmall);if(planned)Text("▪",color=MaterialTheme.colorScheme.primary)}
                     }
                 }
             }
@@ -128,10 +129,24 @@ import java.util.UUID
                 NativeSettingsOptionTitle(ui.text("光影质量")){
                     if(selectedQuality!=null||backdrop?.preparingQuality==true||
                         backdrop?.let{it.requestedQuality!=null&&!it.worldSettingFailed}==true)WorldSettingProgress()
-                    NativeInfoAction(ui.text("光影质量"),ui.text(
-                        "根据设备内存和图形能力选择。本机：{0}。",
-                        tiers.first{it.first==automatic}.second,
-                    ))
+                    NativeInfoAction(ui.text("光影质量")){
+                        Column(Modifier.widthIn(max=304.dp).padding(horizontal=16.dp,vertical=8.dp),
+                            verticalArrangement=Arrangement.spacedBy(NativeOptionSpacing)){
+                            val explanations=listOf(
+                                ui.text("根据设备内存和图形能力选择。本机：{0}。",tiers.first{it.first==automatic}.second),
+                                ui.text("用纸雕色块表现世界，渲染负担最低。"),
+                                ui.text("保留立体光影，减少云层和特效细节。"),
+                                ui.text("云层和阴影更丰富，画质与性能折中。"),
+                                ui.text("最完整的云层、阴影和光照细节。"),
+                            )
+                            for((tier,summary)in tiers.zip(explanations)){
+                                Column(verticalArrangement=Arrangement.spacedBy(4.dp)){
+                                    Text(tier.second,style=MaterialTheme.typography.bodyMedium)
+                                    Text(summary,style=MaterialTheme.typography.bodySmall)
+                                }
+                            }
+                        }
+                    }
                 }
                 NativeSegments(tiers,prefs.lightingQuality,{v->
                     if(v!=prefs.lightingQuality){
@@ -194,7 +209,7 @@ import java.util.UUID
                 NativeSeparator()
                 val available=enabled&&!s.busy&&!birthdaySave.busy
                 val changed=!birthday.enabled||month!=birthday.month||day!=birthday.day
-                NativeDisclosure(ui.text("日期"),null,enabled&&datesOpen,{datesOpen=it},valueLabel="%02d / %02d".format(month,day),rowHeight=56.dp,contentSpacing=0.dp,enabled=available){
+                NativeDisclosure(ui.text("日期"),null,enabled&&datesOpen,{datesOpen=it},valueLabel="%02d / %02d".format(month,day),contentSpacing=0.dp,enabled=available){
                     NativeNumber(ui.text("月份"),month,1..12,available){month=it}
                     NativeNumber(ui.text("日期"),day,1..31,available){day=it}
                 }
@@ -245,7 +260,8 @@ import java.util.UUID
     LaunchedEffect(jump?.serial){if(jump?.opens(key)==true)expanded=true}
     NativeSettingAnchor(key){
         NativeDisclosure(LocalNativeUi.current.text(key),description,expanded,{expanded=it},
-            rowHeight=if(trailing==null)NativeSettingsRowHeight else 64.dp,contentSpacing=0.dp,trailing=if(expanded||showTrailingWhenCollapsed)trailing else null,content=content)
+            contentSpacing=0.dp,trailing=trailing,showTrailing=expanded||showTrailingWhenCollapsed,
+            contentBottomSpacing=NativeOptionSpacing,content=content)
     }
 }
 @Composable internal fun NativeSettingSlider(key:String,value:Int,min:Int,max:Int,enabled:Boolean,saving:Boolean=false,error:String?=null,collapsible:Boolean=true,onCommit:(Int)->Unit){
@@ -264,7 +280,7 @@ import java.util.UUID
             onFlightValue={flight=it},onCommit={held=it;savingSeen=false;onCommit(it)})
     }
     NativeSettingAnchor(key){
-        if(collapsible)NativeDisclosure(label,null,open,{open=it},valueLabel=percentage,rowHeight=60.dp){slider()}
+        if(collapsible)NativeDisclosure(label,null,open,{open=it},valueLabel=percentage,rowHeight=60.dp,contentBottomSpacing=NativeOptionSpacing){slider()}
         else Column(Modifier.fillMaxWidth().padding(vertical=8.dp)){
             Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
                 NativeText(label,NativeTextRole.BODY,Modifier.weight(1f))

@@ -8,7 +8,7 @@ import {buildSync} from 'esbuild';
 const repo=fileURLToPath(new URL('../../../',import.meta.url));
 const out=path.resolve(process.argv[2]??'');
 assert.ok(out.startsWith(path.join(repo,'apps/native-android/world-core/build/generated')+path.sep));
-const bundle=buildSync({absWorkingDir:repo,stdin:{contents:`export {AnimalModels} from ${JSON.stringify(path.join(repo,'packages/voxel/src/animal-models.ts'))};`,resolveDir:repo,sourcefile:'animal-models-reference.ts'},bundle:true,platform:'node',format:'esm',metafile:true,write:false});
+const bundle=buildSync({absWorkingDir:repo,stdin:{contents:`export {AnimalModels} from ${JSON.stringify(path.join(repo,'packages/voxel/src/animal-models.ts'))};`,resolveDir:repo,sourcefile:'animal-models-reference.ts'},bundle:true,platform:'node',format:'esm',metafile:true,preserveSymlinks:true,write:false});
 const {AnimalModels}=await import('data:text/javascript;base64,'+Buffer.from(bundle.outputFiles[0].text).toString('base64'));
 const models=new AnimalModels();
 const meshes=[models.parts,models.faces,models.contacts,models.ripples].map(mesh=>{

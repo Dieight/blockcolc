@@ -36,7 +36,7 @@ export function subject(requests){
 }
 export const yaw=standingSignYaw;
 export const appearance=staticItemMarkerAppearance;`;
-const compiled=await build({stdin:{contents:entry,loader:'ts',resolveDir:repo},bundle:true,write:false,platform:'node',format:'esm',metafile:true,logLevel:'silent'});
+const compiled=await build({stdin:{contents:entry,loader:'ts',resolveDir:repo},bundle:true,write:false,platform:'node',format:'esm',metafile:true,preserveSymlinks:true,logLevel:'silent'});
 const {subject,yaw,appearance}=await import(`data:text/javascript;base64,${Buffer.from(compiled.outputFiles[0].text).toString('base64')}`);
 const face=(lines=['Blockcolc','方块钟','', '26.3'],dyeColor='black',glowing=false)=>({lines,dyeColor,glowing});
 const sign=(kind,state,front=face(),back=face(['Back'],'blue',true))=>({x:2,y:4,z:-3,materialId:'wood',stage:'detail',buildOrder:0,sourceBlockId:'minecraft:'+kind,sourceBlockState:state,sign:{front,back}});

@@ -24,6 +24,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.text.input.ImeAction
@@ -31,6 +32,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.offset
 import com.blockcolc.preview.R
 import kotlinx.coroutines.launch
 import kotlin.math.cos
@@ -60,11 +62,11 @@ import kotlin.math.sin
 
 internal val NativeSettingActionGap = 2.dp
 internal val NativeSettingsRowHeight = 60.dp
+internal val NativeOptionSpacing = 8.dp
 
-@Composable fun NativeDisclosure(title:String,description:String?=null,expanded:Boolean,onExpandedChange:(Boolean)->Unit,valueLabel:String?=null,leading:(@Composable ()->Unit)?=null,rowHeight:androidx.compose.ui.unit.Dp=52.dp,titleStyle:androidx.compose.ui.text.TextStyle=MaterialTheme.typography.bodyLarge,indicator:(@Composable ()->Unit)?=null,valueStyle:androidx.compose.ui.text.TextStyle=MaterialTheme.typography.bodyLarge,rowPadding:androidx.compose.ui.unit.Dp=8.dp,contentSpacing:androidx.compose.ui.unit.Dp=8.dp,indicatorSize:androidx.compose.ui.unit.Dp=24.dp,trailing:(@Composable ()->Unit)?=null,descriptionStyle:androidx.compose.ui.text.TextStyle=MaterialTheme.typography.bodySmall,enabled:Boolean=true,content:@Composable ColumnScope.()->Unit){
+@Composable fun NativeDisclosure(title:String,description:String?=null,expanded:Boolean,onExpandedChange:(Boolean)->Unit,valueLabel:String?=null,leading:(@Composable ()->Unit)?=null,rowHeight:androidx.compose.ui.unit.Dp=NativeSettingsRowHeight,titleStyle:androidx.compose.ui.text.TextStyle=MaterialTheme.typography.bodyLarge,indicator:(@Composable ()->Unit)?=null,valueStyle:androidx.compose.ui.text.TextStyle=MaterialTheme.typography.bodyLarge,rowPadding:androidx.compose.ui.unit.Dp=NativeOptionSpacing,contentSpacing:androidx.compose.ui.unit.Dp=NativeOptionSpacing,indicatorSize:androidx.compose.ui.unit.Dp=24.dp,trailing:(@Composable ()->Unit)?=null,descriptionStyle:androidx.compose.ui.text.TextStyle=MaterialTheme.typography.bodySmall,enabled:Boolean=true,showTrailing:Boolean=true,contentBottomSpacing:androidx.compose.ui.unit.Dp=0.dp,content:@Composable ColumnScope.()->Unit){
     val ui=LocalNativeUi.current;var turns by remember{mutableIntStateOf(if(expanded)1 else 0)}
-    val visibility=remember{androidx.compose.animation.core.MutableTransitionState(expanded)}
-    LaunchedEffect(expanded){visibility.targetState=expanded}
+    val interaction=remember{MutableInteractionSource()}
     var previous by remember{mutableStateOf(expanded)}
     LaunchedEffect(expanded){if(previous!=expanded){turns++;previous=expanded}}
     val angle by animateFloatAsState(turns*180f,tween(if(ui.reduceMotion)0 else 165),label="disclosure")
@@ -72,7 +74,8 @@ internal val NativeSettingsRowHeight = 60.dp
       val density=LocalDensity.current;val measure=rememberTextMeasurer()
       val stackValue=valueLabel!=null&&measure.measure(valueLabel,valueStyle,softWrap=false,maxLines=1).size.width>with(density){maxWidth.toPx()}*.4f
       Column(Modifier.fillMaxWidth()){
-        Row(Modifier.fillMaxWidth().heightIn(min=rowHeight).clickable(enabled=enabled,interactionSource=remember{MutableInteractionSource()},indication=null){onExpandedChange(!expanded)}
+        Row(Modifier.fillMaxWidth().heightIn(min=rowHeight).clickable(enabled=enabled,role=Role.Button,interactionSource=interaction,indication=null){onExpandedChange(!expanded)}
+            .nativePressMotion(interaction,enabled)
             .semantics{stateDescription=ui.text(if(expanded)"收起" else "展开")}.padding(vertical=rowPadding),verticalAlignment=Alignment.CenterVertically){
             if(leading!=null){leading();Spacer(Modifier.width(10.dp))}
             Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(4.dp)){
@@ -80,6 +83,12 @@ internal val NativeSettingsRowHeight = 60.dp
                 if(stackValue&&valueLabel!=null)Text(valueLabel,style=valueStyle)
             }
             if(trailing!=null)Row(
+                // The toolbar's space belongs to the header in both states.
+                // Unplaced children have no drawing or hit targets.
+                modifier=Modifier.layout{measurable,constraints->
+                    val child=measurable.measure(constraints)
+                    layout(child.width,child.height){if(showTrailing)child.placeRelative(0,0)}
+                }.then(if(showTrailing)Modifier else Modifier.clearAndSetSemantics{}),
                 horizontalArrangement=Arrangement.spacedBy(NativeSettingActionGap),
                 verticalAlignment=Alignment.CenterVertically,
             ){trailing()}
@@ -87,14 +96,27 @@ internal val NativeSettingsRowHeight = 60.dp
             if(trailing!=null&&valueLabel==null)Spacer(Modifier.width(NativeSettingActionGap))
             if(indicator!=null)indicator()else PixelGlyph("chevron",Modifier.size(indicatorSize).graphicsLayer{rotationZ=angle})
         }
-        AnimatedVisibility(visibility,modifier=Modifier.graphicsLayer{clip=!visibility.isIdle||!visibility.currentState},
-            enter=expandVertically(tween(if(ui.reduceMotion)0 else 200),expandFrom=Alignment.Top,clip=false)+fadeIn(tween(if(ui.reduceMotion)0 else 100)),
-            exit=shrinkVertically(tween(if(ui.reduceMotion)0 else 165,easing=LinearEasing),shrinkTowards=Alignment.Top,clip=false)+fadeOut(tween(if(ui.reduceMotion)0 else 130))){
-            // No unconditional inset: an empty list has zero content height.
-            // Clip only in flight, so an idle physical slider can leave its row.
-            Column(Modifier.fillMaxWidth(),verticalArrangement=Arrangement.spacedBy(contentSpacing),content=content)
-        }
+        NativeExpandedOptions(expanded,contentSpacing,contentBottomSpacing,content)
       }
+    }
+}
+
+@Composable internal fun NativeExpandedOptions(expanded:Boolean,spacing:androidx.compose.ui.unit.Dp=0.dp,bottomSpacing:androidx.compose.ui.unit.Dp=0.dp,content:@Composable ColumnScope.()->Unit){
+    val reduce=LocalNativeUi.current.reduceMotion
+    val visibility=remember{MutableTransitionState(expanded)}
+    LaunchedEffect(expanded){visibility.targetState=expanded}
+    AnimatedVisibility(visibility,modifier=Modifier.graphicsLayer{clip=!visibility.isIdle||!visibility.currentState},
+        enter=expandVertically(tween(if(reduce)0 else 200),expandFrom=Alignment.Top,clip=false),
+        exit=shrinkVertically(tween(if(reduce)0 else 180),shrinkTowards=Alignment.Top,clip=false)){
+        // Only an occupied subtree earns the inset. At rest a physical
+        // slider can draw beyond its own row.
+        Column(Modifier.fillMaxWidth().layout{measurable,constraints->
+            val gap=NativeOptionSpacing.roundToPx()
+            val totalGap=gap+bottomSpacing.roundToPx()
+            val child=measurable.measure(constraints.offset(vertical=-totalGap))
+            val hasContent=child.height>0
+            layout(child.width,child.height+if(hasContent)totalGap else 0){child.placeRelative(0,if(hasContent)gap else 0)}
+        },verticalArrangement=Arrangement.spacedBy(spacing),content=content)
     }
 }
 
@@ -104,7 +126,7 @@ internal val NativeSettingsRowHeight = 60.dp
     val ui=LocalNativeUi.current;val colors=MaterialTheme.colorScheme
     val position by animateFloatAsState(if(value)1f else 0f,tween(if(ui.reduceMotion)0 else 180),label="pixel-switch")
     val track by animateColorAsState(if(value&&enabled)colors.primary else colors.surfaceVariant,tween(if(ui.reduceMotion)0 else 180),label="switch-fill")
-    Row(Modifier.fillMaxWidth().heightIn(min=if(trailing==null)60.dp else 64.dp).toggleable(value=value,enabled=enabled,role=Role.Switch,
+    Row(Modifier.fillMaxWidth().heightIn(min=NativeSettingsRowHeight).toggleable(value=value,enabled=enabled,role=Role.Switch,
         interactionSource=interaction,indication=null,onValueChange=onChange).padding(vertical=8.dp),verticalAlignment=Alignment.CenterVertically){
         Column(Modifier.weight(1f).padding(end=12.dp),verticalArrangement=Arrangement.spacedBy(4.dp)){Text(title,style=MaterialTheme.typography.bodyLarge);if(description!=null)Text(description,style=MaterialTheme.typography.bodySmall)}
         if(trailing!=null)Row(
@@ -139,7 +161,7 @@ internal val NativeSettingsRowHeight = 60.dp
         if(!focused&&!dirty){input=TextFieldValue(value.toString());attempted=false}
     }
     fun commit(){if(input.composition!=null)return;attempted=true;input.text.toIntOrNull()?.takeIf{it in range}?.let{if(it!=value)onCommit(it)else dirty=false}}
-    Row(Modifier.fillMaxWidth().heightIn(min=52.dp).padding(vertical=8.dp),verticalAlignment=Alignment.CenterVertically){
+    Row(Modifier.fillMaxWidth().heightIn(min=NativeSettingsRowHeight).padding(vertical=NativeOptionSpacing),verticalAlignment=Alignment.CenterVertically){
         Text(title,Modifier.weight(1f).padding(end=12.dp),style=MaterialTheme.typography.bodyLarge)
         BasicTextField(input,{input=it;attempted=false;dirty=true},enabled=enabled,singleLine=true,
             textStyle=MaterialTheme.typography.bodyLarge.copy(color=MaterialTheme.colorScheme.onSurface,textAlign=androidx.compose.ui.text.style.TextAlign.End),
@@ -164,8 +186,10 @@ internal val NativeSettingsRowHeight = 60.dp
         val lineHeight=options.maxOf{measure.measure(it.second,style,constraints=Constraints(maxWidth=textWidth)).size.height}
         val rowHeight=maxOf(48.dp,with(density){lineHeight.toDp()}+24.dp)
         @Composable fun item(id:T,label:String,modifier:Modifier){
+            val interaction=remember{MutableInteractionSource()}
             Box(modifier.heightIn(min=rowHeight).selectable(id==value,enabled=enabled,role=Role.Tab,
-                interactionSource=remember{MutableInteractionSource()},indication=null,onClick={onChange(id)}).padding(horizontal=8.dp,vertical=12.dp),contentAlignment=Alignment.Center){
+                interactionSource=interaction,indication=null,onClick={onChange(id)})
+                .nativePressMotion(interaction,enabled).padding(horizontal=8.dp,vertical=12.dp),contentAlignment=Alignment.Center){
                 Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(7.dp)){
                     icons[id]?.let{PixelGlyph(it,Modifier.size(16.dp),if(id==value)colors.primary else colors.onSurfaceVariant)}
                     Text(label,style=style,color=if(id==value)colors.primary else colors.onSurfaceVariant)
@@ -208,9 +232,10 @@ internal val NativeSettingsRowHeight = 60.dp
 }
 
 @Composable internal fun NativeSettingLink(title:String,onClick:()->Unit,description:String?=null){
-    val interaction=remember{MutableInteractionSource()};val pressed by interaction.collectIsPressedAsState()
-    val reduce=LocalNativeUi.current.reduceMotion
-    Row(Modifier.fillMaxWidth().heightIn(min=60.dp).graphicsLayer{translationY=if(pressed&&!reduce)1.dp.toPx()else 0f}.clickable(role=Role.Button,interactionSource=interaction,indication=null,onClick=onClick).padding(vertical=8.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)){
+    val interaction=remember{MutableInteractionSource()}
+    Row(Modifier.fillMaxWidth().heightIn(min=NativeSettingsRowHeight)
+        .clickable(role=Role.Button,interactionSource=interaction,indication=null,onClick=onClick).nativePressMotion(interaction)
+        .padding(vertical=NativeOptionSpacing),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)){
         Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(4.dp)){
             Text(title,style=MaterialTheme.typography.bodyLarge)
             if(description!=null)Text(description,style=MaterialTheme.typography.bodySmall)

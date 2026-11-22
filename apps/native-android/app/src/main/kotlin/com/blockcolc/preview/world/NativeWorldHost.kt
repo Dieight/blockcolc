@@ -17,6 +17,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.boundsInWindow
@@ -56,7 +57,7 @@ import java.util.concurrent.TimeUnit
  * presenting a newly requested settlement or lighting quality. */
 internal val LocalColdWorldCacheTag=staticCompositionLocalOf<String?>{null}
 
-@Composable fun NativeWorldHost(runtime:PreviewRuntime,visible:Boolean,quality:String,modifier:Modifier=Modifier,worldColor:SourceWorldColor=SourceWorldColor(),atmosphere:NativeAtmosphereFacts?,buildingCondition:Int?=null,outlineVisibility:String="current",interaction:NativeWorldInteractionState=remember{NativeWorldInteractionState()},labels:Map<String,String> = emptyMap(),resourceSelection:ResourceWorldSelection?=ResourceWorldSelection(),onReady:(Boolean)->Unit={},room:com.blockcolc.presentation.RoomPresentation?=null,retainSurface:Boolean=false) {
+@Composable fun NativeWorldHost(runtime:PreviewRuntime,visible:Boolean,quality:String,modifier:Modifier=Modifier,worldColor:SourceWorldColor=SourceWorldColor(),atmosphere:NativeAtmosphereFacts?,buildingCondition:Int?=null,outlineVisibility:String="current",interaction:NativeWorldInteractionState=remember{NativeWorldInteractionState()},labels:Map<String,String> = emptyMap(),resourceSelection:ResourceWorldSelection?=ResourceWorldSelection(),onReady:(Boolean)->Unit={},room:com.blockcolc.presentation.RoomPresentation?=null,retainSurface:Boolean=false,coverVisible:Boolean=visible) {
     val context=LocalContext.current;val ui=LocalNativeUi.current
     val cacheTag=LocalColdWorldCacheTag.current
     val owner=remember(context,interaction,cacheTag){NativeWorldHostOwner(context,interaction,cacheTag)}
@@ -106,9 +107,24 @@ internal val LocalColdWorldCacheTag=staticCompositionLocalOf<String?>{null}
     LaunchedEffect(ready){readyCallback(ready)}
     DisposableEffect(owner){onDispose{readyCallback(false)}}
     val prepareWorld=backdrop?.corePresented!=false
-    LaunchedEffect(input,visible,foreground,effectiveQuality,atmosphere,buildingCondition,outlineVisibility,resourceSelection,prepareWorld,retainSurface,preparingHidden){
+    var heldByOtherPage by remember(owner){mutableStateOf(false)}
+    var resumeRetainedWorld by remember(owner){mutableStateOf(true)}
+    LaunchedEffect(visible,retainSurface){
+        if(!visible&&retainSurface&&owner.hasScene){
+            heldByOtherPage=true
+            resumeRetainedWorld=false
+        }else if(visible){
+            // Keep the displayed buffer while the window compositor drains
+            // the tail of the page animation. There is no world rebuild here.
+            if(heldByOtherPage&&owner.hasScene&&appearanceReady&&!owner.loading)delay(150)
+            heldByOtherPage=false
+            resumeRetainedWorld=true
+        }
+    }
+    val renderVisible=visible&&foreground&&resumeRetainedWorld
+    LaunchedEffect(input,renderVisible,effectiveQuality,atmosphere,buildingCondition,outlineVisibility,resourceSelection,prepareWorld,retainSurface,foreground,preparingHidden){
         owner.atmosphere(atmosphere)
-        owner.request(input,visible&&foreground,effectiveQuality,buildingCondition,outlineVisibility,resourceSelection,prepareWorld,retainSurface&&foreground)
+        owner.request(input,renderVisible,effectiveQuality,buildingCondition,outlineVisibility,resourceSelection,prepareWorld,retainSurface&&foreground)
     }
     LaunchedEffect(worldColor){owner.color(worldColor)}
     val furniture=remember(room){room?.placed?.map{p->NativeInteriorItem(p.owned.item.id,p.slot.x,p.slot.y,p.slot.z,p.slot.mount==com.blockcolc.presentation.RoomMount.WALL,p.slot.quarterTurns)}.orEmpty()}
@@ -118,7 +134,19 @@ internal val LocalColdWorldCacheTag=staticCompositionLocalOf<String?>{null}
         owner.interior(interaction.indoors,furniture)
         owner.navigate(interaction.selected,interaction.resetVersion)
     }
-    Box(modifier.then(if(visible)Modifier.semantics{
+    var slowRoomTransition by remember(owner){mutableStateOf(false)}
+    LaunchedEffect(owner.roomLoading){
+        if(owner.roomLoading){delay(180);slowRoomTransition=true}
+        else slowRoomTransition=false
+    }
+    Box(modifier.pointerInput(visible){
+        if(visible)awaitPointerEventScope{
+            while(true){
+                val event=awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
+                if(event.changes.any{it.pressed&&!it.previousPressed})resumeRetainedWorld=true
+            }
+        }
+    }.then(if(visible)Modifier.semantics{
         contentDescription=ui.text("聚落世界")
         stateDescription=ui.text(if(appearanceReady&&owner.currentScene(input,effectiveQuality,buildingCondition,outlineVisibility,resourceSelection))"世界已就绪" else "正在建造世界")
         if(appearanceReady)customActions=owner.targetIds.map{id->CustomAccessibilityAction(ui.text("查看 {0}",labels[id]?:id)){interaction.pick(id);true}}
@@ -134,7 +162,7 @@ internal val LocalColdWorldCacheTag=staticCompositionLocalOf<String?>{null}
                     it.importantForAccessibility=if(visible)View.IMPORTANT_FOR_ACCESSIBILITY_AUTO else View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
                 })
         }}
-        if(visible&&(!appearanceReady||owner.loading||!owner.hasScene||owner.roomLoading||owner.roomError||owner.error))Box(Modifier.fillMaxWidth().padding(top=with(density){projectionTop.toDp()}).height(with(density){projectionHeight.coerceAtLeast(1).toDp()}).background(MaterialTheme.colorScheme.background.copy(alpha=if(owner.hasScene&&appearanceReady).88f else 1f)),contentAlignment=Alignment.Center){
+        if(coverVisible&&(!appearanceReady||owner.loading||!owner.hasScene||owner.roomLoading&&slowRoomTransition||owner.roomError||owner.error))Box(Modifier.fillMaxWidth().padding(top=with(density){projectionTop.toDp()}).height(with(density){projectionHeight.coerceAtLeast(1).toDp()}).background(MaterialTheme.colorScheme.background.copy(alpha=if(owner.hasScene&&appearanceReady).88f else 1f)),contentAlignment=Alignment.Center){
             Column(horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.spacedBy(12.dp)){
                 if(owner.error){Text(ui.text("世界暂未准备好"));NativeAction(ui.text("重试"),owner::retry,primary=false,icon="reset")}
                 else if(owner.roomError){Text(ui.text("书房暂未准备好"));NativeAction(ui.text("重试"),owner::retryRoom,primary=false,icon="reset")}
@@ -203,6 +231,8 @@ internal class NativeWorldHostOwner(context:Context,private val interaction:Nati
     private val roomCompiler by lazy{NativeInteriorCompiler()}
     private val roomResources=com.blockcolc.preview.resources.NativeWorldResourcePreparation(com.blockcolc.preview.resources.NativeResourceController.get(context.applicationContext),com.blockcolc.world.NativeInteriorBlocks.blockIds)
     private var roomTask:java.util.concurrent.Future<*>?=null;private var roomEpoch=0L;private var roomScene:NativeInteriorScene?=null
+    private data class StudyInputs(val camera:NativeSceneCamera,val targets:List<NativeOrbitTarget>,val items:List<NativeInteriorItem>,val selection:ResourceWorldSelection?,val aspect:Double)
+    private var preparedStudy:Pair<StudyInputs,NativeInteriorScene>?=null
     var roomLoading by mutableStateOf(false);private set
     var roomError by mutableStateOf(false);private set
     fun interior(value:Boolean,items:List<NativeInteriorItem>){
@@ -219,15 +249,20 @@ internal class NativeWorldHostOwner(context:Context,private val interaction:Nati
         }
         val camera=roomCamera?:return;val targets=roomTargets.toList();val items=furniture.toList();roomLoading=true
         val roomAspect=if(width>0&&projectionHeight>0)width.toDouble()/projectionHeight else camera.aspect
-        val selection=resourceSelection
+        val inputs=StudyInputs(camera,targets,items,resourceSelection,roomAspect)
+        fun adopt(candidate:NativeInteriorScene){
+            if(closed||!indoors||roomEpoch!=ticket)return
+            preparedStudy=inputs to candidate
+            roomScene=candidate
+            val current=view?:return
+            current.interior(candidate,onPresented={if(!closed&&roomEpoch==ticket&&view===current)roomLoading=false})
+        }
+        val retained=preparedStudy
+        if(retained?.first==inputs){adopt(retained.second);return}
         roomTask=roomWorker.submit{runCatching{
             val cancelled={Thread.currentThread().isInterrupted}
-            roomCompiler.prepare(camera,targets,items,roomResources.prepare(selection,cancelled),cancelled,aspect=roomAspect)
-        }.onSuccess{candidate->main.post{
-            if(!closed&&indoors&&roomEpoch==ticket){roomScene=candidate;val current=view
-                if(current!=null)current.interior(candidate,onPresented={if(!closed&&roomEpoch==ticket&&view===current)roomLoading=false})
-            }
-        }}.onFailure{failure->main.post{if(!closed&&roomEpoch==ticket){roomLoading=false;roomError=true;android.util.Log.w("BlockcolcWorld","Study preparation failed",failure)}}}}
+            roomCompiler.prepare(camera,targets,items,roomResources.prepare(inputs.selection,cancelled),cancelled,aspect=roomAspect)
+        }.onSuccess{candidate->main.post{adopt(candidate)}}.onFailure{failure->main.post{if(!closed&&roomEpoch==ticket){roomLoading=false;roomError=true;android.util.Log.w("BlockcolcWorld","Study preparation failed",failure)}}}}
     }
     fun retryRoom(){if(!closed)prepareRoom()}
     var targetIds by mutableStateOf<List<String>>(emptyList());private set
@@ -264,6 +299,7 @@ internal class NativeWorldHostOwner(context:Context,private val interaction:Nati
     private data class SampledEnvironment(val uniforms:NativeSceneEnvironment,val clouds:com.blockcolc.world.NativeCloudPrepared?,
         val precipitation:NativePrecipitationPrepared?,val randomTail:Long)
     private var environmentEpoch=0L;private var environmentSequence=0L
+    private var appliedAtmosphere:Pair<Long,NativeAtmosphereFacts>?=null
     var viewKey by mutableStateOf<Long?>(null);private set
     var loading by mutableStateOf(false);private set
     var error by mutableStateOf(false);private set
@@ -273,10 +309,18 @@ internal class NativeWorldHostOwner(context:Context,private val interaction:Nati
     fun projectionWindow(height:Int,top:Int,target:NativeBackdrop?){
         backdrop=target;if(projectionHeight==height&&projectionTop==top)return
         val first=projectionHeight<=0;projectionHeight=height;projectionTop=top
-        target?.presentedWindow=null;val ticket=++projectionEpoch;val current=view
-        current?.projectionWindow(height,top){if(!closed&&ticket==projectionEpoch&&view===current)target?.presentedWindow=height to top}
+        presentProjection()
         if(first&&height>0&&active&&queued==null)main.post{if(!closed)request(this.target,visible,quality)}
         if(!first&&indoors)prepareRoom()
+    }
+    private fun presentProjection(){
+        backdrop?.presentedWindow=null
+        val ticket=++projectionEpoch
+        val current=view?:return
+        val window=NativePresentedWindow(width,projectionHeight,projectionTop)
+        current.projectionWindow(window.height,window.top,window.width){
+            if(!closed&&ticket==projectionEpoch&&view===current)backdrop?.presentedWindow=window
+        }
     }
     private var clipBottom:Int?=null
     fun clip(value:Int?){clipBottom=value;view?.visibleRegion(value)}
@@ -288,6 +332,7 @@ internal class NativeWorldHostOwner(context:Context,private val interaction:Nati
         val firstSize=this.width<=0||this.height<=0
         val widthChanged=this.width!=width
         this.width=width;this.height=height
+        if(widthChanged&&projectionHeight>0)presentProjection()
         if(firstSize&&width>0&&height>0)main.post{if(!closed&&active&&queued==null)request(target,visible,quality)}
         if(!firstSize&&widthChanged&&indoors)prepareRoom()
     }
@@ -320,8 +365,8 @@ internal class NativeWorldHostOwner(context:Context,private val interaction:Nati
             val resident=residentKey?.request
             if(!closed&&key==viewKey&&active&&hasScene&&!loading&&!error&&!interaction.indoors&&interaction.resetVersion==resetVersion&&interaction.selected==selected&&presentation==pendingPresentation&&resident==target?.sceneIdentity&&resident?.replacementGeneration==generation&&resident.revision==revision&&id in targetIds)interaction.pick(id)
         }, optimizeRendering = !stockShadows)
-        view=next;roomScene?.let{candidate->val ticket=roomEpoch;next.interior(candidate,onPresented={if(!closed&&roomEpoch==ticket&&view===next)roomLoading=false})};val windowTicket=projectionEpoch;val window=projectionHeight to projectionTop
-        next.projectionWindow(window.first,window.second){if(!closed&&view===next&&projectionEpoch==windowTicket)backdrop?.presentedWindow=window};next.visibleRegion(clipBottom);pendingView=null;next.navigate(selected);if(!openingConsumed)next.prepareOpening(openingTarget);next.worldColor(worldColor);if(active)next.resume();return next
+        view=next;roomScene?.let{candidate->val ticket=roomEpoch;next.interior(candidate,onPresented={if(!closed&&roomEpoch==ticket&&view===next)roomLoading=false})}
+        presentProjection();next.visibleRegion(clipBottom);pendingView=null;next.navigate(selected);if(!openingConsumed)next.prepareOpening(openingTarget);next.worldColor(worldColor);if(active)next.resume();return next
     }
     fun navigate(id:String?,version:Long){if(closed)return;val reset=version!=resetVersion;selected=id;resetVersion=version;view?.navigate(id,reset)}
     fun color(value:SourceWorldColor){if(closed||worldColor==value)return;worldColor=value;view?.worldColor(value)}
@@ -348,11 +393,18 @@ internal class NativeWorldHostOwner(context:Context,private val interaction:Nati
         if(changedSettlement)settlementChanging=true
         if(changedQuality)qualityChanging=true
         if(changedSettlement||changedQuality)error=false
+        if(this.resourceSelection!=resourceSelection)preparedStudy=null
         this.target=input;this.quality=quality;this.buildingCondition=buildingCondition;this.outlineVisibility=outlineVisibility;this.resourceSelection=resourceSelection;preparationAllowed=allowPreparation
+        val wasActive=active
+        val wasVisible=this.visible
         this.visible=visible;keepPreparingHidden=prepareHidden
         active=visible||prepareHidden&&(settlementChanging||qualityChanging)&&!error
-        if(!active){session.cancelPending();stopEnvironment();queued=null;if(residentKey==null)pendingPresentation= -1;view?.pause();return}
-        view?.resume();if(input==null)return
+        if(!active){
+            if(wasActive){session.cancelPending();stopEnvironment();queued=null;if(residentKey==null)pendingPresentation= -1;view?.pause()}
+            return
+        }
+        if(!wasActive||visible&&!wasVisible)view?.resume()
+        if(input==null)return
         val changingAppearance=settlementChanging||qualityChanging
         if(changingAppearance)loading=true
         if(!allowPreparation&&!hasScene){loading=true;return}
@@ -395,6 +447,7 @@ internal class NativeWorldHostOwner(context:Context,private val interaction:Nati
         if(environmentTask!=null||closed||!active||presentation!=pendingPresentation)return
         val before=environmentContext?:return
         val facts=atmosphere?.takeIf{it.inputs.ocean==before.ocean}?:return
+        if(appliedAtmosphere?.let{it.first==presentation&&it.second==facts}==true)return
         val sampling=before.adopting(facts);environmentContext=sampling
         val cloudSampling=cloudContext?:return;val rainSampling=precipitationContext?:return;val epoch=environmentEpoch
         val beforeCloud=cloudKey;val beforeRain=precipitationKey;val beforeRandom=cloudRandomTail
@@ -415,7 +468,12 @@ internal class NativeWorldHostOwner(context:Context,private val interaction:Nati
                         val world=view
                         if(world==null)finish()else world.updateEnvironment(presentation,++environmentSequence,sample.uniforms,sample.clouds?.source,sample.precipitation?.source){accepted->
                             if(!closed&&active&&epoch==environmentEpoch&&presentation==pendingPresentation&&environmentContext===sampling){
-                                if(accepted){sample.clouds?.let{cloudKey=it.key};sample.precipitation?.let{precipitationKey=it.key};cloudRandomTail=sample.randomTail}
+                                if(accepted){
+                                    appliedAtmosphere=presentation to facts
+                                    sample.clouds?.let{cloudKey=it.key}
+                                    sample.precipitation?.let{precipitationKey=it.key}
+                                    cloudRandomTail=sample.randomTail
+                                }
                                 finish()
                             }
                         }

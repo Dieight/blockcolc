@@ -52,9 +52,15 @@ import java.util.UUID
         if(input.text.trim().length>200){validation="便签最多 200 字。";return}
         validation=null;create.submit{runtime.dispatch(WorkspaceMutation.AddNote(UUID.randomUUID().toString(),input.text),it)}
     }
-    Column(Modifier.fillMaxWidth().then(if(compact)Modifier.fillMaxHeight().padding(vertical=4.dp)else Modifier),verticalArrangement=Arrangement.spacedBy(if(compact)4.dp else 8.dp)){
+    Column(Modifier.fillMaxWidth().then(if(compact)Modifier.fillMaxHeight()else Modifier),verticalArrangement=Arrangement.spacedBy(if(compact)4.dp else 8.dp)){
         Row(Modifier.fillMaxWidth().padding(bottom=if(compact)4.dp else 8.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(8.dp)){
-            PixelGlyph("note",Modifier.size(20.dp),ink);NativeText(ui.text("简易便签"),if(compact)NativeTextRole.BODY else NativeTextRole.SECTION,Modifier.weight(1f));NativeText(active.size.toString(),NativeTextRole.CAPTION,Modifier.testTag("quick-note-count"));if(decorations>0)Spacer(Modifier.width((decorations*44).dp))
+            if(compact)NativeMinimalPanelLabel(ui.text("简易便签"),"note",Modifier.weight(1f))
+            else{
+                PixelGlyph("note",Modifier.size(20.dp),ink)
+                NativeText(ui.text("简易便签"),NativeTextRole.SECTION,Modifier.weight(1f))
+            }
+            NativeText(active.size.toString(),NativeTextRole.CAPTION,Modifier.testTag("quick-note-count"))
+            if(decorations>0)Spacer(Modifier.width((decorations*44).dp))
         }
         Column(Modifier.fillMaxWidth().then(if(compact)Modifier.weight(1f)else Modifier.heightIn(max=320.dp)).verticalScroll(rememberScrollState())){
             for(note in active)key(note.id){NativeNoteRow(note,false,s,runtime,{held[note.id]=note},{held.remove(note.id)})}
@@ -105,10 +111,11 @@ import java.util.UUID
             NativeNoteAction(ui.text("取消修改"),"close",{editing=false},!request.busy)
         }else{
             val checked=completedView||completing
-            Box(Modifier.size(44.dp).toggleable(checked,enabled=!request.busy&&!animateStrike,role=Role.Checkbox,interactionSource=remember{MutableInteractionSource()},indication=null){
+            val interaction=remember{MutableInteractionSource()}
+            Box(Modifier.size(44.dp).toggleable(checked,enabled=!request.busy&&!animateStrike,role=Role.Checkbox,interactionSource=interaction,indication=null){
                 completing=!completedView;if(completing)onCompleting()
                 request.submit{runtime.dispatch(WorkspaceMutation.CompleteNote(note.id,!completedView),it)}
-            }.semantics{contentDescription=ui.text(if(completedView)"恢复便签"else"完成便签")},contentAlignment=Alignment.CenterStart){
+            }.nativePressMotion(interaction,!request.busy&&!animateStrike).semantics{contentDescription=ui.text(if(completedView)"恢复便签"else"完成便签")},contentAlignment=Alignment.CenterStart){
                 Canvas(Modifier.size(16.dp)){drawRect(ink,style=Stroke(2.dp.toPx()));if(checked)drawRect(ink,Offset(4.dp.toPx(),4.dp.toPx()),androidx.compose.ui.geometry.Size(size.width-8.dp.toPx(),size.height-8.dp.toPx()))}
             }
             var layout by remember{mutableStateOf<TextLayoutResult?>(null)}

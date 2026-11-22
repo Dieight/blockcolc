@@ -26,6 +26,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import com.blockcolc.preview.migration.LegacyUpgradeInstaller
 import com.blockcolc.preview.migration.LegacyUpgradeFailure
+import com.blockcolc.preview.ui.prepareNativeMainWindow
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import java.util.Locale
@@ -35,6 +36,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        prepareNativeMainWindow(window)
         setContent {
             var retry by remember { mutableIntStateOf(0) }
             var failed by remember { mutableStateOf(false) }

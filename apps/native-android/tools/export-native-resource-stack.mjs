@@ -7,7 +7,7 @@ import {buildSync} from 'esbuild';
 import {zipSync,zlibSync,strToU8} from 'fflate';
 const repo=fileURLToPath(new URL('../../../',import.meta.url)),out=path.resolve(process.argv[2]??'');
 assert.ok(out.startsWith(path.join(repo,'apps/native-android/world-core/build/generated')+path.sep));
-const bundle=buildSync({absWorkingDir:repo,entryPoints:['packages/resource-pack/src/index.ts'],bundle:true,platform:'node',format:'esm',metafile:true,write:false});
+const bundle=buildSync({absWorkingDir:repo,entryPoints:['packages/resource-pack/src/index.ts'],bundle:true,platform:'node',format:'esm',metafile:true,preserveSymlinks:true,write:false});
 const api=await import('data:text/javascript;base64,'+Buffer.from(bundle.outputFiles[0].text).toString('base64'));
 const sha=bytes=>crypto.createHash('sha256').update(bytes).digest('hex'),json=v=>strToU8(JSON.stringify(v));
 const sourceHashes=Object.fromEntries(Object.keys(bundle.metafile.inputs).map(p=>[p.replaceAll('\\','/'),sha(fs.readFileSync(path.join(repo,p)))]));

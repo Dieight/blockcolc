@@ -12,7 +12,7 @@ const plugin={name:'expose-original-cpu-authored-assets',setup(b){b.onLoad({filt
  export {addOriginalFlowerShapes,FLOWER_COLORS,wheatAge} from './original-flower-shapes';
  export {connectedGlassSurface,connectedGlassPixels,isConnectedOriginalGlass} from './connected-original-glass';`:'\nexport {FLOWER_COLORS,wheatAge};'),loader:'ts',resolveDir:path.dirname(args.path)
 }));}};
-const bundle=await build({entryPoints:[path.join(root,'packages/voxel/src/original-block-details.ts')],bundle:true,write:false,platform:'node',format:'esm',metafile:true,plugins:[plugin]});
+const bundle=await build({entryPoints:[path.join(root,'packages/voxel/src/original-block-details.ts')],bundle:true,write:false,platform:'node',format:'esm',metafile:true,preserveSymlinks:true,plugins:[plugin]});
 for(const input of Object.keys(bundle.metafile.inputs)){const absolute=path.resolve(input),name=path.relative(root,absolute).replaceAll('\\','/');assert(!name.startsWith('../'));hashes[name]=sha(readFileSync(absolute));}
 for(const name of ['apps/native-android/tools/export-original-supplement-oracle.mjs','package-lock.json'])hashes[name]=sha(readFileSync(path.join(root,name)));
 const source=await import('data:text/javascript;base64,'+Buffer.from(bundle.outputFiles[0].text).toString('base64'));

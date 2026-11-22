@@ -6,6 +6,7 @@ import androidx.activity.compose.setContent
 class MainActivity:ComponentActivity(){
  override fun onCreate(savedInstanceState:Bundle?){
   super.onCreate(savedInstanceState)
+  com.blockcolc.preview.ui.prepareNativeMainWindow(window)
   NativeStartupTrace.point("activity-created")
   val runtime=PreviewRuntime.get(this)
   // R8 removes this entire branch and its intent keys from user releases.

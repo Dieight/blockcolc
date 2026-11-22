@@ -135,7 +135,8 @@ describe("merged stepped terrain", () => {
         environmentStyle: 'natural-valley', worldSeed, terrainGenerationVersion: 4,
       });
       expect(terrain.bounds.maxY - .5).toBeGreaterThanOrEqual(42);
-      expect(terrain.bounds.maxY - .5).toBeLessThanOrEqual(48);
+      // The base landform is capped at 48. Distant relief can raise it to 68.
+      expect(terrain.bounds.maxY - .5).toBeLessThanOrEqual(68);
       expect(terrain.hydrology.protectedWaterCellCount).toBe(0);
       expect(terrain.hydrology.maxUphillWaterStep).toBe(0);
     }

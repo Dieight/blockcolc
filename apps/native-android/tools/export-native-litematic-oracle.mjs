@@ -11,7 +11,7 @@ assert.ok(out.startsWith(path.join(repo,'apps/native-android/world-core/build/')
 const sourceHashes={};
 const sha=b=>crypto.createHash('sha256').update(b).digest('hex');
 const canonical=v=>v===null||typeof v!=='object'?JSON.stringify(v):Array.isArray(v)?'['+v.map(canonical).join(',')+']':'{'+Object.keys(v).sort().map(k=>JSON.stringify(k)+':'+canonical(v[k])).join(',')+'}';
-async function load(contents){const r=buildSync({stdin:{contents,loader:'ts',resolveDir:repo},absWorkingDir:repo,bundle:true,write:false,platform:'node',format:'esm',metafile:true});
+async function load(contents){const r=buildSync({stdin:{contents,loader:'ts',resolveDir:repo},absWorkingDir:repo,bundle:true,write:false,platform:'node',format:'esm',metafile:true,preserveSymlinks:true});
  for(const p of Object.keys(r.metafile.inputs).filter(p=>p!=='<stdin>'))sourceHashes[p.replaceAll('\\','/')]=sha(fs.readFileSync(path.join(repo,p)));
  return import('data:text/javascript;base64,'+Buffer.from(r.outputFiles[0].text).toString('base64'));}
 const helperPath='packages/litematic/test/litematic.test.ts',helperSource=fs.readFileSync(path.join(repo,helperPath),'utf8');

@@ -33,7 +33,7 @@ export function subject(input){
     edgeStrength:m.userData.edgeStrength??null}};
  });
 }`;
-const compiled=await build({stdin:{contents:entry,loader:'ts',resolveDir:repo},bundle:true,write:false,platform:'node',format:'esm',metafile:true,logLevel:'silent'});
+const compiled=await build({stdin:{contents:entry,loader:'ts',resolveDir:repo},bundle:true,write:false,platform:'node',format:'esm',metafile:true,preserveSymlinks:true,logLevel:'silent'});
 const {subject}=await import(`data:text/javascript;base64,${Buffer.from(compiled.outputFiles[0].text).toString('base64')}`);
 const blueprints=[];
 for(const kind of ['solid','plate','sparse']){

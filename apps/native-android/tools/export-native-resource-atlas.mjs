@@ -1,10 +1,10 @@
 import fs from 'node:fs';import path from 'node:path';import crypto from 'node:crypto';import assert from 'node:assert/strict';import {fileURLToPath} from 'node:url';
 import {buildSync} from 'esbuild';import {zipSync,zlibSync,strToU8} from 'fflate';
 const repo=fileURLToPath(new URL('../../../',import.meta.url)),out=path.resolve(process.argv[2]??'');assert.ok(out.startsWith(path.join(repo,'apps/native-android/world-core/build/generated')+path.sep));
-const bundle=buildSync({absWorkingDir:repo,entryPoints:['packages/resource-pack/src/index.ts'],bundle:true,platform:'node',format:'esm',metafile:true,write:false});
+const bundle=buildSync({absWorkingDir:repo,entryPoints:['packages/resource-pack/src/index.ts'],bundle:true,platform:'node',format:'esm',metafile:true,preserveSymlinks:true,write:false});
 const api=await import('data:text/javascript;base64,'+Buffer.from(bundle.outputFiles[0].text).toString('base64'));
 const sha=b=>crypto.createHash('sha256').update(b).digest('hex'),json=v=>strToU8(JSON.stringify(v));
-const sourceHashes=Object.fromEntries(Object.keys(bundle.metafile.inputs).map(p=>[p.replaceAll('\\','/'),sha(fs.readFileSync(path.join(repo,p)))]));
+const sourceHashes=Object.fromEntries(Object.keys(bundle.metafile.inputs).map(p=>[p.replaceAll('\\','/'),sha(fs.readFileSync(path.resolve(repo,p)))]));
 function crc(b){let c=0xffffffff;for(const v of b){c^=v;for(let i=0;i<8;i++)c=(c>>>1)^((c&1)?0xedb88320:0);}return(c^0xffffffff)>>>0;}
 function chunk(name,b){const v=Buffer.alloc(b.length+12);v.writeUInt32BE(b.length);v.write(name,4);v.set(b,8);v.writeUInt32BE(crc(v.subarray(4,v.length-4)),v.length-4);return v;}
 function png(width=16,height=width,{alpha='opaque',badAdler=false,seed=1}={}){const header=Buffer.alloc(13);header.writeUInt32BE(width);header.writeUInt32BE(height,4);header[8]=8;header[9]=6;

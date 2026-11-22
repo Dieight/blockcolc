@@ -85,31 +85,34 @@ internal val LocalNativeSystemBarPolicy=staticCompositionLocalOf<NativeSystemBar
     val policy=LocalNativeSystemBarPolicy.current
     SideEffect{policy?.immersive=immersive}
     val activity=remember(view){generateSequence(view.context){(it as? android.content.ContextWrapper)?.baseContext}.filterIsInstance<android.app.Activity>().firstOrNull()}
-    DisposableEffect(activity,immersive){
+    DisposableEffect(activity){
         val window=activity?.window
-        if(window!=null){
-            WindowCompat.setDecorFitsSystemWindows(window,false)
-            applyNativeCutoutPolicy(window)
-            @Suppress("DEPRECATION")
-            window.statusBarColor=android.graphics.Color.TRANSPARENT
-            @Suppress("DEPRECATION")
-            window.navigationBarColor=android.graphics.Color.TRANSPARENT
-            if(android.os.Build.VERSION.SDK_INT>=29)window.isNavigationBarContrastEnforced=false
-            WindowCompat.getInsetsController(window,window.decorView).apply{
-                systemBarsBehavior=androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-                if(immersive)hide(androidx.core.view.WindowInsetsCompat.Type.systemBars())
-                else show(androidx.core.view.WindowInsetsCompat.Type.systemBars())
-            }
-        }
+        if(window!=null)prepareNativeMainWindow(window)
         onDispose{if(window!=null)WindowCompat.getInsetsController(window,window.decorView).show(androidx.core.view.WindowInsetsCompat.Type.systemBars())}
+    }
+    LaunchedEffect(activity,immersive){
+        val window=activity?.window?:return@LaunchedEffect
+        WindowCompat.getInsetsController(window,window.decorView).apply{
+            systemBarsBehavior=androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            if(immersive)hide(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+            else show(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+        }
     }
 }
 
+@Suppress("DEPRECATION")
+internal fun prepareNativeMainWindow(window:android.view.Window){
+    WindowCompat.setDecorFitsSystemWindows(window,false)
+    applyNativeCutoutPolicy(window)
+    window.statusBarColor=android.graphics.Color.TRANSPARENT
+    window.navigationBarColor=android.graphics.Color.TRANSPARENT
+    if(android.os.Build.VERSION.SDK_INT>=29)window.isNavigationBarContrastEnforced=false
+}
+
 private fun applyNativeCutoutPolicy(window:android.view.Window){
-    val sdk=android.os.Build.VERSION.SDK_INT
-    if(sdk<28)return
+    if(android.os.Build.VERSION.SDK_INT<28)return
     val mode=when{
-        sdk>=30->android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+        android.os.Build.VERSION.SDK_INT>=30->android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
         else->android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
     }
     val layout=window.attributes

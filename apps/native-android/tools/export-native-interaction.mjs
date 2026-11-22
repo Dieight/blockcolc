@@ -35,7 +35,7 @@ export function subject(input){
  }
  return results;
 }`;
-const compiled=await build({stdin:{contents:entry,loader:'ts',resolveDir:repo},bundle:true,write:false,platform:'node',format:'esm',metafile:true,logLevel:'silent'});
+const compiled=await build({stdin:{contents:entry,loader:'ts',resolveDir:repo},bundle:true,write:false,platform:'node',format:'esm',metafile:true,preserveSymlinks:true,logLevel:'silent'});
 const {subject}=await import(`data:text/javascript;base64,${Buffer.from(compiled.outputFiles[0].text).toString('base64')}`);
 const cameras=[];
 for(const aspect of [.32,.75,1,1.8,3.2])for(const scale of [1,9]){

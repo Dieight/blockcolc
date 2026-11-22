@@ -4,7 +4,7 @@ import {createHash} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import path from 'node:path';
 const root=fileURLToPath(new URL('../../../',import.meta.url)),out=process.argv[2];
-const built=await build({entryPoints:[path.join(root,'packages/voxel/src/resource-fluids.ts')],bundle:true,write:false,platform:'node',format:'esm',metafile:true});
+const built=await build({entryPoints:[path.join(root,'packages/voxel/src/resource-fluids.ts')],bundle:true,write:false,platform:'node',format:'esm',metafile:true,preserveSymlinks:true});
 const source=await import('data:text/javascript;base64,'+Buffer.from(built.outputFiles[0].text).toString('base64'));
 const input=JSON.parse(readFileSync(path.join(root,'apps/native-android/world-core/build/generated/fluid-oracle/fluid-oracle.json'))),cases=[];
 for(const original of input.cases.filter(c=>c.voxels.length<300))for(const mode of ['both','still-only','flow-only','none','split-page','lava-transparent']){

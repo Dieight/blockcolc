@@ -10,8 +10,11 @@ if(beta!=null||betaCode!=null){
         throw new GradleException('Beta requires formal signing, a positive beta number and a versionCode above the public release')
 }
 def currentReleaseVersion=upgradeCandidate?(beta==null?'3.0.0':"3.0.0-beta.${beta}".toString()):publicVersion.versionName
-if(stableCode!=null&&(!upgradeCandidate||beta!=null||!(stableCode==~ /[1-9][0-9]{0,8}/)||stableCode.toInteger()<=publicVersion.versionCode.toInteger()))
-    throw new GradleException('The formal release versionCode must exceed the installed public release')
+if(upgradeCandidate&&beta==null&&stableCode==null)
+    throw new GradleException('Set -PnativeReleaseVersionCode explicitly using the delivered APK history')
+def minStableCode=publicVersion.versionCode.toInteger()+(publicVersion.versionName==currentReleaseVersion?0:1)
+if(stableCode!=null&&(!upgradeCandidate||beta!=null||!(stableCode==~ /[1-9][0-9]{0,8}/)||stableCode.toInteger()<minStableCode))
+    throw new GradleException('The formal versionCode must match or advance the release metadata')
 def nativeAppId=upgradeCandidate?'com.blockcolc.app':'com.blockcolc.preview'
 def largeHeap=providers.gradleProperty('nativeLargeHeap').getOrElse('false')
 if(!(largeHeap in ['true','false']))throw new GradleException('nativeLargeHeap must be true or false')
@@ -35,7 +38,7 @@ android {
         applicationId nativeAppId
         minSdk 23
         targetSdk 35
-        versionCode(upgradeCandidate?((betaCode?:stableCode)?.toInteger()?:publicVersion.versionCode.toInteger()+1):diagnostics?diagnosticVersion.getOrElse('2').toInteger():benchmarkVersion.getOrElse('19').toInteger())
+        versionCode(upgradeCandidate?(betaCode?:stableCode).toInteger():diagnostics?diagnosticVersion.getOrElse('2').toInteger():benchmarkVersion.getOrElse('19').toInteger())
         versionName(upgradeCandidate?currentReleaseVersion:diagnostics?'0.3-p3-diagnostic':'3.0.0-p3-preview')
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
     }

@@ -12,7 +12,7 @@ if(!output)throw Error('Generated oracle directory required');
 const sourceHashes={};
 const sha=b=>createHash('sha256').update(b).digest('hex');
 async function load(relative){
- const built=buildSync({entryPoints:[path.join(root,relative)],bundle:true,write:false,platform:'node',format:'esm',metafile:true,loader:{'.css':'empty'}});
+ const built=buildSync({entryPoints:[path.join(root,relative)],bundle:true,write:false,platform:'node',format:'esm',metafile:true,preserveSymlinks:true,loader:{'.css':'empty'}});
  for(const file of Object.keys(built.metafile.inputs)){
   const absolute=path.resolve(file),name=path.relative(root,absolute).replaceAll('\\','/');
   assert.ok(!name.startsWith('../'));sourceHashes[name]=sha(readFileSync(absolute));

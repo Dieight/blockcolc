@@ -5,7 +5,7 @@ const repo=fileURLToPath(new URL('../../../',import.meta.url)),out=path.resolve(
 assert.ok(out.startsWith(path.join(repo,'apps/native-android/world-core/build/generated')+path.sep));
 const source=`export * from './packages/resource-pack/src/index';export * from './packages/voxel/src/visual-biome';
 export {resolvePackTileRect,cropAtlasTilePixels} from './packages/voxel/src/resource-textures';export * from './packages/voxel/src/terrain-material';`;
-const bundle=buildSync({absWorkingDir:repo,stdin:{contents:source,resolveDir:repo,loader:'ts'},bundle:true,platform:'node',format:'esm',write:false,metafile:true});
+const bundle=buildSync({absWorkingDir:repo,stdin:{contents:source,resolveDir:repo,loader:'ts'},bundle:true,platform:'node',format:'esm',write:false,metafile:true,preserveSymlinks:true});
 const api=await import('data:text/javascript;base64,'+Buffer.from(bundle.outputFiles[0].text).toString('base64'));
 const sha=b=>crypto.createHash('sha256').update(b).digest('hex'),json=v=>strToU8(JSON.stringify(v));
 const sourceHashes=Object.fromEntries(Object.keys(bundle.metafile.inputs).filter(p=>!p.startsWith('<')).map(p=>[p.replaceAll('\\','/'),sha(fs.readFileSync(path.join(repo,p)))]));

@@ -6,44 +6,35 @@
 
 [简体中文](README.md) · [English](README.en.md)
 
-Blockcolc 是本地优先的专注计时应用。把真实投入转化为方块建筑：
-普通大型任务由小任务自报进度推进，习惯任务由有效专注轮次推进。
+Blockcolc 是本地优先的 Android 专注计时应用。普通任务按汇报的小任务进度建造，习惯任务按有效专注轮次建造。3.0 起，计时、存储、界面和世界渲染都在原生 Android 应用内运行。
 
 ## 主要能力
 
-- 普通、习惯、固定轮次、马拉松和极简专注，共用时间真相与沉浸表面。
-- 多任务切换、每日目标、可选自动连续专注、离开保护和系统通知。
-- 今日时间轴、热力图、任务投入、纪念建筑、小任务分布和本地成就。
-- JSON 备份/恢复与原子回滚；中断前已投入的时间如实统计。
-- Litematic 蓝图导入、真实预览及本地保存；Java 26.3 资源包的模型/纹理、
-  染色、动画与受限特殊方块静态显示，不支持内容明确回退。
-- 自然山谷、经典空岛、海洋小岛和万象海岸，昼夜光照、天气及环境装饰。
-- 默认本地天气；可选现实天气，失败仍保持离线核心可用。
-- 中文 / English、像素 / 系统字体、可选便签和自然环境录音。
-
-核心不要求账号或服务器。Android 是主要发布平台，Web 共用 React 界面与业务逻辑。
-标准版不含私人同步上传模块；私人集成构筑不属于公开下载内容。
+- 固定轮次、按结束时间、极简时钟和沉浸专注。可开启自动接续、计划结束后加时、离开保护和系统提醒。
+- 每日目标、专注热力图和任务投入。纪念建筑保留完成记录，成就可解锁书房陈设。
+- 四种聚落、室内书房视角、动物、昼夜与天气。纸雕画质适合性能较低的设备。
+- 建筑蓝图库汇集原生、奖励和导入内容，支持 `.litematic` 预览与导入。兼容 Minecraft Java 26.3 资源包的模型、纹理、染色和动画，部分方块实体支持静态显示。
+- JSON 导入导出、每日合并备份和操作回滚。可开启账户，在设备间同步记录与偏好，使用云端备份或分享专注状态。
+- 简体中文与 English，像素、系统和混合字体。可选便签、日期倒计时、自然录音与随天气播放的雨声。
 
 ## 安装与运行
 
-Android 安装包见 [Releases](https://github.com/Dieight/blockcolc/releases)。
-本地需要 Node.js 20.19 或更高，Android 工具链使用 JDK 21 与 Android SDK。
+从 [GitHub Releases](https://github.com/Dieight/blockcolc/releases) 下载 Android APK。现有用户可以先导出一份 JSON，再用同签名 APK 覆盖升级。想体验测试版，可以在「设置 → 高级与数据 → 加入 Beta 测试」开启测试版更新通道。
+
+本地构建使用 Node.js 24、JDK 21、Android SDK 35 和 Filament 1.56.0 的 `matc`。
 
 ```powershell
-npm install
-npm run dev -w @blockcolc/web
+npm ci
+.\apps\android\android\gradlew.bat -p apps/native-android :app:assembleDebug '-PmatcPath=C:\dev\filament\bin\matc.exe'
 ```
 
-Web 构建：`npm run build -w @blockcolc/web`。
-Android 本地调试：`npm run android:sync -w @blockcolc/android`，
-然后 `npm run android:assemble -w @blockcolc/android`。
-测试与签名交付使用 [验证策略](docs/TESTING.md)，不要把 debug 包当正式候选。
+原生模块、环境配置与离线验证见[原生工程说明](apps/native-android/README.md)。旧 Web 和 Android 工程保留作迁移对照及回退依据，当前 Android APK 由原生工程构建。
 
 ## 数据与版权
 
-本地任务与资源默认保存在本机。标准版不上传任务或统计；
-用户显式开启现实天气时按设置请求位置与天气，不上传任务内容。
-用户导入资源在本机校验，受限方块实体只恢复已支持的静态信息，不模拟完整 Minecraft 游戏。
+默认离线使用。登录后可同步任务、专注记录和可同步的设备偏好，导入的材质包和音频保存在本机。好友功能可以单独开启，并选择分享状态、任务、起止时间或每日投入。现实天气也需手动开启。 [云服务条款及隐私说明](services/cloud/policy/zh-CN.md)
+
+用户导入的资源在本机校验。方块实体中受支持的信息用于静态展示。
 
 Minecraft 是 Mojang Studios 的商标。本项目与 Mojang Studios 或 Microsoft 无关联，
 不附带未经授权的原版纹理、字体、声音或模型。
@@ -55,10 +46,11 @@ Minecraft 是 Mojang Studios 的商标。本项目与 Mojang Studios 或 Microso
 
 | 技术 | 用途 | 上游 |
 | --- | --- | --- |
-| TypeScript、React | 共享业务与 Android/Web 界面 | [TypeScript](https://github.com/microsoft/TypeScript)、[React](https://github.com/facebook/react) |
-| Three.js / WebGL | 方块世界、实例绘制、光照和天气 | [Three.js](https://github.com/mrdoob/three.js) |
-| Capacitor、Java | Android 宿主、通知、生命周期、定位、音频和文件桥接 | [Capacitor](https://github.com/ionic-team/capacitor)、[Android](https://developer.android.com/) |
-| IndexedDB | 本地任务、资源和恢复快照 | [MDN 文档](https://developer.mozilla.org/en-US/docs/Web/API/IndexedDB_API) |
+| Kotlin、Jetpack Compose | 原生界面、计时及 Android 系统集成 | [Kotlin](https://kotlinlang.org/) · [Compose](https://developer.android.com/compose) |
+| Filament、OpenGL ES | 方块世界、阴影、透明材质和同帧液态玻璃 | [Filament](https://github.com/google/filament) |
+| SQLite、Node.js | 本地记录与回滚，以及可选的账号、好友和云备份服务 | [SQLite](https://www.sqlite.org/) · [Node.js](https://nodejs.org/) |
+| Fusion Pixel | 中英文像素字体 | [Fusion Pixel](https://github.com/TakWolf/fusion-pixel-font) |
+| TypeScript、React、Three.js | 旧客户端、迁移对照及现有资源生成工具 | [TypeScript](https://github.com/microsoft/TypeScript) · [React](https://github.com/facebook/react) · [Three.js](https://github.com/mrdoob/three.js) |
 | SunCalc 2.0.2 | 太阳/月亮位置、月相与亮边角度计算 | [SunCalc](https://github.com/mourner/suncalc)、[BSD-2-Clause 许可](apps/web/public/licenses/suncalc.txt) |
 | lunar-typescript 1.8.6 | 离线农历节日日期换算 | [lunar-typescript](https://github.com/6tail/lunar-typescript)、[MIT 许可](apps/web/public/licenses/lunar-typescript/LICENSE.txt) |
 | fflate | 本地 ZIP/GZIP 解压，用于资源包和 Litematic | [fflate](https://github.com/101arrowz/fflate) |
@@ -76,10 +68,6 @@ SunCalc 的版权声明和完整许可随应用保留，可在关于页单独查
 
 - [当前产品规则](BLOCKCOLC.md)
 - [当前工作范围](docs/TODO.md)
-- [架构](ARCHITECTURE.md)与[设计](DESIGN.md)
 - [验证与交付](docs/TESTING.md)
 - [工作区维护](docs/WORKSPACE-MAINTENANCE.md)
 - [版本记录](docs/versions/README.md)
-
-部分内部规范按既有本机 Git 排除策略维护；源码获取者如未携带本地规范，
-以随源码提供的 AGENTS、产品文件、测试工具与版本文档为准。

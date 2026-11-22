@@ -23,9 +23,12 @@ class NativeInteriorTest {
         for(x in -4..3)for(y in 1..3)assertTrue(cells.any{it.x==x+.5&&it.y==y+.5&&it.z== -4.5&&it.sourceBlockId=="minecraft:glass"})
         for(x in -5..4)for(z in -5..4){
             assertTrue(cells.any{it.x==x+.5&&it.y==4.5&&it.z==z+.5})
-            assertTrue(cells.any{it.x==x+.5&&it.y== -.5&&it.z==z+.5})
+            assertTrue(cells.any{it.x==x+.5&&it.y== -.5&&it.z==z+.5&&it.sourceBlockId=="minecraft:polished_andesite"})
         }
-        assertTrue(cells.any{it.sourceBlockId=="minecraft:oak_stairs"})
+        assertTrue(cells.any{it.sourceBlockId=="minecraft:spruce_planks"&&it.z==4.5})
+        assertEquals(6,cells.count{it.sourceBlockId=="minecraft:dark_oak_slab"})
+        assertEquals(2,cells.count{it.sourceBlockId=="minecraft:dark_oak_fence"})
+        assertEquals(NativeInteriorBlocks.blockIds,cells.mapNotNull{it.sourceBlockId}.toSet())
         val bed=cells.filter{it.sourceBlockId=="minecraft:red_bed"}
         assertEquals(2,bed.size)
         assertEquals(3.5,bed.single{it.sourceBlockState?.get("part")=="head"}.z,0.0)
@@ -33,7 +36,7 @@ class NativeInteriorTest {
         assertTrue(bed.all{it.sourceBlockState?.get("facing")=="south"})
         assertEquals(-4.0,bed.minOf{it.x}-.5,0.0)
         assertEquals(4.0,bed.maxOf{it.z}+.5,0.0)
-        assertEquals(NativeInteriorBlocks.VIEW_Z,cells.single{it.sourceBlockId=="minecraft:oak_stairs"}.z,0.0)
+        assertEquals(NativeInteriorBlocks.VIEW_Z,cells.single{it.sourceBlockId=="minecraft:warped_stairs"}.z,0.0)
         assertTrue(cells.filter{it.sourceBlockId=="minecraft:lantern"}.all{kotlin.math.abs(it.x)>.85})
         assertEquals(1.62,NativeInteriorBlocks.EYE_HEIGHT,0.0)
         assertEquals(1.0,NativeInteriorBlocks.DESK_HEIGHT,0.0)

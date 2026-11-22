@@ -10,7 +10,7 @@ if(!output)throw Error('Reward presentation oracle directory required');
 const sourceHashes={};
 function track(name){sourceHashes[name]=createHash('sha256').update(readFileSync(path.join(root,name))).digest('hex');}
 async function load(name){
- const compiled=buildSync({entryPoints:[path.join(root,name)],bundle:true,write:false,platform:'node',format:'esm',metafile:true});
+ const compiled=buildSync({entryPoints:[path.join(root,name)],bundle:true,write:false,platform:'node',format:'esm',metafile:true,preserveSymlinks:true});
  for(const file of Object.keys(compiled.metafile.inputs))track(path.relative(root,path.resolve(file)).replaceAll('\\','/'));
  return import('data:text/javascript;base64,'+Buffer.from(compiled.outputFiles[0].text).toString('base64'));
 }

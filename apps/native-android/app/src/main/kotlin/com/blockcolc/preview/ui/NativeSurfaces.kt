@@ -26,18 +26,27 @@ import kotlinx.coroutines.launch
 
 internal val LocalNativeSettingsActions=staticCompositionLocalOf{false}
 
+@Composable internal fun Modifier.nativePressMotion(interaction:MutableInteractionSource,enabled:Boolean=true):Modifier {
+    val pressed by interaction.collectIsPressedAsState()
+    val reduce=LocalNativeUi.current.reduceMotion
+    val progress=animateFloatAsState(if(pressed&&enabled&&!reduce)1f else 0f,
+        tween(if(reduce)0 else if(pressed)65 else 120,easing=FastOutSlowInEasing),label="press-motion")
+    return graphicsLayer{
+        translationY=1.dp.toPx()*progress.value
+    }
+}
+
 @Composable fun NativeAction(label:String,onClick:()->Unit,modifier:Modifier=Modifier,pending:Boolean=false,enabled:Boolean=true,icon:String="check",primary:Boolean=true,danger:Boolean=false,leading:(@Composable ()->Unit)?=null){
     val colors=MaterialTheme.colorScheme
     val ink=if(primary)if(danger)colors.onError else colors.onPrimary else if(danger)colors.error else colors.onSurface
     val background=if(primary)if(danger)colors.error else colors.primary else colors.surface
     val interaction=remember{MutableInteractionSource()}
-    val pressed by interaction.collectIsPressedAsState()
-    val reduce=LocalNativeUi.current.reduceMotion
     val settings=LocalNativeSettingsActions.current
     var motion by remember{mutableIntStateOf(0)}
-    val shift by animateFloatAsState(if(pressed&&enabled&&!pending)1f else 0f,tween(if(reduce)0 else 70),label="button-press")
-    Row(modifier.heightIn(min=48.dp).graphicsLayer{translationY=if(reduce)0f else shift*density}.then(if(!primary)Modifier.border(1.dp,if(danger)colors.error else colors.outline)else Modifier).background(if(enabled)background else colors.surfaceVariant).clickable(interactionSource=interaction,indication=null,
-        enabled=enabled&&!pending,role=Role.Button,onClick={motion++;onClick()}).semantics{if(pending)stateDescription=label}
+    Row(modifier.heightIn(min=48.dp).clickable(interactionSource=interaction,indication=null,
+        enabled=enabled&&!pending,role=Role.Button,onClick={motion++;onClick()}).nativePressMotion(interaction,enabled&&!pending)
+        .then(if(!primary)Modifier.border(1.dp,if(danger)colors.error else colors.outline)else Modifier)
+        .background(if(enabled)background else colors.surfaceVariant).semantics{if(pending)stateDescription=label}
         .padding(horizontal=if(settings)12.dp else 16.dp,vertical=if(settings)8.dp else 12.dp),
         horizontalArrangement=Arrangement.spacedBy(8.dp,Alignment.CenterHorizontally),verticalAlignment=Alignment.CenterVertically){
         CompositionLocalProvider(LocalContentColor provides if(enabled)ink else colors.onSurfaceVariant){
@@ -57,27 +66,29 @@ internal val LocalNativeSettingsActions=staticCompositionLocalOf{false}
 @Composable internal fun NativeInlineAction(
     title:String,onClick:()->Unit,icon:String,action:String?=null,
     enabled:Boolean=true,pending:Boolean=false,checked:Boolean?=null,
+    description:(@Composable ColumnScope.()->Unit)?=null,
 ){
     val ui=LocalNativeUi.current
     val colors=MaterialTheme.colorScheme
     val interaction=remember{MutableInteractionSource()}
-    val pressed by interaction.collectIsPressedAsState()
     var motion by remember{mutableIntStateOf(0)}
     val actionColor=if(enabled||pending)colors.primary else colors.onSurfaceVariant
     Row(
-        Modifier.fillMaxWidth().heightIn(min=48.dp)
+        Modifier.fillMaxWidth().heightIn(min=NativeSettingsRowHeight)
             .clickable(enabled=enabled&&!pending,role=Role.Button,interactionSource=interaction,indication=null){
                 motion++;onClick()
             }.semantics{
                 if(pending)stateDescription=ui.text("处理中")
                 if(checked!=null)selected=checked
-            }.padding(vertical=8.dp),
+            }.nativePressMotion(interaction,enabled&&!pending).padding(vertical=8.dp),
         verticalAlignment=Alignment.CenterVertically,
         horizontalArrangement=Arrangement.spacedBy(12.dp),
     ){
-        Text(title,Modifier.weight(1f),style=MaterialTheme.typography.bodyLarge)
+        Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(4.dp)){
+            Text(title,style=MaterialTheme.typography.bodyLarge)
+            description?.invoke(this)
+        }
         Row(
-            Modifier.graphicsLayer{translationY=if(pressed&&!ui.reduceMotion)1.dp.toPx() else 0f},
             verticalAlignment=Alignment.CenterVertically,
             horizontalArrangement=Arrangement.spacedBy(NativeSettingActionGap),
         ){
@@ -94,14 +105,14 @@ internal val LocalNativeSettingsActions=staticCompositionLocalOf{false}
 }
 
 @Composable fun NativeIconAction(title:String,icon:String,onClick:()->Unit,modifier:Modifier=Modifier,enabled:Boolean=true,pending:Boolean=false){
-    val ui=LocalNativeUi.current;var motion by remember{mutableIntStateOf(0)}
-    val interaction=remember{MutableInteractionSource()};val pressed by interaction.collectIsPressedAsState()
+    var motion by remember{mutableIntStateOf(0)}
+    val interaction=remember{MutableInteractionSource()}
     val target=if(LocalNativeSettingsActions.current)48.dp else 44.dp
     Box(modifier.sizeIn(minWidth=target,minHeight=target).clickable(enabled=enabled&&!pending,role=Role.Button,interactionSource=interaction,indication=null){
         motion++;onClick()
-    }.semantics{contentDescription=title;if(pending)stateDescription=title}.padding(10.dp),contentAlignment=Alignment.Center){
+    }.semantics{contentDescription=title;if(pending)stateDescription=title}.nativePressMotion(interaction,enabled&&!pending).padding(10.dp),contentAlignment=Alignment.Center){
         val tint=if(enabled)LocalContentColor.current else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha=.45f)
-        CompositionLocalProvider(LocalContentColor provides tint){if(pending&&icon=="reset")NativeRefreshingGlyph()else if(pending)NativeBusy(Modifier.size(20.dp))else NativeMotionGlyph(icon,motion,Modifier.size(20.dp).graphicsLayer{translationY=if(pressed&&!ui.reduceMotion)1.dp.toPx() else 0f},tint)}
+        CompositionLocalProvider(LocalContentColor provides tint){if(pending&&icon=="reset")NativeRefreshingGlyph()else if(pending)NativeBusy(Modifier.size(20.dp))else NativeMotionGlyph(icon,motion,Modifier.size(20.dp),tint)}
     }
 }
 
@@ -157,7 +168,9 @@ internal val LocalNativeSettingsActions=staticCompositionLocalOf{false}
     ModalBottomSheet(onDismissRequest={close()},sheetState=sheetState,
         sheetMaxWidth=Dp.Unspecified,shape=RectangleShape,dragHandle=null,
         containerColor=androidx.compose.ui.graphics.Color.Transparent,contentColor=colors.onSurface,
-        scrimColor=androidx.compose.ui.graphics.Color.Black.copy(alpha=.28f),
+        // The window drawable uses the sheet's physical travel for both
+        // shade and blur, including a drag or a nested dialog's dismissal.
+        scrimColor=androidx.compose.ui.graphics.Color.Transparent,
         contentWindowInsets={WindowInsets.safeDrawing},
         properties=ModalBottomSheetProperties(shouldDismissOnBackPress=dismissible)){
         NativeWindowAppearance()
@@ -179,4 +192,11 @@ internal val LocalNativeSettingsActions=staticCompositionLocalOf{false}
 
 @Composable fun NativeHeading(title:String,subtitle:String?=null,modifier:Modifier=Modifier){
     Column(modifier.fillMaxWidth(),verticalArrangement=Arrangement.spacedBy(5.dp)){NativeText(title,NativeTextRole.TITLE);if(!subtitle.isNullOrBlank())NativeText(subtitle,NativeTextRole.BODY,color=MaterialTheme.colorScheme.onSurfaceVariant)}
+}
+
+@Composable internal fun NativePageTitle(title:String,actions:@Composable RowScope.()->Unit={}){
+    Row(Modifier.fillMaxWidth().heightIn(min=44.dp),verticalAlignment=Alignment.CenterVertically){
+        NativeHeading(title,modifier=Modifier.weight(1f))
+        actions()
+    }
 }

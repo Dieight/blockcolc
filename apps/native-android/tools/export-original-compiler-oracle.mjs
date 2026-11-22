@@ -24,7 +24,7 @@ import {planOriginalStaticShapeBatches,groupOriginalStaticShapeEntries,createOri
 import {fallbackVisualStyleForOriginalComponent} from './fallback-visual';
 import {sourceLanternEmissionForVoxel,sourceCandleEmissionForVoxel,effectiveEmissionIdentity} from './lighting';
 import {captureCpuGeometry} from './building-cpu-cache';`;
-const compiled=await build({stdin:{contents:imports+'\n'+declaration+'\nexport {compileOriginalBuildingShapes,sourceLanternEmissionForVoxel,sourceCandleEmissionForVoxel,effectiveEmissionIdentity};',loader:'ts',resolveDir:path.dirname(rendererPath),sourcefile:rendererPath},bundle:true,write:false,platform:'node',format:'esm',metafile:true});
+const compiled=await build({stdin:{contents:imports+'\n'+declaration+'\nexport {compileOriginalBuildingShapes,sourceLanternEmissionForVoxel,sourceCandleEmissionForVoxel,effectiveEmissionIdentity};',loader:'ts',resolveDir:path.dirname(rendererPath),sourcefile:rendererPath},bundle:true,write:false,platform:'node',format:'esm',metafile:true,preserveSymlinks:true});
 for(const input of Object.keys(compiled.metafile.inputs)){const absolute=path.resolve(input),name=path.relative(root,absolute).replaceAll('\\','/');assert(!name.startsWith('../'));hashes[name]=sha(readFileSync(absolute));}
 hashes['packages/voxel/src/renderer.ts']=sha(readFileSync(rendererPath));
 const source=await import('data:text/javascript;base64,'+Buffer.from(compiled.outputFiles[0].text).toString('base64'));

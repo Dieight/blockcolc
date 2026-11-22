@@ -33,7 +33,9 @@ import com.blockcolc.preview.NativeCelebrations
     val glyph=remember(entry.emblem){HolidayPixels.glyph(entry.emblem)}
     val label=ui.text(entry.name)+" · "+ui.text(entry.emblem)
     Box{
-        Box(Modifier.size(if(goal)76.dp else 44.dp).clickable(role=Role.Button,interactionSource=remember{androidx.compose.foundation.interaction.MutableInteractionSource()},indication=null,onClick=onToggle).semantics{contentDescription=label},contentAlignment=Alignment.Center){
+        val interaction=remember{androidx.compose.foundation.interaction.MutableInteractionSource()}
+        Box(Modifier.size(if(goal)76.dp else 44.dp).clickable(role=Role.Button,interactionSource=interaction,indication=null,onClick=onToggle)
+            .nativePressMotion(interaction).semantics{contentDescription=label},contentAlignment=Alignment.Center){
             Canvas(Modifier.size(if(goal)64.dp else 32.dp)){
                 val cell=size.minDimension/12f
                 glyph.rows.forEachIndexed{y,row->row.forEachIndexed{x,ch->

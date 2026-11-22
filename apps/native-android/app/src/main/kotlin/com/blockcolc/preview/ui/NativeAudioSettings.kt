@@ -1,9 +1,5 @@
 package com.blockcolc.preview.ui
 
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.shrinkVertically
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
@@ -29,12 +25,14 @@ import com.blockcolc.presentation.*
         NativeToggle(ui.text("自然白噪音"),value=current.enabled,enabled=available,trailing={
             NativeInfoAction(ui.text("自然白噪音"),ui.text("最多 8 份 · 单份 64 MiB · 主音轨仅播放一份"))
         }){value->change{it.copy(enabled=value)}}
-        AnimatedVisibility(current.enabled,enter=expandVertically(tween(if(ui.reduceMotion)0 else 200)),exit=shrinkVertically(tween(if(ui.reduceMotion)0 else 180))){
+        NativeExpandedOptions(current.enabled){
             Column{
                 val choices=listOf("forest-birds" to ui.text("清晨林中鸟鸣"),"shore-waves" to ui.text("贴岸小浪"))+library.items.map{it.id to it.name}
                 for((id,title)in choices){
                     Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
-                        Row(Modifier.weight(1f).heightIn(min=48.dp).clickable(enabled=available,interactionSource=remember(id){MutableInteractionSource()},indication=null){change{it.copy(primary=id)}}
+                        val interaction=remember(id){MutableInteractionSource()}
+                        Row(Modifier.weight(1f).heightIn(min=NativeSettingsRowHeight).clickable(enabled=available,interactionSource=interaction,indication=null){change{it.copy(primary=id)}}
+                            .nativePressMotion(interaction,available)
                             .semantics{selected=current.primary==id;role=Role.RadioButton;contentDescription=title}.padding(vertical=12.dp),
                             horizontalArrangement=Arrangement.spacedBy(12.dp),verticalAlignment=Alignment.CenterVertically){
                             PixelGlyph(if(current.primary==id)"check"else"note",color=if(current.primary==id)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
@@ -53,7 +51,7 @@ import com.blockcolc.presentation.*
         val controlsVisible=current.enabled||current.rainEnabled
         var heldTransport by remember{mutableStateOf(current.enabled||playback.active)}
         if(controlsVisible)heldTransport=current.enabled||playback.active
-        AnimatedVisibility(controlsVisible,enter=expandVertically(tween(if(ui.reduceMotion)0 else 200)),exit=shrinkVertically(tween(if(ui.reduceMotion)0 else 180))){
+        NativeExpandedOptions(controlsVisible){
             Column{
                 NativeSeparator()
                 NativeSettingSlider("白噪音音量",current.volume,0,100,available,saving=saving,error=preferenceError){value->change{it.copy(volume=value)}}

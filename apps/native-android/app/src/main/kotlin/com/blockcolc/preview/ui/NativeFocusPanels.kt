@@ -95,12 +95,16 @@ data class PlanEditorModel(val token:String=UUID.randomUUID().toString(),val pro
         }
         if(type!=PlanMode.MINIMAL){
             if(entry.replacingPlanId==null||entry.mode!=PlanMode.ROUNDS)NativeSegments(listOf(PlanMode.ROUNDS.name to ui.text("固定轮次"),PlanMode.MARATHON.name to ui.text("按结束时间")),mode,{mode=it},enabled=pending==null,icons=mapOf(PlanMode.ROUNDS.name to "flag",PlanMode.MARATHON.name to "clock"))
-            if(type==PlanMode.ROUNDS)Row(Modifier.fillMaxWidth().heightIn(min=64.dp).clickable(enabled=pending==null,role=Role.Button,interactionSource=remember{MutableInteractionSource()},indication=null){choosingTask=true}.semantics{contentDescription=ui.text("选择小任务")}.padding(vertical=8.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(8.dp)){
-                Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(4.dp)){
-                    NativeText(owner?.title?:ui.text("选择小任务"),NativeTextRole.CAPTION)
-                    NativeText(if(owner?.habit==true)owner.title else owner?.tasks?.find{it.id==task}?.title?:ui.text("选择小任务"),NativeTextRole.BODY)
+            if(type==PlanMode.ROUNDS){
+                val interaction=remember{MutableInteractionSource()}
+                Row(Modifier.fillMaxWidth().heightIn(min=NativeSettingsRowHeight).clickable(enabled=pending==null,role=Role.Button,interactionSource=interaction,indication=null){choosingTask=true}
+                    .nativePressMotion(interaction,pending==null).semantics{contentDescription=ui.text("选择小任务")}.padding(vertical=8.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(8.dp)){
+                    Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(4.dp)){
+                        NativeText(owner?.title?:ui.text("选择小任务"),NativeTextRole.CAPTION)
+                        NativeText(if(owner?.habit==true)owner.title else owner?.tasks?.find{it.id==task}?.title?:ui.text("选择小任务"),NativeTextRole.BODY)
+                    }
+                    PixelGlyph("chevron",Modifier.size(20.dp).graphicsLayer{rotationZ=-90f})
                 }
-                PixelGlyph("chevron",Modifier.size(20.dp).graphicsLayer{rotationZ=-90f})
             }
         }
         val minutes=if(owner?.habit==true&&type==PlanMode.ROUNDS)s.preferences.habitFocusMinutes else s.preferences.focusMinutes
@@ -120,8 +124,10 @@ data class PlanEditorModel(val token:String=UUID.randomUUID().toString(),val pro
 
 @Composable private fun FormalFocusChoice(title:String,detail:String?,selected:Boolean,enabled:Boolean,habit:Boolean=false,onClick:()->Unit){
     val ink=LocalContentColor.current
+    val interaction=remember{MutableInteractionSource()}
     Row(Modifier.fillMaxWidth().heightIn(min=NativeSettingsRowHeight).drawBehind{if(selected&&!habit)drawRect(ink,Offset.Zero,androidx.compose.ui.geometry.Size(2.dp.toPx(),size.height))}
-        .clickable(enabled=enabled,role=Role.RadioButton,interactionSource=remember{MutableInteractionSource()},indication=null,onClick=onClick).semantics{this.selected=selected}.padding(horizontal=if(habit)0.dp else 10.dp,vertical=8.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(8.dp)){
+        .clickable(enabled=enabled,role=Role.RadioButton,interactionSource=interaction,indication=null,onClick=onClick)
+        .nativePressMotion(interaction,enabled).semantics{this.selected=selected}.padding(horizontal=if(habit)0.dp else 10.dp,vertical=8.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(8.dp)){
         Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(3.dp)){
             if(habit)Text(title,style=MaterialTheme.typography.bodyLarge,color=if(enabled)ink else MaterialTheme.colorScheme.onSurfaceVariant)
             else NativeText(title,NativeTextRole.BODY,color=if(enabled)ink else MaterialTheme.colorScheme.onSurfaceVariant)
@@ -142,12 +148,19 @@ data class PlanEditorModel(val token:String=UUID.randomUUID().toString(),val pro
     }
 }
 
-@Composable fun NativeChoice(title:String,selected:Boolean,enabled:Boolean=true,icon:String?=null,onClick:()->Unit){
+@Composable fun NativeChoice(title:String,selected:Boolean,enabled:Boolean=true,icon:String?=null,description:String?=null,onClick:()->Unit){
     val colors=MaterialTheme.colorScheme
-    Row(Modifier.fillMaxWidth().heightIn(min=48.dp).background(if(selected)colors.surfaceVariant else androidx.compose.ui.graphics.Color.Transparent)
-        .clickable(enabled=enabled,interactionSource=remember{MutableInteractionSource()},indication=null,onClick=onClick).padding(8.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(8.dp)){
+    val interaction=remember{MutableInteractionSource()}
+    Row(Modifier.fillMaxWidth().heightIn(min=NativeSettingsRowHeight)
+        .clickable(enabled=enabled,interactionSource=interaction,indication=null,role=Role.RadioButton,onClick=onClick)
+        .nativePressMotion(interaction,enabled).semantics{this.selected=selected}
+        .background(if(selected)colors.surfaceVariant else androidx.compose.ui.graphics.Color.Transparent).padding(NativeOptionSpacing),
+        verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(NativeOptionSpacing)){
         if(icon!=null)PixelGlyph(icon,color=colors.primary)
-        Text(title,Modifier.weight(1f),style=MaterialTheme.typography.bodyLarge)
+        Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(4.dp)){
+            Text(title,style=MaterialTheme.typography.bodyLarge)
+            if(description!=null)Text(description,style=MaterialTheme.typography.bodySmall)
+        }
         if(selected)PixelGlyph("check",color=colors.primary)
     }
 }
@@ -199,7 +212,12 @@ data class PlanEditorModel(val token:String=UUID.randomUUID().toString(),val pro
                 val label=if(selected==value&&delivered)ui.text("材料已送达！")else if(selected==value&&pending)ui.text("正在保存…")else if(value==target.progress)ui.text("保持 {0}%",value/100)else if(value==10000)ui.text("完成小任务")else ui.text("推进至 {0}%",value/100)
                 val enabled=!pending&&!delivered
                 val colors=MaterialTheme.colorScheme
-                Row(Modifier.fillMaxWidth().heightIn(min=48.dp).border(1.dp,if(value==10000)colors.primary else colors.outlineVariant).background(colors.surface.copy(alpha=.8f)).clickable(enabled=enabled,role=androidx.compose.ui.semantics.Role.Button,interactionSource=remember{MutableInteractionSource()},indication=null){selected=value;onSubmit(ReportDraft(pool.planId,listOf(TaskAllocation(target.projectId,target.taskId!!,value,pool.totalRounds))))}.padding(12.dp).then(if(selected==value)feedbackDraw else Modifier),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(8.dp,Alignment.CenterHorizontally)){
+                val interaction=remember{MutableInteractionSource()}
+                Row(Modifier.fillMaxWidth().heightIn(min=48.dp).clickable(enabled=enabled,role=Role.Button,interactionSource=interaction,indication=null){
+                    selected=value;onSubmit(ReportDraft(pool.planId,listOf(TaskAllocation(target.projectId,target.taskId!!,value,pool.totalRounds))))
+                }.nativePressMotion(interaction,enabled).border(1.dp,if(value==10000)colors.primary else colors.outlineVariant)
+                    .background(colors.surface.copy(alpha=.8f)).padding(12.dp).then(if(selected==value)feedbackDraw else Modifier),
+                    verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(8.dp,Alignment.CenterHorizontally)){
                     if(pending&&selected==value)NativeBusy()
                     Text(label,color=if(value==10000)colors.primary else colors.onSurface,style=MaterialTheme.typography.bodyLarge)
                 }
@@ -228,7 +246,7 @@ data class PlanEditorModel(val token:String=UUID.randomUUID().toString(),val pro
             val head=targets.first();val habit=head.taskId==null
             val description=if(habit)ui.text("习惯 · 第")+" ${head.habitCycle?:1} "+ui.text("座建筑 ·")+" ${head.habitCompleted?:0} / ${head.habitTarget?:head.maxRounds} "+ui.text("轮")else "${(head.projectProgress+50)/100}"+ui.text("% 总进度")
             NativeSeparator()
-            NativeDisclosure(head.projectTitle,description,expanded,{expanded=it},rowHeight=64.dp,titleStyle=MaterialTheme.typography.bodyLarge,indicator={NativeText(ui.text(if(expanded)"收起"else if(habit)"计入轮数"else"展开"),NativeTextRole.CAPTION,Modifier.padding(start=8.dp))}){
+            NativeDisclosure(head.projectTitle,description,expanded,{expanded=it},titleStyle=MaterialTheme.typography.bodyLarge,indicator={NativeText(ui.text(if(expanded)"收起"else if(habit)"计入轮数"else"展开"),NativeTextRole.CAPTION,Modifier.padding(start=8.dp))}){
                 for(target in targets){key(target.taskId?:target.projectId){
                     if(target.taskId==null){
                         val current=draft.habits.find{it.projectId==project}?.rounds?:0
@@ -242,7 +260,11 @@ data class PlanEditorModel(val token:String=UUID.randomUUID().toString(),val pro
                         FlowRow(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp),verticalArrangement=Arrangement.spacedBy(8.dp),maxItemsInEachRow=3){
                             for(value in listOf(target.progress,2500,5000,7500,10000).distinct().filter{it>=target.progress}){
                                 val label=if(value==target.progress)ui.text("保持 {0}%",value/100)else if(value==10000)ui.text("完成小任务")else ui.text("推进至 {0}%",value/100)
-                                Box(Modifier.heightIn(min=44.dp).then(if(allocation?.progress==value)Modifier.drawBehind{drawRect(selectionInk,Offset(0f,size.height-2.dp.toPx()),androidx.compose.ui.geometry.Size(size.width,2.dp.toPx()))}else Modifier).clickable(enabled=!pending&&!delivered,interactionSource=remember{MutableInteractionSource()},indication=null){progress(target,value)}.padding(8.dp),contentAlignment=Alignment.Center){Text(label,style=MaterialTheme.typography.bodySmall)}
+                                val interaction=remember{MutableInteractionSource()}
+                                Box(Modifier.heightIn(min=44.dp).clickable(enabled=!pending&&!delivered,role=Role.Button,interactionSource=interaction,indication=null){progress(target,value)}
+                                    .nativePressMotion(interaction,!pending&&!delivered)
+                                    .then(if(allocation?.progress==value)Modifier.drawBehind{drawRect(selectionInk,Offset(0f,size.height-2.dp.toPx()),androidx.compose.ui.geometry.Size(size.width,2.dp.toPx()))}else Modifier)
+                                    .padding(8.dp),contentAlignment=Alignment.Center){Text(label,style=MaterialTheme.typography.bodySmall)}
                             }
                         }
                         if(!ordinary&&allocation!=null){

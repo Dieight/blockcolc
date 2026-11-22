@@ -8,18 +8,26 @@ const {apk,identity}=apkIdentity(process.argv[2]);assert.equal(identity.mode,upg
 const sdk=process.env.ANDROID_HOME||process.env.ANDROID_SDK_ROOT||(process.env.LOCALAPPDATA&&path.join(process.env.LOCALAPPDATA,'Android','Sdk'));
 assert.ok(sdk,'Android SDK required to verify the delivery configuration');
 const buildTools=path.join(sdk,'build-tools');const versions=fs.readdirSync(buildTools).filter(name=>fs.statSync(path.join(buildTools,name)).isDirectory()).sort((a,b)=>b.localeCompare(a,'en',{numeric:true}));
-const aapt=versions.map(version=>path.join(buildTools,version,process.platform==='win32'?'aapt2.exe':'aapt2')).find(file=>fs.existsSync(file));
+const executableSuffix=process.platform==='win32'?'.exe':'';
+const findBuildTool=name=>versions.map(version=>path.join(buildTools,version,name)).find(file=>fs.existsSync(file));
+const apkPath=path.resolve(process.argv[2]);
+const aapt=findBuildTool(`aapt2${executableSuffix}`);
 assert.ok(aapt,'aapt2 required to verify the delivery configuration');
-const badging=execFileSync(aapt,['dump','badging',path.resolve(process.argv[2])],{encoding:'utf8',maxBuffer:4*1024*1024});
+const badging=execFileSync(aapt,['dump','badging',apkPath],{encoding:'utf8',maxBuffer:4*1024*1024});
 assert.equal(/^package: name='([^']+)'/m.exec(badging)?.[1],identity.applicationId);
 if(upgrade){
+ assert.equal(identity.accountBased,true,'Public native APK must contain account support');
+ assert.equal(identity.privateRelay,false,'Public native APK must not contain the legacy private relay');
  const version=JSON.parse(fs.readFileSync(new URL('../../../version.json',import.meta.url),'utf8'));
  const beta=process.argv.find(arg=>arg.startsWith('--beta='))?.slice(7);
  const manifestCode=Number(/^package: .* versionCode='([0-9]+)'/m.exec(badging)?.[1]);
  const manifestName=/^package: .* versionName='([^']+)'/m.exec(badging)?.[1];
  if(beta===undefined){
-  const code=Number(process.argv.find(arg=>arg.startsWith('--release-code='))?.slice(15)??version.versionCode+1);
-  assert.ok(Number.isSafeInteger(code)&&code>version.versionCode);
+  const configuredCode=process.argv.find(arg=>arg.startsWith('--release-code='))?.slice(15);
+  assert.match(configuredCode??'',/^[1-9][0-9]{0,8}$/,'Specify the formal Android versionCode with --release-code');
+  const code=Number(configuredCode);
+  const minimum=version.versionCode+(version.versionName==='3.0.0'?0:1);
+  assert.ok(Number.isSafeInteger(code)&&code>=minimum);
   assert.equal(manifestCode,code);
   assert.equal(manifestName,'3.0.0');
  }else{
@@ -48,7 +56,7 @@ const launcherNames=['ic_launcher','ic_launcher_foreground','ic_launcher_round']
 if(!launcherNames.every(name=>apk.names.some(n=>new RegExp('^res/mipmap-[^/]+/'+name+'\\.png$').test(n)))){
  // Release resource optimization renames ZIP entries (for example res/9w.png).
  // Resolve named resources rather than mistaking renamed artwork for a loss.
- const table=execFileSync(aapt,['dump','resources',path.resolve(process.argv[2])],{encoding:'utf8',maxBuffer:16*1024*1024});
+ const table=execFileSync(aapt,['dump','resources',apkPath],{encoding:'utf8',maxBuffer:16*1024*1024});
  const resolved=new Map(launcherNames.map(name=>[name,[]]));let current=null;
  for(const line of table.split(/\r?\n/)){
   if(/^\s+resource /.test(line)){const match=/\bmipmap\/(\w+)\s*$/.exec(line);current=match&&resolved.has(match[1])?match[1]:null;}
@@ -60,4 +68,20 @@ const catalog=JSON.parse(apk.read('native-blueprints/catalog.json'));const entri
 assert.ok(apk.names.some(n=>n.endsWith('.filamat')),'Runtime shaders missing');assert.ok(apk.names.includes('native-original-materials/materials.json'),'Original materials missing');assert.ok(apk.names.some(n=>n.includes('licenses/fusion-pixel/')),'Font licenses missing');assert.ok(apk.names.some(n=>n.endsWith('.ogg')),'Recordings missing');
 for(const marker of ['NativeWorldView','NativeApp'])assert.ok(dex.includes(Buffer.from(marker)),'Real application/runtime missing');
 assert.equal(dex.includes(Buffer.from('legacyWorkspaceSha')),upgrade,'Missing or unexpected first-start upgrade path');
-console.log(JSON.stringify({userPreviewPackageVerified:!upgrade,upgradeCandidateVerified:upgrade,configuration:identity,debuggable,deliveryEligible:!debuggable&&!upgrade,bundledBlueprints:entries.length,entries:apk.names.length,diagnosticAssets:0,diagnosticImplementations:0}));
+const signingEvidence={};
+if(upgrade){
+ const releaseConfig=JSON.parse(fs.readFileSync(new URL('../../../tools/release-config.json',import.meta.url),'utf8'));
+ assert.equal(identity.applicationId,releaseConfig.packageId,'Public native package differs from the release identity');
+ const apksigner=findBuildTool(path.join('lib','apksigner.jar'));
+ const zipalign=findBuildTool(`zipalign${executableSuffix}`);
+ assert.ok(apksigner&&zipalign,'apksigner and zipalign required to verify the public native APK');
+ const java=process.env.JAVA_HOME?path.join(process.env.JAVA_HOME,'bin',`java${executableSuffix}`):'java';
+ const signing=execFileSync(java,['-jar',apksigner,'verify','--print-certs',apkPath],{encoding:'utf8'});
+ const signers=[...signing.matchAll(/^Signer #\d+ certificate SHA-256 digest:\s*([0-9a-f]{64})\s*$/gim)]
+     .map(match=>match[1].toLowerCase());
+ assert.deepEqual(signers,[releaseConfig.signerSha256],'APK is not signed with the configured public release certificate');
+ execFileSync(zipalign,['-c','-P','16','4',apkPath]);
+ signingEvidence.signerSha256=signers[0];
+ signingEvidence.alignedFor16KiB=true;
+}
+console.log(JSON.stringify({userPreviewPackageVerified:!upgrade,upgradeCandidateVerified:upgrade,configuration:identity,debuggable,deliveryEligible:!debuggable&&!upgrade,bundledBlueprints:entries.length,entries:apk.names.length,diagnosticAssets:0,diagnosticImplementations:0,...signingEvidence}));

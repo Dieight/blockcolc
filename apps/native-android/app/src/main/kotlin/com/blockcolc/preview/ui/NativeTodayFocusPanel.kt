@@ -6,6 +6,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -17,6 +18,13 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.unit.dp
 import com.blockcolc.presentation.TodayFocusTimeline
+
+@Composable internal fun NativeMinimalPanelLabel(title:String,icon:String,modifier:Modifier=Modifier){
+    Row(modifier.heightIn(min=24.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(6.dp)){
+        PixelGlyph(icon,Modifier.size(16.dp),LocalContentColor.current)
+        NativeText(title,NativeTextRole.CAPTION)
+    }
+}
 
 /** Geometry and motion from MinimalTodayPanel.tsx / minimal-today.css. */
 @Composable fun NativeTodayFocusPanel(data:TodayFocusTimeline){
@@ -32,7 +40,7 @@ import com.blockcolc.presentation.TodayFocusTimeline
     Column(Modifier.fillMaxWidth().testTag("minimal-today-timeline")){
         Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.Bottom){
             Column(verticalArrangement=Arrangement.spacedBy(4.dp)){
-                Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(5.dp)){PixelGlyph("clock",Modifier.size(14.dp),ink);NativeText(ui.text("今日专注"),NativeTextRole.CAPTION)}
+                NativeMinimalPanelLabel(ui.text("今日专注"),"chart")
                 NativeText(duration(data.totalMs),NativeTextRole.TITLE,accent=true)
             }
             Row(horizontalArrangement=Arrangement.spacedBy(6.dp)){

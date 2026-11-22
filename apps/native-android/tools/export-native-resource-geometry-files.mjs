@@ -5,7 +5,7 @@ const repo=fileURLToPath(new URL('../../../',import.meta.url)),output=path.resol
 assert.ok(output.startsWith(path.join(repo,'artifacts/experiments/v3.0.0')+path.sep),'Keep external asset references in experiment evidence.');
 const inputs=process.argv.slice(3).map(p=>path.resolve(p));assert.equal(inputs.length,5,'Client followed by the four user packs.');
 const source=`export * from './packages/resource-pack/src/index';export * from './packages/voxel/src/resource-geometry';export * from './packages/voxel/src/visual-biome';`;
-const bundle=buildSync({absWorkingDir:repo,stdin:{contents:source,resolveDir:repo,loader:'ts'},bundle:true,platform:'node',format:'esm',write:false,metafile:true});
+const bundle=buildSync({absWorkingDir:repo,stdin:{contents:source,resolveDir:repo,loader:'ts'},bundle:true,platform:'node',format:'esm',write:false,metafile:true,preserveSymlinks:true});
 const api=await import('data:text/javascript;base64,'+Buffer.from(bundle.outputFiles[0].text).toString('base64'));
 const sha=b=>crypto.createHash('sha256').update(b).digest('hex');
 const sourceHashes=Object.fromEntries(Object.keys(bundle.metafile.inputs).filter(p=>!p.startsWith('<')).map(p=>[p.replaceAll('\\','/'),sha(fs.readFileSync(path.join(repo,p)))]));

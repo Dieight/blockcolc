@@ -99,7 +99,7 @@ class NativeWorldView(context: Context, private val fixture: String, private val
     private var generatedEnvironmentFailures=0L
     private var presentationFence:Fence?=null
     private var projectionFence:Fence?=null;@Volatile private var projectionTicket=0L
-    private class ProjectionReceipt(val callback:()->Unit){val delivered=java.util.concurrent.atomic.AtomicBoolean(false)}
+    private class ProjectionReceipt(val surfaceWidth:Int,val callback:()->Unit){val delivered=java.util.concurrent.atomic.AtomicBoolean(false)}
     private var pendingProjectionFrame=false;private var projectionReceipt:ProjectionReceipt?=null
     private var generatedPost:SourcePost?=null
     private val main=Handler(Looper.getMainLooper())
@@ -247,6 +247,7 @@ class NativeWorldView(context: Context, private val fixture: String, private val
                 render.post {
                     if(closed||!surfaceLease.isCurrent(ticket))return@post
                     try{
+                        if(width!=viewportWidth||height!=viewportHeight)cancelProjectionFence(false)
                         invalidatePicks();physicalViewportReady=true;viewportWidth=width;viewportHeight=height
                         // The pipeline owns its offscreen world viewport. A
                         // same-size Surface recreation reuses those targets;
@@ -654,10 +655,10 @@ class NativeWorldView(context: Context, private val fixture: String, private val
             android.util.Log.i("BlockcolcP2","construction:${progress}:${(System.nanoTime()-start)/1e6}");requestFrame()
         }catch(error:Exception){report("世界更新未完成，记录已经保存：${error.message}")}
     }}
-    fun projectionWindow(height:Int,top:Int,onPresented:(()->Unit)?=null){
+    fun projectionWindow(height:Int,top:Int,surfaceWidth:Int=0,onPresented:(()->Unit)?=null){
         check(Looper.myLooper()==Looper.getMainLooper());if(closed||height<=0)return
         render.post{if(!closed){
-            cancelProjectionFence();presentationHeight=height;presentationTop=top;projectionReceipt=onPresented?.let{ProjectionReceipt(it)}
+            cancelProjectionFence();presentationHeight=height;presentationTop=top;projectionReceipt=onPresented?.let{ProjectionReceipt(surfaceWidth,it)}
             pendingProjectionFrame=onPresented!=null;project();cameraDirty=true;requestFrame()
         }}
     }
@@ -857,7 +858,9 @@ class NativeWorldView(context: Context, private val fixture: String, private val
                 if (cached) frameQueue?.submitted()
                 cameraDirty=false;lastDrawNs=timestamp
                 if(pendingInteriorFrame){pendingInteriorFrame=false;awaitInteriorFrame(surfaceTicket,interiorSequence)}
-                if(pendingProjectionFrame){pendingProjectionFrame=false;awaitProjectionFrame(surfaceTicket)}
+                if(pendingProjectionFrame&&projectionReceipt?.let{it.surfaceWidth==0||it.surfaceWidth==viewportWidth}==true){
+                    pendingProjectionFrame=false;awaitProjectionFrame(surfaceTicket)
+                }
                 if(!BuildConfig.NATIVE_DIAGNOSTICS||generatedMode){generatedSubmittedFrames++;pendingGeneratedFrame?.let{identity->
                     if(BuildConfig.NATIVE_DIAGNOSTICS)generatedSubmittedNs=System.nanoTime()
                     pendingGeneratedFrame=null;awaitGeneratedFrame(identity,surfaceTicket)}}

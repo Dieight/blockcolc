@@ -29,8 +29,11 @@ import java.time.LocalDate
     val summary=remember(workspace,first,last){workspace.range(first,last)}
     val label=if(summary.start==summary.end)if(summary.end==workspace.today)ui.text("今天")else summary.end.replace('-','.')else "${summary.start.replace('-','.')} — ${summary.end.replace('-','.')}"
     NativePageScroll{
-        NativeHeading(ui.text("专注轨迹"))
+        NativePageTitle(ui.text("统计"))
         FormalCard(padding=16.dp){
+            Row(Modifier.fillMaxWidth().heightIn(min=44.dp),verticalAlignment=androidx.compose.ui.Alignment.CenterVertically){
+                NativeText(ui.text("专注热力图"),NativeTextRole.SECTION,Modifier.weight(1f))
+            }
             Row(Modifier.fillMaxWidth().heightIn(min=44.dp),verticalAlignment=androidx.compose.ui.Alignment.CenterVertically){
                 PixelGlyph("clock",Modifier.size(16.dp),MaterialTheme.colorScheme.primary);Spacer(Modifier.width(8.dp))
                 NativeText(label+ui.text("的投入"),NativeTextRole.CAPTION,Modifier.weight(1f),MaterialTheme.colorScheme.onSurfaceVariant)
@@ -218,7 +221,9 @@ import java.time.LocalDate
             if(date>workspace.today)continue
             val column=index/7;val row=index%7;val actual=heatmapBand(days[date]?.durationMs?:0)
             val origin=Offset(left+column*step+(step-side)/2,top+row*rowHeight+(rowHeight-side)/2)
-            drawFocusHeatmapCell(palette,if(column<progress.value)actual else 0,origin,side,if(band==null||band==actual)1f else .18f)
+            val opacity=if(band==null||band==actual)1f else .18f
+            if(actual>0&&column>=progress.value)drawRect(palette[0].copy(alpha=opacity),origin,Size(side,side))
+            else drawFocusHeatmapCell(palette,actual,origin,side,opacity)
             if(band==4&&date==longest&&actual==4){val path=androidx.compose.ui.graphics.Path().apply{moveTo(origin.x,origin.y-2.dp.toPx());lineTo(origin.x+side,origin.y-2.dp.toPx());lineTo(origin.x+side/2,origin.y-side/2-2.dp.toPx());close()};drawPath(path,ink)}
         }
     }

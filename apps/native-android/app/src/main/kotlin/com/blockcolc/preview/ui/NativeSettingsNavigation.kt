@@ -7,15 +7,21 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.offset
+import androidx.compose.ui.unit.sp
 import com.blockcolc.presentation.*
 import kotlinx.coroutines.delay
 
@@ -32,7 +38,14 @@ internal val LocalSettingsJump=staticCompositionLocalOf<SettingsJump?>{null}
     var query by rememberNativePageState("settings/query"){""}
     val results=remember(query){SettingsCatalog.search(query)}
     fun go(entry:SettingsEntry){focus.clearFocus();keyboard?.hide();jump.go(entry);query=""}
-    OutlinedTextField(query,{query=it},Modifier.fillMaxWidth().testTag("settings-search"),singleLine=true,label={Text(ui.text("搜索设置"))},textStyle=MaterialTheme.typography.bodyLarge)
+    val searchLabel=ui.text("搜索设置")
+    OutlinedTextField(query,{query=it},Modifier.fillMaxWidth().layout{measurable,constraints->
+        // The title-to-card gap already has room for Material's floating label.
+        val inset=8.sp.roundToPx()
+        val field=measurable.measure(constraints.offset(vertical=inset))
+        layout(field.width,(field.height-inset).coerceAtLeast(0)){field.placeRelative(0,-inset)}
+    }.testTag("settings-search").semantics{contentDescription=searchLabel},
+        singleLine=true,label={Text(searchLabel)},shape=RectangleShape,textStyle=MaterialTheme.typography.bodyLarge)
     if(query.isNotBlank()){
         if(results.isEmpty())Text(ui.text("没有找到设置"),style=MaterialTheme.typography.bodySmall)
         for(entry in results)NativeAction("${ui.text(SettingsCatalog.group(entry.group).title)} · ${ui.text(entry.title)}",{go(entry)},Modifier.fillMaxWidth(),primary=false,icon="tasks")

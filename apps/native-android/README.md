@@ -1,18 +1,18 @@
-# blockcolc 原生预览工程
+# blockcolc 原生 Android 工程
 
-这是按[总规划](../../docs/research/3.0.0-native-migration-plan.md)逐步实现的同一个原生工程，不是新的 UI 提案，也不覆盖正式 App。
+这个工程提供方块钟的原生 Android 应用。业务、SQLite 存储、Compose 界面和 Filament 世界渲染在同一应用内运行。迁移分阶段记录在[总规划](../../docs/research/3.0.0-native-migration-plan.md)。
 
-P1 代表世界关卡于 2026-10-22 通过；P2 的数据／计时闭环、存储测点补正及受影响返验于 10-24 收口，见 [P1](../../docs/versions/3.0.0-development.md#p1-阶段验收结论)／[P2 补正](../../docs/versions/3.0.0-development.md#p2-存储采样补正)。[P3 页面与功能](../../docs/versions/3.0.0-p3.md)已完成多轮返修，当前继续 [P4 整体性能对照](../../docs/versions/3.0.0-p4.md)。仍使用隔离预览身份，尚未替代正式安装。
+公开的 3.0 Beta 使用正式包名与证书。当前覆盖升级、性能和兼容性证据见 [P4 验收记录](../../docs/versions/3.0.0-p4.md)，发布方式见 [Beta 通道](#beta-通道)。
 
-## 当前 P3 用户预览
+## 本地构建
 
-用户包使用 `:app:recordUserPreview`，传入本机 `-PmatcPath=<matc.exe>` 即可；诊断默认关闭，不传 P1 固定世界和 P2 施工输入。从 /10 起是统一账户客户端，不再传入私人模块或区分标准／私人包。包名为 `com.blockcolc.preview`，可与正式方块钟共存，支持从复制的正式备份恢复；未登录仍完整离线使用，登录后连接自有账户服务。
+使用仓库的 Gradle wrapper，以 `apps/native-android` 为工程目录，传入本机 Filament 1.56.0 的 `-PmatcPath=<matc.exe>`。`:app:assembleDebug` 用于开发，`:app:recordUserPreview` 用于记录签名的隔离包。隔离包使用 `com.blockcolc.preview`，支持导入 JSON 备份。
 
-该入口会检查最终 APK 的运行素材、诊断排除和账户配置身份，并记录源码及摘要。现有 /11 交付、设备安装历史及外部待验项见 [P3 工作包](../../docs/versions/3.0.0-p3.md)；本轮候选默认构建号为 /12，内部实验仍按原签名和 /11 覆盖并恢复。P4 尚未整体验收通过。以下 P1／P2 输入和诊断命令保留为历史实验入口，不用于构建这份用户包。
+公开构筑使用含可选账户功能的同一客户端。P1/P2 的固定世界和施工输入供诊断构筑使用。用户候选的包内素材、诊断排除和签名由各自的构建核验任务检查。
 
 模块：`world-core` 持有世界输入与更新契约，`world-filament` 拥有渲染线程和 GPU 生命周期，`app` 提供原生预览宿主。`domain-core` 持有完整存档与业务命令，`state-store` 负责逐项 SQL、CAS、内容备份及恢复控制，`state-store-android` 只适配系统 SQLite，`focus-core` 协调计时计划。Activity、闹钟、服务和恢复共用 `PreviewRuntime` 的单一 IO 执行入口；落盘成功后再通知页面、系统和建筑，不复制旧样机的整份原子 JSON 存档。
 
-包名 `com.blockcolc.preview`，使用独立目录；用户预览可创建自己的任务或恢复本地／云端内容，不自动读取正式存档。仪器检查另用隔离夹具，并核对原环境恢复。通知、精确提醒及计时前台服务按系统入口申请权限，后台仍受 OEM 电池策略影响。客户端只同步到自有账户服务，旧好友转发由服务端受保护配置绑定，正式来源在 P4/P5 再交接；现有正式安装、签名和好友同步不变。诊断包不作为用户交付或发布候选。
+通知、精确提醒及计时前台服务按系统入口请求权限，后台运行仍受厂商电池策略影响。登录后连接[账户服务](../../services/cloud/README.md)。正式身份的旧版数据迁移与回退见 [验证策略](../../docs/TESTING.md#首次正式原生升级与回退)。
 
 ## P0 固定项
 
@@ -68,7 +68,7 @@ MC 图集的静态 UV／裁切／旋转／染色按可复用外观预求值，�
 
 `apps/android/android/gradlew.bat -p apps/native-android :domain-core:test :state-store:test :state-store-android:assembleDebug :state-store-android:lintDebug :state-store-android:assembleDebugAndroidTest` 不需要世界输入，也不构建正式／私人 App。JVM 存储测试使用真实 SQLite，Android 测试 APK 仅编译不表示已在手机通过；安装／实机另按授权进行。
 
-正式 TS Oracle 在测试前由当前 `packages/domain/src` 生成，并核对源码、生成器和历法依赖指纹；比较完整规范化状态、事件、失败码和统计归属，不把旧实验的计时摘要当完整数据。SQL 表和恢复语义见 [ARCHITECTURE](../../ARCHITECTURE.md#原生预览隔离)。封套 1／2、每日一个合并根和最近两个操作回滚根已接；导入／恢复提高替换代次并撤销旧自动授权，损坏库不重新种空任务。
+正式 TS Oracle 在测试前由当前 `packages/domain/src` 生成。测试核对源码、生成器和历法依赖指纹，并比较完整规范化状态、事件、失败码和统计归属。SQL 表和恢复事务在 [Android SQLite 适配层](state-store-android)和[状态存储模块](state-store)。存储支持封套 1／2、每日一个合并根和最近两个操作回滚根。导入与恢复提高替换代次并撤销旧自动授权，损坏的原库保留供恢复。
 
 大文本超出 Android CursorWindow 时，在同一事务内改用标量读取；正常小行仍走原批量路径。小存档仅在真实行证明完全相同时复用校验，大存档不保留多份证明。17 MiB 设备往返已通过，但 100 MiB 文件／512 MiB 展开是格式预算，不是所有设备的内存保证；完整容量上界仍需候选阶段验证。
 
@@ -95,6 +95,6 @@ MC 图集的静态 UV／裁切／旋转／染色按可复用外观预求值，�
 
 ## Beta 通道
 
-用正式签名构建。原生 Gradle 构建参数为 `-PnativeUpgradeCandidate=true -PnativeBetaNumber=N -PnativeBetaVersionCode=CODE`，目标为 `:app:recordUpgradeCandidate`，同样需要指定 Filament 编译器。此任务先验证 APK，再记录源码与产物摘要。
+用正式签名构建。原生 Gradle 构建参数为 `-PnativeUpgradeCandidate=true -PnativeBetaNumber=N -PnativeBetaVersionCode=CODE`，目标为 `:app:recordUpgradeCandidate`，同样需要指定 Filament 编译器。此任务先验证包内身份、正式签名和 16 KiB 对齐，再记录源码与产物摘要。
 
-提交、推送、打标签和发布见 [Beta 发布](../../docs/TESTING.md#beta-发布)。后续正式包可用 `-PnativeReleaseVersionCode=CODE` 指定高于 Beta 的构建号。自动与手动检查共用所选通道，手动安装 Beta 后默认跟随 Beta 通道，已有通道设置会保留。下载后核对发布资产的 SHA-256，安装前核对包名、版本和签名。 [GitHub Releases API](https://docs.github.com/en/rest/releases/releases)
+提交、推送、打标签和发布见 [Beta 发布](../../docs/TESTING.md#beta-发布)。正式包用 `-PnativeReleaseVersionCode=CODE` 代替两个 Beta 参数。根据已发布和已交付的同包名 APK 确定构建号，其中包括已发布的 Beta。自动与手动检查共用所选通道，手动安装 Beta 后默认跟随 Beta 通道，已有通道设置会保留。下载后核对发布资产的 SHA-256，安装前核对包名、版本和签名。 [GitHub Releases API](https://docs.github.com/en/rest/releases/releases)

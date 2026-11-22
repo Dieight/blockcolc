@@ -7,8 +7,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.rememberGraphicsLayer
-import androidx.compose.ui.graphics.layer.drawLayer
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.graphics.FilterQuality
@@ -51,9 +49,12 @@ import com.blockcolc.preview.updates.NativeUpdateController
 import com.blockcolc.updates.UpdateView
 import com.blockcolc.preview.blueprints.NativeBlueprintImport
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.roundToInt
 import kotlin.coroutines.resume
 import java.text.SimpleDateFormat
@@ -221,19 +222,20 @@ private val NATIVE_UI_PROCESS=java.util.UUID.randomUUID().toString()
             resourceSettings={NativeResourceSettings(resourceLibrary,onImport={resourceImporter.launch(arrayOf("application/zip","application/x-zip-compressed","application/java-archive","application/x-java-archive","application/octet-stream"))},
                 onRefresh=resourcePacks::refresh,onRetry=resourcePacks::retry,onOriginal=resourcePacks::original,onSelect=resourcePacks::select,onDelete=resourcePacks::remove)},
             blueprintSettings={NativeBlueprintSettings(snapshot,runtime,blueprintImport){blueprintImporter.launch(arrayOf("application/octet-stream","application/gzip","application/x-gzip","*/*"))}},
-            worldHost={visible,retainSurface,quality,modifier,onReady->val c=snapshot.preferences.worldColorAdjustment
+            worldHost={visible,retainSurface,coverVisible,quality,modifier->val c=snapshot.preferences.worldColorAdjustment
                  val details=snapshot.workspace?.takeIf{it.details==WorkspaceDetails.READY}
                  val memories=details?.memories
                 val labels=remember(memories,snapshot.preferences.language){memories?.buildings?.associate{it.id to if(it.cycleNumber==null)it.title else resources.text(snapshot.preferences.language,"{0} · 第 {1} 座",it.title,it.cycleNumber)}.orEmpty()+memories?.rewards?.associate{
                     it.id to (it.title?:resources.text(snapshot.preferences.language,when(it.kind){WorldAssetKind.BIRTHDAY->"生日蛋糕";WorldAssetKind.HOLIDAY->"节日奖励";else->"每日奖励"}))}.orEmpty()}
                  val room=remember(details?.achievements){details?.achievements?.let{RoomPresentationProjection.from(it)}}
                  NativeWorldHost(runtime,visible&&initialAtmosphereReady,quality,modifier,com.blockcolc.world.SourceWorldColor(c.saturation,c.brightness,c.contrast),atmosphere,worldDebug.buildingCondition,snapshot.preferences.constructionOutlineVisibility,worldInteraction,
-                     if(memories==null)snapshot.projects.associate{it.id to it.title}else labels,resourceLibrary.selection,onReady,room,retainSurface)})
+                     if(memories==null)snapshot.projects.associate{it.id to it.title}else labels,resourceLibrary.selection,
+                     room=room,retainSurface=retainSurface,coverVisible=coverVisible)})
     }
 }
 
 @Composable private fun NativeWorkspace(s:WorkspaceUiState,runtime:PreviewRuntime,worldInteraction:NativeWorldInteractionState,updates:NativeUpdateController,updateView:UpdateView,foreground:Boolean,pageSelection:MutableState<String>,minimalSelection:MutableState<Boolean?>,onInteractive:(Boolean)->Unit,onImport:()->Unit,onExport:()->Unit,onConfirmImport:(Boolean)->Unit,
-    worldHost:@Composable (Boolean,Boolean,String,Modifier,(Boolean)->Unit)->Unit,audioSettings:@Composable ()->Unit,weatherSettings:@Composable ()->Unit,debugSettings:@Composable ()->Unit,resourceSettings:@Composable ()->Unit,notificationSettings:@Composable ()->Unit,blueprintSettings:@Composable ()->Unit){
+    worldHost:@Composable (Boolean,Boolean,Boolean,String,Modifier)->Unit,audioSettings:@Composable ()->Unit,weatherSettings:@Composable ()->Unit,debugSettings:@Composable ()->Unit,resourceSettings:@Composable ()->Unit,notificationSettings:@Composable ()->Unit,blueprintSettings:@Composable ()->Unit){
     val ui=LocalNativeUi.current
     val cloudContext=LocalContext.current
     val cloud=remember(runtime){NativeCloudController.get(cloudContext,runtime)}
@@ -349,13 +351,10 @@ private val NATIVE_UI_PROCESS=java.util.UUID.randomUUID().toString()
 
     var worldHeight by remember{mutableIntStateOf(0)}
     val density=LocalDensity.current
-    val transition=remember{Animatable(if(immersive)1f else 0f)}
     var displayedMinimal by remember{mutableStateOf(minimal)}
     var displayedImmersive by remember{mutableStateOf(immersive)}
     NativeSystemBars(displayedImmersive)
-    var projectedImmersive by remember{mutableStateOf(immersive)}
     var modeMotion by remember{mutableStateOf(false)}
-    var modeWaiting by remember{mutableStateOf(false)}
     var lastPageInteraction by remember{mutableLongStateOf(0L)}
     var pageTouchActive by remember{mutableStateOf(false)}
     LaunchedEffect(foreground){if(!foreground)pageTouchActive=false}
@@ -381,14 +380,15 @@ private val NATIVE_UI_PROCESS=java.util.UUID.randomUUID().toString()
     fun routeX(key:String):Float {
         val target=swipeTarget
         if(target!=null&&!immersive){
-            val offset=swipeOffset.floatValue
+            val offset=swipeOffset.floatValue.roundToInt().toFloat()
             return when(key){settledPage->offset;target->offset+if(pageOrder.indexOf(target)>pageOrder.indexOf(settledPage))viewportWidth.toFloat()else -viewportWidth.toFloat();else->0f}
         }
         if(!pageMoving||immersive||key!=page&&key!=settledPage)return 0f
         // Read animation state inside graphicsLayer, rather than recomposing
         // the retained pages on every navigation frame.
         val progress=if(motionPage==page)pageTravel.value else 0f
-        return if(key==page)pageDirection*viewportWidth*(1-progress)else -pageDirection*viewportWidth*progress
+        val offset=(-pageDirection*viewportWidth*progress).roundToInt().toFloat()
+        return if(key==page)offset+pageDirection*viewportWidth else offset
     }
 
     fun finishSwipe(velocity:Float,cancel:Boolean=false){
@@ -406,82 +406,79 @@ private val NATIVE_UI_PROCESS=java.util.UUID.randomUUID().toString()
     LaunchedEffect(foreground,immersive){if(!foreground||immersive){clearSwipe();settledPage=page;motionPage=page;pageTravel.snapTo(1f)}}
 
     val wideTimer=viewportWidth>viewportHeight||with(density){viewportWidth.toDp()}>=720.dp
+    val safeSides=WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal)
+    val sidePadding=safeSides.asPaddingValues()
+    val layoutDirection=LocalLayoutDirection.current
+    val safeLeft=sidePadding.calculateLeftPadding(layoutDirection)
+    val safeRight=sidePadding.calculateRightPadding(layoutDirection)
+    val pageBackground=MaterialTheme.colorScheme.background
+    fun wideWorldWidth(total:androidx.compose.ui.unit.Dp)=safeLeft+(total-safeLeft-safeRight).coerceAtLeast(0.dp)*WIDE_WORLD_FRACTION
+    val swipeWorldEdge=with(density){wideWorldWidth(viewportWidth.toDp()).toPx()}
+    val currentNormalWidth by rememberUpdatedState(if(wideTimer)swipeWorldEdge.roundToInt() else viewportWidth)
     val normalReferenceHeight=if(navigationHeight>0&&viewportHeight>0)((viewportHeight-navigationHeight)*(if(wideTimer)1f else NORMAL_WORLD_FRACTION)).toInt().coerceAtLeast(1) else worldHeight
     var lastModeSize by remember{mutableStateOf(IntSize.Zero)}
-    val uiLayer=rememberGraphicsLayer()
-    var uiCaptureSerial by remember{mutableIntStateOf(0)}
-    val uiRecordedSerial=remember{java.util.concurrent.atomic.AtomicInteger(0)}
-    var modeFrames by remember{mutableStateOf<NativeModeFrames?>(null)}
+    var modeFrame by remember{mutableStateOf<NativeModeFrame?>(null)}
     var timerPanelTop by remember{mutableIntStateOf(0)}
     val panelAlpha=remember{Animatable(1f)}
+    val modeFrameAlpha=remember{Animatable(0f)}
     val glassConsumers=backdrop?.glassConsumers?:0
     SideEffect{backdrop?.requested=(immersive&&!ui.reduceTransparency&&android.os.Build.VERSION.SDK_INT>=31)||modeMotion||glassConsumers>0}
     DisposableEffect(lifecycle){val observer=androidx.lifecycle.LifecycleEventObserver{_,event->if(event==androidx.lifecycle.Lifecycle.Event.ON_STOP)motionForeground=false else if(event==androidx.lifecycle.Lifecycle.Event.ON_START)motionForeground=true};lifecycle?.addObserver(observer);onDispose{lifecycle?.removeObserver(observer)}}
     LaunchedEffect(minimal,immersive,worldVisible,worldReady,motionForeground,ui.reduceMotion,viewportWidth){
         val size=IntSize(viewportWidth,viewportHeight)
         val resized=lastModeSize!=IntSize.Zero&&lastModeSize.width!=size.width;lastModeSize=size
-        suspend fun settle(){projectedImmersive=immersive;displayedMinimal=minimal;displayedImmersive=immersive;transition.snapTo(if(immersive)1f else 0f);modeFrames=null;modeMotion=false;modeWaiting=false}
-        // A still-loading world has no coherent frame to photograph or wait
-        // for. Focus must adopt its layout without waiting for GPU snapshots.
-        if(!worldVisible||!worldReady||!motionForeground||ui.reduceMotion||resized||android.os.Build.VERSION.SDK_INT<24){
-            if(BuildConfig.NATIVE_DIAGNOSTICS&&(displayedMinimal!=minimal||displayedImmersive!=immersive))android.util.Log.i("BlockcolcMode","phase=skipped visible=$worldVisible foreground=$motionForeground reduce=${ui.reduceMotion} resized=$resized size=$size")
-            settle()
+        suspend fun settle(){
+            displayedMinimal=minimal
+            displayedImmersive=immersive
+            panelAlpha.snapTo(1f)
+            modeFrameAlpha.snapTo(0f)
+            modeFrame=null
+            modeMotion=false
         }
-        else if(displayedMinimal!=minimal||displayedImmersive!=immersive){
+        if(!worldVisible||!worldReady||!motionForeground||ui.reduceMotion||resized||displayedImmersive==immersive){
+            settle()
+        }else{
             modeMotion=true
             val modeStarted=android.os.SystemClock.uptimeMillis()
             fun modeTrace(phase:String){if(BuildConfig.NATIVE_DIAGNOSTICS)android.util.Log.i("BlockcolcMode","phase=$phase entering=$immersive elapsedMs=${android.os.SystemClock.uptimeMillis()-modeStarted}")}
             try{
-                // Record the real outgoing UI before adopting the other layout.
-                // Only these two transient layers are read back, never a feed.
-                suspend fun captureUi():androidx.compose.ui.graphics.ImageBitmap{
-                    val ticket=++uiCaptureSerial
-                    val deadline=android.os.SystemClock.uptimeMillis()+700
-                    while(uiRecordedSerial.get()<ticket){
-                        if(android.os.SystemClock.uptimeMillis()>deadline)throw IllegalStateException("UI drawing did not complete")
-                        delay(8)
-                    }
-                    return uiLayer.toImageBitmap()
+                val bounds=backdrop?.bounds
+                val bottom=if(displayedImmersive)viewportHeight else normalReferenceHeight
+                val frozen=coroutineScope{
+                    val capture=async{withTimeoutOrNull(180){backdrop?.snapshot()}}
+                    panelAlpha.animateTo(0f,tween(130,easing=FastOutSlowInEasing))
+                    capture.await()
                 }
-                val sourceUi=captureUi()
-                val sourceWorld=kotlinx.coroutines.withTimeoutOrNull(350){backdrop?.snapshot()}?:run{settle();return@LaunchedEffect}
-                val oldBottom=if(displayedImmersive)viewportHeight else normalReferenceHeight
-                val source=NativeModeFrame(sourceWorld.asImageBitmap(),sourceUi,viewportWidth,viewportHeight,oldBottom,timerPanelTop.coerceIn(0,viewportHeight),if(displayedImmersive)viewportHeight else viewportHeight-navigationHeight,if(wideTimer&&!displayedImmersive)(viewportWidth*WIDE_WORLD_FRACTION).roundToInt()else viewportWidth)
-                modeTrace("source-captured")
-                modeFrames=NativeModeFrames(source,entering=immersive)
-                projectedImmersive=immersive;displayedMinimal=minimal;displayedImmersive=immersive
-                // OEMs may resize the edge-to-edge content when system bars
-                // hide. Keep the outgoing frame and adopt the actual stable
-                // target window, rather than cancelling on a height change.
-                var targetSize=currentViewport
-                var stableSince=android.os.SystemClock.uptimeMillis()
-                val deadline=stableSince+1200
-                var targetWindow=0 to 0
-                while(android.os.SystemClock.uptimeMillis()<deadline){
-                    if(currentViewport!=targetSize){targetSize=currentViewport;stableSince=android.os.SystemClock.uptimeMillis()}
-                    targetWindow=(if(immersive)targetSize.height else ((targetSize.height-currentNavigationHeight)*(if(wideTimer)1f else NORMAL_WORLD_FRACTION)).toInt().coerceAtLeast(1)) to 0
-                    if(android.os.SystemClock.uptimeMillis()-stableSince>=64&&backdrop?.presentedWindow==targetWindow)break
-                    delay(8)
+                if(frozen!=null&&bounds!=null){
+                    modeFrame=NativeModeFrame(frozen.asImageBitmap(),IntSize(bounds.width.roundToInt(),bounds.height.roundToInt()),bottom)
+                    modeFrameAlpha.snapTo(1f)
+                }else modeFrameAlpha.animateTo(1f,tween(80,easing=FastOutSlowInEasing))
+                modeTrace(if(frozen==null)"scene-copy-unavailable"else"source-captured")
+                displayedMinimal=minimal
+                displayedImmersive=immersive
+                withFrameNanos{}
+                val presented=withTimeoutOrNull(750){
+                    snapshotFlow{
+                        val height=currentViewport.height
+                        val wanted=if(immersive)height else ((height-currentNavigationHeight)*(if(wideTimer)1f else NORMAL_WORLD_FRACTION)).toInt()
+                        val width=if(immersive)currentViewport.width else currentNormalWidth
+                        wanted>0&&backdrop?.presentedWindow==NativePresentedWindow(width,wanted,0)
+                    }.first{it}
                 }
-                if(backdrop?.presentedWindow!=targetWindow){settle();return@LaunchedEffect}
-                withFrameNanos{};withFrameNanos{}
-                val targetUi=captureUi()
-                val targetWorld=kotlinx.coroutines.withTimeoutOrNull(350){backdrop?.snapshot()}?:run{settle();return@LaunchedEffect}
-                modeFrames=NativeModeFrames(source,NativeModeFrame(targetWorld.asImageBitmap(),targetUi,targetSize.width,targetSize.height,targetWindow.first,timerPanelTop.coerceIn(0,targetSize.height),if(immersive)targetSize.height else targetSize.height-currentNavigationHeight,if(wideTimer&&!immersive)(targetSize.width*WIDE_WORLD_FRACTION).roundToInt()else targetSize.width),immersive)
-                modeTrace("target-captured")
-                transition.animateTo(if(immersive)1f else 0f,tween(720,easing=FastOutSlowInEasing))
+                modeTrace(if(presented==true)"projection-presented"else"projection-timeout")
+                coroutineScope{
+                    val fade=launch{modeFrameAlpha.animateTo(0f,tween(330,easing=FastOutSlowInEasing))}
+                    panelAlpha.animateTo(1f,tween(360,easing=FastOutSlowInEasing))
+                    fade.join()
+                }
                 modeTrace("motion-complete")
             }catch(error:kotlinx.coroutines.CancellationException){throw error}
             catch(error:Exception){modeTrace("fallback-${error.javaClass.simpleName}");if(BuildConfig.NATIVE_DIAGNOSTICS)android.util.Log.w("BlockcolcMode","Frame capture failed",error);settle()}
-            finally{modeMotion=false;modeWaiting=false;modeFrames=null}
-        }else{settle()}
+            finally{modeMotion=false;modeFrame=null}
+        }
     }
-    val normalBottom=normalReferenceHeight.coerceAtLeast(1)
-    val clipBottom=if(transition.value>=.999f)null else (normalBottom+(viewportHeight-normalBottom)*transition.value).toInt()
-    SideEffect{backdrop?.clipBottom=clipBottom;backdrop?.immersive=displayedImmersive
-        // Projection changes once with the target layout. The 720ms cover
-        // expands its crop; it never animates a non-uniform world transform.
-        backdrop?.projectionHeight=if(projectedImmersive)viewportHeight else normalReferenceHeight
+    SideEffect{backdrop?.clipBottom=if(displayedImmersive)null else normalReferenceHeight.coerceAtLeast(1);backdrop?.immersive=displayedImmersive
+        backdrop?.projectionHeight=if(displayedImmersive)viewportHeight else normalReferenceHeight
         backdrop?.projectionTop=0
     }
     BackHandler(enabled=immersive&&!ongoing){minimalSelection.value=false}
@@ -493,25 +490,23 @@ private val NATIVE_UI_PROCESS=java.util.UUID.randomUUID().toString()
               if(pagesPrepared.size<4){pageTouchActive=event.changes.any{it.pressed};lastPageInteraction=android.os.SystemClock.uptimeMillis()}
           }}
       }.nativePageSwipe(enabled=foreground&&startupOpen&&!immersive&&!modeMotion&&!s.busy&&projectEditor==null&&editor==null&&!goal&&!manual&&!tutorial&&!about&&!accountOpen&&!friendsOpen&&s.importSummary==null&&s.backupImportIssue==null&&page==settledPage&&!swipeSettling,
-          excluded={point->point.x<with(density){24.dp.toPx()}||point.x>viewportWidth-with(density){24.dp.toPx()}||point.y>=viewportHeight-navigationHeight||page=="timer"&&(if(wideTimer)point.x<viewportWidth*WIDE_WORLD_FRACTION else point.y<normalReferenceHeight)},
+          excluded={point->point.x<with(density){24.dp.toPx()}||point.x>viewportWidth-with(density){24.dp.toPx()}||point.y>=viewportHeight-navigationHeight||page=="timer"&&(if(wideTimer)point.x<swipeWorldEdge else point.y<normalReferenceHeight)},
           onStart={dx->
               val target=pageOrder.getOrNull(pageOrder.indexOf(settledPage)+if(dx<0)1 else -1)
               if(target==null)false else{swipeTarget=target;pagesPrepared=pagesPrepared+target;true}
           },onDrag={dx->swipeTarget?.let{target->swipeOffset.floatValue=if(pageOrder.indexOf(target)>pageOrder.indexOf(settledPage))dx.coerceIn(-viewportWidth.toFloat(),0f)else dx.coerceIn(0f,viewportWidth.toFloat())}},
           onEnd={finishSwipe(it)},onCancel={if(!swipeSettling)finishSwipe(0f,true)})
         .onSizeChanged{viewportHeight=it.height;viewportWidth=it.width}){
-                 val safeSides=WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal)
-                 val sides=safeSides.asPaddingValues()
-                 val direction=LocalLayoutDirection.current
-                 val left=sides.calculateLeftPadding(direction)
-                 val right=sides.calculateRightPadding(direction)
-                 val wideWorldWidth=left+(maxWidth-left-right).coerceAtLeast(0.dp)*WIDE_WORLD_FRACTION
-                 if(corePresented)worldHost(worldVisible&&!pageMoving,s.ready&&s.error==null&&!s.refreshRequired&&projectEditor==null&&!immersive&&(page!="timer"||pageMoving),s.preferences.lightingQuality,
+                 val wideWorld=wideWorldWidth(maxWidth)
+                 if(corePresented)worldHost(worldVisible&&!pageMoving,s.ready&&s.error==null&&!s.refreshRequired&&projectEditor==null&&!immersive&&(page!="timer"||pageMoving),
+                    worldVisible,s.preferences.lightingQuality,
                     // Keep the separately composited SurfaceView stationary.
                     // Sliding the ordinary pages over it avoids native surface
                     // placement transactions on every navigation frame, and
                     // keeps its touch coordinates at the real screen origin.
-                     Modifier.fillMaxHeight().width(if(wideTimer&&!projectedImmersive)wideWorldWidth else maxWidth).clipToBounds().drawWithContent{clipRect(bottom=if(immersive&&transition.value>=1f)size.height else normalReferenceHeight.toFloat().coerceAtLeast(1f)+(size.height-normalReferenceHeight.toFloat().coerceAtLeast(1f))*transition.value){this@drawWithContent.drawContent()}}){}
+                     Modifier.fillMaxHeight().width(if(wideTimer&&!displayedImmersive)wideWorld else maxWidth).clipToBounds().drawWithContent{
+                         clipRect(bottom=if(displayedImmersive)size.height else normalReferenceHeight.toFloat().coerceAtLeast(1f)){this@drawWithContent.drawContent()}
+                     })
                  else if(worldVisible){
                      val worldSize=when{
                          immersive->Modifier.fillMaxHeight()
@@ -519,23 +514,35 @@ private val NATIVE_UI_PROCESS=java.util.UUID.randomUUID().toString()
                          else->Modifier.fillMaxHeight(NORMAL_WORLD_FRACTION)
                      }
                      val loading=ui.text("正在建造世界")
-                     NativeLoadingScene(loading,Modifier.width(if(wideTimer&&!immersive)wideWorldWidth else maxWidth).then(worldSize).semantics{
+                     NativeLoadingScene(loading,Modifier.width(if(wideTimer&&!immersive)wideWorld else maxWidth).then(worldSize).semantics{
                          contentDescription=ui.text("聚落世界");stateDescription=loading
                      },embedded=true)
                  }
+        if(modeMotion)NativeModeWorldCover(modeFrame,modeFrameAlpha.asState(),MaterialTheme.colorScheme.background,Modifier.fillMaxSize())
         // The transition cover consumes touch. Hide covered controls from
         // accessibility too, rather than advertising actions that cannot fire.
         // Measure/preload the real pages while the opaque loader is visible,
         // without painting their glass, weather and text beneath that loader.
         // The separate SurfaceView above continues building and presenting.
-        Column(Modifier.fillMaxSize().windowInsetsPadding(safeSides).imePadding().drawWithContent{if(modeMotion){uiLayer.record{this@drawWithContent.drawContent()};uiRecordedSerial.set(uiCaptureSerial);drawLayer(uiLayer)}else if(startupOpen)drawContent()}.then(if(startupOpen&&!modeMotion)Modifier else Modifier.clearAndSetSemantics{})){
-            Box(Modifier.weight(1f)){
-                if(s.refreshRequired)NativePageScroll{
+        Column(Modifier.fillMaxSize().imePadding().drawWithContent{if(startupOpen)drawContent()}.then(if(startupOpen&&!modeMotion)Modifier else Modifier.clearAndSetSemantics{})){
+            Box(Modifier.weight(1f).clipToBounds().drawWithContent{
+                drawContent()
+                if(pageMoving&&!displayedImmersive){
+                    val left=safeLeft.toPx()
+                    val right=safeRight.toPx()
+                    // The safe gutters stay at the display edges during the slide.
+                    val leftOpacity=if(wideTimer&&worldVisible)
+                        (-routeX("timer")/swipeWorldEdge.coerceAtLeast(1f)).coerceIn(0f,1f) else 1f
+                    if(left>0f)drawRect(pageBackground,size=androidx.compose.ui.geometry.Size(left,size.height),alpha=leftOpacity)
+                    if(right>0f)drawRect(pageBackground,topLeft=androidx.compose.ui.geometry.Offset(size.width-right,0f),size=androidx.compose.ui.geometry.Size(right,size.height))
+                }
+            }){
+                if(s.refreshRequired)NativePageScroll(Modifier.windowInsetsPadding(safeSides).statusBarsPadding()){
                     val refresh=rememberNativeRequest(s)
                     Text(ui.text("记录已保存，页面暂未更新。"),style=MaterialTheme.typography.titleMedium)
                     NativeAction(ui.text("重试显示"),{refresh.submit{runtime.refreshWorkspace(it)}},pending=refresh.busy,enabled=!s.busy)
                     NativeRequestError(refresh)
-                }else if(s.error!=null)NativePageScroll{
+                }else if(s.error!=null)NativePageScroll(Modifier.windowInsetsPadding(safeSides).statusBarsPadding()){
                     NativeHeading(ui.text("本地记录需要恢复"),ui.text("原文件已保留，请选择备份恢复。"))
                     NativeAction(ui.text("重试"),{runtime.start()},pending=s.busy,primary=false)
                     NativeAction(ui.text("恢复备份"),onImport,pending=s.busy)
@@ -545,14 +552,16 @@ private val NATIVE_UI_PROCESS=java.util.UUID.randomUUID().toString()
                     val timerActive=timerVisible&&(page=="timer"||immersive)&&startupOpen&&foreground&&!pageMoving
                     Box(Modifier.fillMaxSize().graphicsLayer{alpha=if(timerVisible)1f else 0f;translationX=routeX("timer")}.then(if(timerActive)Modifier else Modifier.clearAndSetSemantics{}).layout{measurable,constraints->val measured=measurable.measure(constraints);layout(measured.width,measured.height){if(timerVisible)measured.place(0,0)}}){key("$pageIdentity/timer"){NativePageActivation(timerActive){NativePageState("$pageIdentity/timer",timerScroll,timerMemory){NativeTimerPage(s,runtime,displayedMinimal,displayedImmersive,pool,submit.busy,delivered,submit.error,selectedTask,
                         onMinimal={minimalSelection.value=it},onAdjust={editor=it},onManual={manual=true},onCreate={projectEditor=ProjectEditor()},
-                        onSubmit={draft->if(!submit.busy&&!delivered){heldReport=pool;submit.submit{runtime.submitReport(draft,it)}}},onWorldHeight={if(!displayedImmersive&&!immersive)worldHeight=it},memory=worldInteraction.memory,onCloseMemory=worldInteraction::closeMemory,panelOpacity=panelAlpha.value,active=timerActive,onPanelTop={timerPanelTop=it},wide=wideTimer,
-                        minimalFriends=if(cloudView.account?.optBoolean("friendsEnabled")==true)({shown->NativeMinimalFriends(cloudView,shown&&foreground&&!friendsOpen,cloud::refreshFriends){friendsOpen=true}}) else null)}}}}
+                        onSubmit={draft->if(!submit.busy&&!delivered){heldReport=pool;submit.submit{runtime.submitReport(draft,it)}}},onWorldHeight={if(!displayedImmersive)worldHeight=it},memory=worldInteraction.memory,onCloseMemory=worldInteraction::closeMemory,panelVisibility=panelAlpha.asState(),active=timerActive,onPanelTop={timerPanelTop=it},wide=wideTimer,wideWorld=wideWorld,
+                        minimalFriends=if(cloudView.account?.optBoolean("friendsEnabled")==true)({shown->NativeMinimalFriends(cloudView,shown&&foreground&&!friendsOpen,cloud::refreshFriends)}) else null)}}}}
                     for(preparedPage in pagesPrepared.filter{it!="timer"})key(preparedPage){
                         val activePage=projectEditor==null&&!immersive&&page==preparedPage&&startupOpen&&foreground&&!pageMoving
                         var held by remember{mutableStateOf(s)}
                         if(activePage&&held!==s)held=s
                         val placedPage=projectEditor==null&&!immersive&&(page==preparedPage||swipeTarget==preparedPage||pageMoving&&settledPage==preparedPage)
-                        Box(Modifier.fillMaxSize().graphicsLayer{alpha=if(placedPage)1f else 0f;translationX=routeX(preparedPage)}.background(MaterialTheme.colorScheme.background).statusBarsPadding().then(if(activePage)Modifier else Modifier.clearAndSetSemantics{}).layout{measurable,constraints->val measured=measurable.measure(constraints);layout(measured.width,measured.height){if(placedPage)measured.place(0,0)}}){
+                        Box(Modifier.fillMaxSize().graphicsLayer{alpha=if(placedPage)1f else 0f;translationX=routeX(preparedPage);clip=true}
+                            .background(MaterialTheme.colorScheme.background).windowInsetsPadding(safeSides).statusBarsPadding()
+                            .then(if(activePage)Modifier else Modifier.clearAndSetSemantics{}).layout{measurable,constraints->val measured=measurable.measure(constraints);layout(measured.width,measured.height){if(placedPage)measured.place(0,0)}}){
                             key("$pageIdentity/$preparedPage"){NativePageActivation(activePage){NativePageState("$pageIdentity/$preparedPage",when(preparedPage){"tasks"->tasksScroll;"statistics"->statisticsScroll;else->settingsScroll},when(preparedPage){"tasks"->tasksMemory;"statistics"->statisticsMemory;else->settingsMemory}){when(preparedPage){
                                 "tasks"->NativeTasksPage(held,runtime,{projectEditor=ProjectEditor()},{goal=true},{titleEditor=it},{_,task->selectedTask=task;page="timer"},{projectEditor=ProjectEditor(nextHabit=true)},onView={worldInteraction.pick(it);page="timer"},onFriends={friendsOpen=true},friendsEnabled=cloudView.account?.optBoolean("friendsEnabled")==true)
                                 "statistics"->NativeStatisticsPage(held,runtime)
@@ -565,16 +574,18 @@ private val NATIVE_UI_PROCESS=java.util.UUID.randomUUID().toString()
                             }}}}
                         }
                     }
-                    if(projectEditor!=null)Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).statusBarsPadding()){
+                    if(projectEditor!=null)Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).windowInsetsPadding(safeSides).statusBarsPadding()){
                         NativeProjectEditor(projectEditor,s,runtime){projectEditor=null}
                     }
                 }
             }
-            if(!displayedImmersive)Row(Modifier.fillMaxWidth().onSizeChanged{navigationHeight=it.height}.background(MaterialTheme.colorScheme.surface).navigationBarsPadding(),horizontalArrangement=Arrangement.SpaceEvenly){
+            if(!displayedImmersive)Row(Modifier.fillMaxWidth().onSizeChanged{navigationHeight=it.height}.background(MaterialTheme.colorScheme.surface)
+                .windowInsetsPadding(safeSides).navigationBarsPadding(),horizontalArrangement=Arrangement.SpaceEvenly){
                 for((key,label,icon)in listOf(Triple("timer","计时","clock"),Triple("tasks","任务","tasks"),Triple("statistics","统计","chart"),Triple("settings","设置","gear"))){
                     var motion by remember{mutableIntStateOf(0)}
                     val tint=if(page==key)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                    Column(Modifier.weight(1f).height(68.dp).semantics{contentDescription=ui.text(label);selected=page==key;role=Role.Tab}.clickable(enabled=!s.busy,interactionSource=remember{androidx.compose.foundation.interaction.MutableInteractionSource()},indication=null){motion++;clearSwipe();projectEditor=null;pagesPrepared=pagesPrepared+key;page=key}.drawWithContent{
+                    val interaction=remember{androidx.compose.foundation.interaction.MutableInteractionSource()}
+                    Column(Modifier.weight(1f).height(68.dp).semantics{contentDescription=ui.text(label);selected=page==key;role=Role.Tab}.clickable(enabled=!s.busy,interactionSource=interaction,indication=null){motion++;clearSwipe();projectEditor=null;pagesPrepared=pagesPrepared+key;page=key}.nativePressMotion(interaction,!s.busy).drawWithContent{
                         drawContent();if(page==key)drawRect(tint,androidx.compose.ui.geometry.Offset(size.width/2-1.5.dp.toPx(),size.height-9.dp.toPx()),androidx.compose.ui.geometry.Size(3.dp.toPx(),3.dp.toPx()))
                     }.padding(vertical=8.dp),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.spacedBy(5.dp,Alignment.CenterVertically)){
                         NativeMotionGlyph(icon,motion,color=tint)
@@ -585,13 +596,14 @@ private val NATIVE_UI_PROCESS=java.util.UUID.randomUUID().toString()
                 }
             }
         }
-        if(modeMotion)Box(Modifier.fillMaxSize().testTag("mode-transition").clickable(interactionSource=remember{androidx.compose.foundation.interaction.MutableInteractionSource()},indication=null){}){
-            modeFrames?.let{NativeModeCover(it,if(it.entering)transition.value else 1f-transition.value,MaterialTheme.colorScheme.background,Modifier.fillMaxSize())}
-        }
+        if(modeMotion)Box(Modifier.fillMaxSize().testTag("mode-transition").pointerInput(Unit){
+            awaitPointerEventScope{while(true)awaitPointerEvent().changes.forEach{it.consume()}}
+        })
         if(!startupOpen)NativeLoadingScene(ui.text("正在建造世界"),Modifier.fillMaxSize().pointerInput(Unit){
             awaitPointerEventScope{while(true)awaitPointerEvent().changes.forEach{it.consume()}}
         })
-        if(!immersive)Box(Modifier.fillMaxWidth().windowInsetsTopHeight(WindowInsets.statusBars).background(MaterialTheme.colorScheme.surface.copy(alpha=.88f)))
+        if(!displayedImmersive)Box(Modifier.fillMaxWidth().windowInsetsTopHeight(WindowInsets.statusBars)
+            .background(if(page=="timer"&&!pageMoving)MaterialTheme.colorScheme.surface.copy(alpha=.88f)else MaterialTheme.colorScheme.background))
       }
     }
     NativeCelebrationOverlay(runtime.celebrations,foreground,worldReady&&(immersive||page=="timer")&&startupOpen)

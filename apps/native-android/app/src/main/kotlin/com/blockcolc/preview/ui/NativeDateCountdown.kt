@@ -1,6 +1,8 @@
 package com.blockcolc.preview.ui
 
 import android.content.Context
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
@@ -9,6 +11,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
@@ -117,8 +120,12 @@ private fun LocalDate?.orToday()=this?:LocalDate.now()
 
 @Composable private fun NativeCountdownLine(countdown:DateCountdown,today:LocalDate,modifier:Modifier){
     val ui=LocalNativeUi.current
-    Row(modifier,verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(6.dp)){
-        PixelGlyph("clock",Modifier.size(16.dp))
+    val interaction=remember{MutableInteractionSource()}
+    var motion by remember{mutableIntStateOf(0)}
+    Row(modifier.heightIn(min=44.dp).clickable(role=Role.Button,interactionSource=interaction,indication=null,
+        onClickLabel=ui.text("播放倒计时图标动画")){motion++}.nativePressMotion(interaction),
+        verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(6.dp)){
+        NativeMotionGlyph("countdown",motion,Modifier.size(16.dp))
         Text(countdown.title.ifBlank{ui.text("日期倒计时")},Modifier.weight(1f,fill=false),
             style=MaterialTheme.typography.bodyMedium,maxLines=1,overflow=TextOverflow.Ellipsis)
         Text(countdownDays(countdown.date,today),style=MaterialTheme.typography.labelLarge,maxLines=1)
