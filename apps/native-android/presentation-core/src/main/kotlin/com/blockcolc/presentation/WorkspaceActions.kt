@@ -18,7 +18,8 @@ sealed interface WorkspaceMutation {
     data class AddNote(val id:String,val text:String):Note
     data class RenameNote(val id:String,val text:String):Note
     data class CompleteNote(val id:String,val completed:Boolean):Note
-    data class DeleteNote(val id:String):Note
+    /** The undo window may outlive the visible workspace. */
+    data class DeleteNote(val id:String,val expectedWorkspace:String):Note
     data class DailyGoal(val date:String,val rounds:Int):WorkspaceMutation
     data class Integrity(val enabled:Boolean,val excursions:Int,val thresholdSeconds:Int):WorkspaceMutation
     data class Calendar(val timeZone:String,val restWeekdays:List<Int>):WorkspaceMutation

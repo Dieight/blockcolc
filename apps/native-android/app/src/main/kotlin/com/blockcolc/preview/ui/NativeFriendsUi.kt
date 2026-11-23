@@ -201,15 +201,14 @@ private class FriendDrag(val id:String,val order:List<String>,val rows:Map<Strin
 
 /** Invite codes are 18 hexadecimal characters. Pasted text may contain
  * spaces, dashes, lower case or surrounding words. */
-internal fun normalizeFriendCode(raw:String):String=raw.filter{it.isLetterOrDigit()&&it.code<128}.uppercase()
+internal fun normalizeFriendCode(raw:String):String=raw.filterNot{it.isWhitespace()||it=='-'||it=='·'}.uppercase()
 internal fun isFriendCode(code:String)=code.length==18&&code.all{it in '0'..'9'||it in 'A'..'F'}
-internal fun pastedFriendCode(raw:String):String{
-    val compact=raw.uppercase().replace(Regex("[\\s\\-·]"),"")
-    return Regex("[0-9A-F]{18}").find(compact)?.value?:normalizeFriendCode(raw).take(18)
-}
+private val friendCodeToken=Regex("(?<![A-Za-z0-9])(?:[0-9A-Fa-f]{18}|[0-9A-Fa-f]{6}(?:[ \\t·-]+[0-9A-Fa-f]{6})+)(?![A-Za-z0-9])")
+internal fun pastedFriendCode(raw:String):String?=friendCodeToken.findAll(raw)
+    .map{normalizeFriendCode(it.value)}.filter(::isFriendCode).distinct().singleOrNull()
 internal fun groupedFriendCode(code:String)=code.chunked(6).joinToString(" ")
 
-@Composable internal fun NativeFriendsPanel(controller:NativeCloudController,view:CloudView,onRemove:(JSONObject)->Unit={friend->controller.respond(friend.getString("id"),"remove")}){
+@Composable internal fun NativeFriendsPanel(controller:NativeCloudController,view:CloudView,onRemove:(String)->Unit){
     val account=checkNotNull(view.account)
     val accountId=account.getString("id")
     val pending=view.friends.filter{it.optString("status")=="pending"}
@@ -219,6 +218,7 @@ internal fun groupedFriendCode(code:String)=code.chunked(6).joinToString(" ")
     val focus=LocalFocusManager.current
     val keyboard=LocalSoftwareKeyboardController.current
     var invite by rememberSaveable(accountId){mutableStateOf("")}
+    var pasteFailed by remember(accountId){mutableStateOf(false)}
     var adding by rememberSaveable(accountId){mutableStateOf(empty)}
     LaunchedEffect(accountId){
         while(true){
@@ -234,7 +234,7 @@ internal fun groupedFriendCode(code:String)=code.chunked(6).joinToString(" ")
             enabled=!view.busy,
             fetchHistory={controller.friendHistory(accountId,friend.getString("id"))},
             changeSharing={controller.sharing(friend.getString("id"),it)},
-            remove={onRemove(friend)},
+            remove={onRemove(friend.getString("id"))},
             modifier=modifier,
             dragging=dragging,
         )
@@ -273,17 +273,22 @@ internal fun groupedFriendCode(code:String)=code.chunked(6).joinToString(" ")
             }
         }
         val normalized=normalizeFriendCode(invite)
+        val canSend=!view.busy&&!pasteFailed&&isFriendCode(normalized)
         fun send(){
-            if(view.busy||!isFriendCode(normalized))return
+            if(!canSend)return
             controller.invite(normalized)
             invite=""
             focus.clearFocus()
             keyboard?.hide()
         }
-        FriendCodeField(cloudText("添加好友码","Add friend code"),invite,normalized.length,{invite=it.take(24)},::send){
-            clipboard.getText()?.text?.let{invite=pastedFriendCode(it)}
+        FriendCodeField(cloudText("添加好友码","Add friend code"),invite,normalized.length,{if(it.length<=64){invite=it;pasteFailed=false}},::send){
+            val code=clipboard.getText()?.text?.let(::pastedFriendCode)
+            pasteFailed=code==null
+            if(code!=null)invite=code
         }
-        NativeAction(cloudText("发送邀请","Send invite"),::send,Modifier.fillMaxWidth(),enabled=!view.busy&&isFriendCode(normalized),primary=false,icon="plus")
+        if(pasteFailed)Text(cloudText("请复制一个完整的好友码。","Copy one complete friend code."),
+            style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.error)
+        NativeAction(cloudText("发送邀请","Send invite"),::send,Modifier.fillMaxWidth(),enabled=canSend,primary=false,icon="plus")
     }
 }
 

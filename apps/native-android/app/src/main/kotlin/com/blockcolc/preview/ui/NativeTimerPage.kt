@@ -55,12 +55,12 @@ import java.util.*
     // already committed round/rest has resumed. Both faces share its clock.
     val workbenchDuration=!immersive&&timer.mode!=PlanMode.MARATHON&&timer.surface in setOf(TimerSurface.IDLE,TimerSurface.PREPARED)
     val extensionElapsed=timer.extensionStartedAt?.let{(now-DomainTime.millis(it)).coerceAtLeast(0)}
-    val clock=formalClock(extensionElapsed?:if(workbenchDuration)(if(project?.habit==true)s.preferences.habitFocusMinutes else s.preferences.focusMinutes)*60000L else remaining,
+    val roundMs=s.plannedFocusMs?:(if(project?.habit==true)s.preferences.habitFocusMinutes else s.preferences.focusMinutes)*60000L
+    val clock=formalClock(extensionElapsed?:if(workbenchDuration)roundMs else remaining,
         countUp=extensionElapsed!=null)
     // Plans show when they end, not only how long they take.
     val roundCount=timer.totalRounds.coerceAtLeast(1)
-    val roundMinutes=if(project?.habit==true)s.preferences.habitFocusMinutes else s.preferences.focusMinutes
-    val plannedMs=if(timer.surface==TimerSurface.PREPARED)timer.remainingMs else roundMinutes*60000L*roundCount+s.preferences.breakMinutes*60000L*(roundCount-1)
+    val plannedMs=if(timer.surface==TimerSurface.PREPARED)timer.remainingMs else roundMs*roundCount+s.preferences.breakMinutes*60000L*(roundCount-1)
     val planEnds=formalEndLabel(timer.deadline?.let(DomainTime::millis)?:now+plannedMs,now)
     val planSummary=ui.text("{0} · 预计 {1} 结束",ui.rounds(roundCount),planEnds)
     val startLabel=if(timer.mode==PlanMode.MARATHON)ui.text("开始专注")else if(roundCount==1)ui.text("开始 1 轮")else ui.text("开始 {0} 轮",roundCount)
@@ -106,7 +106,7 @@ import java.util.*
                     }
                     Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(LocalNativePageScroll.current?:rememberScrollState()),verticalArrangement=Arrangement.spacedBy(8.dp),horizontalAlignment=Alignment.CenterHorizontally){
                         NativeText(if(timer.mode==PlanMode.MARATHON)ui.text("按结束时间排程")else if(project.habit)s.blueprintNames[s.projects.find{it.id==project.id}?.blueprint]?:project.title else task?.title?:project.title,NativeTextRole.SECTION,Modifier.fillMaxWidth())
-                        if(project.habit)NativeText("${details?.habitApplied?:0} / ${details?.habitTarget?:0} ${ui.text("轮")}",NativeTextRole.CAPTION,Modifier.fillMaxWidth())
+                        if(project.habit)NativeText(ui.text("{0} / {1} 轮",details?.habitApplied?:0,details?.habitTarget?:0),NativeTextRole.CAPTION,Modifier.fillMaxWidth())
                         Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
                             NativeText(planSummary,NativeTextRole.CAPTION,Modifier.weight(1f))
                             FormalTextAction(ui.text("调整"),"edit",::adjust,enabled=!s.busy)
@@ -171,7 +171,7 @@ import java.util.*
                                 NativeText("${(task?.progress?:0)/100}%",NativeTextRole.CAPTION)
                             }
                         }
-                        val plan=if(compact&&!marathon)ui.text("{0} × {1} · 预计 {2} 结束",ui.rounds(roundCount),formatDuration(roundMinutes*60000L),planEnds)else planSummary
+                        val plan=if(compact&&!marathon)ui.text("{0} × {1} · 预计 {2} 结束",ui.rounds(roundCount),formatDuration(roundMs),planEnds)else planSummary
                         val adjustInteraction=remember{MutableInteractionSource()}
                         Row(Modifier.fillMaxWidth().heightIn(min=44.dp).clickable(enabled=!s.busy,interactionSource=adjustInteraction,indication=null,onClick=::adjust)
                             .nativePressMotion(adjustInteraction,!s.busy),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(8.dp)){
@@ -179,7 +179,7 @@ import java.util.*
                             NativeText(plan,NativeTextRole.CAPTION,Modifier.weight(1f))
                             FormalTextAction(ui.text("调整"),"edit",::adjust,Modifier.widthIn(min=80.dp),!s.busy)
                         }
-                        if(!compact)Column(Modifier.fillMaxWidth().weight(1f).heightIn(min=76.dp),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.Center){
+                        if(!compact||marathon)Column(Modifier.fillMaxWidth().weight(1f).heightIn(min=76.dp),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.Center){
                             NativeText(ui.text(if(marathon)"剩余总时长"else"每轮时长"),NativeTextRole.CAPTION)
                             Spacer(Modifier.height(4.dp));NativeText(clock,NativeTextRole.CLOCK,accent=true)
                             NativeDateCountdown(countdown,now,Modifier.padding(top=4.dp))
@@ -338,10 +338,12 @@ import java.util.*
 /** Clock time a plan ends; a later day is named rather than implied. */
 @Composable internal fun formalEndLabel(endsAt:Long,now:Long):String{
     val ui=LocalNativeUi.current;val zone=java.time.ZoneId.systemDefault()
-    val end=java.time.Instant.ofEpochMilli(endsAt).atZone(zone)
-    val days=java.time.temporal.ChronoUnit.DAYS.between(java.time.Instant.ofEpochMilli(now).atZone(zone).toLocalDate(),end.toLocalDate())
-    val time=String.format(Locale.ROOT,"%02d:%02d",end.hour,end.minute)
-    return when{days<=0L->time;days==1L->ui.text("明天")+" "+time;else->"${end.monthValue}/${end.dayOfMonth} $time"}
+    return remember(endsAt/60_000,now/60_000,ui,zone){
+        val end=java.time.Instant.ofEpochMilli(endsAt).atZone(zone)
+        val days=java.time.temporal.ChronoUnit.DAYS.between(java.time.Instant.ofEpochMilli(now).atZone(zone).toLocalDate(),end.toLocalDate())
+        val time=String.format(Locale.ROOT,"%02d:%02d",end.hour,end.minute)
+        when{days<=0L->time;days==1L->ui.text("明天")+" "+time;else->"${end.monthValue}/${end.dayOfMonth} $time"}
+    }
 }
 
 internal fun formalClock(ms:Long,countUp:Boolean=false):String{

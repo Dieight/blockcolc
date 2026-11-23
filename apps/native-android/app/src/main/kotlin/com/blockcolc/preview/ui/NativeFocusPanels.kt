@@ -36,7 +36,11 @@ data class PlanEditorModel(val token:String=UUID.randomUUID().toString(),val pro
     var hint by remember{mutableStateOf(true)}
     // Shown on entry; a single tap on the panel shows it again for a moment.
     var localRequest by remember{mutableIntStateOf(0)}
-    LaunchedEffect(hintRequest+localRequest){hint=true;kotlinx.coroutines.delay(if(hintRequest+localRequest==0)3800 else 3000);hint=false}
+    LaunchedEffect(hintRequest,localRequest){
+        hint=true
+        kotlinx.coroutines.delay(if(hintRequest==0&&localRequest==0)3800 else 3000)
+        hint=false
+    }
     fun toggleEndControl(){revealed=!revealed;hint=false}
     val drawReceipt=if(BuildConfig.BUILD_TYPE=="benchmark"&&enabled){
         val reported=remember{booleanArrayOf(false)}
@@ -58,7 +62,12 @@ data class PlanEditorModel(val token:String=UUID.randomUUID().toString(),val pro
             customActions=listOf(CustomAccessibilityAction(ui.text(if(revealed)"隐藏结束操作"else"显示结束操作")){if(enabled){toggleEndControl();true}else false})
         }.focusable(enabled),contentAlignment=Alignment.Center){
         if(revealed)FormalGlassAction(ui.text("结束本次专注"),onEnd,enabled=enabled,danger=true,onDoubleClick=::toggleEndControl)
-        else if(hint)NativeText(ui.text("双击下方空白处唤出结束按钮"),NativeTextRole.CAPTION)
+        else if(hint){
+            val colors=MaterialTheme.colorScheme
+            NativeText(ui.text("双击下方空白处唤出结束按钮"),NativeTextRole.CAPTION,
+                Modifier.padding(horizontal=8.dp).background(colors.inverseSurface).padding(horizontal=8.dp,vertical=4.dp),
+                color=colors.inverseOnSurface)
+        }
     }
 }
 

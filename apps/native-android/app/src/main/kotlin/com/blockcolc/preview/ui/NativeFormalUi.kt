@@ -97,8 +97,10 @@ internal enum class NativeTextRole { CAPTION, BODY, SECTION, TITLE, NUMBER, CLOC
 @Composable internal fun FormalRoundPips(total:Int,filled:Int,modifier:Modifier=Modifier,cell:Dp=8.dp){
     if(total !in 1..12)return
     val ink=MaterialTheme.colorScheme.primary
-    Canvas(modifier.size(width=cell*total+3.dp*(total-1),height=cell).clearAndSetSemantics{}){
-        val edge=cell.toPx();val gap=3.dp.toPx();val stroke=1.5.dp.toPx()
+    val width=cell*total+3.dp*(total-1)
+    Canvas(modifier.size(width=width,height=cell).clearAndSetSemantics{}){
+        val scale=minOf(1f,size.width/width.toPx(),size.height/cell.toPx())
+        val edge=cell.toPx()*scale;val gap=3.dp.toPx()*scale;val stroke=1.5.dp.toPx()*scale
         repeat(total){index->
             val x=index*(edge+gap)
             if(index<filled)drawRect(ink,Offset(x,0f),Size(edge,edge))

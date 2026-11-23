@@ -214,8 +214,9 @@ import java.util.UUID
                     NativeSettingLink(ui.text("日期"),{sheet=NativeDateDraft(null,savedMonth,savedDay)},value="%02d / %02d".format(savedMonth,savedDay),
                         modifier=Modifier.testTag("birthday-date"))
                 }
-                NativeRequestError(birthdaySave)
-                NativeDateSheet(sheet,ui.text("生日祝福"),{if(!birthdaySave.busy)sheet=null},pending=birthdaySave.busy){draft->
+                if(sheet==null)NativeRequestError(birthdaySave)
+                NativeDateSheet(sheet,ui.text("生日祝福"),{if(!birthdaySave.busy)sheet=null},
+                    pending=birthdaySave.busy,feedback={NativeRequestError(birthdaySave)}){draft->
                     birthdaySave.submit{runtime.dispatch(WorkspaceMutation.Birthday(true,draft.month,draft.day),it)}
                 }
             }

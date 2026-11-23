@@ -35,7 +35,7 @@ internal fun nativeDateDraft(year:String?,month:String,day:String,withYear:Boole
 /** The one date editor behind every date row in Settings. A row opens it and
  * the date is saved here, once; nothing changes until Save. */
 @Composable internal fun NativeDateSheet(model:NativeDateDraft?,title:String,onClose:()->Unit,pending:Boolean=false,
-    caption:@Composable (NativeDateDraft)->String?={null},onSave:(NativeDateDraft)->Unit){
+    caption:@Composable (NativeDateDraft)->String?={null},feedback:@Composable ()->Unit={},onSave:(NativeDateDraft)->Unit){
     val ui=LocalNativeUi.current
     NativeSheet(model,{title},onClose,dismissible=!pending){initial->
         var year by rememberSaveable(initial){mutableStateOf(initial.year?.toString())}
@@ -50,6 +50,7 @@ internal fun nativeDateDraft(year:String?,month:String,day:String,withYear:Boole
         val message=if(draft==null)ui.text("日期无效")else caption(draft)
         if(message!=null)Text(message,style=MaterialTheme.typography.bodySmall,
             color=if(draft==null)MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary)
+        feedback()
         NativeAction(ui.text("保存"),{draft?.let(onSave)},Modifier.fillMaxWidth(),pending=pending,enabled=draft!=null)
     }
 }

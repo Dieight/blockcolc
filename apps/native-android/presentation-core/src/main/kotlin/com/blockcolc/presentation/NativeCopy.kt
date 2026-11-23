@@ -162,7 +162,7 @@ internal object NativeCopy {
         "还差 {0} · 约 {1}" to "{0} to go · about {1}",
         "今日目标已达成" to "Daily goal reached",
         "第 {0} 座 · {1} / {2} 轮" to "Building {0} · {1} / {2} rounds",
-        "已删除“{0}”" to "Deleted “{0}”",
+        "待删除“{0}”" to "Removing “{0}”",
         "撤销" to "Undo",
         "{0}的投入" to "Focus time · {0}",
         "{0} – {1} · 共 {2} 天" to "{0} – {1} · {2} days",

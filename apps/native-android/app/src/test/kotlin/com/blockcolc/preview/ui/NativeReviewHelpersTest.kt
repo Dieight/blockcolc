@@ -25,14 +25,13 @@ class NativeReviewHelpersTest {
     }
 
     @Test fun pixelCellsUseWholeDevicePixelsAndStayCentred(){
-        // 20dp at 2.75x is 55px: 4.58px per cell becomes 5px.
-        assertEquals(5f,nativePixelCell(55f/12),0f)
-        // 2.625x (52.5px) rounds down to 4px; exact sizes are untouched.
+        // The 12 columns fit inside all 55px at 2.75x.
+        assertEquals(4f,nativePixelCell(55f/12),0f)
         assertEquals(4f,nativePixelCell(52.5f/12),0f)
         assertEquals(5f,nativePixelCell(60f/12),0f)
         // Below one pixel per cell the fraction is kept rather than vanishing.
         assertEquals(.5f,nativePixelCell(.5f),0f)
-        assertEquals(-2f,nativePixelOrigin(55f,60f),0f)
+        assertEquals(4f,nativePixelOrigin(55f,48f),0f)
         assertEquals(4f,nativePixelOrigin(56f,48f),0f)
     }
 
@@ -56,6 +55,10 @@ class NativeReviewHelpersTest {
         assertEquals("${code.substring(0,6)} ${code.substring(6,12)} ${code.substring(12)}",groupedFriendCode(code))
         assertEquals(code,pastedFriendCode("我的方块钟好友码：${groupedFriendCode(code)}"))
         assertEquals(code,pastedFriendCode("Code: ${code.lowercase()}"))
+        assertEquals(code,pastedFriendCode("code $code"))
+        assertNull(pastedFriendCode("A$code"))
+        assertNull(pastedFriendCode("${groupedFriendCode(code)} ABCDEF"))
+        assertNull(pastedFriendCode("$code / ${code.reversed()}"))
         assertFalse(isFriendCode(code.dropLast(1)))
         assertFalse(isFriendCode(code.dropLast(1)+"G"))
         assertFalse(isFriendCode(normalizeFriendCode("好友码")))

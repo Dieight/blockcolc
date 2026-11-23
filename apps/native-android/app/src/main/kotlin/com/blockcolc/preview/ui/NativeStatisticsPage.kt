@@ -204,7 +204,7 @@ import java.time.LocalDate
         else ui.text("{0} – {1} · 共 {2} 天",from.format(dayFormat),to.format(dayFormat),java.time.temporal.ChronoUnit.DAYS.between(from,to)+1)
     Row(Modifier.fillMaxWidth().heightIn(min=44.dp),verticalAlignment=androidx.compose.ui.Alignment.CenterVertically){
         NativeIconAction(ui.text("前一天"),"chevron",{move(-1,false)},Modifier.graphicsLayer{rotationZ=90f},enabled=cursor>start.toString())
-        Box(Modifier.weight(1f),contentAlignment=androidx.compose.ui.Alignment.Center){NativeText(selection,NativeTextRole.BODY,maxLines=1)}
+        Box(Modifier.weight(1f),contentAlignment=androidx.compose.ui.Alignment.Center){NativeText(selection,NativeTextRole.BODY,maxLines=2)}
         NativeIconAction(ui.text("后一天"),"chevron",{move(1,false)},Modifier.graphicsLayer{rotationZ=-90f},enabled=cursor<workspace.today)
         if(selectedFrom!=workspace.today||selectedTo!=workspace.today)FormalTextAction(ui.text("今天"),"",{keyboardAnchor=null;cursor=workspace.today;onSelection(workspace.today,workspace.today)})
     }
@@ -230,6 +230,11 @@ import java.time.LocalDate
         }
         labels.forEachIndexed{index,layout->drawText(layout,color=muted,topLeft=Offset(left-8.dp.toPx()-layout.size.width,top+rowHeight*index+(rowHeight-layout.size.height)/2))}
         val side=minOf(8.dp.toPx(),step*.68f,rowHeight*.68f)
+        val clearance=minOf(step,rowHeight)-side
+        val selectionStroke=minOf(1.5.dp.toPx(),clearance/2)
+        val selectionInset=minOf(2.dp.toPx(),(clearance-selectionStroke)/2)
+        val tickHeight=minOf(2.dp.toPx(),(rowHeight-side)/4)
+        val tickWidth=minOf(3.dp.toPx(),side)
         for((index,date)in dates.withIndex()){
             if(date>workspace.today)continue
             val column=index/7;val row=index%7;val actual=heatmapBand(days[date]?.durationMs?:0)
@@ -237,9 +242,12 @@ import java.time.LocalDate
             val opacity=if(band==null||band==actual)1f else .18f
             if(actual>0&&column>=progress.value)drawRect(palette[0].copy(alpha=opacity),origin,Size(side,side))
             else drawFocusHeatmapCell(palette,actual,origin,side,opacity)
-            if(date in selectedFrom..selectedTo){val gap=2.dp.toPx();val stroke=1.5.dp.toPx()
-                drawRect(ink,Offset(origin.x-gap,origin.y-gap),Size(side+2*gap,side+2*gap),style=androidx.compose.ui.graphics.drawscope.Stroke(stroke))}
-            if(date==workspace.today)drawRect(todayMark,Offset(origin.x+side/2-1.5.dp.toPx(),origin.y+side+3.dp.toPx()),Size(3.dp.toPx(),2.dp.toPx()))
+            if(date in selectedFrom..selectedTo){
+                val edge=side+2*selectionInset
+                drawRect(ink,origin-Offset(selectionInset,selectionInset),Size(edge,edge),
+                    style=androidx.compose.ui.graphics.drawscope.Stroke(selectionStroke))
+            }
+            if(date==workspace.today)drawRect(todayMark,Offset(origin.x+(side-tickWidth)/2,top+(row+1)*rowHeight-tickHeight),Size(tickWidth,tickHeight))
             if(band==4&&date==longest&&actual==4){val path=androidx.compose.ui.graphics.Path().apply{moveTo(origin.x,origin.y-2.dp.toPx());lineTo(origin.x+side,origin.y-2.dp.toPx());lineTo(origin.x+side/2,origin.y-side/2-2.dp.toPx());close()};drawPath(path,ink)}
         }
     }

@@ -31,7 +31,7 @@ class WorkspaceCommandsTest {
             WorkspaceMutation.AddNote("n",title) to cmd("AddQuickNote","noteId" to "n","text" to title),
             WorkspaceMutation.RenameNote("n",title) to cmd("RenameQuickNote","noteId" to "n","text" to title),
             WorkspaceMutation.CompleteNote("n",true) to cmd("SetQuickNoteCompleted","noteId" to "n","completed" to true),
-            WorkspaceMutation.DeleteNote("n") to cmd("DeleteQuickNote","noteId" to "n"),
+            WorkspaceMutation.DeleteNote("n","typed:0") to cmd("DeleteQuickNote","noteId" to "n"),
             WorkspaceMutation.DailyGoal("2026-10-25",0) to cmd("DisableDailyGoal","date" to "2026-10-25"),
             WorkspaceMutation.DailyGoal("2026-10-25",8) to cmd("SetDailyGoal","date" to "2026-10-25","targetPomodoros" to 8),
             WorkspaceMutation.Integrity(true,2,15) to cmd("ConfigureFocusIntegrity","enabled" to true,"maxEffectiveExcursions" to 2,"excursionThresholdSeconds" to 15),
@@ -44,6 +44,20 @@ class WorkspaceCommandsTest {
         assertEquals("p",WorkspaceCommands.encode(WorkspaceMutation.RenameProject("p",title)).expectedProject)
         assertEquals("h",WorkspaceCommands.encode(WorkspaceMutation.NextHabitBuilding("h","house",12)).expectedProject)
         assertNull(WorkspaceCommands.encode(WorkspaceMutation.AddNote("n",title)).expectedProject)
+    }
+    @Test fun delayedNoteRemovalCannotDeleteTheSameNoteAfterBackupRestore()=coordinator{c,_->
+        val original=WorkspaceCommands.commit(c,"add-note",WorkspaceMutation.AddNote("n","待复习"),now).state
+        val pending=WorkspaceMutation.DeleteNote("n",c.workspaceContext(original.token.replacementGeneration))
+        val backup=BackupCodec.read(BackupCodec.write(original.domain,DomainTime.format(now)))
+        val restored=c.importBackup("restore-note",backup,now+1).state
+
+        val result=runCatching{WorkspaceCommands.commit(c,"stale-delete",pending,now+2)}
+        assertEquals("WORKSPACE_CHANGED",(result.exceptionOrNull() as? FocusFailure)?.reason)
+        assertEquals(restored.domain,c.load().domain)
+
+        val current=pending.copy(expectedWorkspace=c.workspaceContext(restored.token.replacementGeneration))
+        val deleted=WorkspaceCommands.commit(c,"delete-note",current,now+3).state
+        assertEquals(0,deleted.domain.projectionJson().getJSONArray("quickNotes").length())
     }
     private fun coordinator(block:(FocusCoordinator,JdbcStateDatabase)->Unit){
         JdbcStateDatabase(temporary.newFolder().toPath().resolve("state.db")).use{db->

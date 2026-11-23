@@ -45,20 +45,23 @@ import kotlinx.coroutines.delay
     val held=remember{mutableStateMapOf<String,NoteRow>()}
     // Deleting leaves a short undo window; the saved delete follows it. A
     // submitted delete stays hidden until its receipt arrives.
-    var removed by remember{mutableStateOf<Pair<NoteRow,Long>?>(null)}
+    var removed by remember{mutableStateOf<PendingNoteRemoval?>(null)}
     val deleting=remember{mutableStateMapOf<String,String>()}
     var deleteFailed by remember{mutableStateOf(false)}
-    val generation by rememberUpdatedState(s.generation)
-    fun commitDelete(note:NoteRow){
-        val request=UUID.randomUUID().toString();deleting[request]=note.id;deleteFailed=false
-        runtime.dispatch(WorkspaceMutation.DeleteNote(note.id),request)
+    fun commitDelete(pending:PendingNoteRemoval){
+        val request=UUID.randomUUID().toString();deleting[request]=pending.note.id;deleteFailed=false
+        runtime.dispatch(WorkspaceMutation.DeleteNote(pending.note.id,pending.workspace),request)
     }
-    fun startDelete(note:NoteRow){removed?.let{(previous,_)->commitDelete(previous)};removed=note to s.generation}
-    LaunchedEffect(removed){val pending=removed?:return@LaunchedEffect;delay(5000);if(removed==pending){removed=null;commitDelete(pending.first)}}
+    fun startDelete(note:NoteRow){
+        val workspace=s.roomContext?:return
+        removed?.let(::commitDelete)
+        removed=PendingNoteRemoval(note,workspace)
+    }
+    LaunchedEffect(removed){val pending=removed?:return@LaunchedEffect;delay(5000);if(removed==pending){removed=null;commitDelete(pending)}}
     LaunchedEffect(s.receipts){for((request,_) in deleting.toMap()){val receipt=s.receipts.find{it.id==request}?:continue;deleting.remove(request);if(!receipt.saved)deleteFailed=true}}
-    // Leaving early (minimal mode closed) still deletes, unless records were replaced meanwhile.
-    DisposableEffect(Unit){onDispose{removed?.let{(note,from)->if(from==generation)commitDelete(note)};removed=null}}
-    val hidden=deleting.values.toSet()+setOfNotNull(removed?.first?.id)
+    // Leaving early still submits the delete for the workspace where it began.
+    DisposableEffect(s.roomContext){onDispose{removed?.let(::commitDelete);removed=null}}
+    val hidden=deleting.values.toSet()+setOfNotNull(removed?.note?.id)
     val active=(s.notes.filter{!it.completed||it.id in held}.map{held[it.id]?:it}+
         held.values.filter{note->s.notes.none{it.id==note.id}}).filter{it.id !in hidden}
     val done=s.notes.filter{it.completed&&it.id !in held&&it.id !in hidden}
@@ -81,9 +84,9 @@ import kotlinx.coroutines.delay
         }
         Column(Modifier.fillMaxWidth().then(if(compact)Modifier.weight(1f)else Modifier.heightIn(max=320.dp)).verticalScroll(rememberScrollState())){
             for(note in active)key(note.id){NativeNoteRow(note,false,s,runtime,{held[note.id]=note},{held.remove(note.id)},::startDelete)}
-            removed?.first?.let{note->
+            removed?.note?.let{note->
                 Row(Modifier.fillMaxWidth().heightIn(min=44.dp).semantics{liveRegion=LiveRegionMode.Polite},verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(8.dp)){
-                    NativeText(ui.text("已删除“{0}”",note.text),NativeTextRole.CAPTION,Modifier.weight(1f),maxLines=1)
+                    NativeText(ui.text("待删除“{0}”",note.text),NativeTextRole.CAPTION,Modifier.weight(1f),maxLines=1)
                     FormalTextAction(ui.text("撤销"),"back",{removed=null})
                 }
             }
@@ -104,6 +107,8 @@ import kotlinx.coroutines.delay
         NativeRequestError(create)
     }
 }
+
+private data class PendingNoteRemoval(val note:NoteRow,val workspace:String)
 
 @Composable private fun NativeNoteInput(label:String,value:TextFieldValue,onChange:(TextFieldValue)->Unit,modifier:Modifier=Modifier,enabled:Boolean=true,placeholder:String?=null,compact:Boolean=false,onDone:()->Unit){
     val ink=LocalContentColor.current

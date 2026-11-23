@@ -153,7 +153,7 @@ import java.util.concurrent.atomic.AtomicReference
     fun tr(zh:String,en:String)=if(english)en else zh
     var username by rememberSaveable{mutableStateOf("")};var password by remember{mutableStateOf("")};var registration by rememberSaveable{mutableStateOf(false)}
     var restoreConfirm by remember{mutableStateOf(false)};var logoutConfirm by remember{mutableStateOf(false)}
-    var removing by remember{mutableStateOf<JSONObject?>(null)}
+    var removing by remember(friendsOpen,view.account?.optString("id")){mutableStateOf<String?>(null)}
     var passwordOpen by remember{mutableStateOf(false)}
     var passwordPending by remember{mutableStateOf(false)}
     var policyOpen by rememberSaveable{mutableStateOf(false)}
@@ -289,10 +289,13 @@ import java.util.concurrent.atomic.AtomicReference
         Text(tr("本机当前内容会先保留回滚点。其他设备需重新选择同步方式。","A local rollback is kept first. Other devices must choose how to sync again."))
         NativeAction(tr("确认恢复","Restore"),{commitAccount.get().invoke();restoreConfirm=false;controller.restoreBackup()},Modifier.fillMaxWidth())
     }
-    NativeSheet(removing?.takeIf{friendsOpen},{tr("移除好友？","Remove friend?")},{removing=null}){friend->
-        val name=friend.optString("name")
+    val removable=view.friends.find{it.optString("id")==removing&&it.optString("status")=="accepted"}
+    NativeSheet(removing?.takeIf{friendsOpen&&removable!=null},{tr("移除好友？","Remove friend?")},{removing=null}){id->
+        val name=removable?.optString("name").orEmpty()
         Text(tr("移除 $name 后，你们将不再看到彼此的专注状态和热力图。重新添加需要对方再次接受邀请。","After removing $name, neither of you will see the other's focus status or heatmap. Adding them again needs a new invite."))
-        NativeAction(tr("确认移除","Remove"),{removing=null;controller.respond(friend.getString("id"),"remove")},Modifier.fillMaxWidth(),enabled=!view.busy,danger=true,icon="close")
+        NativeAction(tr("确认移除","Remove"),{
+            if(removing==id&&removable!=null){removing=null;controller.respond(id,"remove")}
+        },Modifier.fillMaxWidth(),enabled=!view.busy&&removing==id&&removable!=null,danger=true,icon="close")
     }
     NativeSheet(Unit.takeIf{logoutConfirm},{tr("退出登录？","Sign out?")},{logoutConfirm=false}){
         Text(tr("本机内容保留，停止云同步与好友状态上传。","Local data stays. Cloud sync and friend updates stop."))

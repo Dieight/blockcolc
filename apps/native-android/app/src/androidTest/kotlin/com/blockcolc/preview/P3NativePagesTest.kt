@@ -845,7 +845,11 @@ class P3NativePagesTest {
         compose.waitUntil(60000){renderedWorld()!=null}
         val world=checkNotNull(renderedWorld())
         compose.waitUntil(60000){compose.onAllNodesWithText("正在建造世界").fetchSemanticsNodes().isEmpty()}
-        compose.waitUntil(10000){worldDiagnostic(world).getLong("environmentUpdates")>0}
+        compose.waitUntil(15000){
+            val frame=worldDiagnostic(world,false)
+            val navigation=frame.optJSONObject("navigation")
+            frame.getLong("environmentUpdates")>0&&navigation?.optString("selected")=="work"&&!navigation.getBoolean("opening")
+        }
         val owner=AtomicReference<com.blockcolc.preview.environment.NativeEnvironmentSession>()
         InstrumentationRegistry.getInstrumentation().runOnMainSync{owner.set(com.blockcolc.preview.environment.NativeEnvironmentSession.get(context,runtime,com.blockcolc.audio.NativeAudioController.get(context)))}
         fun facts():com.blockcolc.world.NativeAtmosphereFacts?{val result=AtomicReference<com.blockcolc.world.NativeAtmosphereFacts?>()
@@ -1134,7 +1138,7 @@ class P3NativePagesTest {
         val confirmed=runtime.testRead().get(30,TimeUnit.SECONDS)
         assertEquals(2,confirmed.recovery.plan!!.totalRounds);assertTrue(confirmed.domain.json().isNull("activeFocusSession"))
         screen("prepared-two-rounds")
-        compose.onNodeWithText("开始 2 轮").performScrollTo().performClick()
+        compose.onNodeWithText("开始 2 轮").assertIsDisplayed().performClick()
         compose.waitUntil(10000){runtime.latest.phase=="FOCUS"}
         assertEquals(2,runtime.latest.timer!!.totalRounds)
         compose.waitUntilAtLeastOneExists(hasContentDescription("专注操作区"),10000)
@@ -1192,7 +1196,7 @@ class P3NativePagesTest {
             val root=compose.onRoot().fetchSemanticsNode().boundsInRoot
             val panel=compose.onNodeWithTag("formal-normal-workbench").fetchSemanticsNode().boundsInRoot
             assertTrue("Landscape timer docks beside the world",panel.left>root.width*.45f)
-            compose.onNodeWithText(caption("开始 {0} 轮",1)).assertIsDisplayed()
+            compose.onNodeWithText(caption("开始 1 轮")).assertIsDisplayed()
             screen("review-wide-timer")
         }
         nav(caption("任务"));screen("review-$language-$font-tasks")
@@ -1341,7 +1345,7 @@ class P3NativePagesTest {
         }else{
             val startLabel=if(mode==PlanMode.ROUNDS)"开始 2 轮"else"开始专注"
             compose.waitUntilAtLeastOneExists(hasText(startLabel),10000)
-            compose.onNodeWithText(startLabel).performScrollTo().performClick()
+            compose.onNodeWithText(startLabel).assertIsDisplayed().performClick()
         }
         compose.waitUntil(10000){runtime.latest.phase=="FOCUS"}
         assertEquals(2,runtime.latest.timer!!.totalRounds)
@@ -1384,7 +1388,7 @@ class P3NativePagesTest {
                 compose.onNode(hasText("写作工程") and hasClickAction()).performScrollTo().performClick()
                 compose.onAllNodesWithText("保持 0%").onFirst().performScrollTo().performClick()
                 compose.onAllNodesWithContentDescription("增加轮数").onLast().performScrollTo().performClick()
-                compose.onNodeWithText("已分配 2 / 2 轮 · 未分配 0").performScrollTo().assertIsDisplayed()
+                compose.onNodeWithText("已分配 2 / 2 轮").performScrollTo().assertIsDisplayed()
                 screen("flow-${mode.name.lowercase()}-report")
                 compose.onNodeWithText("一次提交本次推进").performScrollTo().performClick()
             }
@@ -2247,9 +2251,13 @@ class P3NativePagesTest {
         val original=runtime.testRead().get(30,TimeUnit.SECONDS).domain.sha256
         val preferences=runtime.latest.preferences
         val search=compose.onNodeWithTag("settings-search").performScrollTo()
-        compose.onNodeWithText("搜索设置",useUnmergedTree=true).assertIsDisplayed()
+        val label=compose.onNodeWithText("搜索设置",useUnmergedTree=true)
+        fun labelInset()=label.fetchSemanticsNode().boundsInRoot.top-search.fetchSemanticsNode().boundsInRoot.top
+        val restingInset=labelInset()
+        search.performClick()
+        compose.waitUntil(10000){runCatching{labelInset()<restingInset-8f}.getOrDefault(false)}
         search.performTextInput("字体")
-        compose.onNodeWithText("搜索设置",useUnmergedTree=true).assertDoesNotExist()
+        label.assertIsDisplayed()
         compose.onNodeWithTag("settings-result-字体").assertTextContains("外观与阅读").performClick()
         compose.waitUntil(10000){runCatching{compose.onNodeWithText("混合字体").assertIsDisplayed()}.isSuccess}
         compose.onNodeWithText("混合字体").assertIsDisplayed()
@@ -2370,6 +2378,15 @@ class P3NativePagesTest {
             "subtasks" to JSONArray().put(JSONObject().put("id","goal").put("title","确定目标")).put(JSONObject().put("id","work").put("title","完成核心工作")).put(JSONObject().put("id","check").put("title","检查并收尾"))),System.currentTimeMillis())
         check(result.ok){result.error.orEmpty()};return result.state
     }
+    @Test fun startStaysVisibleOnTheCompactWorkbench()=run(formalUiInitial()){
+        val start=compose.onNodeWithText("开始 1 轮").assertIsDisplayed()
+        val panel=compose.onNodeWithTag("formal-normal-workbench").fetchSemanticsNode().boundsInRoot
+        assertTrue("Start must fit inside the workbench",start.fetchSemanticsNode().boundsInRoot.bottom<=panel.bottom)
+        screen("compact-timer")
+        start.performClick()
+        compose.waitUntil(10000){runtime.latest.phase=="FOCUS"}
+    }
+
     @Test fun formalWorkbenchPagesAndMinimalControlsMatchSourceGeometry()=run(formalUiInitial(),configure={it.copy(themeMode="light",fontStyle="pixel",focusMinutes=25,breakMinutes=5,quickNotesEnabled=false)}){
         compose.onNodeWithText("我的第一座工坊").assertIsDisplayed()
         compose.onNodeWithText(" · 第 1 / 3 项").assertIsDisplayed();compose.onNodeWithText("确定目标").assertIsDisplayed()

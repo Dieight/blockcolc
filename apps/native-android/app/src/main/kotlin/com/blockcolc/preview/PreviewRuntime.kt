@@ -483,7 +483,7 @@ class PreviewRuntime private constructor(private val context: Context):Workspace
         val p = state.recovery.plan
         // Archive listing belongs to the backup panel, not every timer/state
         // adoption. Never advertise a retained list as newly verified.
-        val room="${c.databaseIdentity}:${state.token.replacementGeneration}"
+        val room=c.workspaceContext(state.token.replacementGeneration)
         val root=latest.roots.takeIf{latest.roomContext==room}.orEmpty()
         fun rows(name: String) = s.getJSONArray(name).let { a -> List(a.length()) { a.getJSONObject(it) } }
         val projects = rows("projects").map { item ->

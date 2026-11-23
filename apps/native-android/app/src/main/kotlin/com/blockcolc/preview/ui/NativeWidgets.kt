@@ -49,8 +49,8 @@ import kotlin.math.sin
 
 /** Pixel art needs whole device pixels per cell: a fractional cell (20dp is
  * 4.58px per cell at 2.75x) antialiases its edges and makes columns uneven.
- * The nearest whole cell keeps the glyph within one cell of its design size. */
-internal fun nativePixelCell(exact:Float):Float=if(exact>=1f)kotlin.math.round(exact)else exact
+ * Use the largest whole cell that fits the glyph's allotted bounds. */
+internal fun nativePixelCell(exact:Float):Float=if(exact>=1f)kotlin.math.floor(exact)else exact
 internal fun nativePixelOrigin(extent:Float,used:Float):Float=kotlin.math.round((extent-used)/2f)
 
 @Composable fun NativeBrand(modifier:Modifier=Modifier){

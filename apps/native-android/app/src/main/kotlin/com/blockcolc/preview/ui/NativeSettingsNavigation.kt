@@ -3,11 +3,8 @@ package com.blockcolc.preview.ui
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
@@ -47,21 +44,18 @@ internal val LocalSettingsJump=staticCompositionLocalOf<SettingsJump?>{null}
     val results=remember(query){SettingsCatalog.search(query)}
     fun go(entry:SettingsEntry){focus.clearFocus();keyboard?.hide();jump.go(entry);query=""}
     val searchLabel=ui.text("搜索设置")
-    // The app's own square input, like notes and task names. Results are
-    // ordinary setting rows that jump to the control.
     val colors=MaterialTheme.colorScheme
-    Row(Modifier.fillMaxWidth().heightIn(min=48.dp).border(1.dp,colors.outline).background(colors.surface).padding(start=12.dp),
-        verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(8.dp)){
-        PixelGlyph("search",Modifier.size(20.dp),colors.onSurfaceVariant)
-        BasicTextField(query,{query=it},Modifier.weight(1f).heightIn(min=44.dp).testTag("settings-search").semantics{contentDescription=searchLabel},
-            singleLine=true,textStyle=MaterialTheme.typography.bodyLarge.copy(color=colors.onSurface),cursorBrush=SolidColor(colors.primary),
-            keyboardOptions=KeyboardOptions(imeAction=ImeAction.Search),keyboardActions=KeyboardActions(onSearch={results.firstOrNull()?.let(::go)}),
-            decorationBox={field->Box(contentAlignment=Alignment.CenterStart){
-                if(query.isEmpty())Text(searchLabel,style=MaterialTheme.typography.bodyLarge,color=colors.onSurfaceVariant)
-                field()
-            }})
-        if(query.isNotEmpty())NativeIconAction(ui.text("清除搜索"),"close",{query=""})
-    }
+    OutlinedTextField(query,{query=it},Modifier.fillMaxWidth().layout{measurable,constraints->
+        // The existing title-to-card gap has room for the floating label.
+        val inset=8.sp.roundToPx()
+        val field=measurable.measure(constraints.offset(vertical=inset))
+        layout(field.width,(field.height-inset).coerceAtLeast(0)){field.placeRelative(0,-inset)}
+    }.testTag("settings-search").semantics{contentDescription=searchLabel},
+        singleLine=true,label={Text(searchLabel)},shape=RectangleShape,textStyle=MaterialTheme.typography.bodyLarge,
+        leadingIcon={PixelGlyph("search",Modifier.size(20.dp),colors.onSurfaceVariant)},
+        trailingIcon=if(query.isNotEmpty()){{NativeIconAction(ui.text("清除搜索"),"close",{query=""})}}else null,
+        keyboardOptions=KeyboardOptions(imeAction=ImeAction.Search),
+        keyboardActions=KeyboardActions(onSearch={results.firstOrNull()?.let(::go)}))
     if(query.isNotBlank()){
         if(results.isEmpty())Text(ui.text("没有找到设置"),style=MaterialTheme.typography.bodySmall)
         else Column(Modifier.fillMaxWidth().border(1.dp,colors.outlineVariant).background(colors.surface).padding(1.dp).padding(horizontal=16.dp)){
