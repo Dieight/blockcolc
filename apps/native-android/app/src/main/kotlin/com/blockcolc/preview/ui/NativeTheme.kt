@@ -19,6 +19,8 @@ import com.blockcolc.preview.R
 
 data class NativeUi(val resources:UiResources,val language:String,val reduceMotion:Boolean,val reduceTransparency:Boolean){
     fun text(key:String,vararg values:Any?)=resources.text(language,key,*values)
+    /** A round count as a phrase; English needs the singular. */
+    fun rounds(count:Int)=if(language=="en")(if(count==1)"1 round" else "$count rounds")else text("{0} 轮",count)
 }
 val LocalNativeUi=compositionLocalOf<NativeUi>{error("Native UI theme is missing")}
 

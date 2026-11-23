@@ -42,6 +42,8 @@ import kotlin.math.*
         // Narrow or large-text windows use one column; labels stay at 12sp.
         val columns=if(maxWidth<280.dp||density.fontScale>1.3f||rows.size==1)1 else 2
         val cellWidth=if(columns==1)maxWidth else (maxWidth-16.dp)/2
+        // Phone-width cards keep the hundred points but spend less height.
+        val clusterHeight=if(maxWidth<320.dp)112.dp else 140.dp
         Box(Modifier.fillMaxWidth().onGloballyPositioned{field=it}){
             Canvas(Modifier.matchParentSize()){
                 for(i in 1 until rows.size){
@@ -55,7 +57,7 @@ import kotlin.math.*
                         val row=rows[index];val label=if(row.first.unknown)ui.text("未分配 / 不可追溯")else row.first.projectTitle
                         Column(Modifier.width(cellWidth),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.spacedBy(4.dp)){
                             androidx.compose.material3.Text(label,style=MaterialTheme.typography.bodySmall,textAlign=TextAlign.Center,maxLines=2,overflow=androidx.compose.ui.text.style.TextOverflow.Ellipsis)
-                            Canvas(Modifier.fillMaxWidth().height(140.dp).onGloballyPositioned{child->field?.takeIf{it.isAttached}?.let{centers[index]=it.localPositionOf(child,Offset(child.size.width/2f,child.size.height/2f))}}){
+                            Canvas(Modifier.fillMaxWidth().height(clusterHeight).onGloballyPositioned{child->field?.takeIf{it.isAttached}?.let{centers[index]=it.localPositionOf(child,Offset(child.size.width/2f,child.size.height/2f))}}){
                                 val scale=minOf(size.width,size.height)/176f;val c=Offset(size.width/2,size.height/2)
                                 val ink=if(row.first.unknown)colors.onSurface.copy(alpha=.5f)else palette[index%palette.size]
                                 repeat(units[index]){k->
@@ -69,7 +71,7 @@ import kotlin.math.*
                                 }
                                 drawRect(ink,c-Offset(2.4f,2.4f)*scale,Size(4.8f*scale,4.8f*scale))
                             }
-                            androidx.compose.material3.Text(formatDuration(row.second),style=MaterialTheme.typography.bodySmall,textAlign=TextAlign.Center)
+                            androidx.compose.material3.Text("${formatDuration(row.second)} · ${units[index]}%",style=MaterialTheme.typography.bodySmall,textAlign=TextAlign.Center)
                         }
                     }
                 }

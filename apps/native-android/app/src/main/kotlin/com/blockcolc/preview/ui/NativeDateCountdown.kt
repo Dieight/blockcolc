@@ -2,6 +2,14 @@ package com.blockcolc.preview.ui
 
 import android.content.Context
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.*
@@ -51,55 +59,45 @@ internal class CountdownPreference(context:Context) {
     val ui=LocalNativeUi.current
     val current=preference.value
     var title by rememberSaveable(current, stateSaver=TextFieldValue.Saver){mutableStateOf(TextFieldValue(current?.title.orEmpty()))}
-    var date by rememberSaveable(current){mutableStateOf(current?.date?.toString())}
-    var picking by rememberSaveable{mutableStateOf(false)}
     var editing by rememberSaveable(current){mutableStateOf(current==null)}
+    var sheet by remember{mutableStateOf<NativeDateDraft?>(null)}
     val today = LocalDate.now()
+    fun draftOf(date:LocalDate)=NativeDateDraft(date.year,date.monthValue,date.dayOfMonth)
+    fun shown(date:LocalDate)="%d / %02d / %02d".format(date.year,date.monthValue,date.dayOfMonth)
     NativeSettingGroup("日期倒计时",current?.let{countdownDays(it.date,today)}){
         if(current!=null&&!editing){
             NativeCountdownLine(current,today,Modifier.fillMaxWidth().padding(vertical=8.dp))
             NativeSeparator()
-            NativeInlineAction(ui.text("目标日期"),{editing=true},"edit",current.date.toString())
+            NativeInlineAction(ui.text("目标日期"),{editing=true},"edit",shown(current.date))
             NativeSeparator()
             NativeInlineAction(ui.text("移除倒计时"),{preference.save(null)},"close")
         }else{
-            OutlinedTextField(title,{if(it.text.length<=48)title=it},Modifier.fillMaxWidth(),
-                label={Text(ui.text("事件名称"))},singleLine=true,shape=androidx.compose.ui.graphics.RectangleShape)
-            NativeSettingLink(ui.text("目标日期"),{picking=true},description=date)
-            NativeInlineAction(ui.text("保存"),{
-                preference.save(DateCountdown(title.text.trim(),LocalDate.parse(checkNotNull(date))))
-                editing=false
-            },"check",enabled=date!=null&&title.composition==null)
+            // The date sheet saves name and date together; Done saves a
+            // renamed countdown without reopening its date.
+            NativeCountdownTitle(ui.text("事件名称"),title,{if(it.text.length<=48)title=it}){
+                if(current!=null){preference.save(current.copy(title=title.text.trim()));editing=false}
+            }
+            NativeSettingLink(ui.text("目标日期"),{sheet=draftOf(current?.date?:today)},value=current?.date?.let(::shown)?:ui.text("未设置"))
         }
     }
-    NativeSheet(date?.let(LocalDate::parse).orToday().takeIf{picking},{ui.text("目标日期")},{picking=false}){initial->
-        CountdownDateFields(initial){value->date=value.toString();picking=false}
+    NativeDateSheet(sheet,ui.text("目标日期"),{sheet=null},caption={draft->draft.date?.let{countdownDays(it,today)}}){draft->
+        preference.save(DateCountdown(title.text.trim(),checkNotNull(draft.date)))
+        sheet=null;editing=false
     }
 }
 
-private fun LocalDate?.orToday()=this?:LocalDate.now()
-
-@Composable private fun CountdownDateFields(initial:LocalDate,onConfirm:(LocalDate)->Unit){
-    val ui=LocalNativeUi.current
-    var year by rememberSaveable(initial){mutableStateOf(initial.year.toString())}
-    var month by rememberSaveable(initial){mutableStateOf(initial.monthValue.toString())}
-    var day by rememberSaveable(initial){mutableStateOf(initial.dayOfMonth.toString())}
-    val value=remember(year,month,day){
-        runCatching{LocalDate.of(year.toInt(),month.toInt(),day.toInt())}
-            .getOrNull()?.takeIf{year.length==4&&it.year>0}
-    }
-    Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){
-        CountdownDateField(ui.text("年份"),year,4,Modifier.weight(1.25f)){year=it}
-        CountdownDateField(ui.text("月份"),month,2,Modifier.weight(1f)){month=it}
-        CountdownDateField(ui.text("日期（日）"),day,2,Modifier.weight(1f)){day=it}
-    }
-    NativeAction(ui.text("确定"),{value?.let(onConfirm)},Modifier.fillMaxWidth(),enabled=value!=null,icon="check")
-}
-
-@Composable private fun CountdownDateField(label:String,value:String,limit:Int,modifier:Modifier,onChange:(String)->Unit){
-    OutlinedTextField(value,{new->if(new.length<=limit&&new.all{it in '0'..'9'})onChange(new)},modifier,
-        label={Text(label)},singleLine=true,keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Number),
-        shape=androidx.compose.ui.graphics.RectangleShape)
+/** The app's square text input (as in notes and task names), not a Material
+ * floating-label field. */
+@Composable private fun NativeCountdownTitle(label:String,value:TextFieldValue,onChange:(TextFieldValue)->Unit,onDone:()->Unit){
+    val colors=MaterialTheme.colorScheme
+    BasicTextField(value,onChange,singleLine=true,textStyle=MaterialTheme.typography.bodyLarge.copy(color=colors.onSurface),cursorBrush=SolidColor(colors.primary),
+        keyboardOptions=KeyboardOptions(imeAction=ImeAction.Done),keyboardActions=KeyboardActions(onDone={if(value.composition==null)onDone()}),
+        modifier=Modifier.fillMaxWidth().padding(vertical=8.dp).heightIn(min=44.dp).border(1.dp,colors.outline).background(colors.surface)
+            .padding(horizontal=12.dp,vertical=10.dp).semantics{contentDescription=label},
+        decorationBox={field->Box(contentAlignment=Alignment.CenterStart){
+            if(value.text.isEmpty())Text(label,style=MaterialTheme.typography.bodyLarge,color=colors.onSurfaceVariant)
+            field()
+        }})
 }
 
 @Composable internal fun NativeDateCountdown(countdown:DateCountdown?,now:Long,modifier:Modifier=Modifier){

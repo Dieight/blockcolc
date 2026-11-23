@@ -30,11 +30,17 @@ data class PlanEditorModel(val token:String=UUID.randomUUID().toString(),val pro
 
 /** Revealing controls never ends or changes the saved session. The blank
  * touch target is separate from the clock, world gestures and other buttons. */
-@Composable fun NativeFocusExitControl(enabled:Boolean,onEnd:()->Unit,modifier:Modifier=Modifier){
+@Composable fun NativeFocusExitControl(enabled:Boolean,onEnd:()->Unit,modifier:Modifier=Modifier,hintRequest:Int=0){
     val ui=LocalNativeUi.current
     var revealed by rememberSaveable{mutableStateOf(false)}
     var hint by remember{mutableStateOf(true)}
-    LaunchedEffect(Unit){kotlinx.coroutines.delay(3800);hint=false}
+    // Shown on entry; a single tap on the panel shows it again for a moment.
+    var localRequest by remember{mutableIntStateOf(0)}
+    LaunchedEffect(hintRequest,localRequest){
+        hint=true
+        kotlinx.coroutines.delay(if(hintRequest==0&&localRequest==0)3800 else 3000)
+        hint=false
+    }
     fun toggleEndControl(){revealed=!revealed;hint=false}
     val drawReceipt=if(BuildConfig.BUILD_TYPE=="benchmark"&&enabled){
         val reported=remember{booleanArrayOf(false)}
@@ -48,7 +54,7 @@ data class PlanEditorModel(val token:String=UUID.randomUUID().toString(),val pro
     }else Modifier
     Box(modifier.fillMaxWidth().heightIn(min=48.dp)
         .then(drawReceipt)
-        .pointerInput(enabled){detectTapGestures(onDoubleTap={if(enabled)toggleEndControl()})}
+        .pointerInput(enabled){detectTapGestures(onDoubleTap={if(enabled)toggleEndControl()},onTap={if(enabled&&!revealed)localRequest++})}
         .onFocusChanged{if(it.hasFocus&&enabled)revealed=true}
         .onKeyEvent{event->if(enabled&&event.type==KeyEventType.KeyDown&&event.key in listOf(Key.Enter,Key.Spacebar)){toggleEndControl();true}else false}
         .semantics{
@@ -56,7 +62,12 @@ data class PlanEditorModel(val token:String=UUID.randomUUID().toString(),val pro
             customActions=listOf(CustomAccessibilityAction(ui.text(if(revealed)"隐藏结束操作"else"显示结束操作")){if(enabled){toggleEndControl();true}else false})
         }.focusable(enabled),contentAlignment=Alignment.Center){
         if(revealed)FormalGlassAction(ui.text("结束本次专注"),onEnd,enabled=enabled,danger=true,onDoubleClick=::toggleEndControl)
-        else if(hint)NativeText(ui.text("双击下方空白处唤出结束按钮"),NativeTextRole.CAPTION)
+        else if(hint){
+            val colors=MaterialTheme.colorScheme
+            NativeText(ui.text("双击下方空白处唤出结束按钮"),NativeTextRole.CAPTION,
+                Modifier.padding(horizontal=8.dp).background(colors.inverseSurface).padding(horizontal=8.dp,vertical=4.dp),
+                color=colors.inverseOnSurface)
+        }
     }
 }
 
@@ -111,6 +122,11 @@ data class PlanEditorModel(val token:String=UUID.randomUUID().toString(),val pro
         if(type==PlanMode.ROUNDS)FormalRoundChoices(rounds,pending==null){rounds=it}
         else NativeClockPicker(end,System.currentTimeMillis(),minutes,s.preferences.breakMinutes,enabled=pending==null,onChange={end=it})
         NativeText(ui.text("每轮 {0} 分钟 · 休息 {1} 分钟",minutes,s.preferences.breakMinutes),NativeTextRole.CAPTION)
+        if(type==PlanMode.ROUNDS){
+            val reference=System.currentTimeMillis()
+            val totalMs=minutes*60000L*rounds+s.preferences.breakMinutes*60000L*(rounds-1)
+            NativeText(ui.text("共 {0} · 预计 {1} 结束",formatDuration(totalMs),formalEndLabel(reference+totalMs,reference)),NativeTextRole.CAPTION,color=MaterialTheme.colorScheme.primary)
+        }
         if(failed)Text(ui.text("保存失败，请重试。"),color=MaterialTheme.colorScheme.error)
         val valid=owner!=null&&owner.canStart&&(owner.habit||type!=PlanMode.ROUNDS||owner.tasks.any{it.id==task})&&(type==PlanMode.ROUNDS||end?.let{it>System.currentTimeMillis()}==true)
         NativeAction(ui.text(if(pending==null)"确认计划" else "保存中…"),{
@@ -118,7 +134,7 @@ data class PlanEditorModel(val token:String=UUID.randomUUID().toString(),val pro
             val draft=FocusDraft(target,if(type==PlanMode.ROUNDS)task else null,type,if(type==PlanMode.ROUNDS)DraftSchedule.Rounds(rounds)else DraftSchedule.EndAt(end?:return@NativeAction))
             val request=UUID.randomUUID().toString();pending=request;failed=false
             if(entry.replacingPlanId==null)runtime.confirmPlan(draft,request)else runtime.amendPlan(entry.replacingPlanId,draft,request)
-        },Modifier.fillMaxWidth(),pending=pending!=null,enabled=valid,icon="play")
+        },Modifier.fillMaxWidth(),pending=pending!=null,enabled=valid,icon="check")
     }
 }
 
@@ -230,9 +246,9 @@ data class PlanEditorModel(val token:String=UUID.randomUUID().toString(),val pro
         val duration=if(pool.partialExtensionMs>0)formalClock(pool.totalDurationMs,countUp=true)else formatDuration(pool.totalDurationMs)
         NativeText(duration,NativeTextRole.NUMBER,accent=true)
     }
-    var help by rememberNativePageState("report/${pool.planId}/help"){false}
-    NativeDisclosure(ui.text("轮次如何记录"),null,help,{help=it},rowHeight=44.dp,titleStyle=MaterialTheme.typography.bodySmall,indicator={NativeText(if(help)"−"else"+",NativeTextRole.CAPTION)}){
-        NativeText(ui.text("每轮只计入一个目标。不足一轮的时长均分到已分配轮次；保持进度也可计入轮次。"),NativeTextRole.CAPTION)
+    Row(Modifier.fillMaxWidth().heightIn(min=44.dp),verticalAlignment=Alignment.CenterVertically){
+        NativeText(ui.text("轮次如何记录"),NativeTextRole.CAPTION,Modifier.weight(1f))
+        NativeInfoAction(ui.text("轮次如何记录"),ui.text("每轮只计入一个目标。不足一轮的时长均分到已分配轮次；保持进度也可计入轮次。"))
     }
     fun progress(target:ReportTarget,value:Int){
         val existing=draft.tasks.find{it.taskId==target.taskId}
@@ -256,15 +272,20 @@ data class PlanEditorModel(val token:String=UUID.randomUUID().toString(),val pro
                     }else{
                         if(!ordinary){NativeSeparator();NativeText(target.title,NativeTextRole.BODY);NativeText(ui.text("当前")+" ${target.progress/100}%（"+ui.text(if(target.progress==0)"尚未推进"else"已有建筑进度")+"）",NativeTextRole.CAPTION)}
                         val allocation=draft.tasks.find{it.taskId==target.taskId}
-                        val selectionInk=MaterialTheme.colorScheme.primary
+                        val chipColors=MaterialTheme.colorScheme
                         FlowRow(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp),verticalArrangement=Arrangement.spacedBy(8.dp),maxItemsInEachRow=3){
                             for(value in listOf(target.progress,2500,5000,7500,10000).distinct().filter{it>=target.progress}){
                                 val label=if(value==target.progress)ui.text("保持 {0}%",value/100)else if(value==10000)ui.text("完成小任务")else ui.text("推进至 {0}%",value/100)
                                 val interaction=remember{MutableInteractionSource()}
-                                Box(Modifier.heightIn(min=44.dp).clickable(enabled=!pending&&!delivered,role=Role.Button,interactionSource=interaction,indication=null){progress(target,value)}
-                                    .nativePressMotion(interaction,!pending&&!delivered)
-                                    .then(if(allocation?.progress==value)Modifier.drawBehind{drawRect(selectionInk,Offset(0f,size.height-2.dp.toPx()),androidx.compose.ui.geometry.Size(size.width,2.dp.toPx()))}else Modifier)
-                                    .padding(8.dp),contentAlignment=Alignment.Center){Text(label,style=MaterialTheme.typography.bodySmall)}
+                                val chosen=allocation?.progress==value
+                                Row(Modifier.heightIn(min=44.dp).clickable(enabled=!pending&&!delivered,role=Role.Button,interactionSource=interaction,indication=null){progress(target,value)}
+                                    .nativePressMotion(interaction,!pending&&!delivered).semantics{selected=chosen}
+                                    .border(1.dp,if(chosen)chipColors.primary else chipColors.outlineVariant)
+                                    .background(if(chosen)chipColors.surfaceVariant else chipColors.surface.copy(alpha=.55f))
+                                    .padding(horizontal=12.dp,vertical=8.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(6.dp)){
+                                    if(chosen)PixelGlyph("check",Modifier.size(16.dp),chipColors.primary)
+                                    Text(label,style=MaterialTheme.typography.bodyLarge,color=if(chosen)chipColors.primary else LocalContentColor.current)
+                                }
                             }
                         }
                         if(!ordinary&&allocation!=null){
@@ -278,7 +299,10 @@ data class PlanEditorModel(val token:String=UUID.randomUUID().toString(),val pro
     }
     if(!ordinary){
         NativeSeparator()
-        Text("${ui.text("已分配")} ${draft.allocated} / ${pool.totalRounds} ${ui.text("轮")} · ${ui.text("未分配")} ${pool.totalRounds-draft.allocated}",style=MaterialTheme.typography.bodySmall)
+        Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(8.dp)){
+            FormalRoundPips(pool.totalRounds,draft.allocated.toInt(),cell=10.dp)
+            Text(ui.text("已分配 {0} / {1} 轮",draft.allocated,pool.totalRounds),style=MaterialTheme.typography.bodySmall)
+        }
         FormalGlassAction(ui.text(if(delivered)"材料已送达！" else if(pending)"正在保存…" else "一次提交本次推进"),{onSubmit(draft)},modifier=feedbackDraw.semantics{liveRegion=androidx.compose.ui.semantics.LiveRegionMode.Polite},pending=pending,enabled=valid&&!delivered)
     }else if(delivered||pending)Text(ui.text(if(delivered)"材料已送达！" else "保存中…"),style=MaterialTheme.typography.bodyLarge)
 }

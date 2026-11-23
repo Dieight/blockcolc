@@ -1,6 +1,11 @@
 package com.blockcolc.preview.ui
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -39,16 +44,26 @@ internal val LocalSettingsJump=staticCompositionLocalOf<SettingsJump?>{null}
     val results=remember(query){SettingsCatalog.search(query)}
     fun go(entry:SettingsEntry){focus.clearFocus();keyboard?.hide();jump.go(entry);query=""}
     val searchLabel=ui.text("搜索设置")
+    val colors=MaterialTheme.colorScheme
     OutlinedTextField(query,{query=it},Modifier.fillMaxWidth().layout{measurable,constraints->
-        // The title-to-card gap already has room for Material's floating label.
+        // The existing title-to-card gap has room for the floating label.
         val inset=8.sp.roundToPx()
         val field=measurable.measure(constraints.offset(vertical=inset))
         layout(field.width,(field.height-inset).coerceAtLeast(0)){field.placeRelative(0,-inset)}
     }.testTag("settings-search").semantics{contentDescription=searchLabel},
-        singleLine=true,label={Text(searchLabel)},shape=RectangleShape,textStyle=MaterialTheme.typography.bodyLarge)
+        singleLine=true,label={Text(searchLabel)},shape=RectangleShape,textStyle=MaterialTheme.typography.bodyLarge,
+        leadingIcon={PixelGlyph("search",Modifier.size(20.dp),colors.onSurfaceVariant)},
+        trailingIcon=if(query.isNotEmpty()){{NativeIconAction(ui.text("清除搜索"),"close",{query=""})}}else null,
+        keyboardOptions=KeyboardOptions(imeAction=ImeAction.Search),
+        keyboardActions=KeyboardActions(onSearch={results.firstOrNull()?.let(::go)}))
     if(query.isNotBlank()){
         if(results.isEmpty())Text(ui.text("没有找到设置"),style=MaterialTheme.typography.bodySmall)
-        for(entry in results)NativeAction("${ui.text(SettingsCatalog.group(entry.group).title)} · ${ui.text(entry.title)}",{go(entry)},Modifier.fillMaxWidth(),primary=false,icon="tasks")
+        else Column(Modifier.fillMaxWidth().border(1.dp,colors.outlineVariant).background(colors.surface).padding(1.dp).padding(horizontal=16.dp)){
+            for((index,entry) in results.withIndex()){
+                if(index>0)NativeSeparator()
+                NativeSettingLink(ui.text(entry.title),{go(entry)},description=ui.text(SettingsCatalog.group(entry.group).title),modifier=Modifier.testTag("settings-result-${entry.id}"))
+            }
+        }
     }
 }
 

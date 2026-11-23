@@ -142,9 +142,16 @@ class FocusCoordinator(private val store: NativeStateStore, val databaseIdentity
             }
         }
     }
+    fun workspaceContext(generation:Long)="$databaseIdentity:$generation"
+
     @Synchronized fun command(requestId: String, command: JSONObject, now: Long, expectedProjectId:String?=null,
-        prepareCommand:((DomainDocument,JSONObject)->JSONObject)?=null): Operation = change(requestId,
-        if(expectedProjectId==null)command else DomainEngine.command("guarded-command","projectId" to expectedProjectId,"command" to command)) { m ->
+        expectedWorkspace:String?=null,prepareCommand:((DomainDocument,JSONObject)->JSONObject)?=null): Operation = change(requestId,
+        if(expectedProjectId==null)command else DomainEngine.command("guarded-command","projectId" to expectedProjectId,"command" to command),
+        current=expectedWorkspace?.let{expected->
+            load().also{current->
+                if(workspaceContext(current.token.replacementGeneration)!=expected)throw FocusFailure("WORKSPACE_CHANGED")
+            }
+        }) { m ->
         if(expectedProjectId!=null&&m.doc.json().opt("activeProjectId")!=expectedProjectId)throw FocusFailure("PROJECT_CONTEXT_CHANGED")
         // Source selection is resolved only for a new transaction. Replaying
         // an acknowledged creation must not consult a subsequently deleted

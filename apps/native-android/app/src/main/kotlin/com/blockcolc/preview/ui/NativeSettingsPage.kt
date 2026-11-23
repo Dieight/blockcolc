@@ -7,6 +7,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
@@ -194,30 +195,30 @@ import java.util.UUID
             audioSettings()
             NativeSeparator()
             NativeSettingGroup("生日祝福"){
+                // Same date row and sheet as the countdown: the date is saved
+                // in the sheet, and the switch saves at once when a date exists.
                 val birthday=workspace.settings.birthday
-                val birthdaySave=rememberNativeRequest(s)
-                var enabled by rememberNativePageState("settings/birthday/enabled"){birthday.enabled}
-                var month by rememberNativePageState("settings/birthday/month"){birthday.month?:1}
-                var day by rememberNativePageState("settings/birthday/day"){birthday.day?:1}
-                var datesOpen by rememberNativePageState("settings/birthday/datesOpen"){false}
-                LaunchedEffect(birthdaySave.error){if(birthdaySave.error!=null)enabled=birthday.enabled}
-                NativeToggle(ui.text("启用生日祝福"),value=enabled,enabled=!birthdaySave.busy&&!s.busy){v->
-                    enabled=v
-                    if(!v)datesOpen=false
-                    if(!v&&birthday.enabled)birthdaySave.submit{runtime.dispatch(WorkspaceMutation.Birthday(false,birthday.month?:1,birthday.day?:1),it)}
+                var sheet by remember{mutableStateOf<NativeDateDraft?>(null)}
+                val birthdaySave=rememberNativeRequest(s){sheet=null}
+                NativeToggle(ui.text("启用生日祝福"),value=birthday.enabled,enabled=!birthdaySave.busy&&!s.busy){v->
+                    val month=birthday.month;val day=birthday.day
+                    when{
+                        !v->birthdaySave.submit{runtime.dispatch(WorkspaceMutation.Birthday(false,month?:1,day?:1),it)}
+                        month!=null&&day!=null->birthdaySave.submit{runtime.dispatch(WorkspaceMutation.Birthday(true,month,day),it)}
+                        else->{val today=java.time.LocalDate.now();sheet=NativeDateDraft(null,today.monthValue,today.dayOfMonth)}
+                    }
                 }
-                NativeSeparator()
-                val available=enabled&&!s.busy&&!birthdaySave.busy
-                val changed=!birthday.enabled||month!=birthday.month||day!=birthday.day
-                NativeDisclosure(ui.text("日期"),null,enabled&&datesOpen,{datesOpen=it},valueLabel="%02d / %02d".format(month,day),contentSpacing=0.dp,enabled=available){
-                    NativeNumber(ui.text("月份"),month,1..12,available){month=it}
-                    NativeNumber(ui.text("日期"),day,1..31,available){day=it}
+                val savedMonth=birthday.month;val savedDay=birthday.day
+                if(birthday.enabled&&savedMonth!=null&&savedDay!=null){
+                    NativeSeparator()
+                    NativeSettingLink(ui.text("日期"),{sheet=NativeDateDraft(null,savedMonth,savedDay)},value="%02d / %02d".format(savedMonth,savedDay),
+                        modifier=Modifier.testTag("birthday-date"))
                 }
-                Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.End){
-                    NativeAction(ui.text("保存日期"),{birthdaySave.submit{runtime.dispatch(WorkspaceMutation.Birthday(true,month,day),it)}},primary=false,
-                        pending=birthdaySave.busy,enabled=available&&changed&&runCatching{java.time.MonthDay.of(month,day)}.isSuccess)
+                if(sheet==null)NativeRequestError(birthdaySave)
+                NativeDateSheet(sheet,ui.text("生日祝福"),{if(!birthdaySave.busy)sheet=null},
+                    pending=birthdaySave.busy,feedback={NativeRequestError(birthdaySave)}){draft->
+                    birthdaySave.submit{runtime.dispatch(WorkspaceMutation.Birthday(true,draft.month,draft.day),it)}
                 }
-                NativeRequestError(birthdaySave)
             }
         }
         NativeSection(ui.text(SettingsCatalog.group("advanced").title)){
@@ -305,10 +306,10 @@ import java.util.UUID
         }
         NativeRequestError(refresh,"备份暂不可用，请重试。")
         NativeSettingGroup("导入与导出"){
-            NativeInlineAction(ui.text("导出 JSON"),onExport,"chest",ui.text("导出"),
+            NativeInlineAction(ui.text("导出 JSON"),onExport,"export",ui.text("导出"),
                 enabled=!s.busy,pending=s.backupOperation==BackupOperation.EXPORT)
             NativeSeparator()
-            NativeInlineAction(ui.text("导入备份"),onImport,"plus",ui.text("选择文件"),
+            NativeInlineAction(ui.text("导入备份"),onImport,"import",ui.text("选择文件"),
                 enabled=!s.busy,pending=s.backupOperation==BackupOperation.READ_IMPORT)
         }
         NativeSeparator()
@@ -324,7 +325,7 @@ import java.util.UUID
                 if(!s.backupListingReady){if(refresh.busy)Text(ui.text("处理中"),style=MaterialTheme.typography.bodySmall)}
                 else if(roots.isEmpty())Text(ui.text("暂无可恢复备份"),style=MaterialTheme.typography.bodySmall)
                 if(s.backupListingReady)for(root in roots){
-                    NativeInlineAction(root.date?:root.id,{selected=root.id},"chest",ui.text("恢复"),enabled=!s.busy)
+                    NativeInlineAction(root.date?:root.id,{selected=root.id},"import",ui.text("恢复"),enabled=!s.busy)
                 }
             }
         }

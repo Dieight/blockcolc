@@ -30,10 +30,15 @@ internal fun heatmapBand(durationMs:Long)=when{
 
 @Composable internal fun nativeFocusHeatmapColors():List<Color>{
     val scheme=MaterialTheme.colorScheme
-    return if(scheme.background.luminance()<.5f)
-        listOf(scheme.outlineVariant,Color(0xff294c38),Color(0xff417d57),Color(0xff5ba671),Color(0xff87d59c))
-    else listOf(scheme.outlineVariant,Color(0xffc8dbd2),Color(0xff99b8aa),Color(0xff639780),Color(0xff276749))
+    return focusHeatmapColors(scheme.background.luminance()<.5f,scheme.outlineVariant)
 }
+
+/** One hue, ordered light to dark. Zero minutes stay blank, so even the first
+ * band means focus happened and must stand out from the card (at least 2:1;
+ * 2.60:1 light, 2.78:1 dark). The darkest bands keep the brand greens. */
+internal fun focusHeatmapColors(dark:Boolean,empty:Color):List<Color> =
+    if(dark)listOf(empty,Color(0xff3a6e52),Color(0xff4a8a62),Color(0xff5ba671),Color(0xff87d59c))
+    else listOf(empty,Color(0xff7aab92),Color(0xff5a977a),Color(0xff3f8063),Color(0xff276749))
 
 internal fun DrawScope.drawFocusHeatmapCell(palette:List<Color>,band:Int,origin:Offset,edge:Float,alpha:Float=1f){
     if(band>0)drawRect(palette[band].copy(alpha=alpha),origin,Size(edge,edge))

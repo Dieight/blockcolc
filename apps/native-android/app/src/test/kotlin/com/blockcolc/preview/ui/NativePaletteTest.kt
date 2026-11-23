@@ -32,5 +32,12 @@ class NativePaletteTest {
                 assertTrue("Container ink must remain readable",contrast(colors.onSurface,surface)>=4.5f)
         }
     }
+    @Test fun heatmapBandsStandOutFromTheCardInOrder(){
+        for((colors,dark) in listOf(NativePalette.light to false,NativePalette.dark to true)){
+            val steps=focusHeatmapColors(dark,colors.outlineVariant).drop(1).map{contrast(it,colors.surface)}
+            for(step in steps)assertTrue("A focus band blends into the card: $steps",step>=2f)
+            assertEquals("Bands must darken (or brighten) in order",steps.sorted(),steps)
+        }
+    }
     private fun contrast(a:Color,b:Color):Float {val x=a.luminance();val y=b.luminance();return (maxOf(x,y)+.05f)/(minOf(x,y)+.05f)}
 }

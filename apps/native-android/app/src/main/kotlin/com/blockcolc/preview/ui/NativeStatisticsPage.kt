@@ -12,6 +12,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
@@ -36,7 +37,7 @@ import java.time.LocalDate
             }
             Row(Modifier.fillMaxWidth().heightIn(min=44.dp),verticalAlignment=androidx.compose.ui.Alignment.CenterVertically){
                 PixelGlyph("clock",Modifier.size(16.dp),MaterialTheme.colorScheme.primary);Spacer(Modifier.width(8.dp))
-                NativeText(label+ui.text("的投入"),NativeTextRole.CAPTION,Modifier.weight(1f),MaterialTheme.colorScheme.onSurfaceVariant)
+                NativeText(ui.text("{0}的投入",label),NativeTextRole.CAPTION,Modifier.weight(1f),MaterialTheme.colorScheme.onSurfaceVariant)
                 NativeOccasionEmblems(workspace.today,2,workspace.settings.birthday)
             }
             FormalStatisticDuration(summary.durationMs,Modifier.padding(bottom=16.dp))
@@ -86,7 +87,7 @@ import java.time.LocalDate
                         FormalStatisticDuration(archive.durationMs)
                         NativeSeparator()
                         Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){
-                            Column{NativeText(ui.text("完成轮次"),NativeTextRole.CAPTION);NativeText("${archive.rounds} ${ui.text("轮")}",NativeTextRole.BODY)}
+                            Column{NativeText(ui.text("完成轮次"),NativeTextRole.CAPTION);NativeText(ui.rounds(archive.rounds),NativeTextRole.BODY)}
                             Column{NativeText(ui.text("中断投入"),NativeTextRole.CAPTION);NativeText(if(archive.interrupted>0)ui.text("{0} 条 · {1}",archive.interrupted,formatDuration(archive.interruptedMs))else ui.text("无"),NativeTextRole.CAPTION)}
                         }
                         Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){NativeText(ui.text("完成时间"),NativeTextRole.CAPTION);NativeText(archive.completedAt?.let{sourceDisplayDate(it,workspace.settings.timeZone,ui.language)}?:ui.text("未知"),NativeTextRole.CAPTION)}
@@ -177,7 +178,8 @@ import java.time.LocalDate
         val next=LocalDate.parse(cursor).plusDays(offset.toLong()).coerceIn(start,today).toString()
         if(extend){if(keyboardAnchor==null)keyboardAnchor=cursor;onSelection(keyboardAnchor!!,next)}else{keyboardAnchor=null;onSelection(next,next)};cursor=next;return true
     }
-    val ink=MaterialTheme.colorScheme.onSurface;val muted=MaterialTheme.colorScheme.onSurfaceVariant
+    val ink=MaterialTheme.colorScheme.onSurface;val muted=MaterialTheme.colorScheme.onSurfaceVariant;val todayMark=MaterialTheme.colorScheme.primary
+    val selectedFrom=minOf(first,last);val selectedTo=maxOf(first,last)
     val text=androidx.compose.ui.text.rememberTextMeasurer();val textStyle=MaterialTheme.typography.bodySmall
     val density=androidx.compose.ui.platform.LocalDensity.current
     val weekdays=listOf("一","二","三","四","五","六","日").map{ui.text(it)}
@@ -195,6 +197,17 @@ import java.time.LocalDate
         if(!outside&&(column !in 0..25||row !in 0..6))return null
         return dates[column.coerceIn(0,25)*7+row.coerceIn(0,6)].coerceAtMost(workspace.today)
     }
+    // Day cells are about 7 dp wide: touch gets the keyboard's day steps.
+    val dayFormat=remember(ui.language){java.time.format.DateTimeFormatter.ofPattern(ui.text("M月d日"),if(ui.language=="en")java.util.Locale.ENGLISH else java.util.Locale.SIMPLIFIED_CHINESE)}
+    val from=LocalDate.parse(selectedFrom);val to=LocalDate.parse(selectedTo)
+    val selection=if(from==to)from.format(dayFormat)+(if(selectedTo==workspace.today)" · "+ui.text("今天")else "")
+        else ui.text("{0} – {1} · 共 {2} 天",from.format(dayFormat),to.format(dayFormat),java.time.temporal.ChronoUnit.DAYS.between(from,to)+1)
+    Row(Modifier.fillMaxWidth().heightIn(min=44.dp),verticalAlignment=androidx.compose.ui.Alignment.CenterVertically){
+        NativeIconAction(ui.text("前一天"),"chevron",{move(-1,false)},Modifier.graphicsLayer{rotationZ=90f},enabled=cursor>start.toString())
+        Box(Modifier.weight(1f),contentAlignment=androidx.compose.ui.Alignment.Center){NativeText(selection,NativeTextRole.BODY,maxLines=2)}
+        NativeIconAction(ui.text("后一天"),"chevron",{move(1,false)},Modifier.graphicsLayer{rotationZ=-90f},enabled=cursor<workspace.today)
+        if(selectedFrom!=workspace.today||selectedTo!=workspace.today)FormalTextAction(ui.text("今天"),"",{keyboardAnchor=null;cursor=workspace.today;onSelection(workspace.today,workspace.today)})
+    }
     Canvas(Modifier.fillMaxWidth().height(chartHeight).onSizeChanged{width=it.width.toFloat()}.semantics{
         contentDescription=ui.text("专注日历");stateDescription=if(first==last)first else "$first — $last"
         progressBarRangeInfo=ProgressBarRangeInfo(dates.indexOf(cursor).coerceAtLeast(0).toFloat(),0f..dates.indexOf(workspace.today).toFloat())
@@ -202,7 +215,7 @@ import java.time.LocalDate
         customActions=listOf(CustomAccessibilityAction(ui.text("前一天")){move(-1,false)},CustomAccessibilityAction(ui.text("后一天")){move(1,false)},CustomAccessibilityAction(ui.text("向前扩展一天")){move(-1,true)},CustomAccessibilityAction(ui.text("向后扩展一天")){move(1,true)})
     }.onKeyEvent{e->if(e.type!=KeyEventType.KeyDown)false else when(e.key){Key.DirectionLeft->move(-7,e.isShiftPressed);Key.DirectionRight->move(7,e.isShiftPressed);Key.DirectionUp->move(-1,e.isShiftPressed);Key.DirectionDown->move(1,e.isShiftPressed);Key.Escape,Key.Enter,Key.MoveEnd->{cursor=workspace.today;onSelection(cursor,cursor);true};Key.MoveHome->{cursor=start.toString();onSelection(cursor,cursor);true};else->false}}.focusable().pointerInput(start,workspace.today,left,top,rowHeight){
         awaitEachGesture{
-            val down=awaitFirstDown();val anchor=hit(down.position)?:return@awaitEachGesture;down.consume();onSelection(anchor,anchor)
+            val down=awaitFirstDown();val anchor=hit(down.position)?:return@awaitEachGesture;down.consume();keyboardAnchor=null;cursor=anchor;onSelection(anchor,anchor)
             while(true){val event=awaitPointerEvent().changes.find{it.id==down.id}?:break;if(event.isConsumed)break;event.consume();hit(event.position,true)?.let{onSelection(anchor,it);cursor=it};if(!event.pressed)break}
         }
     }){
@@ -217,6 +230,11 @@ import java.time.LocalDate
         }
         labels.forEachIndexed{index,layout->drawText(layout,color=muted,topLeft=Offset(left-8.dp.toPx()-layout.size.width,top+rowHeight*index+(rowHeight-layout.size.height)/2))}
         val side=minOf(8.dp.toPx(),step*.68f,rowHeight*.68f)
+        val clearance=minOf(step,rowHeight)-side
+        val selectionStroke=minOf(1.5.dp.toPx(),clearance/2)
+        val selectionInset=minOf(2.dp.toPx(),(clearance-selectionStroke)/2)
+        val tickHeight=minOf(2.dp.toPx(),(rowHeight-side)/4)
+        val tickWidth=minOf(3.dp.toPx(),side)
         for((index,date)in dates.withIndex()){
             if(date>workspace.today)continue
             val column=index/7;val row=index%7;val actual=heatmapBand(days[date]?.durationMs?:0)
@@ -224,6 +242,12 @@ import java.time.LocalDate
             val opacity=if(band==null||band==actual)1f else .18f
             if(actual>0&&column>=progress.value)drawRect(palette[0].copy(alpha=opacity),origin,Size(side,side))
             else drawFocusHeatmapCell(palette,actual,origin,side,opacity)
+            if(date in selectedFrom..selectedTo){
+                val edge=side+2*selectionInset
+                drawRect(ink,origin-Offset(selectionInset,selectionInset),Size(edge,edge),
+                    style=androidx.compose.ui.graphics.drawscope.Stroke(selectionStroke))
+            }
+            if(date==workspace.today)drawRect(todayMark,Offset(origin.x+(side-tickWidth)/2,top+(row+1)*rowHeight-tickHeight),Size(tickWidth,tickHeight))
             if(band==4&&date==longest&&actual==4){val path=androidx.compose.ui.graphics.Path().apply{moveTo(origin.x,origin.y-2.dp.toPx());lineTo(origin.x+side,origin.y-2.dp.toPx());lineTo(origin.x+side/2,origin.y-side/2-2.dp.toPx());close()};drawPath(path,ink)}
         }
     }

@@ -40,8 +40,18 @@ import kotlin.math.sin
 
 @Composable fun PixelGlyph(name:String,modifier:Modifier=Modifier,color:Color=LocalContentColor.current){
     val rows=LocalNativeUi.current.resources.icons.getValue(name)
-    Canvas(modifier.size(24.dp)){val unit=minOf(size.width,size.height)/12f;for(y in 0..11)for(x in 0..11)if(rows[y][x]=='1')drawRect(color,Offset(x*unit,y*unit),Size(unit,unit))}
+    Canvas(modifier.size(24.dp)){
+        val unit=nativePixelCell(minOf(size.width,size.height)/12f)
+        val left=nativePixelOrigin(size.width,unit*12);val top=nativePixelOrigin(size.height,unit*12)
+        for(y in 0..11)for(x in 0..11)if(rows[y][x]=='1')drawRect(color,Offset(left+x*unit,top+y*unit),Size(unit,unit))
+    }
 }
+
+/** Pixel art needs whole device pixels per cell: a fractional cell (20dp is
+ * 4.58px per cell at 2.75x) antialiases its edges and makes columns uneven.
+ * Use the largest whole cell that fits the glyph's allotted bounds. */
+internal fun nativePixelCell(exact:Float):Float=if(exact>=1f)kotlin.math.floor(exact)else exact
+internal fun nativePixelOrigin(extent:Float,used:Float):Float=kotlin.math.round((extent-used)/2f)
 
 @Composable fun NativeBrand(modifier:Modifier=Modifier){
     val motion=LocalNativeUi.current.reduceMotion;val scale=remember{Animatable(1f)};val scope=rememberCoroutineScope()
@@ -135,7 +145,7 @@ internal val NativeOptionSpacing = 8.dp
             verticalAlignment=Alignment.CenterVertically,
         ){trailing()}
         Canvas(Modifier.size(48.dp,28.dp)){
-            val unit=minOf(size.width/22f,size.height/14f);val left=(size.width-22*unit)/2;val top=(size.height-12*unit)/2
+            val unit=nativePixelCell(minOf(size.width/22f,size.height/14f));val left=nativePixelOrigin(size.width,22*unit);val top=nativePixelOrigin(size.height,12*unit)
             val outline=if(enabled)if(value)colors.primary else colors.outline else colors.outlineVariant
             fun shape(x:Float,y:Float,w:Float,h:Float,color:Color){
                 drawRect(color,Offset(x+unit,y),Size(w-2*unit,h))
@@ -174,17 +184,25 @@ internal val NativeOptionSpacing = 8.dp
 @Composable fun <T> NativeSegments(options:List<Pair<T,String>>,value:T,onChange:(T)->Unit,enabled:Boolean=true,icons:Map<T,String> = emptyMap(),textStyle:androidx.compose.ui.text.TextStyle=MaterialTheme.typography.labelLarge){
     require(options.isNotEmpty());val reduce=LocalNativeUi.current.reduceMotion
     val index=options.indexOfFirst{it.first==value}.coerceAtLeast(0)
-    val position by animateFloatAsState(index.toFloat(),tween(if(reduce)0 else 200),label="segmented-selection")
     val colors=MaterialTheme.colorScheme
     val density=LocalDensity.current;val measure=rememberTextMeasurer();val style=textStyle
     BoxWithConstraints(Modifier.fillMaxWidth()){
         val available=with(density){maxWidth.roundToPx()}
         val padding=with(density){16.dp.roundToPx()}
         val iconSpace=with(density){24.dp.roundToPx()}
-        val stacked=options.any{measure.measure(it.second,style,softWrap=false,maxLines=1).size.width+padding+(if(it.first in icons)iconSpace else 0)>available/options.size}
-        val textWidth=(if(stacked)available else available/options.size).minus(padding).minus(if(icons.isEmpty())0 else iconSpace).coerceAtLeast(1)
+        val widths=options.map{measure.measure(it.second,style,softWrap=false,maxLines=1).size.width+padding+(if(it.first in icons)iconSpace else 0)}
+        // Labels that cannot share one row wrap into the fewest balanced rows
+        // that keep every label whole (five options become 3 + 2); very
+        // large text still ends with one complete option per row.
+        val rows=nativeSegmentRows(options.size){perRow->widths.all{it<=available/perRow}}
+        val starts=rows.runningFold(0){start,count->start+count}
+        val textWidth=(available/rows.max()).minus(padding).minus(if(icons.isEmpty())0 else iconSpace).coerceAtLeast(1)
         val lineHeight=options.maxOf{measure.measure(it.second,style,constraints=Constraints(maxWidth=textWidth)).size.height}
         val rowHeight=maxOf(48.dp,with(density){lineHeight.toDp()}+24.dp)
+        val row=starts.indexOfLast{it<=index}.coerceIn(0,rows.lastIndex)
+        val selectionX by animateFloatAsState((index-starts[row]).toFloat()/rows[row],tween(if(reduce)0 else 200),label="segmented-x")
+        val selectionWidth by animateFloatAsState(1f/rows[row],tween(if(reduce)0 else 200),label="segmented-width")
+        val selectionRow by animateFloatAsState(row.toFloat(),tween(if(reduce)0 else 200),label="segmented-row")
         @Composable fun item(id:T,label:String,modifier:Modifier){
             val interaction=remember{MutableInteractionSource()}
             Box(modifier.heightIn(min=rowHeight).selectable(id==value,enabled=enabled,role=Role.Tab,
@@ -196,23 +214,29 @@ internal val NativeOptionSpacing = 8.dp
                 }
             }
         }
-        // Retain one moving selection; when large text cannot fit a row,
-        // stack complete labels rather than breaking individual words.
+        // One moving selection across rows; rows share one height.
         Box(Modifier.fillMaxWidth()){
         Canvas(Modifier.matchParentSize()){
-            val width=if(stacked)size.width else size.width/options.size
-            val height=if(stacked)size.height/options.size else size.height
-            val x=if(stacked)0f else position*width;val y=if(stacked)position*height else 0f
+            val height=size.height/rows.size
+            val x=selectionX*size.width;val y=selectionRow*height;val width=selectionWidth*size.width
             drawRect(colors.surfaceVariant,Offset(x,y),Size(width,height))
             drawRect(colors.primary,Offset(x,(y+height-2.dp.toPx()).coerceAtLeast(0f)),Size(width,2.dp.toPx()))
         }
-        if(stacked)Column(Modifier.fillMaxWidth().selectableGroup()){
-            for((id,label) in options)item(id,label,Modifier.fillMaxWidth())
-        }else Row(Modifier.fillMaxWidth().selectableGroup()){
-            for((id,label) in options)item(id,label,Modifier.weight(1f))
+        Column(Modifier.fillMaxWidth().selectableGroup()){
+            for((line,count) in rows.withIndex())Row(Modifier.fillMaxWidth()){
+                for(option in starts[line] until starts[line]+count){val (id,label)=options[option];item(id,label,Modifier.weight(1f))}
+            }
         }
         }
     }
+}
+
+/** Option counts per row: the fewest rows whose widest row still fits, with
+ * earlier rows taking any remainder (7 options in three rows are 3 + 2 + 2). */
+internal fun nativeSegmentRows(count:Int,fits:(perRow:Int)->Boolean):List<Int>{
+    require(count>0)
+    val rows=(1..count).firstOrNull{fits((count+it-1)/it)}?:count
+    return List(rows){line->count/rows+if(line<count%rows)1 else 0}
 }
 
 /** In-place status glyph, never an extra icon that changes button geometry. */
@@ -223,7 +247,7 @@ internal val NativeOptionSpacing = 8.dp
         infinite.animateFloat(0f,1f,infiniteRepeatable(tween(900,easing=LinearEasing)),label="busy-phase")
     }
     Canvas(modifier.size(24.dp)){
-        val cell=minOf(size.width,size.height)/12f;val progress=phase?.value?:0f
+        val cell=nativePixelCell(minOf(size.width,size.height)/12f);val progress=phase?.value?:0f
         repeat(3){i->val angle=(progress*360+i*120)*Math.PI.toFloat()/180;val cx=size.width/2+cos(angle)*cell*3.5f;val cy=size.height/2+sin(angle)*cell*3.5f
             val x=kotlin.math.round(cx/cell)*cell;val y=kotlin.math.round(cy/cell)*cell
             drawRect(color.copy(alpha=1f-i*.18f),Offset(x-cell,y-cell*.5f),Size(cell*2,cell));drawRect(color.copy(alpha=1f-i*.18f),Offset(x-cell*.5f,y-cell),Size(cell,cell*2))
@@ -231,15 +255,16 @@ internal val NativeOptionSpacing = 8.dp
     }
 }
 
-@Composable internal fun NativeSettingLink(title:String,onClick:()->Unit,description:String?=null){
+@Composable internal fun NativeSettingLink(title:String,onClick:()->Unit,description:String?=null,value:String?=null,modifier:Modifier=Modifier){
     val interaction=remember{MutableInteractionSource()}
-    Row(Modifier.fillMaxWidth().heightIn(min=NativeSettingsRowHeight)
+    Row(modifier.fillMaxWidth().heightIn(min=NativeSettingsRowHeight)
         .clickable(role=Role.Button,interactionSource=interaction,indication=null,onClick=onClick).nativePressMotion(interaction)
         .padding(vertical=NativeOptionSpacing),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)){
         Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(4.dp)){
             Text(title,style=MaterialTheme.typography.bodyLarge)
             if(description!=null)Text(description,style=MaterialTheme.typography.bodySmall)
         }
+        if(value!=null)Text(value,style=MaterialTheme.typography.bodyLarge,color=MaterialTheme.colorScheme.onSurfaceVariant)
         PixelGlyph("chevron",Modifier.size(20.dp).graphicsLayer{rotationZ=-90f},LocalContentColor.current)
     }
 }

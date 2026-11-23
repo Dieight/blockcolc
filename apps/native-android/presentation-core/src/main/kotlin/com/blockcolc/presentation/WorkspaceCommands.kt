@@ -53,7 +53,8 @@ object WorkspaceCommands {
         val prepare:((com.blockcolc.domain.DomainDocument,JSONObject)->JSONObject)?=if(blueprint!=null&&resolveBlueprint!=null){_,wire->
             resolveBlueprint(blueprint)?.let{source->wire.put("importedBlueprint",source)};wire
         }else null
-        coordinator.command(requestId,it.command,now,it.expectedProject,prepare)
+        val expectedWorkspace=(value as? WorkspaceMutation.DeleteNote)?.expectedWorkspace
+        coordinator.command(requestId,it.command,now,it.expectedProject,expectedWorkspace,prepare)
     }
     fun decide(coordinator:FocusCoordinator,requestId:String,decision:FocusDecision,now:Long)=when(decision){
         FocusDecision.CompleteEarly->coordinator.manual(requestId,true,false,null,null,now)

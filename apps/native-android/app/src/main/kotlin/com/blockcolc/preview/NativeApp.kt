@@ -125,8 +125,8 @@ private val NATIVE_UI_PROCESS=java.util.UUID.randomUUID().toString()
         NativeAction(ui.text("创建大型任务"),{editor=ProjectEditor()},Modifier.fillMaxWidth(),enabled=!s.busy,icon="plus")
         Text(ui.text("大型任务按小任务推进，习惯任务按专注轮次建造。"),style=MaterialTheme.typography.bodySmall)
         NativeAction(ui.text("创建习惯任务"),{editor=ProjectEditor(initialHabit=true)},Modifier.fillMaxWidth(),enabled=!s.busy,primary=false,icon="repeat")
-        NativeAction(ui.text("恢复备份"),onImport,Modifier.fillMaxWidth(),pending=s.busy,primary=false,icon="chest")
-        NativeAction(if(ui.language=="en")"Sign in & restore cloud"else"登录账户并恢复云端",{accountOpen=true},Modifier.fillMaxWidth(),primary=false,icon="chest")
+        NativeAction(ui.text("恢复备份"),onImport,Modifier.fillMaxWidth(),pending=s.busy,primary=false,icon="import")
+        NativeAction(if(ui.language=="en")"Sign in & restore cloud"else"登录账户并恢复云端",{accountOpen=true},Modifier.fillMaxWidth(),primary=false,icon="cloud")
         s.message?.let{Text(it,color=MaterialTheme.colorScheme.error)}
     }
     NativeBackupConfirmation(s,runtime::confirmImport,onImport)
@@ -696,7 +696,7 @@ private data class TutorialStep(val page:String,val title:String,val description
             TutorialStep("timer","从一轮专注开始","选择小任务，确认计划后开始。计时按实际结束时间恢复。"),
             TutorialStep("tasks","把任务建成世界","大任务对应建筑，小任务的推进决定施工；习惯任务按轮次积累。"),
             TutorialStep("timer","专注、休息与汇报","专注时双击面板下方空白显示结束按钮，再双击可收起。休息后双击时间继续。提前完成或中止后，由你确认再开始。"),
-            TutorialStep("timer","极简与便签","开启极简后左右滑动面板查看统计和便签；双击时间确认结束计划。"),
+            TutorialStep("timer","极简与便签","开启极简后左右滑动面板，查看便签、统计和好友；在时钟上上下滑动设定结束时间，再双击时间开始专注。"),
             TutorialStep("timer","世界的两种复位","复位视角仍围绕所选建筑；地图按钮返回整个聚落的总览。"),
             TutorialStep("timer","窗前的小书房","切换室内视角，从窗前看同一个聚落。成就解锁的摆设会自动放进书房。"),
             TutorialStep("statistics","回看每一天","点选或拖选热力图查看投入，展开纪念建筑和成就。"),

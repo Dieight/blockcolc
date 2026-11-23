@@ -43,7 +43,7 @@ class P3PreferencesStorageTest {
     }
     @Test fun actualApkCanLoadFormalTextGlyphsTheNativeFontAndTheBrandVector(){
         val context=InstrumentationRegistry.getInstrumentation().targetContext
-        val ui=UiResources.load();assertEquals(26,ui.icons.size);assertTrue("study" in ui.icons);assertTrue(ui.english.size>=1300)
+        val ui=UiResources.load();assertEquals(36,ui.icons.size);assertTrue("study" in ui.icons);assertTrue(ui.english.size>=1300)
         val font=androidx.core.content.res.ResourcesCompat.getFont(context,R.font.fusion_pixel_12px_zh_hans)
         assertNotNull(font);val paint=android.graphics.Paint().apply{typeface=font;textSize=24f}
         assertTrue(paint.hasGlyph("方"));assertTrue(paint.hasGlyph("A"))

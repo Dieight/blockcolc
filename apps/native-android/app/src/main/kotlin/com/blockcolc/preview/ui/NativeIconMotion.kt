@@ -31,13 +31,20 @@ import kotlin.math.tan
         icon.layers.forEachIndexed{index,layer->val spec=icon.motions[layer.part]
             Canvas(Modifier.fillMaxSize().graphicsLayer{
                 val state=if(time.value>=900f||spec==null)PixelTransform()else spec.at(time.value)
-                transformOrigin=TransformOrigin(((spec?.originX?:icon.minX+icon.width/2)-icon.minX)/icon.width,((spec?.originY?:icon.minY+icon.height/2)-icon.minY)/icon.height)
-                translationX=state.x*size.width/icon.width;translationY=state.y*size.height/icon.height
+                val unit=nativePixelCell(minOf(size.width/icon.width,size.height/icon.height))
+                val pivotX=(spec?.originX?:icon.minX+icon.width/2)-icon.minX
+                val pivotY=(spec?.originY?:icon.minY+icon.height/2)-icon.minY
+                transformOrigin=TransformOrigin(
+                    (nativePixelOrigin(size.width,unit*icon.width)+pivotX*unit)/size.width.coerceAtLeast(1f),
+                    (nativePixelOrigin(size.height,unit*icon.height)+pivotY*unit)/size.height.coerceAtLeast(1f))
+                translationX=state.x*unit;translationY=state.y*unit
                 scaleX=state.scaleX;scaleY=state.scaleY;rotationZ=state.rotation;rotationX=state.rotationX;alpha=state.opacity
-                cameraDistance=state.perspective*size.width/icon.width
+                cameraDistance=state.perspective*unit.coerceAtLeast(1f)
             }){
-                val unit=minOf(size.width/icon.width,size.height/icon.height)
-                drawContext.canvas.save();drawContext.canvas.scale(unit,unit)
+                val unit=nativePixelCell(minOf(size.width/icon.width,size.height/icon.height))
+                drawContext.canvas.save()
+                drawContext.canvas.translate(nativePixelOrigin(size.width,unit*icon.width),nativePixelOrigin(size.height,unit*icon.height))
+                drawContext.canvas.scale(unit,unit)
                 drawContext.canvas.translate(-icon.minX,-icon.minY)
                 val state=if(time.value>=900f||spec==null)PixelTransform()else spec.at(time.value)
                 if(state.skewX!=0f){val x=spec?.originX?:0f;val y=spec?.originY?:0f;drawContext.canvas.translate(x,y);drawContext.canvas.skew(tan(state.skewX*Math.PI/180).toFloat(),0f);drawContext.canvas.translate(-x,-y)}
