@@ -7,3 +7,14 @@ android {
     kotlinOptions { jvmTarget = '17' }
 }
 dependencies { testImplementation 'junit:junit:4.13.2'; testImplementation 'org.json:json:20240303' }
+
+def cloudCaCertificate = layout.projectDirectory.file('src/main/assets/blockcolc-cloud-ca.pem')
+def requireCloudCa = tasks.register('requireCloudCa') {
+    inputs.file(cloudCaCertificate).withPropertyName('cloudCaCertificate')
+    doLast {
+        if (cloudCaCertificate.asFile.length() == 0) {
+            throw new GradleException('The public account service CA certificate is empty')
+        }
+    }
+}
+tasks.named('preBuild') { dependsOn requireCloudCa }

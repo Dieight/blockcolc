@@ -1,1 +1,3 @@
 /weather_api.txt
+# This is the public trust anchor used by the Android account client.
+!/apps/native-android/platform-cloud/src/main/assets/blockcolc-cloud-ca.pem

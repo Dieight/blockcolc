@@ -2,9 +2,19 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import {execFileSync} from 'node:child_process';
+import {X509Certificate} from 'node:crypto';
 import {apkIdentity,dexClassNames} from './native-apk-identity.mjs';
 const upgrade=process.argv.includes('--upgrade-candidate');
 const {apk,identity}=apkIdentity(process.argv[2]);assert.equal(identity.mode,upgrade?'upgrade-candidate':'user-preview');
+const cloudCaAsset = 'assets/blockcolc-cloud-ca.pem';
+assert.ok(apk.names.includes(cloudCaAsset), 'Missing account service CA certificate in APK');
+const cloudCa = apk.read(cloudCaAsset);
+const sourceCa = fs.readFileSync(new URL('../platform-cloud/src/main/assets/blockcolc-cloud-ca.pem', import.meta.url));
+assert.ok(cloudCa.equals(sourceCa), 'Packaged account service CA differs from source');
+assert.match(cloudCa.toString('ascii'), /^-----BEGIN CERTIFICATE-----\r?\n(?:[A-Za-z0-9+/=]+\r?\n)+-----END CERTIFICATE-----\r?\n?$/,
+    'Account service CA asset must contain a single public PEM certificate');
+const certificate = new X509Certificate(cloudCa);
+assert.ok(certificate.ca && certificate.verify(certificate.publicKey), 'Invalid account service root CA');
 const sdk=process.env.ANDROID_HOME||process.env.ANDROID_SDK_ROOT||(process.env.LOCALAPPDATA&&path.join(process.env.LOCALAPPDATA,'Android','Sdk'));
 assert.ok(sdk,'Android SDK required to verify the delivery configuration');
 const buildTools=path.join(sdk,'build-tools');const versions=fs.readdirSync(buildTools).filter(name=>fs.statSync(path.join(buildTools,name)).isDirectory()).sort((a,b)=>b.localeCompare(a,'en',{numeric:true}));
@@ -86,4 +96,4 @@ if(upgrade){
  signingEvidence.signerSha256=signers[0];
  signingEvidence.alignedFor16KiB=true;
 }
-console.log(JSON.stringify({userPreviewPackageVerified:!upgrade,upgradeCandidateVerified:upgrade,configuration:identity,debuggable,deliveryEligible:!debuggable&&!upgrade,bundledBlueprints:entries.length,entries:apk.names.length,diagnosticAssets:0,diagnosticImplementations:0,...signingEvidence}));
+console.log(JSON.stringify({userPreviewPackageVerified:!upgrade,upgradeCandidateVerified:upgrade,configuration:identity,debuggable,deliveryEligible:!debuggable&&!upgrade,bundledBlueprints:entries.length,entries:apk.names.length,diagnosticAssets:0,diagnosticImplementations:0,cloudCaFingerprint:certificate.fingerprint256,...signingEvidence}));

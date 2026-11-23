@@ -6,7 +6,7 @@ Node 24 LTS，使用内置 HTTPS、密码派生和 SQLite。领域验证直接�
 
 在本目录执行 `npm test`。测试使用临时目录、合成账号和模拟公开来源，退出后清理。HTTP 工厂仅供回环测试；生产入口要求明确的数据目录、TLS 证书和密钥。
 
-`node tools/build.mjs` 生成可重建的 `build/domain.mjs`。`python tools/deploy.py` 部署独立 systemd 服务及带 IP SAN 的 HTTPS 证书，不占用现有 443。私钥和部署包在工作区的忽略目录中，公开源码只包含客户端使用的 CA 公钥。
+`node tools/build.mjs` 生成可重建的 `build/domain.mjs`。`python tools/deploy.py --reuse-tls` 更新现有独立 systemd 服务，沿用带 IP SAN 的 HTTPS 证书。续签服务端证书时需要原账户服务 CA 与私钥。Android 使用仓库中的公开 CA 证书 `blockcolc-cloud-ca.pem`，出包时核对其已正确封装。私钥和部署包保存在忽略目录中。
 
 当前部署使用 8443。服务器安全组还需允许该端口；服务内部 HTTPS 成功不能代替公网可达性。`tools/test-proxy.py` 是只监听电脑回环地址的实验桥，需要独立 SSH 转发；不随 App 打包，也不跳过 TLS 校验。
 

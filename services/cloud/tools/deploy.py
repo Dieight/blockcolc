@@ -21,6 +21,9 @@ def certificates():
     now = datetime.datetime.now(datetime.timezone.utc)
     root_key_path = PRIVATE/'ca.key'
     root_cert_path = PRIVATE/'ca.pem'
+    public = ROOT/'apps/native-android/platform-cloud/src/main/assets/blockcolc-cloud-ca.pem'
+    if public.exists() and not (root_key_path.is_file() and root_cert_path.is_file()):
+        raise ValueError('The app already trusts a deployment CA. Use --reuse-tls or provide the existing CA files.')
     if not root_key_path.exists():
         key = ec.generate_private_key(ec.SECP256R1())
         name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, 'blockcolc Cloud Root')])
@@ -32,6 +35,8 @@ def certificates():
         root_cert_path.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
     ca_key = serialization.load_pem_private_key(root_key_path.read_bytes(),None)
     ca = x509.load_pem_x509_certificate(root_cert_path.read_bytes())
+    if public.exists() and x509.load_pem_x509_certificate(public.read_bytes()).fingerprint(hashes.SHA256()) != ca.fingerprint(hashes.SHA256()):
+        raise ValueError('The local deployment CA differs from the certificate trusted by the app.')
     leaf_key = ec.generate_private_key(ec.SECP256R1())
     leaf = (x509.CertificateBuilder().subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME,'blockcolc Cloud API')]))
             .issuer_name(ca.subject).public_key(leaf_key.public_key()).serial_number(x509.random_serial_number())
@@ -41,9 +46,9 @@ def certificates():
             .add_extension(x509.ExtendedKeyUsage([x509.oid.ExtendedKeyUsageOID.SERVER_AUTH]),False).sign(ca_key,hashes.SHA256()))
     (PRIVATE/'server.key').write_bytes(leaf_key.private_bytes(serialization.Encoding.PEM,serialization.PrivateFormat.PKCS8,serialization.NoEncryption()))
     (PRIVATE/'server.pem').write_bytes(leaf.public_bytes(serialization.Encoding.PEM)+ca.public_bytes(serialization.Encoding.PEM))
-    public = ROOT/'apps/native-android/platform-cloud/src/main/assets/blockcolc-cloud-ca.pem'
-    public.parent.mkdir(parents=True,exist_ok=True)
-    public.write_bytes(ca.public_bytes(serialization.Encoding.PEM))
+    if not public.exists():
+        public.parent.mkdir(parents=True,exist_ok=True)
+        public.write_bytes(ca.public_bytes(serialization.Encoding.PEM))
 
 def deploy(*, reuse_tls, viewer_web):
     if not reuse_tls:
