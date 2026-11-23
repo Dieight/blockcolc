@@ -13,6 +13,23 @@ import java.util.concurrent.CancellationException
 import java.util.Base64
 
 class NativeWorldPacketCompilerTest {
+    @Test fun lowTierKeepsTheTerrainCellEdgesAndTheSameWorldLayout(){
+        val planner=WorldPlanBuilder()
+        NativeWorldPacketCompiler().use{optimized->
+            NativeWorldPacketCompiler(compactGeometry=false).use{original->
+                val document=apply(initial(),"ConfigureWorldEnvironment","environmentStyle" to WorldEnvironment.VALLEY.wireValue)
+                val world=planner.terrain(planner.prepare(WorldFacts.from(document)))
+                val identity=WorldRequestIdentity("terrain-seams.db",0,1)
+                val low=options.copy(quality=NativeLightingQuality.LOW)
+                val reference=original.prepare(identity,world,low)
+                val active=optimized.prepare(identity,world,low)
+                assertEquals(reference.spatialKey,active.spatialKey)
+                assertEquals(reference.scene.sources.first{it.owner=="world"}.geometryKeys,
+                    active.scene.sources.first{it.owner=="world"}.geometryKeys)
+            }
+        }
+        planner.clear()
+    }
     @Test fun parallelPreparationRetainsEveryPacketAndTheCurrentOwnerReuse() {
         val builder=WorldPlanBuilder();val sequential=NativeWorldPacketCompiler();val parallel=NativeWorldPacketCompiler(parallel=true)
         fun fingerprint(source:NativePacketSource):String {

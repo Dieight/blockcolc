@@ -6,11 +6,17 @@ import java.util.concurrent.FutureTask
 
 private data class BlueprintSlice(val start:Int,val end:Int)
 
+internal fun metadataWithoutActiveFocus(view:JSONObject):String{
+    val active=view.get("activeFocusSession")
+    view.put("activeFocusSession",JSONObject.NULL)
+    return try{StrictJson.render(view)}finally{view.put("activeFocusSession",active)}
+}
+
 /** Validated, complete domain wire state. Mutable JSON never crosses the owned boundary. */
 class DomainDocument private constructor(private val wire:CanonicalWire, private val snapshot: JSONObject?,private val focusControls:String?,private val activeSession:String?,private val dailyResources:Set<String>,private val birthdayControls:String,
     private val projection:String?,private val blueprintSlices:Map<Pair<String,String>,BlueprintSlice>,private val rootSlices:Map<String,BlueprintSlice>,
     private val projectionSections:Map<String,String>,private val controlSections:Map<String,String>,private val checkedSha:String?=null,
-    private val focusStartBaseSha:String?=null) {
+    private val activeFocusBaseSha:String?=null) {
     val canonical:String get()=wire.text
     val canonicalLength:Int get()=wire.length
     val sha256: String by lazy { checkedSha?:wire.sha256() }
@@ -47,8 +53,8 @@ class DomainDocument private constructor(private val wire:CanonicalWire, private
     }
     /** The store can apply just this singleton after verifying the same base
      * document in its transaction. Parsing a document does not grant a patch. */
-    fun startedFocusWireFrom(base:DomainDocument):String? =
-        if(focusStartBaseSha!=null&&focusStartBaseSha==base.sha256)activeSession else null
+    fun activeFocusWireFrom(base:DomainDocument):String? =
+        if(activeFocusBaseSha!=null&&activeFocusBaseSha==base.sha256)activeSession else null
     internal val canSpliceStartedFocus get()=snapshot==null
     internal fun checkpointMetadata():JSONObject=JSONObject()
         .put("roots",JSONObject().also{out->rootSlices.forEach{(name,s)->out.put(name,JSONArray().put(s.start).put(s.end))}})
@@ -70,26 +76,25 @@ class DomainDocument private constructor(private val wire:CanonicalWire, private
             }
         }
     }
-    /** Only StartFocus may use this path. Its original command runs on a
-     * detached metadata view; every other field must remain byte-identical.
-     * The new session uses the same shape and full reference checks as a
-     * whole-domain decode. Immutable blueprint/history bytes are inherited. */
-    internal fun startedFocus(view:JSONObject,beforeMetadata:String):DomainDocument? {
-        check(canSpliceStartedFocus&&activeSession==null)
-        val session=view.get("activeFocusSession")
-        view.put("activeFocusSession",JSONObject.NULL)
-        val unchanged=StrictJson.render(view)==beforeMetadata
-        view.put("activeFocusSession",session)
-        if(!unchanged)return null
+    /** A focus start or visibility change may replace one validated session.
+     * Every other field must match the original metadata, including history. */
+    internal fun updateActiveFocus(view:JSONObject,beforeMetadata:String):DomainDocument? {
+        val session=view.optJSONObject("activeFocusSession")?:return null
+        if(metadataWithoutActiveFocus(view)!=beforeMetadata)return null
+        val sessionWire=StrictJson.render(session)
+        if(sessionWire==activeSession)return this
         DomainValidation.activeSession(session)
         DomainReferences.validate(view)
-        val sessionWire=StrictJson.render(session);val old=rootSlices.getValue("activeFocusSession")
+        val old=rootSlices.getValue("activeFocusSession")
         val delta=sessionWire.length-(old.end-old.start)
         val next=wire.replace(old.start,old.end,sessionWire)
         fun shifted(slice:BlueprintSlice)=if(slice.start>=old.end)BlueprintSlice(slice.start+delta,slice.end+delta)else slice
         val roots=java.util.Collections.unmodifiableMap(rootSlices.mapValues{(name,slice)->if(name=="activeFocusSession")BlueprintSlice(old.start,old.start+sessionWire.length)else shifted(slice)})
         val blueprints=java.util.Collections.unmodifiableMap(blueprintSlices.mapValues{(_,slice)->shifted(slice)})
-        return DomainDocument(next,null,null,sessionWire,dailyResources,birthdayControls,null,blueprints,roots,projectionSections,controlSections,focusStartBaseSha=sha256)
+        val controls=focusControls?.let{StrictJson.render(focusControlJson().put("activeFocusSession",session))}
+        val display=projection?.let{StrictJson.render(view)}
+        return DomainDocument(next,null,controls,sessionWire,dailyResources,birthdayControls,display,blueprints,roots,
+            projectionSections,controlSections,activeFocusBaseSha=sha256)
     }
 
     /** Focus and task-selection commands can edit records and seal a habit

@@ -186,8 +186,8 @@ class NativeStateStore(private val db: SqlDatabase, private val checkpoint: (Str
         if (intentSha != null) require(Regex("[a-f0-9]{64}").matches(intentSha))
         val digest = StrictJson.sha("$kind\n${domain.sha256}\n$local\n${rollback?.reason.orEmpty()}\n${rollback?.source.orEmpty()}")
         val before = load() ?: throw StorageConflict("NOT_INITIALIZED")
-        val focusStart=if(!replacement&&rollback==null)domain.startedFocusWireFrom(before.domain)else null
-        val preparedLayout=if(domain==before.domain||focusStart!=null)null else RecordLayout.split(domain)
+        val focusUpdate=if(!replacement&&rollback==null)domain.activeFocusWireFrom(before.domain)else null
+        val preparedLayout=if(domain==before.domain||focusUpdate!=null)null else RecordLayout.split(domain)
         var committedLayout:RecordLayout?=null
         var committedAssetDigest:String?=null
         var committedAssetRanges:AssetRanges?=null
@@ -215,7 +215,7 @@ class NativeStateStore(private val db: SqlDatabase, private val checkpoint: (Str
             // The optimized focus splice touches one domain value. Reuse
             // checked rows only when the actual pinned write connection
             // still has the same stamp, and the base domain and token match.
-            val point=readCheckpoint?.takeIf{focusStart!=null&&domain.canonicalLength<=largeDocumentCharacters&&
+            val point=readCheckpoint?.takeIf{focusUpdate!=null&&domain.canonicalLength<=largeDocumentCharacters&&
                 it.focusBase!=null&&it.token==meta.token&&validated?.domain===before.domain&&meta.sha==before.domain.sha256}
             val focusBase=point?.takeIf{PipelineCost.section("storage.prewrite-stamp"){sql.readStamp()==it.stamp}}?.focusBase
             val current=if(focusBase==null)PipelineCost.section("storage.prewrite-inputs"){readInputs(sql,meta)}else null
@@ -230,7 +230,7 @@ class NativeStateStore(private val db: SqlDatabase, private val checkpoint: (Str
             } else null
             val revision = Math.addExact(expected.revision, 1); val generation = if (replacement) Math.addExact(expected.replacementGeneration, 1) else expected.replacementGeneration
             if(current!=null){
-                val values=if(focusStart==null)current.values else current.values+("activeFocusSession" to focusStart)
+                val values=if(focusUpdate==null)current.values else current.values+("activeFocusSession" to focusUpdate)
                 val layout=preparedLayout?:RecordLayout(values,current.records,current.assets)
                 committedLayout=layout
                 if(layout.assets===current.assets){
@@ -240,7 +240,7 @@ class NativeStateStore(private val db: SqlDatabase, private val checkpoint: (Str
                 writeRecords(sql,layout,current)
             }else{
                 checkpoint("after-assets")
-                if(sql.execute("UPDATE domain_values SET canonical=? WHERE name='activeFocusSession'",listOf(checkNotNull(focusStart)))!=1)
+                if(sql.execute("UPDATE domain_values SET canonical=? WHERE name='activeFocusSession'",listOf(checkNotNull(focusUpdate)))!=1)
                     throw StorageCorruption("Missing active focus row")
                 checkpoint("after-records")
                 committedFocusBase=checkNotNull(focusBase)
@@ -273,7 +273,7 @@ class NativeStateStore(private val db: SqlDatabase, private val checkpoint: (Str
             val meta=Meta(committed.token,domain.sha256)
             val focusBase=committedFocusBase
             if(focusBase!=null){
-                val values=focusBase.values+("activeFocusSession" to checkNotNull(focusStart))
+                val values=focusBase.values+("activeFocusSession" to checkNotNull(focusUpdate))
                 val digest=RecordLayout.contentDigest(values,focusBase.records,focusBase.assets.digest)
                 readCheckpoint=null
                 validated=Validated(null,fingerprint(meta,local,digest),ValidatedRecordContent(digest,domain),focusBase.assets)
@@ -431,7 +431,7 @@ class NativeStateStore(private val db: SqlDatabase, private val checkpoint: (Str
         val matched=proof.matchedAssetRanges
         // A proven focus splice preserves all previously compared bodies and
         // owner identities. Other documents establish their own exact ranges.
-        if(matched!=null&&prior!=null&&(domain===prior.domain||domain.startedFocusWireFrom(prior.domain)!=null))return matched
+        if(matched!=null&&prior!=null&&(domain===prior.domain||domain.activeFocusWireFrom(prior.domain)!=null))return matched
         val ranges=AssetRanges(RecordLayout.assetOwners(proof.records),digest)
         return ranges.takeIf{it.matches(domain,proof.assets)}
     }

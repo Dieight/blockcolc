@@ -4,12 +4,15 @@ def upgradeCandidate=providers.gradleProperty('nativeUpgradeCandidate').getOrEls
 def publicVersion=new groovy.json.JsonSlurper().parse(rootProject.file('../../version.json'))
 def beta=providers.gradleProperty('nativeBetaNumber').orNull
 def betaCode=providers.gradleProperty('nativeBetaVersionCode').orNull
+def betaBase=providers.gradleProperty('nativeBetaTargetVersion').getOrElse(publicVersion.versionName.toString())
 def stableCode=providers.gradleProperty('nativeReleaseVersionCode').orNull
 if(beta!=null||betaCode!=null){
     if(!upgradeCandidate||!(beta==~ /[1-9][0-9]{0,5}/)||!(betaCode==~ /[1-9][0-9]{0,8}/)||betaCode.toInteger()<=publicVersion.versionCode.toInteger())
         throw new GradleException('Beta requires formal signing, a positive beta number and a versionCode above the public release')
+    if(!(betaBase==~ /(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)/))
+        throw new GradleException('Beta target version must use MAJOR.MINOR.PATCH')
 }
-def currentReleaseVersion=upgradeCandidate?(beta==null?'3.0.0':"3.0.0-beta.${beta}".toString()):publicVersion.versionName
+def currentReleaseVersion=beta==null?publicVersion.versionName:"${betaBase}-beta.${beta}".toString()
 if(upgradeCandidate&&beta==null&&stableCode==null)
     throw new GradleException('Set -PnativeReleaseVersionCode explicitly using the delivered APK history')
 def minStableCode=publicVersion.versionCode.toInteger()+(publicVersion.versionName==currentReleaseVersion?0:1)
@@ -287,7 +290,7 @@ if(upgradeCandidate) {
         dependsOn 'assembleRelease'
         workingDir rootProject.projectDir
         commandLine 'node','tools/check-user-preview-package.mjs',project.layout.buildDirectory.file('outputs/apk/release/app-release.apk').get().asFile.absolutePath,'--upgrade-candidate'
-        if(beta!=null)args "--beta=${beta}".toString(),"--beta-code=${betaCode}".toString()
+        if(beta!=null)args "--beta=${beta}".toString(),"--beta-code=${betaCode}".toString(),"--beta-target=${betaBase}".toString()
         if(stableCode!=null)args "--release-code=${stableCode}".toString()
     }
     tasks.register('recordUpgradeCandidate',Exec){

@@ -17,9 +17,16 @@ class FocusPlatform(private val context: Context) {
     private val notifications = context.getSystemService(NotificationManager::class.java)
     private var previous: PendingIntent? = null
     private var shownTicket: DeadlineTicket? = null
+    private val colorOsDevice=listOf(Build.MANUFACTURER,Build.BRAND).any{it.lowercase() in setOf("oppo","oneplus","realme")}
     private fun english(state:PreviewSnapshot)=state.preferences.language=="en"
     private fun text(state:PreviewSnapshot,zh:String,en:String)=if(english(state))en else zh
     private fun surfaceKey(state:PreviewSnapshot)="${state.generation}:${state.planId}"
+    internal fun compactFocusLabel(state:PreviewSnapshot):String?=when(state.phase){
+        "FOCUS"->text(state,"专注中","Focus")
+        "REST"->text(state,"休息中","Break")
+        "READY"->text(state,"等待中","Waiting")
+        else->null
+    }
     fun promotedAllowed():Boolean = Build.VERSION.SDK_INT>=36 && runCatching {
         notifications.javaClass.getMethod("canPostPromotedNotifications").invoke(notifications)==true
     }.getOrDefault(false)
@@ -53,8 +60,15 @@ class FocusPlatform(private val context: Context) {
         val types=events.mapNotNull{runCatching{org.json.JSONObject(it).getString("type")}.getOrNull()}
         if(ticket!=shownTicket){previous?.let(alarms::cancel);previous=null;cancelLive();shownTicket=ticket}
         if (ticket == null) {
+            val waiting=state.phase=="READY"&&state.planId!=null&&state.round in 1 until state.rounds
+            if(waiting&&colorOsDevice&&promotedAllowed()&&notificationAllowed()){
+                context.stopService(Intent(context, FocusAlarmService::class.java))
+                notifications.cancel(REMINDER)
+                notifications.notify(LIVE,notification(state,null,waitingLive=true))
+                return state.returnReminderKey
+            }
             cancelLive();context.stopService(Intent(context, FocusAlarmService::class.java))
-            val eligible=state.phase=="READY"&&state.planMode!=com.blockcolc.storage.PlanMode.ROUNDS&&state.round>0&&state.round<state.rounds&&state.preferences.returnToFocusReminders
+            val eligible=waiting&&state.planMode!=com.blockcolc.storage.PlanMode.ROUNDS&&state.preferences.returnToFocusReminders
             val complete=state.phase=="REPORT"&&"FocusCompleted" in types
             val returning=eligible&&state.returnReminderKey!=null
             val existing=notifications.activeNotifications.firstOrNull{it.id==REMINDER}
@@ -88,17 +102,21 @@ class FocusPlatform(private val context: Context) {
         return null
     }
     private fun liveTag(ticket:DeadlineTicket)="blockcolc-focus:${com.blockcolc.domain.StrictJson.sha(ticket.json().toString())}"
-    fun notification(state: PreviewSnapshot, ticket: DeadlineTicket?): Notification {
+    internal fun notification(state:PreviewSnapshot,ticket:DeadlineTicket?,waitingLive:Boolean=false,colorOs:Boolean=colorOsDevice):Notification {
         if (Build.VERSION.SDK_INT >= 26) notifications.createNotificationChannel(NotificationChannel(CHANNEL, "方块钟 · 专注与休息", NotificationManager.IMPORTANCE_LOW).apply { setSound(null, null); enableVibration(false) })
         val intent = PendingIntent.getActivity(context, 1, Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         @Suppress("DEPRECATION") val b = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(context, CHANNEL) else Notification.Builder(context)
         val extended=state.extensionStartedAt?.takeIf{ticket!=null}
         val heading=if(extended!=null)text(state,"加时专注","Extended focus")else if(english(state))when(state.phase){"FOCUS"->"Focus · ${state.round+1}/${state.rounds}";"REST"->"Break";"READY"->"Ready for the next round";"REPORT"->"Focus completed";else->"blockcolc"}else state.heading
         val subtext=if(extended!=null)text(state,"等待用户结束","Waiting for manual finish")else "${minOf(state.round+1,maxOf(1,state.rounds))}/${maxOf(1,state.rounds)}"
-        b.setSmallIcon(R.drawable.ic_focus).setContentTitle(heading).setContentText(state.detail).setContentIntent(intent)
-            .setCategory(if(ticket!=null)"stopwatch" else Notification.CATEGORY_REMINDER)
+        val live=ticket!=null||waitingLive
+        b.setSmallIcon(if(colorOs)R.drawable.ic_focus_coloros else R.drawable.ic_focus).setContentTitle(heading).setContentText(state.detail).setContentIntent(intent)
+            .setCategory(if(live)"stopwatch" else Notification.CATEGORY_REMINDER)
             .setGroup("blockcolc-focus-audio").setSubText(subtext)
-            .setVisibility(Notification.VISIBILITY_PUBLIC).setOnlyAlertOnce(true).setOngoing(ticket != null).setShowWhen(false)
+            .setVisibility(Notification.VISIBILITY_PUBLIC).setOnlyAlertOnce(true).setOngoing(live).setShowWhen(false)
+        if(live&&colorOs&&Build.VERSION.SDK_INT>=36)compactFocusLabel(state)?.let{label->
+            runCatching{Notification.Builder::class.java.getMethod("setShortCriticalText",String::class.java).invoke(b,label)}
+        }
         val remaining = ticket?.let { DomainTime.millis(it.end) - System.currentTimeMillis() } ?: 0
         if(extended!=null)b.setWhen(DomainTime.millis(extended)).setShowWhen(true).setUsesChronometer(true)
         else if (remaining > 0 && ticket != null&&Build.VERSION.SDK_INT>=26) {
@@ -110,7 +128,8 @@ class FocusPlatform(private val context: Context) {
         }else if(ticket!=null)b.setContentText("${text(state,"本轮结束于","Round ended at")} ${java.text.SimpleDateFormat("HH:mm:ss",java.util.Locale.getDefault()).format(java.util.Date(DomainTime.millis(ticket.end)))}")
         val extras=Bundle().apply {
             putString("blockcolc.focus.key",surfaceKey(state));state.returnReminderKey?.let{putString("blockcolc.return.key",it)}
-            if(ticket!=null){putString("blockcolc.focus.ticket",ticket.json().toString());putString("blockcolc.focus.tag",liveTag(ticket));putBoolean("android.requestPromotedOngoing",promotedAllowed())}
+            if(ticket!=null){putString("blockcolc.focus.ticket",ticket.json().toString());putString("blockcolc.focus.tag",liveTag(ticket))}
+            if(live)putBoolean("android.requestPromotedOngoing",promotedAllowed())
             putBoolean("oplus_smallicon_use_app_icon",false)
         }
         if(ticket!=null){

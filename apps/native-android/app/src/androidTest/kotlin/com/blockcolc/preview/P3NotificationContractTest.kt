@@ -39,6 +39,17 @@ class P3NotificationContractTest {
         assertTrue(OriginOsTimerSurface.ownsTag("VIVO_SUPERX_TAG","ours"))
         assertFalse(OriginOsTimerSurface.ownsTag("unrelated","ours"))
     }
+    @Test fun colorOsFocusRestAndWaitingKeepTheLegacyIconAndTheWaitingChipHasNoClock(){
+        for((phase,label) in listOf("FOCUS" to "专注中","REST" to "休息中","READY" to "等待中")){
+            val state=PreviewSnapshot(phase=phase,planId="p",round=1,rounds=2)
+            val waiting=phase=="READY"
+            val notice=platform.notification(state,ticket().takeUnless{waiting},waitingLive=waiting,colorOs=true)
+            assertEquals(label,platform.compactFocusLabel(state))
+            assertEquals(R.drawable.ic_focus_coloros,notice.smallIcon.resId)
+            assertTrue(notice.flags and Notification.FLAG_ONGOING_EVENT!=0)
+            assertEquals(!waiting,notice.extras.getBoolean(Notification.EXTRA_SHOW_CHRONOMETER))
+        }
+    }
     @Test fun powerEntryTargetsThisAppAndDoesNotRequestBatteryWhitelist(){
         val power=platform.settingsIntent("battery")
         assertEquals(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,power.action)

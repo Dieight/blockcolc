@@ -72,9 +72,12 @@ data class PlanEditorModel(val token:String=UUID.randomUUID().toString(),val pro
 }
 
 @Composable fun NativePlanEditor(model:PlanEditorModel?,s:WorkspaceUiState,runtime:WorkspaceActions,onClose:()->Unit){
-    val ui=LocalNativeUi.current;var pending by remember(model?.token){mutableStateOf<String?>(null)};var failed by remember(model?.token){mutableStateOf(false)}
+    val ui=LocalNativeUi.current;var pending by remember(model?.token){mutableStateOf<String?>(null)};var error by remember(model?.token){mutableStateOf<String?>(null)}
     var choosingTask by rememberSaveable(model?.token){mutableStateOf(false)}
-    LaunchedEffect(s.receipts,pending){pending?.let{id->s.receipts.find{it.id==id}?.let{result->pending=null;if(result.saved)onClose()else failed=true}}}
+    LaunchedEffect(s.receipts,pending){pending?.let{id->s.receipts.find{it.id==id}?.let{result->
+        pending=null
+        if(result.saved)onClose()else error=result.reason?:"SAVE_FAILED"
+    }}}
     NativeSheet(model,{ui.text("调整")},onClose,dismissible=pending==null,heading={
         if(choosingTask)NativeIconAction(ui.text("返回计划"),"back",{choosingTask=false})
         NativeText(ui.text(if(choosingTask)"本次专注"else"调整"),NativeTextRole.TITLE,Modifier.weight(1f))
@@ -127,12 +130,12 @@ data class PlanEditorModel(val token:String=UUID.randomUUID().toString(),val pro
             val totalMs=minutes*60000L*rounds+s.preferences.breakMinutes*60000L*(rounds-1)
             NativeText(ui.text("共 {0} · 预计 {1} 结束",formatDuration(totalMs),formalEndLabel(reference+totalMs,reference)),NativeTextRole.CAPTION,color=MaterialTheme.colorScheme.primary)
         }
-        if(failed)Text(ui.text("保存失败，请重试。"),color=MaterialTheme.colorScheme.error)
+        NativeRequestError(error)
         val valid=owner!=null&&owner.canStart&&(owner.habit||type!=PlanMode.ROUNDS||owner.tasks.any{it.id==task})&&(type==PlanMode.ROUNDS||end?.let{it>System.currentTimeMillis()}==true)
         NativeAction(ui.text(if(pending==null)"确认计划" else "保存中…"),{
             val target=project?:return@NativeAction
             val draft=FocusDraft(target,if(type==PlanMode.ROUNDS)task else null,type,if(type==PlanMode.ROUNDS)DraftSchedule.Rounds(rounds)else DraftSchedule.EndAt(end?:return@NativeAction))
-            val request=UUID.randomUUID().toString();pending=request;failed=false
+            val request=UUID.randomUUID().toString();pending=request;error=null
             if(entry.replacingPlanId==null)runtime.confirmPlan(draft,request)else runtime.amendPlan(entry.replacingPlanId,draft,request)
         },Modifier.fillMaxWidth(),pending=pending!=null,enabled=valid,icon="check")
     }

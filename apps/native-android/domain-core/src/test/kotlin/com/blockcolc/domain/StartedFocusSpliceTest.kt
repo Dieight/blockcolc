@@ -61,12 +61,30 @@ class StartedFocusSpliceTest {
         val started=DomainEngine.execute(state,command(),now).state
         assertEquals(whole(started,command()),DomainEngine.execute(started,command(),now))
     }
+    @Test fun visibilityChangesReuseTheValidatedSessionRowButAnExpiredRoundStillCompletes(){
+        val live=DomainEngine.execute(large(),command(),now).state
+        val leave=DomainEngine.command("RecordFocusBackgrounded","reason" to "app-switch")
+        val enter=DomainEngine.command("RecordFocusForegrounded")
+        val away=DomainEngine.execute(live,leave,now+2_000)
+        assertEquals(whole(live,leave,now+2_000),away)
+        assertNotNull(away.state.activeFocusWireFrom(live))
+        val back=DomainEngine.execute(away.state,enter,now+6_000)
+        assertEquals(whole(away.state,enter,now+6_000),back)
+        assertNotNull(back.state.activeFocusWireFrom(away.state))
+        assertEquals(live,back.state)
+
+        val expired=DomainEngine.execute(away.state,enter,now+61_000)
+        assertEquals(whole(away.state,enter,now+61_000),expired)
+        assertNull(expired.state.activeFocusWireFrom(away.state))
+        assertNull(expired.state.activeFocusSession())
+        assertEquals(1,expired.state.projectionJson().getJSONArray("focusHistory").length())
+    }
     @Test fun anotherFieldChangeFallsBackAndAnInvalidActiveSessionCannotInheritValidation(){
         val state=large();val view=state.projectionJson();val before=StrictJson.render(view)
         view.put("activeFocusSession",JSONObject().put("id","broken"))
-        assertThrows(StateInputException::class.java){state.startedFocus(view,before)}
+        assertThrows(StateInputException::class.java){state.updateActiveFocus(view,before)}
         view.getJSONArray("quickNotes").put(JSONObject().put("id","extra"))
-        assertNull(state.startedFocus(view,before));assertNull(state.activeFocusSession())
+        assertNull(state.updateActiveFocus(view,before));assertNull(state.activeFocusSession())
     }
 
     @Test fun reportingRetainsExactBodiesAndCopiesTheCorrectImportedHabitSnapshot() {

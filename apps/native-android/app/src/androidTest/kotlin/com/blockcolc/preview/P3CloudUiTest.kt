@@ -124,6 +124,13 @@ class P3CloudUiTest {
         assertEquals(0,fetched.get())
         compose.onNodeWithText("Shared friend").performClick()
         compose.waitUntil(5000){compose.onAllNodesWithContentDescription("Focus heatmap").fetchSemanticsNodes().isNotEmpty()}
+        compose.onNodeWithText("Today's focus").assertIsDisplayed()
+        compose.onNodeWithText("1 min").assertIsDisplayed()
+        compose.onNodeWithText("Total").performClick()
+        compose.onNodeWithText("Total focus").assertIsDisplayed()
+        compose.onNodeWithText("3 min").assertIsDisplayed()
+        compose.onNodeWithText("Today").performClick()
+        compose.onNodeWithText("Today's focus").assertIsDisplayed()
         compose.onNodeWithText("2025-08-11 – 2026-11-15").assertIsDisplayed()
         assertEquals(1,fetched.get())
         assertEquals(0,privateFetches.get())

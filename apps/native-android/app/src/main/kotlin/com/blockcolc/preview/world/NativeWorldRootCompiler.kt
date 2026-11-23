@@ -8,7 +8,7 @@ import kotlin.math.*
 
 /** Static terrain/scenery owns its material and geometry caches. It never
  * shares a mutable compiler with building/entity preparation. */
-internal class NativeWorldRootCompiler(private val compactGeometry:Boolean = true) {
+internal class NativeWorldRootCompiler {
     private val materials=NativeOriginalMaterials()
     private val originals=NativeOriginalPackets(materials)
     private val compiler=OriginalStructureCompiler()
@@ -17,17 +17,19 @@ internal class NativeWorldRootCompiler(private val compactGeometry:Boolean = tru
     private var resourceCompiler:NativeResourceStructureCompiler?=null
     private var resourcePackets:NativeResourcePackets?=null
     private fun check(cancelled:()->Boolean){if(cancelled()||Thread.currentThread().isInterrupted)throw CancellationException("Static world packing superseded")}
-    fun prepare(world:WorldTerrainPlan,state:NativeSurfaceState,assets:NativeResourceWorldAssets?,retainManifest:Boolean,cancelled:()->Boolean):NativePacketSource {
+    fun prepare(world:WorldTerrainPlan,state:NativeSurfaceState,assets:NativeResourceWorldAssets?,retainManifest:Boolean,
+        compactTerrain:Boolean,cancelled:()->Boolean):NativePacketSource {
         if(resourceAssets!==assets){
             resourceCompiler?.clear();resourceAssets=assets
             resourceCompiler=assets?.let{NativeResourceStructureCompiler(it.stack,it.textures,it.palette,specials=it.specials)}
             resourcePackets=assets?.let{NativeResourcePackets(it.textures)}
         }
-        return build(world,state,retainManifest,cancelled)
+        return build(world,state,retainManifest,compactTerrain,cancelled)
     }
-    private fun build(world:WorldTerrainPlan,state:NativeSurfaceState,retainManifest:Boolean,cancelled:()->Boolean):NativePacketSource {
+    private fun build(world:WorldTerrainPlan,state:NativeSurfaceState,retainManifest:Boolean,
+        compactTerrain:Boolean,cancelled:()->Boolean):NativePacketSource {
         val target=NativePacketBuilder("world",retainManifest=retainManifest);val coast=world.input.spatial.environment==WorldEnvironment.COAST
-        val geometries=NativePlanarGeometry.terrain(world.terrain,cancelled,compactOpaqueTops=compactGeometry)
+        val geometries=NativePlanarGeometry.terrain(world.terrain,cancelled,compactOpaqueTops=compactTerrain)
         for((i,geometry)in geometries.withIndex()){check(cancelled);if(geometry==null)continue
             val side=i>=TerrainMaterial.entries.size;val material=if(side)if(i==TerrainMaterial.entries.size)TerrainMaterial.DIRT else TerrainMaterial.STONE else TerrainMaterial.entries[i]
             val surface=resourceAssets?.terrain?.material(material,state,side)

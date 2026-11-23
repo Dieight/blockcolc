@@ -75,9 +75,9 @@ class NativeStateStoreTest {
             val command=DomainEngine.command("StartFocus","sessionId" to "s1","projectId" to "host","subtaskId" to "read","plannedDurationMs" to 60_000)
             val started=DomainEngine.execute(before.domain,command,DomainTime.millis("2026-10-01T08:00:00.000Z"))
             assertTrue(started.error,started.ok)
-            assertNotNull(started.state.startedFocusWireFrom(before.domain))
-            assertNull(started.state.startedFocusWireFrom(state("goal")))
-            assertNull(DomainDocument.parse(started.state.canonical).startedFocusWireFrom(before.domain))
+            assertNotNull(started.state.activeFocusWireFrom(before.domain))
+            assertNull(started.state.activeFocusWireFrom(state("goal")))
+            assertNull(DomainDocument.parse(started.state.canonical).activeFocusWireFrom(before.domain))
             val sections=mutableSetOf<String>()
             var assetHashes=0
             val receipt=PipelineCost.collect({name,_,_,_->

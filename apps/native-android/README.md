@@ -95,6 +95,6 @@ MC 图集的静态 UV／裁切／旋转／染色按可复用外观预求值，�
 
 ## Beta 通道
 
-用正式签名构建。原生 Gradle 构建参数为 `-PnativeUpgradeCandidate=true -PnativeBetaNumber=N -PnativeBetaVersionCode=CODE`，目标为 `:app:recordUpgradeCandidate`，同样需要指定 Filament 编译器。此任务先验证包内身份、正式签名和 16 KiB 对齐，再记录源码与产物摘要。
+用正式签名构建。原生 Gradle 构建参数为 `-PnativeUpgradeCandidate=true -PnativeBetaNumber=N -PnativeBetaVersionCode=CODE`，目标为 `:app:recordUpgradeCandidate`，同样需要指定 Filament 编译器。给下一条版本线构建 Beta 时，加 `-PnativeBetaTargetVersion=X.Y.Z`。此任务先验证包内身份、正式签名和 16 KiB 对齐，再记录源码与产物摘要。
 
 提交、推送、打标签和发布见 [Beta 发布](../../docs/TESTING.md#beta-发布)。正式包用 `-PnativeReleaseVersionCode=CODE` 代替两个 Beta 参数。根据已发布和已交付的同包名 APK 确定构建号，其中包括已发布的 Beta。自动与手动检查共用所选通道，手动安装 Beta 后默认跟随 Beta 通道，已有通道设置会保留。下载后核对发布资产的 SHA-256，安装前核对包名、版本和签名。 [GitHub Releases API](https://docs.github.com/en/rest/releases/releases)

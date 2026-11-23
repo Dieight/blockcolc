@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">
+    <!-- The legacy focus notification icon used by the 2.9 line. -->
+    <path android:fillColor="#FFFFFFFF" android:fillType="evenOdd"
+        android:pathData="M9,6.5H15V7H17V8H18.5V9H19.5V11H20.5V16H20V18H19V19H17.5V20H15.5V21H8.5V20.5H6.5V19.5H5V18H4V16H3.5V12H4V10H5V8.5H6.5V7.5H9Z M10,9H14V9.5H16V10.5H17V12H18V15.5H17.5V17H16V18H14.5V19H9.5V18.5H8V17.5H7V16H6V12H6.5V11H8V10H10Z"/>
+    <path android:fillColor="#FFFFFFFF"
+        android:pathData="M11,7H10V6.5H9V6H8V5H8.5V4H9.5V4.5H11V5H11.5V3.5H12V2.5H12.5V4H13V5H14V4.5H15V4H16V5H16.5V6H15V6.5H14V7H13Z M15,17H15.5V16.5H16V16H16.5V15.5H17V16.5H16.5V17H16V17.5H15Z"/>
+</vector>

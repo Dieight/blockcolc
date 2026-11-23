@@ -87,7 +87,11 @@ class NativeWorldPacketCompiler internal constructor(signRasterizer:NativeSignRa
         val key=RootKey(world.input.spatial.key,world.cacheKey,world.sceneryKey,materialState,paper)
         val cachedRoot=root?.takeIf{it.first==key}?.second
         val cache=if(paper)paperWorldCache else staticWorldCache?.takeIf{options.resources==null}
-        val diskKey=cache?.key(world,materialState.ambientOcclusion,compactGeometry && !paper)
+        // Keep the original cell edges in the fast pipeline. Merging flat
+        // tops introduces long/short edge junctions that can expose sky
+        // samples as the camera moves, especially on mobile rasterizers.
+        val compactTerrain=compactGeometry&&!paper&&options.quality!=NativeLightingQuality.LOW
+        val diskKey=cache?.key(world,materialState.ambientOcclusion,compactTerrain)
         val rootTask=batch.submit{com.blockcolc.preview.NativeStartupTrace.measure("packets-root",benchmark=true){
             val reused=cachedRoot?:diskKey?.let{cache?.read(it,cancelled)?.also{
                 com.blockcolc.preview.NativeStartupTrace.point(if(paper)"paper-packets-cache-hit" else "root-packets-cache-hit")
@@ -98,8 +102,8 @@ class NativeWorldPacketCompiler internal constructor(signRasterizer:NativeSignRa
                 PaperWorldMesh.appendRoot(target,world,allocator,cancelled)
                 target.build(cancelled) to (diskKey!=null)
             } else {
-                val compiler=rootCompiler?:NativeWorldRootCompiler(compactGeometry).also{rootCompiler=it}
-                compiler.prepare(world,materialState,options.resources,diskKey!=null,cancelled) to (diskKey!=null)
+                val compiler=rootCompiler?:NativeWorldRootCompiler().also{rootCompiler=it}
+                compiler.prepare(world,materialState,options.resources,diskKey!=null,compactTerrain,cancelled) to (diskKey!=null)
             }
         }}
         val animalTask=batch.submit{com.blockcolc.preview.NativeStartupTrace.measure("packets-animals",benchmark=true){animals.prepare(world,paper,cancelled)}}

@@ -464,6 +464,15 @@ private fun parseFriendCalendar(data:JSONObject):FriendCalendar{
 @Composable private fun NativeFriendHistory(data:FriendCalendar){
     val today=data.today
     val earliest=data.earliest
+    var total by rememberSaveable{mutableStateOf(false)}
+    val duration=if(total)data.total else data.days[today]?:0L.takeIf{data.complete}
+    Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(8.dp)){
+        Column(Modifier.weight(1f)){
+            Text(if(total)cloudText("累计专注","Total focus")else cloudText("今日专注","Today's focus"),style=MaterialTheme.typography.bodySmall)
+            Text(duration?.let{formatDuration(it)}?:cloudText("暂不可用","Unavailable"),style=MaterialTheme.typography.titleMedium)
+        }
+        FormalTextAction(if(total)cloudText("今日","Today")else cloudText("总计","Total"),"",{total=!total})
+    }
     if(earliest==null){
         Text(cloudText("暂无专注记录","No focus history"),style=MaterialTheme.typography.bodyMedium)
         return
@@ -474,8 +483,6 @@ private fun parseFriendCalendar(data:JSONObject):FriendCalendar{
     val list=rememberLazyListState(initialFirstVisibleItemIndex=count-1)
     val palette=nativeFocusHeatmapColors()
     val title=cloudText("专注热力图","Focus heatmap")
-    Text(cloudText("累计专注","Total focus"),style=MaterialTheme.typography.bodySmall)
-    Text(formatDuration(data.total),style=MaterialTheme.typography.titleMedium)
     Text("$earliest – $today",style=MaterialTheme.typography.bodySmall)
     LazyRow(Modifier.fillMaxWidth().height(81.dp).semantics{contentDescription=title},state=list,horizontalArrangement=Arrangement.spacedBy(3.dp)){
         items(count){column->

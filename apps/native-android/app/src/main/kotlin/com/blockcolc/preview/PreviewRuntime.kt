@@ -312,7 +312,7 @@ class PreviewRuntime private constructor(private val context: Context):Workspace
         if(id!=null){receipts.addLast(UiReceipt(id,saved,reason));while(receipts.size>256)receipts.removeFirst()}
         return receipts.toList()
     }
-    private fun enqueue(name: String,uiRequest:String?=null,lockUi:Boolean=true, work: (FocusCoordinator) -> Operation) {
+    private fun enqueue(name:String,uiRequest:String?=null,lockUi:Boolean=true,prepareRewardsBefore:Boolean=true,work:(FocusCoordinator)->Operation) {
         if(uiRequest!=null&&latest.refreshRequired&&name!="refresh-workspace"){
             actor.execute{publish(latest.copy(receipts=receipt(uiRequest,false,"VIEW_NOT_READY")))}
             return
@@ -329,11 +329,11 @@ class PreviewRuntime private constructor(private val context: Context):Workspace
             val begin = SystemClock.elapsedRealtimeNanos()
             var acknowledged:Operation?=null
             try {
-                val c = NativeStartupTrace.measure("runtime-open",benchmark=true){open()}
+                val c = NativeStartupTrace.measure("runtime-open",benchmark=true){open(prepareAssets=prepareRewardsBefore)}
                 val result = NativeStartupTrace.measure("runtime-command",benchmark=true){
                     val viewOnly=(!recordingTest||cloudTesting)&&!cloudGate.canExecute()
                     val protected=name in setOf("confirm-plan","start-plan","begin-focus","amend-plan","start-focus","manual","focus-decision","report-draft","report")
-                    if(viewOnly&&protected)throw IllegalStateException("CLOUD_VIEW_ONLY")
+                    if(viewOnly&&protected)throw FocusFailure("CLOUD_VIEW_ONLY")
                     if(viewOnly&&lifecycle)Operation(c.load()) else
                     if(BuildConfig.BUILD_TYPE=="benchmark"&&(name=="begin-focus"||name=="start-plan"))
                         NativeStartupTrace.measureFocusWrite{work(c)}
@@ -462,7 +462,7 @@ class PreviewRuntime private constructor(private val context: Context):Workspace
 
     private fun projectFocusPlatform(c:FocusCoordinator,display:PreviewSnapshot,events:List<String>,adoptReminder:(StoredState)->Unit):Boolean{
         future?.cancel(false);future=null
-        if((!recordingTest||cloudTesting)&&!cloudGate.canExecute()){platform.update(null,display);return false}
+        if((!recordingTest||cloudTesting)&&!cloudGate.canExecute()){platform.update(null,PreviewSnapshot());return false}
         try{
             val delivered=P2OperationCost.section("platform-projection"){platform.update(display.ticket,display,events)}
             if(delivered!=null){
@@ -501,13 +501,15 @@ class PreviewRuntime private constructor(private val context: Context):Workspace
         // and publish immutable models; large blueprint pools are not parsed
         // again for each page. The DomainDocument keeps its ownership boundary.
         // Workspace history and task statistics do not include the live
-        // session. Reuse them on a proven StartFocus splice in the same room
+        // session. Reuse them on a proven focus splice in the same room
         // and civil day. Timer and report controls still read current facts.
         val previous=committedWorld?.takeIf{it.identity.database==c.databaseIdentity&&it.identity.replacementGeneration==state.token.replacementGeneration}
-        val onlyStartedFocus=previous!=null&&state.domain.startedFocusWireFrom(previous.document)!=null
-        val focusBase=if(onlyStartedFocus)key.copy(sha=checkNotNull(previous).document.sha256)else null
+        val focusBase=previous?.takeIf{state.domain.activeFocusWireFrom(it.document)!=null}
+            ?.let{key.copy(sha=it.document.sha256)}
         val workspace=projectWorkspace(s,now,key,focusBase,observePresentation)
-        val library=blueprintLibrary?.takeIf{it.first==state.domain.sha256}?.second?:NativeBlueprintLibrary.from(s,blueprintCatalog!!,state.domain).also{blueprintLibrary=state.domain.sha256 to it}
+        val library=blueprintLibrary?.takeIf{it.first==key.sha||it.first==focusBase?.sha}?.second
+            ?:NativeBlueprintLibrary.from(s,blueprintCatalog!!,state.domain)
+        blueprintLibrary=key.sha to library
         val allocation=workspaceAllocations(workspace)
         val preferences=clientPreferences.load()
         if(observePresentation&&(projects.isNotEmpty()||history.isNotEmpty()))finishSetup()
@@ -525,7 +527,7 @@ class PreviewRuntime private constructor(private val context: Context):Workspace
         // Plan-only writes and the proven session splice have no world
         // changes. Keep the render request alive, but publish the new
         // document and committed revision for birthday/recovery observers.
-        val sceneIdentity=if(previous!=null&&(previous.document.sha256==state.domain.sha256||onlyStartedFocus))previous.sceneIdentity else identity
+        val sceneIdentity=if(previous!=null&&(previous.document.sha256==state.domain.sha256||focusBase!=null))previous.sceneIdentity else identity
         if(previous?.identity!=identity&&sceneIdentity!=identity)NativeStartupTrace.point("world-facts-reused")
         val worldInput=CommittedWorldInput(identity,state.domain,s.getJSONObject("worldSettings").getString("environmentStyle"),sceneIdentity)
         committedWorld=worldInput
@@ -573,7 +575,7 @@ class PreviewRuntime private constructor(private val context: Context):Workspace
                 val c = NativeStartupTrace.measure("receiver-open",benchmark=true){open(prepareAssets=false)}
                 if((!recordingTest||cloudTesting)&&!cloudGate.canExecute()){
                     NativeStartupTrace.point("receiver-execution-not-owned")
-                    platform.update(null,latest);return@execute
+                    platform.update(null,PreviewSnapshot());return@execute
                 }
                 val now=System.currentTimeMillis()
                 // Reject another database/generation/session and early wakes
@@ -651,7 +653,8 @@ class PreviewRuntime private constructor(private val context: Context):Workspace
                     view.copy(remainingMs=(if(habit)saved.value.habitFocusMinutes else saved.value.focusMinutes)*60000L)
                 }else view}
                 publish(latest.copy(preferences=saved.value,preferencesReadFailed=saved.readFailed,preferencesSaving=pending,message=failure,timer=timer))
-                runCatching{platform.update(latest.ticket.takeIf{recordingTest||cloudGate.canExecute()},latest)}.onFailure{android.util.Log.w("BlockcolcP3","Saved preference; notification refresh unavailable",it)}
+                val notice=if(recordingTest&&!cloudTesting||cloudGate.canExecute())latest else PreviewSnapshot()
+                runCatching{platform.update(notice.ticket,notice)}.onFailure{android.util.Log.w("BlockcolcP3","Saved preference; notification refresh unavailable",it)}
                 if(!recordingTest)NativeCloudController.peek()?.changed()
             }
             if(cause==null)receipt.saved()else receipt.failed(cause)
@@ -872,10 +875,15 @@ class PreviewRuntime private constructor(private val context: Context):Workspace
     }
     fun foreground(foreground: Boolean, screenLocked: Boolean = false) {
         val reason=if(foreground){navigation.cancel();"app-switch"}else navigation.backgroundReason(screenLocked)
-        actor.execute{dailyBackups.foreground(foreground);scheduleDaily()}
-        enqueue(if(foreground)"RecordFocusForegrounded"else"RecordFocusBackgrounded",lockUi=false){c->
-            c.observeLifecycle(foreground,reason,System.currentTimeMillis()){id()}
+        enqueue(if(foreground)"RecordFocusForegrounded"else"RecordFocusBackgrounded",lockUi=false,prepareRewardsBefore=false){c->
+            val now=System.currentTimeMillis()
+            val deadline=latest.ticket?.let{DomainTime.millis(it.end)}
+            // Visibility bookkeeping cannot award a new reward before the
+            // saved phase deadline. Due reconciliation still needs the pool.
+            if(latest.refreshRequired||deadline==null||now>=deadline)prepareRewards(c)
+            c.observeLifecycle(foreground,reason,now){id()}
         }
+        actor.execute{dailyBackups.foreground(foreground);scheduleDaily()}
     }
     private fun trace(name: String, begin: Long, state: StoredState, replay: Boolean) {
         android.util.Log.i("BlockcolcP2", JSONObject().put("operation", name).put("durationMs", (SystemClock.elapsedRealtimeNanos() - begin) / 1e6).put("revision", state.token.revision).put("generation", state.token.replacementGeneration).put("replayed", replay).toString())

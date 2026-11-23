@@ -50,7 +50,13 @@ import java.util.UUID
 }
 
 @Composable fun NativeRequestError(request:NativeRequest,message:String="保存失败，请重试。"){
-    if(request.error!=null)Text(LocalNativeUi.current.text(message),color=MaterialTheme.colorScheme.error,modifier=Modifier.semantics{liveRegion=LiveRegionMode.Polite})
+    NativeRequestError(request.error,message)
+}
+
+@Composable internal fun NativeRequestError(reason:String?,message:String="保存失败，请重试。"){
+    if(reason==null)return
+    val key=if(reason=="CLOUD_VIEW_ONLY")"请在账户与云同步中将本机设为执行设备。"else message
+    Text(LocalNativeUi.current.text(key),color=MaterialTheme.colorScheme.error,modifier=Modifier.semantics{liveRegion=LiveRegionMode.Polite})
 }
 
 /** TextFieldValue is the source for both selection and composing text. No

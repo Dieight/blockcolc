@@ -73,7 +73,7 @@ class BlueprintPartAssemblyTest {
         val command=DomainEngine.command("StartFocus","sessionId" to "first","projectId" to "work","subtaskId" to "task","plannedDurationMs" to 60_000)
         val started=DomainEngine.execute(actual,command,0)
         assertTrue(started.error,started.ok)
-        assertNotNull(started.state.startedFocusWireFrom(actual))
+        assertNotNull(started.state.activeFocusWireFrom(actual))
         assertSame(wire,started.state.blueprintCanonical("buildingBlueprintResources","parts-test"))
         assertEquals(DomainEngine.execute(expected,command,0).state.canonical,started.state.canonical)
     }

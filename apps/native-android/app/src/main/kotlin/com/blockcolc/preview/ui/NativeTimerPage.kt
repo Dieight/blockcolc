@@ -113,8 +113,8 @@ import java.util.*
                         }
                         NativeText(clock,NativeTextRole.CLOCK,Modifier.padding(vertical=4.dp),accent=true)
                         NativeDateCountdown(countdown,now)
-                        NativeRequestError(start)
                     }
+                    NativeRequestError(start)
                     NativeAction(startLabel,::begin,Modifier.fillMaxWidth().heightIn(min=52.dp),pending=start.busy,enabled=project.canStart&&!s.busy,icon="play")
                     if(timer.mayCancelUnstarted)FormalTextAction(ui.text("取消本次计划"),"close",{start.submit{runtime.decideFocus(FocusDecision.Cancel(),it)}},Modifier.align(Alignment.CenterHorizontally),!start.busy&&!s.busy)
                 }
@@ -185,10 +185,10 @@ import java.util.*
                             NativeDateCountdown(countdown,now,Modifier.padding(top=4.dp))
                         }else NativeDateCountdown(countdown,now)
                         if(timer.mayCancelUnstarted)FormalTextAction(ui.text("取消本次计划"),"close",{start.submit{runtime.decideFocus(FocusDecision.Cancel(),it)}},Modifier.align(Alignment.CenterHorizontally),!start.busy&&!s.busy)
-                        NativeRequestError(start)
                     }
                 }
-                Box(Modifier.fillMaxWidth().padding(start=20.dp,end=20.dp,top=8.dp,bottom=16.dp)){
+                Column(Modifier.fillMaxWidth().padding(start=20.dp,end=20.dp,top=8.dp,bottom=16.dp),verticalArrangement=Arrangement.spacedBy(6.dp)){
+                    NativeRequestError(start)
                     NativeAction(startLabel,::begin,Modifier.fillMaxWidth().heightIn(min=52.dp),pending=start.busy,enabled=project.canStart&&!s.busy,icon="play")
                 }
             }
@@ -224,7 +224,12 @@ import java.util.*
                             if(timeline!=null)NativeTodayFocusPanel(timeline)else NativeHistoryDetailsStatus(s,runtime)
                         }
                         "friends"->minimalFriends?.invoke(active&&pager.settledPage==index)
-                        else->FormalFocusFace(stretch=true,context={NativeDateCountdown(countdown,now)},timer={
+                        else->FormalFocusFace(stretch=true,context={
+                            Column(horizontalAlignment=Alignment.CenterHorizontally){
+                                NativeDateCountdown(countdown,now)
+                                NativeRequestError(start)
+                            }
+                        },timer={
                             var end by rememberSaveable{mutableStateOf<Long?>(null)}
                             NativeClockPicker(end,now,s.preferences.focusMinutes,s.preferences.breakMinutes,doubleConfirm=true,enabled=project!=null&&!s.busy,clockStyle=MaterialTheme.typography.displayLarge,onChange={end=it},onConfirm={deadline->project?.let{p->start.submit{runtime.beginFocus(FocusDraft(p.id,null,PlanMode.MINIMAL,DraftSchedule.EndAt(deadline)),it)}}})
                         },controls={
@@ -253,7 +258,7 @@ import java.util.*
                     when(timer.surface){
                         TimerSurface.FOCUS->key(timer.planId,if(extensionElapsed==null)timer.deadline else timer.extensionStartedAt){NativeFocusExitControl(!s.busy,onManual,hintRequest=hintRequest)}
                         TimerSurface.REST->if(timer.mode==PlanMode.MARATHON&&revealed)FormalTextAction(ui.text("调整计划"),"edit",::adjust,enabled=!s.busy)
-                        else->Unit
+                        else->NativeRequestError(start)
                     }
                 })
               }

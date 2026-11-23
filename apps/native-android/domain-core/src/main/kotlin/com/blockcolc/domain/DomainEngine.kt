@@ -21,16 +21,18 @@ object DomainEngine {
     }
     fun execute(state: DomainDocument, command: JSONObject, nowMs: Long): DomainOutcome = PipelineCost.section("domain.execute") { try {
         val type = command.opt("type")
-        if(state.canSpliceStartedFocus&&type=="StartFocus"){
-            val view=state.projectionJson();val before=StrictJson.render(view)
+        val visibilityChange=type=="RecordFocusBackgrounded"||type=="RecordFocusForegrounded"
+        if(visibilityChange&&state.activeFocusSession()==null)return@section DomainOutcome(true,state)
+        if(visibilityChange||state.canSpliceStartedFocus&&type=="StartFocus"){
+            val view=state.projectionJson()
+            val before=metadataWithoutActiveFocus(view)
             val mutation=DomainMutation(view,StrictJson.copy(command) as JSONObject,DomainTime.format(nowMs))
             check(FocusCommands.run(mutation))
-            state.startedFocus(view,before)?.let{return@section DomainOutcome(true,it,mutation.events.map(StrictJson::render))}
-            // A future command extension that changes another field must use
-            // full adoption rather than silently discarding that change.
+            state.updateActiveFocus(view,before)?.let{return@section DomainOutcome(true,it,mutation.events.map(StrictJson::render))}
         }
         when(type) {
-            "SwitchActiveProject", "CompleteFocus", "CompleteFocusEarly", "ReportSubtaskProgress", "ReportMarathonFocus" -> {
+            "SwitchActiveProject", "CompleteFocus", "CompleteFocusEarly", "ReportSubtaskProgress", "ReportMarathonFocus",
+            "RecordFocusBackgrounded", "RecordFocusForegrounded" -> {
                 var events = emptyList<String>()
                 val result = state.editRetainingBlueprints { view ->
                     val mutation = DomainMutation(view, StrictJson.copy(command) as JSONObject, DomainTime.format(nowMs))

@@ -409,6 +409,96 @@ class P3NativePagesTest {
     }
     @Test fun ordinaryWorkspaceKeepsItsCameraAfterHomeAndBothResets()=workspaceHomeAndResets(false)
     @Test fun minimalWorkspaceKeepsItsCameraAfterHomeAndBothResets()=workspaceHomeAndResets(true)
+    @Test fun returningDuringFocusKeepsTheResidentSceneAndDeadline()=run(configure={it.copy(focusMinutes=25,lightingQuality="performance")}){
+        fun frame():JSONObject{
+            var latest:JSONObject?=null
+            compose.waitUntil(90000){
+                val world=renderedWorld()?:return@waitUntil false
+                worldDiagnostic(world,false).let{value->
+                    (value.optBoolean("active")&&value.optBoolean("swapReady")&&value.optLong("gpuReadyFrames")>0&&
+                        value.isNull("pendingPresentation")&&!value.optBoolean("fencePending")&&
+                        value.optJSONObject("navigation")?.optBoolean("opening")==false).also{if(it)latest=value}
+                }
+            }
+            return checkNotNull(latest)
+        }
+        frame()
+        compose.onNodeWithText("开始 1 轮").performClick()
+        compose.waitUntil(15000){runtime.latest.phase=="FOCUS"}
+        compose.waitUntilDoesNotExist(hasTestTag("mode-transition"),15000)
+        val start=frame()
+        val sceneIdentity=checkNotNull(runtime.committedWorld).sceneIdentity
+        val deadline=runtime.latest.timer!!.deadline
+        val instrumentation=InstrumentationRegistry.getInstrumentation()
+        val device=androidx.test.uiautomator.UiDevice.getInstance(instrumentation)
+        val component=AtomicReference<android.content.ComponentName>()
+        instrumentation.runOnMainSync{
+            component.set(androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry.getInstance()
+                .getActivitiesInStage(androidx.test.runner.lifecycle.Stage.RESUMED).single().componentName)
+        }
+        val resumes=JSONArray()
+        repeat(3){
+            instrumentation.runOnMainSync{runtime.foreground(false)}
+            device.pressHome()
+            compose.waitUntil(15000){
+                runtime.latest.phase=="FOCUS"&&runtime.testRead().get(10,TimeUnit.SECONDS).domain.activeFocusSession()
+                    ?.getJSONObject("integrity")?.isNull("backgroundedAt")==false
+            }
+            val from=android.os.SystemClock.elapsedRealtimeNanos()
+            context.startActivity(android.content.Intent().setComponent(component.get()).addFlags(
+                android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP))
+            instrumentation.runOnMainSync{runtime.foreground(true)}
+            val state=runtime.testRead().get(30,TimeUnit.SECONDS)
+            val back=frame()
+            resumes.put(JSONObject().put("returnMs",(android.os.SystemClock.elapsedRealtimeNanos()-from)/1e6)
+                .put("presentation",back.getLong("presentationIdentity")).put("frames",back.getLong("frames"))
+                .put("revision",state.token.revision).put("deadline",runtime.latest.timer?.deadline)
+                .put("requestedScene",runtime.committedWorld?.sceneIdentity?.revision))
+            assertTrue(state.domain.activeFocusSession()!!.getJSONObject("integrity").isNull("backgroundedAt"))
+        }
+        File(context.filesDir,"beta1-focus-resume.json").writeText(JSONObject()
+            .put("baselinePresentation",start.getLong("presentationIdentity")).put("deadline",deadline)
+            .put("resumes",resumes).toString())
+        repeat(resumes.length()){index->
+            val resumed=resumes.getJSONObject(index)
+            assertEquals(deadline,resumed.getString("deadline"))
+            assertEquals("A lifecycle receipt must not replace the GPU scene",start.getLong("presentationIdentity"),resumed.getLong("presentation"))
+            assertEquals("Lifecycle updates must keep the requested scene",sceneIdentity.revision,resumed.getLong("requestedScene"))
+        }
+        screen("low-terrain-before-rotation")
+        val azimuth=frame().getJSONObject("camera").getDouble("azimuth")
+        compose.onNodeWithContentDescription("聚落世界").performTouchInput{
+            swipe(Offset(width*.25f,height*.25f),Offset(width*.75f,height*.25f),durationMillis=350)
+        }
+        compose.waitUntil(15000){kotlin.math.abs(frame().getJSONObject("camera").getDouble("azimuth")-azimuth)>.1}
+        screen("low-terrain-after-rotation")
+    }
+
+    @Test fun viewingDeviceExplainsHowToStartFocusInBothModes()=run{
+        runtime.testCloud(true).get(30,TimeUnit.SECONDS)
+        try{
+            runtime.cloudPermission(owned=false).get(30,TimeUnit.SECONDS)
+            val before=runtime.testRead().get(30,TimeUnit.SECONDS)
+            val error=hasText("请在账户与云同步中将本机设为执行设备。")
+            compose.onNodeWithText("开始 1 轮").performClick()
+            compose.waitUntilAtLeastOneExists(error,10000)
+            compose.onNode(error).assertIsDisplayed()
+
+            runtime.updatePreferences{it.copy(minimalMode=true)}
+            compose.waitUntilAtLeastOneExists(hasText("极简"),10000)
+            compose.onNodeWithText("极简").performClick()
+            compose.waitUntilDoesNotExist(hasTestTag("mode-transition"),15000)
+            val clock=compose.onNodeWithContentDescription("结束时间，上下滑动或按方向键调整")
+            clock.performSemanticsAction(SemanticsActions.SetProgress){it(5f)}
+            clock.performTouchInput{doubleClick()}
+            compose.waitUntil(10000){
+                runtime.latest.receipts.count{it.reason=="CLOUD_VIEW_ONLY"}==2
+            }
+            compose.onNode(error).assertIsDisplayed()
+            assertEquals(before.token,runtime.testRead().get(30,TimeUnit.SECONDS).token)
+            assertNull(runtime.latest.planId)
+        }finally{runtime.testCloud(false).get(30,TimeUnit.SECONDS)}
+    }
     private fun workspaceHomeAndResets(minimal:Boolean){
         val report=JSONArray()
         val selected=DomainEngine.execute(initial(),DomainEngine.command("ConfigureWorldEnvironment","environmentStyle" to "ocean-island"),System.currentTimeMillis())

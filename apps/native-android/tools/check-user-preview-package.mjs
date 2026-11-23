@@ -26,16 +26,18 @@ if(upgrade){
   const configuredCode=process.argv.find(arg=>arg.startsWith('--release-code='))?.slice(15);
   assert.match(configuredCode??'',/^[1-9][0-9]{0,8}$/,'Specify the formal Android versionCode with --release-code');
   const code=Number(configuredCode);
-  const minimum=version.versionCode+(version.versionName==='3.0.0'?0:1);
+  const minimum=version.versionCode;
   assert.ok(Number.isSafeInteger(code)&&code>=minimum);
   assert.equal(manifestCode,code);
-  assert.equal(manifestName,'3.0.0');
+  assert.equal(manifestName,version.versionName);
  }else{
   assert.match(beta,/^[1-9][0-9]{0,5}$/);
   const code=Number(process.argv.find(arg=>arg.startsWith('--beta-code='))?.slice(12));
   assert.ok(Number.isSafeInteger(code)&&code>version.versionCode);
   assert.equal(manifestCode,code);
-  assert.equal(manifestName,`3.0.0-beta.${beta}`);
+  const target=process.argv.find(arg=>arg.startsWith('--beta-target='))?.slice(14)??version.versionName;
+  assert.match(target,/^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/);
+  assert.equal(manifestName,`${target}-beta.${beta}`);
  }
 }
 const debuggable=/^application-debuggable\s*$/m.test(badging);
