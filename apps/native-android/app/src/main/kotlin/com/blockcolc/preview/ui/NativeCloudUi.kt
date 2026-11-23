@@ -153,6 +153,7 @@ import java.util.concurrent.atomic.AtomicReference
     fun tr(zh:String,en:String)=if(english)en else zh
     var username by rememberSaveable{mutableStateOf("")};var password by remember{mutableStateOf("")};var registration by rememberSaveable{mutableStateOf(false)}
     var restoreConfirm by remember{mutableStateOf(false)};var logoutConfirm by remember{mutableStateOf(false)}
+    var removing by remember{mutableStateOf<JSONObject?>(null)}
     var passwordOpen by remember{mutableStateOf(false)}
     var passwordPending by remember{mutableStateOf(false)}
     var policyOpen by rememberSaveable{mutableStateOf(false)}
@@ -204,10 +205,10 @@ import java.util.concurrent.atomic.AtomicReference
             NativeSeparator()
             CloudGroup(tr("云端备份","Cloud backup"),tr("每日合并，只保留一份","One merged daily recovery snapshot")){
                 NativeInlineAction(view.backup?.optString("date")?:tr("尚无云端备份","No cloud backup yet"),
-                    controller::captureBackup,"chest",tr("立即备份","Back up now"),enabled=!view.busy,pending=view.working(CloudAction.BACKUP))
+                    controller::captureBackup,"cloud",tr("立即备份","Back up now"),enabled=!view.busy,pending=view.working(CloudAction.BACKUP))
                 if(view.backup!=null){
                     NativeSeparator()
-                    NativeInlineAction(tr("恢复云端备份","Restore cloud backup"),{restoreConfirm=true},"chest",
+                    NativeInlineAction(tr("恢复云端备份","Restore cloud backup"),{restoreConfirm=true},"import",
                         enabled=!view.busy,pending=view.working(CloudAction.RESTORE))
                 }
             }
@@ -231,7 +232,7 @@ import java.util.concurrent.atomic.AtomicReference
                     CloudSharing(local.getJSONObject("sharing"),enabled,includeStatus=false){chosen=JSONObject(chosen).put("sharing",it).toString()}
                     if(enabled)Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.SpaceBetween){
                         Text(account.optString("friendCode"),Modifier.weight(1f),style=MaterialTheme.typography.bodySmall)
-                        NativeIconAction(tr("复制好友码","Copy friend code"),"chest",{clipboard.setText(AnnotatedString(account.optString("friendCode")))})
+                        NativeIconAction(tr("复制好友码","Copy friend code"),"copy",{clipboard.setText(AnnotatedString(account.optString("friendCode")))})
                     }
                 }
             }else if(view.busy)Text(tr("正在读取账户设置","Loading account settings"),style=MaterialTheme.typography.bodySmall)
@@ -280,13 +281,18 @@ import java.util.concurrent.atomic.AtomicReference
                 val sharing=JSONObject(view.account.optJSONObject("sharing")?.toString()?:"{}").put("status",true)
                 controller.account(JSONObject().put("friendsEnabled",true).put("sharing",sharing))
             },Modifier.fillMaxWidth(),pending=view.busy)
-            else->NativeFriendsPanel(controller,view)
+            else->NativeFriendsPanel(controller,view,onRemove={removing=it})
         }
         CloudError(view.friendsError?:view.error)
     }
     NativeSheet(Unit.takeIf{restoreConfirm},{tr("恢复云端备份？","Restore cloud backup?")},{restoreConfirm=false}){
         Text(tr("本机当前内容会先保留回滚点。其他设备需重新选择同步方式。","A local rollback is kept first. Other devices must choose how to sync again."))
         NativeAction(tr("确认恢复","Restore"),{commitAccount.get().invoke();restoreConfirm=false;controller.restoreBackup()},Modifier.fillMaxWidth())
+    }
+    NativeSheet(removing?.takeIf{friendsOpen},{tr("移除好友？","Remove friend?")},{removing=null}){friend->
+        val name=friend.optString("name")
+        Text(tr("移除 $name 后，你们将不再看到彼此的专注状态和热力图。重新添加需要对方再次接受邀请。","After removing $name, neither of you will see the other's focus status or heatmap. Adding them again needs a new invite."))
+        NativeAction(tr("确认移除","Remove"),{removing=null;controller.respond(friend.getString("id"),"remove")},Modifier.fillMaxWidth(),enabled=!view.busy,danger=true,icon="close")
     }
     NativeSheet(Unit.takeIf{logoutConfirm},{tr("退出登录？","Sign out?")},{logoutConfirm=false}){
         Text(tr("本机内容保留，停止云同步与好友状态上传。","Local data stays. Cloud sync and friend updates stop."))

@@ -36,8 +36,10 @@ import kotlin.math.tan
                 scaleX=state.scaleX;scaleY=state.scaleY;rotationZ=state.rotation;rotationX=state.rotationX;alpha=state.opacity
                 cameraDistance=state.perspective*size.width/icon.width
             }){
-                val unit=minOf(size.width/icon.width,size.height/icon.height)
-                drawContext.canvas.save();drawContext.canvas.scale(unit,unit)
+                val unit=nativePixelCell(minOf(size.width/icon.width,size.height/icon.height))
+                drawContext.canvas.save()
+                drawContext.canvas.translate(nativePixelOrigin(size.width,unit*icon.width),nativePixelOrigin(size.height,unit*icon.height))
+                drawContext.canvas.scale(unit,unit)
                 drawContext.canvas.translate(-icon.minX,-icon.minY)
                 val state=if(time.value>=900f||spec==null)PixelTransform()else spec.at(time.value)
                 if(state.skewX!=0f){val x=spec?.originX?:0f;val y=spec?.originY?:0f;drawContext.canvas.translate(x,y);drawContext.canvas.skew(tan(state.skewX*Math.PI/180).toFloat(),0f);drawContext.canvas.translate(-x,-y)}

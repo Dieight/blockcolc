@@ -13,6 +13,7 @@ import androidx.compose.ui.graphics.*
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.*
 import androidx.compose.ui.unit.*
+import com.blockcolc.presentation.GlassReadability
 import com.blockcolc.world.NativeAtmosphereFacts
 import com.blockcolc.world.filament.NativeWorldView
 import kotlin.math.*
@@ -81,6 +82,31 @@ class NativeBackdrop:AutoCloseable {
         val accepted=view.copyBackdrop(bitmap,main){success->if(continuation.isActive)continuation.resume(if(success)bitmap else null)}
         if(!accepted&&continuation.isActive)continuation.resume(null)
     }
+    /** Average sRGB colour of the presented, already blurred world under
+     * [region] (screen coordinates), from a copy 24 pixels wide. Used only to
+     * choose text ink at a slow cadence; never a glass feed or a frame. */
+    suspend fun sampleColor(region:Rect):FloatArray?=kotlinx.coroutines.suspendCancellableCoroutine{continuation->
+        val view=source
+        val area=region.intersect(bounds)
+        if(closed||view==null||bounds.width<=0||bounds.height<=0||area.width<1f||area.height<1f||Build.VERSION.SDK_INT<24){continuation.resume(null);return@suspendCancellableCoroutine}
+        val width=24;val height=max(1,(width*bounds.height/bounds.width).roundToInt())
+        val bitmap=Bitmap.createBitmap(width,height,Bitmap.Config.ARGB_8888)
+        val accepted=view.copyBackdrop(bitmap,main){success->
+            val result=if(!success||!continuation.isActive)null else{
+                val left=((area.left-bounds.left)/bounds.width*width).toInt().coerceIn(0,width-1)
+                val right=((area.right-bounds.left)/bounds.width*width).roundToInt().coerceIn(left+1,width)
+                val top=((area.top-bounds.top)/bounds.height*height).toInt().coerceIn(0,height-1)
+                val bottom=((area.bottom-bounds.top)/bounds.height*height).roundToInt().coerceIn(top+1,height)
+                var red=0f;var green=0f;var blue=0f;var count=0
+                for(y in top until bottom)for(x in left until right){val pixel=bitmap.getPixel(x,y)
+                    red+=(pixel shr 16 and 255)/255f;green+=(pixel shr 8 and 255)/255f;blue+=(pixel and 255)/255f;count++}
+                if(count==0)null else floatArrayOf(red/count,green/count,blue/count)
+            }
+            bitmap.recycle()
+            if(continuation.isActive)continuation.resume(result)
+        }
+        if(!accepted){bitmap.recycle();continuation.resume(null)}
+    }
     override fun close(){if(closed)return;closed=true;source?.glassRegions(emptyList());source=null;panels.clear();sent=emptyList()}
 }
 internal data class NativePresentedWindow(val width:Int,val height:Int,val top:Int)
@@ -117,7 +143,30 @@ val LocalNativeAtmosphere=compositionLocalOf<NativeAtmosphereFacts?>{null}
     DisposableEffect(backdrop,sampling){if(sampling&&backdrop!=null)backdrop.glassConsumers++
         onDispose{backdrop?.remove(key);if(sampling&&backdrop!=null)backdrop.glassConsumers--}}
     SideEffect{if(sampling)backdrop?.panel(key,panelBounds,material)else backdrop?.remove(key)}
-    val ink=if(dark||sampling&&backdrop?.ready==true&&com.blockcolc.world.NativeGlassMaterial.usesLightInk(transparency,dark,night))Color.White else Color.Black
+    val worldBacked=sampling&&backdrop?.ready==true
+    val themeLight=dark||worldBacked&&com.blockcolc.world.NativeGlassMaterial.usesLightInk(transparency,dark,night)
+    // On clear glass the scene, not the theme, decides which ink reads. The
+    // glass itself stays clear: only the ink and a glyph halo adapt.
+    val probing=worldBacked&&material.tintAlpha<GLASS_PROBE_TINT
+    var measuredLight by remember{mutableStateOf<Boolean?>(null)}
+    val currentBounds by rememberUpdatedState(panelBounds)
+    LaunchedEffect(probing,material,dark,themeLight,backdrop){
+        val source=backdrop?.takeIf{probing}
+        if(source==null){measuredLight=null;return@LaunchedEffect}
+        val surface=doubleArrayOf(colors.surface.red.toDouble(),colors.surface.green.toDouble(),colors.surface.blue.toDouble())
+        kotlinx.coroutines.delay(GLASS_PROBE_FIRST_MS)
+        while(true){
+            source.sampleColor(currentBounds)?.let{scene->
+                val background=GlassReadability.backgroundLuminance(doubleArrayOf(scene[0].toDouble(),scene[1].toDouble(),scene[2].toDouble()),surface,material.tintAlpha.toDouble())
+                measuredLight=GlassReadability.lightInk(background,measuredLight?:themeLight)
+            }
+            kotlinx.coroutines.delay(GLASS_PROBE_INTERVAL_MS)
+        }
+    }
+    val light=if(probing)measuredLight?:themeLight else themeLight
+    val ink=if(light)Color.White else Color.Black
+    val haloRadius=with(androidx.compose.ui.platform.LocalDensity.current){4.dp.toPx()}
+    val halo=if(worldBacked)Shadow(if(light)Color.Black.copy(alpha=.55f)else Color.White.copy(alpha=.72f),Offset.Zero,haloRadius)else null
     Box(modifier.onGloballyPositioned{localBounds=it.nativeScreenBounds(nativeView)}){
         Canvas(Modifier.matchParentSize()){
             if(fixedBlur)drawRect(Brush.verticalGradient(if(dark)listOf(Color(0xff1f3329).copy(alpha=.86f),Color(0xff131c17).copy(alpha=.81f))
@@ -129,9 +178,25 @@ val LocalNativeAtmosphere=compositionLocalOf<NativeAtmosphereFacts?>{null}
             }
         }
         if(weatherEnabled)NativePanelWeather(Modifier.matchParentSize())
-        CompositionLocalProvider(LocalContentColor provides ink){MaterialTheme(colorScheme=colors.withGlassInk(ink)){content()}}
+        val typography=MaterialTheme.typography
+        CompositionLocalProvider(LocalContentColor provides ink){
+            MaterialTheme(colorScheme=colors.withGlassInk(ink),typography=if(halo==null)typography else typography.withHalo(halo)){content()}
+        }
     }
 }
+
+/** Above this coating the theme ink already reads; below it the scene decides. */
+private const val GLASS_PROBE_TINT=.5f
+private const val GLASS_PROBE_FIRST_MS=600L
+private const val GLASS_PROBE_INTERVAL_MS=4000L
+
+/** A soft opposite-ink glow behind every glyph on world-backed glass. */
+internal fun Typography.withHalo(halo:Shadow)=copy(
+    displayLarge=displayLarge.copy(shadow=halo),displayMedium=displayMedium.copy(shadow=halo),displaySmall=displaySmall.copy(shadow=halo),
+    headlineLarge=headlineLarge.copy(shadow=halo),headlineMedium=headlineMedium.copy(shadow=halo),headlineSmall=headlineSmall.copy(shadow=halo),
+    titleLarge=titleLarge.copy(shadow=halo),titleMedium=titleMedium.copy(shadow=halo),titleSmall=titleSmall.copy(shadow=halo),
+    bodyLarge=bodyLarge.copy(shadow=halo),bodyMedium=bodyMedium.copy(shadow=halo),bodySmall=bodySmall.copy(shadow=halo),
+    labelLarge=labelLarge.copy(shadow=halo),labelMedium=labelMedium.copy(shadow=halo),labelSmall=labelSmall.copy(shadow=halo))
 
 internal fun ColorScheme.withGlassInk(ink: Color) =
     copy(onSurface=ink,onSurfaceVariant=ink,onBackground=ink)

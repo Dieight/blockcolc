@@ -33,6 +33,7 @@ import com.blockcolc.presentation.WorkspaceActions
 import com.blockcolc.presentation.WorkspaceMutation
 import com.blockcolc.preview.*
 import java.util.UUID
+import kotlinx.coroutines.delay
 
 /** The released QuickNotes row, inline editor and one-line entry. Both pages
  * share the same saved facts; only the list's available height is different. */
@@ -42,9 +43,25 @@ import java.util.UUID
     var validation by remember{mutableStateOf<String?>(null)}
     val create=rememberNativeRequest(s){input=TextFieldValue()}
     val held=remember{mutableStateMapOf<String,NoteRow>()}
-    val active=s.notes.filter{!it.completed||it.id in held}.map{held[it.id]?:it}+
-        held.values.filter{note->s.notes.none{it.id==note.id}}
-    val done=s.notes.filter{it.completed&&it.id !in held}
+    // Deleting leaves a short undo window; the saved delete follows it. A
+    // submitted delete stays hidden until its receipt arrives.
+    var removed by remember{mutableStateOf<Pair<NoteRow,Long>?>(null)}
+    val deleting=remember{mutableStateMapOf<String,String>()}
+    var deleteFailed by remember{mutableStateOf(false)}
+    val generation by rememberUpdatedState(s.generation)
+    fun commitDelete(note:NoteRow){
+        val request=UUID.randomUUID().toString();deleting[request]=note.id;deleteFailed=false
+        runtime.dispatch(WorkspaceMutation.DeleteNote(note.id),request)
+    }
+    fun startDelete(note:NoteRow){removed?.let{(previous,_)->commitDelete(previous)};removed=note to s.generation}
+    LaunchedEffect(removed){val pending=removed?:return@LaunchedEffect;delay(5000);if(removed==pending){removed=null;commitDelete(pending.first)}}
+    LaunchedEffect(s.receipts){for((request,_) in deleting.toMap()){val receipt=s.receipts.find{it.id==request}?:continue;deleting.remove(request);if(!receipt.saved)deleteFailed=true}}
+    // Leaving early (minimal mode closed) still deletes, unless records were replaced meanwhile.
+    DisposableEffect(Unit){onDispose{removed?.let{(note,from)->if(from==generation)commitDelete(note)};removed=null}}
+    val hidden=deleting.values.toSet()+setOfNotNull(removed?.first?.id)
+    val active=(s.notes.filter{!it.completed||it.id in held}.map{held[it.id]?:it}+
+        held.values.filter{note->s.notes.none{it.id==note.id}}).filter{it.id !in hidden}
+    val done=s.notes.filter{it.completed&&it.id !in held&&it.id !in hidden}
     val decorations=if(compact)s.workspace?.let{HolidayEmblems.at(it.today,0,it.settings.birthday).size}?:0 else 0
     var expanded by rememberNativePageState("notes/completed"){false}
     fun add(){
@@ -63,10 +80,16 @@ import java.util.UUID
             if(decorations>0)Spacer(Modifier.width((decorations*44).dp))
         }
         Column(Modifier.fillMaxWidth().then(if(compact)Modifier.weight(1f)else Modifier.heightIn(max=320.dp)).verticalScroll(rememberScrollState())){
-            for(note in active)key(note.id){NativeNoteRow(note,false,s,runtime,{held[note.id]=note},{held.remove(note.id)})}
+            for(note in active)key(note.id){NativeNoteRow(note,false,s,runtime,{held[note.id]=note},{held.remove(note.id)},::startDelete)}
+            removed?.first?.let{note->
+                Row(Modifier.fillMaxWidth().heightIn(min=44.dp).semantics{liveRegion=LiveRegionMode.Polite},verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(8.dp)){
+                    NativeText(ui.text("已删除“{0}”",note.text),NativeTextRole.CAPTION,Modifier.weight(1f),maxLines=1)
+                    FormalTextAction(ui.text("撤销"),"back",{removed=null})
+                }
+            }
             if(done.isNotEmpty())NativeDisclosure(ui.text("已完成便签")+" "+done.size,expanded=expanded,onExpandedChange={expanded=it},rowHeight=44.dp,rowPadding=0.dp,
                 titleStyle=MaterialTheme.typography.bodySmall,indicatorSize=16.dp,contentSpacing=0.dp){
-                for(note in done)key(note.id){NativeNoteRow(note,true,s,runtime,{},{})}
+                for(note in done)key(note.id){NativeNoteRow(note,true,s,runtime,{},{},::startDelete)}
             }
         }
         Row(Modifier.fillMaxWidth().padding(top=6.dp).then(if(compact)Modifier else Modifier.background(colors.surfaceVariant.copy(alpha=.3f))).drawBehind{
@@ -77,6 +100,7 @@ import java.util.UUID
             NativeNoteAction(ui.text("添加便签"),"plus",::add,enabled=input.text.isNotBlank()&&!create.busy&&s.notes.size<100,pending=create.busy)
         }
         validation?.let{NativeText(ui.text(it),NativeTextRole.CAPTION,color=colors.error)}
+        if(deleteFailed)NativeText(ui.text("保存失败，请重试。"),NativeTextRole.CAPTION,color=colors.error)
         NativeRequestError(create)
     }
 }
@@ -93,7 +117,7 @@ import java.util.UUID
     NativeIconAction(title,icon,onClick,enabled=enabled,pending=pending)
 }
 
-@Composable private fun NativeNoteRow(note:NoteRow,completedView:Boolean,s:WorkspaceUiState,runtime:WorkspaceActions,onCompleting:()->Unit,onAnimationEnd:()->Unit){
+@Composable private fun NativeNoteRow(note:NoteRow,completedView:Boolean,s:WorkspaceUiState,runtime:WorkspaceActions,onCompleting:()->Unit,onAnimationEnd:()->Unit,onDelete:(NoteRow)->Unit){
     val ui=LocalNativeUi.current;val ink=LocalContentColor.current
     var editing by rememberNativePageState("notes/${note.id}/editing"){false}
     var input by rememberNativePageState("notes/${note.id}/input",stateSaver=TextFieldValue.Saver){TextFieldValue(note.text)}
@@ -127,7 +151,7 @@ import java.util.UUID
                     repeat(result.lineCount){line->val left=result.getLineLeft(line);val width=result.getLineRight(line)-left;val length=minOf(width.toDouble(),available).coerceAtLeast(0.0).toFloat()
                         drawLine(ink,Offset(left,(result.getLineTop(line)+result.getLineBottom(line))/2),Offset(left+length,(result.getLineTop(line)+result.getLineBottom(line))/2),2.dp.toPx());available-=width}
                 },onTextLayout={layout=it},style=MaterialTheme.typography.bodyLarge,color=ink)
-            NativeNoteAction(ui.text("删除便签"),"close",{request.submit{runtime.dispatch(WorkspaceMutation.DeleteNote(note.id),it)}},!request.busy&&!animateStrike)
+            NativeNoteAction(ui.text("删除便签"),"close",{onDelete(note)},!request.busy&&!animateStrike)
         }
     }
     NativeRequestError(request)

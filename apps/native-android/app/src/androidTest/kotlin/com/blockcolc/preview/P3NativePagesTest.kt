@@ -856,7 +856,6 @@ class P3NativePagesTest {
         val before=worldDiagnostic(world)
         nav("设置")
         compose.onNodeWithText("画面调试").performScrollTo().performClick()
-        compose.onNodeWithText("天气").performScrollTo().performClick()
         compose.onNodeWithText("雷雨").performScrollTo().performClick()
         compose.onNodeWithText("指定时间").performScrollTo().performClick()
         compose.onNodeWithContentDescription("世界调试时间").performScrollTo().performSemanticsAction(SemanticsActions.SetProgress){it(180f)}
@@ -1274,15 +1273,15 @@ class P3NativePagesTest {
             nav("设置")
             compose.onNodeWithTag("setting-日期倒计时").performScrollTo()
             compose.onNodeWithText("日期倒计时").performClick()
-            compose.onNode(hasText("事件名称") and hasSetTextAction()).performScrollTo().performTextInput("Beta countdown")
+            compose.onNode(hasContentDescription("事件名称") and hasSetTextAction()).performScrollTo().performTextInput("Beta countdown")
             compose.onNodeWithText("目标日期").performScrollTo().performClick()
-            val dateField={label:String->compose.onNode(hasText(label) and hasSetTextAction() and hasAnyAncestor(isDialog()))}
+            val dateField={label:String->compose.onNode(hasContentDescription(label) and hasSetTextAction() and hasAnyAncestor(isDialog()))}
             for(label in listOf("年份","月份","日期（日）"))dateField(label).assertIsDisplayed()
             dateField("年份").performTextReplacement(target.year.toString())
             dateField("月份").performTextReplacement(target.monthValue.toString())
             dateField("日期（日）").performTextReplacement(target.dayOfMonth.toString())
-            compose.onNodeWithText("确定").performScrollTo().performClick()
-            compose.onNodeWithText("保存").performScrollTo().performClick()
+            compose.onNode(hasText("还有 3 天") and hasAnyAncestor(isDialog())).assertIsDisplayed()
+            compose.onNode(hasText("保存") and hasAnyAncestor(isDialog())).performScrollTo().performClick()
             compose.onNodeWithText("Beta countdown").performScrollTo().assertIsDisplayed()
             compose.onAllNodesWithText("还有 3 天").assertCountEquals(2)
             screen("countdown-saved")
@@ -1760,19 +1759,28 @@ class P3NativePagesTest {
         compose.onNodeWithText("生日祝福").performScrollTo().performClick()
         fun toggle()=compose.onNodeWithText("启用生日祝福").performScrollTo().performClick()
         fun saved(enabled:Boolean){compose.waitUntil(15000){runtime.latest.workspace?.settings?.birthday?.enabled==enabled&&!runtime.latest.busy}}
-        val save=compose.onNodeWithText("保存日期")
-        save.assertIsNotEnabled()
-        toggle()
-        compose.onNodeWithText("月份").assertDoesNotExist()
-        save.performScrollTo().performClick();saved(true)
-        compose.waitForIdle();save.assertIsNotEnabled().assert(SemanticsMatcher.keyNotDefined(SemanticsProperties.StateDescription))
-        val revision=runtime.latest.revision
-        save.performTouchInput{click();click()}
-        assertEquals(revision,runtime.testRead().get(30,TimeUnit.SECONDS).token.revision)
+        val dialogSave=compose.onNode(hasText("保存") and hasAnyAncestor(isDialog()))
+        if(runtime.latest.workspace?.settings?.birthday?.month==null){
+            // A first birthday opens the shared date sheet; nothing is saved until Save.
+            toggle();dialogSave.assertIsEnabled()
+            assertEquals(false,runtime.latest.workspace?.settings?.birthday?.enabled)
+            val revision=runtime.latest.revision
+            dialogSave.performTouchInput{click();click()};saved(true)
+            compose.waitUntil(15000){compose.onAllNodes(isDialog()).fetchSemanticsNodes().isEmpty()}
+            assertEquals(revision+1,runtime.testRead().get(30,TimeUnit.SECONDS).token.revision)
+        }else{toggle();saved(true)}
+        compose.onNodeWithTag("birthday-date").performScrollTo().assertIsDisplayed()
+            .assert(SemanticsMatcher.keyNotDefined(SemanticsProperties.StateDescription))
         toggle();saved(false)
-        toggle();compose.onNodeWithText("月份").assertDoesNotExist()
-        save.performScrollTo().performClick();saved(true)
-        compose.waitForIdle();save.assertIsNotEnabled().assert(SemanticsMatcher.keyNotDefined(SemanticsProperties.StateDescription))
+        compose.onNodeWithTag("birthday-date").assertDoesNotExist()
+        // With a saved date the switch alone restores it; no sheet is needed.
+        toggle();saved(true)
+        assertTrue(compose.onAllNodes(isDialog()).fetchSemanticsNodes().isEmpty())
+        compose.onNodeWithTag("birthday-date").performScrollTo().performClick()
+        compose.onNode(hasContentDescription("日期（日）") and hasSetTextAction() and hasAnyAncestor(isDialog())).performTextReplacement("12")
+        dialogSave.performClick()
+        compose.waitUntil(15000){runtime.latest.workspace?.settings?.birthday?.day==12&&!runtime.latest.busy}
+        compose.onNodeWithText("启用生日祝福").assertIsEnabled()
         screen("birthday-saved-again")
     }
     @androidx.test.filters.SdkSuppress(minSdkVersion=29)
@@ -2063,7 +2071,7 @@ class P3NativePagesTest {
         nav(caption("统计"));screen("large-font-$language-statistics")
         nav(caption("设置"))
         compose.onNodeWithTag("settings-search").performScrollTo().performTextInput(caption("字体"))
-        compose.onNodeWithText("${caption("外观与阅读")} · ${caption("字体")}").performClick()
+        compose.onNodeWithTag("settings-result-字体").performClick()
         compose.waitUntil(10000){runCatching{compose.onNodeWithText(caption("混合字体")).assertIsDisplayed()}.isSuccess}
         compose.onNodeWithText(caption("系统字体")).assertIsDisplayed()
         screen("large-font-$language-settings")
@@ -2239,18 +2247,15 @@ class P3NativePagesTest {
         val original=runtime.testRead().get(30,TimeUnit.SECONDS).domain.sha256
         val preferences=runtime.latest.preferences
         val search=compose.onNodeWithTag("settings-search").performScrollTo()
-        val label=compose.onNodeWithText("搜索设置",useUnmergedTree=true)
-        fun labelInset()=label.fetchSemanticsNode().boundsInRoot.top-search.fetchSemanticsNode().boundsInRoot.top
-        val restingInset=labelInset()
-        search.performClick()
-        compose.waitUntil(10000){runCatching{labelInset()<restingInset-8f}.getOrDefault(false)}
+        compose.onNodeWithText("搜索设置",useUnmergedTree=true).assertIsDisplayed()
         search.performTextInput("字体")
-        compose.onNodeWithText("外观与阅读 · 字体").performClick()
+        compose.onNodeWithText("搜索设置",useUnmergedTree=true).assertDoesNotExist()
+        compose.onNodeWithTag("settings-result-字体").assertTextContains("外观与阅读").performClick()
         compose.waitUntil(10000){runCatching{compose.onNodeWithText("混合字体").assertIsDisplayed()}.isSuccess}
         compose.onNodeWithText("混合字体").assertIsDisplayed()
         compose.onNodeWithText("设置目录").assertDoesNotExist()
         compose.onNodeWithTag("settings-search").performScrollTo().performTextReplacement("蓝图库")
-        compose.onNodeWithText("蓝图与材质 · 蓝图库").performClick()
+        compose.onNodeWithTag("settings-result-蓝图库").performClick()
         compose.waitUntil(10000){runCatching{compose.onNodeWithText("原生图纸").assertIsDisplayed()}.isSuccess}
         compose.onNodeWithText("原生图纸").assertIsDisplayed()
         assertEquals(preferences,runtime.latest.preferences)
@@ -2367,7 +2372,8 @@ class P3NativePagesTest {
     }
     @Test fun formalWorkbenchPagesAndMinimalControlsMatchSourceGeometry()=run(formalUiInitial(),configure={it.copy(themeMode="light",fontStyle="pixel",focusMinutes=25,breakMinutes=5,quickNotesEnabled=false)}){
         compose.onNodeWithText("我的第一座工坊").assertIsDisplayed()
-        compose.onNodeWithText("当前小任务").assertIsDisplayed();compose.onNodeWithText("确定目标").assertIsDisplayed()
+        compose.onNodeWithText(" · 第 1 / 3 项").assertIsDisplayed();compose.onNodeWithText("确定目标").assertIsDisplayed()
+        compose.onNodeWithText("1 轮 · 预计",substring=true).assertIsDisplayed();compose.onNodeWithText("总计",substring=true).assertDoesNotExist()
         compose.onNodeWithText("每轮时长").assertIsDisplayed();compose.onNodeWithText("开始 1 轮").assertIsDisplayed()
         val density=context.resources.displayMetrics.density
         val clock=compose.onNodeWithText("25:00").fetchSemanticsNode().boundsInRoot

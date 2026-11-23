@@ -91,3 +91,18 @@ internal enum class NativeTextRole { CAPTION, BODY, SECTION, TITLE, NUMBER, CLOC
     }
     Text(text,modifier,color=color,style=type.displaySmall)
 }
+
+/** Rounds as small squares beside their text; completed rounds are solid.
+ * Long plans keep the number alone. Decorative: the text carries the count. */
+@Composable internal fun FormalRoundPips(total:Int,filled:Int,modifier:Modifier=Modifier,cell:Dp=8.dp){
+    if(total !in 1..12)return
+    val ink=MaterialTheme.colorScheme.primary
+    Canvas(modifier.size(width=cell*total+3.dp*(total-1),height=cell).clearAndSetSemantics{}){
+        val edge=cell.toPx();val gap=3.dp.toPx();val stroke=1.5.dp.toPx()
+        repeat(total){index->
+            val x=index*(edge+gap)
+            if(index<filled)drawRect(ink,Offset(x,0f),Size(edge,edge))
+            else drawRect(ink,Offset(x+stroke/2,stroke/2),Size(edge-stroke,edge-stroke),style=androidx.compose.ui.graphics.drawscope.Stroke(stroke))
+        }
+    }
+}

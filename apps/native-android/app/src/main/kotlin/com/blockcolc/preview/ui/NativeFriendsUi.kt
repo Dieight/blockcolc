@@ -7,6 +7,13 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -192,12 +199,23 @@ private class FriendDrag(val id:String,val order:List<String>,val rows:Map<Strin
     }
 }
 
-@Composable internal fun NativeFriendsPanel(controller:NativeCloudController,view:CloudView){
+/** Invite codes are 18 hexadecimal characters. Pasted text may contain
+ * spaces, dashes, lower case or surrounding words. */
+internal fun normalizeFriendCode(raw:String):String=raw.filter{it.isLetterOrDigit()&&it.code<128}.uppercase()
+internal fun isFriendCode(code:String)=code.length==18&&code.all{it in '0'..'9'||it in 'A'..'F'}
+internal fun pastedFriendCode(raw:String):String{
+    val compact=raw.uppercase().replace(Regex("[\\s\\-·]"),"")
+    return Regex("[0-9A-F]{18}").find(compact)?.value?:normalizeFriendCode(raw).take(18)
+}
+internal fun groupedFriendCode(code:String)=code.chunked(6).joinToString(" ")
+
+@Composable internal fun NativeFriendsPanel(controller:NativeCloudController,view:CloudView,onRemove:(JSONObject)->Unit={friend->controller.respond(friend.getString("id"),"remove")}){
     val account=checkNotNull(view.account)
     val accountId=account.getString("id")
     val pending=view.friends.filter{it.optString("status")=="pending"}
     val empty=view.friends.none{it.optString("status")=="accepted"}
     val clipboard=LocalClipboardManager.current
+    val context=androidx.compose.ui.platform.LocalContext.current
     val focus=LocalFocusManager.current
     val keyboard=LocalSoftwareKeyboardController.current
     var invite by rememberSaveable(accountId){mutableStateOf("")}
@@ -216,7 +234,7 @@ private class FriendDrag(val id:String,val order:List<String>,val rows:Map<Strin
             enabled=!view.busy,
             fetchHistory={controller.friendHistory(accountId,friend.getString("id"))},
             changeSharing={controller.sharing(friend.getString("id"),it)},
-            remove={controller.respond(friend.getString("id"),"remove")},
+            remove={onRemove(friend)},
             modifier=modifier,
             dragging=dragging,
         )
@@ -248,18 +266,24 @@ private class FriendDrag(val id:String,val order:List<String>,val rows:Map<Strin
             Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(8.dp)){
                 Column(Modifier.weight(1f)){
                     Text(cloudText("我的好友码","My friend code"),style=MaterialTheme.typography.bodySmall)
-                    Text(code,style=MaterialTheme.typography.bodyMedium)
+                    Text(groupedFriendCode(code),style=MaterialTheme.typography.bodyLarge)
                 }
-                NativeIconAction(cloudText("复制好友码","Copy friend code"),"chest",{clipboard.setText(AnnotatedString(code))})
+                NativeIconAction(cloudText("复制好友码","Copy friend code"),"copy",{clipboard.setText(AnnotatedString(code))})
+                NativeIconAction(cloudText("分享好友码","Share friend code"),"export",{shareFriendCode(context,code)})
             }
         }
-        CloudField(cloudText("添加好友码","Add friend code"),invite,{invite=it})
-        NativeAction(cloudText("发送邀请","Send invite"),{
-            controller.invite(invite)
+        val normalized=normalizeFriendCode(invite)
+        fun send(){
+            if(view.busy||!isFriendCode(normalized))return
+            controller.invite(normalized)
             invite=""
             focus.clearFocus()
             keyboard?.hide()
-        },Modifier.fillMaxWidth(),enabled=!view.busy&&invite.trim().length==18,primary=false,icon="plus")
+        }
+        FriendCodeField(cloudText("添加好友码","Add friend code"),invite,normalized.length,{invite=it.take(24)},::send){
+            clipboard.getText()?.text?.let{invite=pastedFriendCode(it)}
+        }
+        NativeAction(cloudText("发送邀请","Send invite"),::send,Modifier.fillMaxWidth(),enabled=!view.busy&&isFriendCode(normalized),primary=false,icon="plus")
     }
 }
 
@@ -361,7 +385,12 @@ private class FriendDrag(val id:String,val order:List<String>,val rows:Map<Strin
                     CloudSharing(friend.optJSONObject("sharing")?:defaultSharing,enabled,onChange=changeSharing)
                     NativeAction(cloudText("使用默认设置","Use defaults"),{changeSharing(null)},Modifier.fillMaxWidth(),enabled=enabled,primary=false)
                 }
-                NativeAction(cloudText("移除好友","Remove friend"),remove,Modifier.fillMaxWidth(),enabled=enabled,primary=false,icon="close")
+                // A quiet entry; the confirmation sheet states what removal does.
+                Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.End){
+                    CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurfaceVariant){
+                        FormalTextAction(cloudText("移除好友","Remove friend"),"close",remove,enabled=enabled)
+                    }
+                }
             }
         }
     }
@@ -459,4 +488,33 @@ private fun parseFriendCalendar(data:JSONObject):FriendCalendar{
     }
     NativeFocusHeatmapLegend(palette)
     if(data.hasMissing)Text(cloudText("留白日期未提供数据","Blank dates have no shared data"),style=MaterialTheme.typography.bodySmall)
+}
+
+/** Square code entry with its own paste action and an 18-character count. */
+@Composable private fun FriendCodeField(label:String,value:String,count:Int,onChange:(String)->Unit,onSend:()->Unit,onPaste:()->Unit){
+    val colors=MaterialTheme.colorScheme
+    Column(Modifier.fillMaxWidth().padding(vertical=8.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
+        Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
+            Text(label,Modifier.weight(1f),style=MaterialTheme.typography.bodySmall)
+            Text("$count / 18",style=MaterialTheme.typography.bodySmall,color=colors.onSurfaceVariant)
+        }
+        Row(Modifier.fillMaxWidth().border(1.dp,colors.outline).background(colors.surface),verticalAlignment=Alignment.CenterVertically){
+            BasicTextField(value,onChange,Modifier.weight(1f).heightIn(min=44.dp).padding(horizontal=12.dp,vertical=10.dp).semantics{contentDescription=label},
+                singleLine=true,textStyle=MaterialTheme.typography.bodyLarge.copy(color=colors.onSurface),cursorBrush=SolidColor(colors.primary),
+                keyboardOptions=KeyboardOptions(capitalization=KeyboardCapitalization.Characters,keyboardType=KeyboardType.Ascii,imeAction=ImeAction.Send),
+                keyboardActions=KeyboardActions(onSend={onSend()}),
+                decorationBox={field->Box(contentAlignment=Alignment.CenterStart){
+                    if(value.isEmpty())Text(cloudText("18 位好友码","18-character code"),style=MaterialTheme.typography.bodyLarge,color=colors.onSurfaceVariant)
+                    field()
+                }})
+            FormalTextAction(cloudText("粘贴","Paste"),"copy",onPaste,Modifier.padding(end=8.dp))
+        }
+    }
+}
+
+private fun shareFriendCode(context:android.content.Context,code:String){
+    val send=android.content.Intent(android.content.Intent.ACTION_SEND).setType("text/plain").putExtra(android.content.Intent.EXTRA_TEXT,code)
+    val chooser=android.content.Intent.createChooser(send,null)
+    if(context !is android.app.Activity)chooser.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+    runCatching{context.startActivity(chooser)}
 }
