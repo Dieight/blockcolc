@@ -118,6 +118,7 @@ class NativeWorldView(context: Context, private val fixture: String, private val
     private var sky: Skybox?=null
     private var colorPipeline:NativeColorPipeline?=null
     private var desiredGlassRegions:List<com.blockcolc.world.NativeGlassRegion> = emptyList()
+    private var desiredPixelated=false
     private var sourceLighting:SourceLighting?=null
     private var directionalShadows: DirectionalShadowCache? = null
     private var shadowCamera: NativeSceneCamera? = null
@@ -337,7 +338,7 @@ class NativeWorldView(context: Context, private val fixture: String, private val
         val lighting=generated?.lighting?:SourceLighting.read(metadata.getJSONObject("environment"));sourceLighting=lighting
         val post=generated?.post?:SourcePost.read(metadata.getJSONObject("environment").getJSONObject("pipeline"))
         installLighting(lighting,p.hasSkyBackdrop,post.direct)
-        colorPipeline=NativeColorPipeline(e,context.assets,v,c,lighting.exposure,colorProbe,post,resources.displayMetrics.density).also{it.glassRegions(desiredGlassRegions)}
+        colorPipeline=NativeColorPipeline(e,context.assets,v,c,lighting.exposure,colorProbe,post,resources.displayMetrics.density).also{it.glassRegions(desiredGlassRegions);it.pixelated(desiredPixelated)}
         syncRasterSize()
         if(generated!=null){generatedPost=post;generatedOwners=generated.sources.associate{it.owner to it.ownerIdentity};generatedGeneration=generated.generation;generatedRevision=generated.revision
             generatedPresentation=generated.presentationIdentity;pendingGeneratedFrame=Triple(generated.generation,generated.revision,generated.presentationIdentity);pendingGenerated=null
@@ -499,6 +500,13 @@ class NativeWorldView(context: Context, private val fixture: String, private val
             if(cameraChanged)sourceLighting?.let{installLighting(it,active.hasSkyBackdrop,generatedPost?.direct==true)}
             interiorPresented=onPresented;pendingInteriorFrame=true;cameraDirty=true;requestFrame()
         }catch(error:Throwable){retireInteriorLamp(stagedLamp);android.util.Log.e("BlockcolcWorld","Study update failed",error);report("NATIVE_INTERIOR_ERROR")}
+    }}
+    /** Paper colours drawn as large square pixels. Display preference only:
+     * the generated world, camera and interaction are unchanged. */
+    fun pixelated(value:Boolean){render.post{
+        if(closed||failed||desiredPixelated==value)return@post
+        try{desiredPixelated=value;colorPipeline?.pixelated(value);syncRasterSize();cameraDirty=true;requestFrame()}
+        catch(error:Throwable){android.util.Log.e("BlockcolcWorld","Pixel style failed",error);report("NATIVE_UPDATE_ERROR")}
     }}
     /** Lightweight display preference, independent of generation and time. */
     fun glassRegions(value:List<com.blockcolc.world.NativeGlassRegion>){render.post{
