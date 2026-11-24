@@ -9,7 +9,6 @@ import com.blockcolc.world.NativeStructurePlacement
 import com.blockcolc.world.generation.BlockPoint
 import com.blockcolc.world.generation.BlockTransform
 import com.blockcolc.world.generation.OriginalMaterialStyles
-import com.blockcolc.world.generation.OriginalEmission
 import com.blockcolc.world.generation.PaperFaceGeometry
 import com.blockcolc.world.generation.RenderVoxel
 import com.blockcolc.world.generation.TerrainMaterial
@@ -52,33 +51,16 @@ internal object PaperWorldMesh {
     )
 
     private val palette by lazy { OriginalMaterialStyles() }
-    private fun isGlass(voxel: RenderVoxel) = voxel.materialId == "glass" || voxel.sourceBlockId.orEmpty().contains("glass")
     private fun blockColors(): (RenderVoxel) -> Int {
         val colors = HashMap<Pair<String?,String>,Int>()
         return { voxel -> colors.getOrPut(voxel.sourceBlockId to voxel.materialId) {
             val id = voxel.sourceBlockId.orEmpty()
             when {
-                isGlass(voxel) -> 0x83a99e
+                voxel.materialId == "glass" || id.contains("glass") -> 0x83a99e
                 voxel.materialId == "roof" && id.isEmpty() -> 0xb66d4e
                 else -> palette.voxel(voxel).color
             }
         } }
-    }
-
-    /** In opaque paper meshes alpha carries inverse emission. Water uses
-     * actual alpha and is uploaded in a separate transparent packet. */
-    private fun nightAlpha(voxel: RenderVoxel): Int {
-        val level = voxel.emissiveLevel ?: when {
-            voxel.emissiveKind != null -> 15
-            voxel.sourceBlockId?.endsWith("lantern") == true -> OriginalEmission.lantern(voxel)?.level ?: 0
-            voxel.sourceBlockId?.endsWith("candle") == true -> OriginalEmission.candle(voxel)?.level ?: 0
-            else -> 0
-        }
-        return when {
-            level > 0 -> 255 - level.coerceAtMost(15) * 17
-            isGlass(voxel) -> 176
-            else -> 255
-        }
     }
 
     private val opaque = NativeRenderMaterial(vertexColors = true, unlit = true, side = NativeFaceSide.DOUBLE)
@@ -251,7 +233,6 @@ internal object PaperWorldMesh {
             for ((at,v) in voxels.withIndex()) {
                 if (at % 1024 == 0) checkpoint()
                 val blockColor = color(v)
-                val alpha = if (linear) nightAlpha(v) else 255
                 val lighting = shades.getOrPut(blockColor) { faces.map { pigment(shade(blockColor, it.shade)) }.toIntArray() }
                 for ((i, face) in faces.withIndex()) {
                     if (key(v.x + face.x, v.y + face.y, v.z + face.z) in occupied) continue
@@ -262,7 +243,7 @@ internal object PaperWorldMesh {
                         val z = v.z - origin.z + if (corner and 4 != 0) .5 else -.5
                         vertex(transform[0] * x + transform[4] * y + transform[8] * z + transform[12],
                             transform[1] * x + transform[5] * y + transform[9] * z + transform[13],
-                            transform[2] * x + transform[6] * y + transform[10] * z + transform[14], lighting[i], alpha)
+                            transform[2] * x + transform[6] * y + transform[10] * z + transform[14], lighting[i], 255)
                     }
                 }
             }

@@ -3,7 +3,7 @@ material {
     culling:none, requires:[color], depthWrite:@DEPTH@,
     variables:[paperDepth],
     parameters:[{type:float3,name:tint},{type:float3,name:nightFill},{type:float,name:opacity},
-        {type:float3,name:mist},{type:float2,name:fogRange},{type:float,name:lamps}]
+        {type:float3,name:mist},{type:float2,name:fogRange}]
 }
 vertex {
     void materialVertex(inout MaterialVertexInputs material) {
@@ -19,15 +19,8 @@ fragment {
         prepareMaterial(m);
         vec4 paint = getColor();
         float fog = smoothstep(materialParams.fogRange.x, materialParams.fogRange.y, variable_paperDepth.x);
-        vec3 surface = paint.rgb * materialParams.tint + materialParams.nightFill;
-        float alpha = materialParams.opacity;
-        if (@DEPTH@) {
-            float glow = (1.0 - paint.a) * materialParams.lamps;
-            surface += mix(vec3(0.96, 0.55, 0.16), paint.rgb, 0.16) * glow;
-        } else {
-            alpha *= paint.a;
-        }
-        vec3 pigment = mix(surface, materialParams.mist, fog);
+        vec3 pigment = mix(paint.rgb * materialParams.tint + materialParams.nightFill, materialParams.mist, fog);
+        float alpha = paint.a * materialParams.opacity;
         m.baseColor = vec4(paperSrgb(clamp(pigment, 0.0, 1.0)) * alpha, alpha);
     }
 }

@@ -32,15 +32,13 @@ class NativeWorldNavigation(camera:NativeSceneCamera,targets:List<NativeOrbitTar
     private var interiorAzimuth=PI/2
     private var interiorPitch=0.0
     private var interiorFov=55.0
-    private var pixelCell=0
-    private var projectedHeight=1
     private data class Opening(val from:BlockPoint,val to:BlockPoint,val fromDistance:Double,val toDistance:Double,
         var previous:Long?=null,var elapsed:Long=0)
     private var opening:Opening?=null
     val openingActive:Boolean get()=opening!=null
     val indoors:Boolean get()=interior!=null
     val orthographic:Boolean get()=camera.paper&&!indoors
-    val orthographicEyeOffset:Double get()=if(orthographic)paperEyeOffset(frameTarget(),distance)else 0.0
+    val orthographicEyeOffset:Double get()=if(orthographic)paperEyeOffset(target,distance)else 0.0
     // Indoor look direction is a unit vector, not the distance to the town.
     // Feeding that unit length to atmospheric fog hid every outdoor building.
     val atmosphericDistance:Double get()=interior?.sceneDistance?:distance
@@ -55,32 +53,8 @@ class NativeWorldNavigation(camera:NativeSceneCamera,targets:List<NativeOrbitTar
             val look=BlockPoint(e.x-cos(p)*cos(a),e.y-sin(p),e.z-cos(p)*sin(a))
             return NativeOrbitFrame(look,e,1.0,1.0,1.0,1.0,p,a,interiorFov,null)}
         val horizontal=distance*cos(pitch)
-        val center=frameTarget()
-        return NativeOrbitFrame(center,BlockPoint(center.x+horizontal*cos(azimuth),center.y+distance*sin(pitch),center.z+horizontal*sin(azimuth)),
+        return NativeOrbitFrame(target,BlockPoint(target.x+horizontal*cos(azimuth),target.y+distance*sin(pitch),target.z+horizontal*sin(azimuth)),
             distance,fitted,minimum,maximum,pitch,azimuth,camera.fov,selected)}
-    /** Snap in the camera plane so rendering and picking use the same grid. */
-    fun pixelGrid(cell:Int,visibleHeight:Int){
-        require(cell>=0&&visibleHeight>0)
-        pixelCell=cell;projectedHeight=visibleHeight
-    }
-    private fun frameTarget():BlockPoint {
-        if(!orthographic||pixelCell==0)return target
-        val step=2.0*distance*tan(camera.fov*PI/360)*pixelCell/projectedHeight
-        val right=BlockPoint(sin(azimuth),0.0,-cos(azimuth))
-        val up=BlockPoint(-cos(azimuth)*sin(pitch),cos(pitch),-sin(azimuth)*sin(pitch))
-        fun adjustment(axis:BlockPoint):Double {val p=dot(target,axis);return round(p/step)*step-p}
-        val x=adjustment(right);val y=adjustment(up)
-        return BlockPoint(target.x+right.x*x+up.x*y,target.y+up.y*y,target.z+right.z*x+up.z*y)
-    }
-    fun settlePixelOrbit():Boolean {
-        if(!orthographic||pixelCell==0)return false
-        val step=PI/90
-        val nextAzimuth=round(azimuth/step)*step
-        val nextPitch=(round(pitch/step)*step).coerceIn(24*PI/180,64*PI/180)
-        if(nextAzimuth==azimuth&&nextPitch==pitch)return false
-        azimuth=nextAzimuth;pitch=nextPitch
-        return true
-    }
     val targetIds:List<String> get()=Collections.unmodifiableList(targets.map{it.id})
     fun adopt(camera:NativeSceneCamera,targets:List<NativeOrbitTarget>,resetSpatial:Boolean){
         this.camera=camera;this.targets=owned(targets)

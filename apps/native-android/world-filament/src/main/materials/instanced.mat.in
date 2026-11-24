@@ -242,20 +242,6 @@ fragment {
         float4 sampledBase = texture(materialParams_baseMap, getUV0());
         if (materialParams.motionKind == 6) sampledBase = mix(sampledBase, texture(materialParams_baseMap, variable_sourceAtlas.xy), variable_sourceAtlas.z);
         float4 base = materialParams.baseColor * getColor() * sampledBase;
-        if (materialParams.nativeSkyData[3].w > 0.5 && materialParams.nativeSkyData[0].w > 1.5) {
-            // Step the silhouette in billboard space. The output grid still
-            // determines the size of a pixel on the display.
-            vec2 p = ((floor(getUV0() * 8.0) + 0.5) / 8.0) * 2.0 - 1.0;
-            float r2 = dot(p, p);
-            if (r2 > 0.89) discard;
-            if (materialParams.nativeSkyData[0].w > 2.5) {
-                vec3 phase = materialParams.nativeSkyData[0].xyz;
-                float litX = p.x*cos(phase.z) + p.y*sin(phase.z);
-                float lightZ = 2.0*phase.x - 1.0;
-                float lightX = sqrt(max(0.0, 1.0 - lightZ*lightZ)) * phase.y;
-                base.a *= mix(0.13, 1.0, step(0.0, litX*lightX + sqrt(1.0-r2)*lightZ));
-            }
-        }
         if (materialParams.motionKind == 5) {
             // Exact source valley curtain patch. Its UV is the original
             // across / height pair, and visible time has its own 250ms cap.
@@ -295,12 +281,6 @@ fragment {
         #endif
         material.baseColor = base;
         if (materialParams.skyBackdrop) {
-            if (materialParams.nativeSkyData[3].w > 0.5) {
-                float height = normalize(variable_sourcePosition.xyz).y;
-                float band = floor(smoothstep(0.0, height >= 0.0 ? 0.82 : 0.72, abs(height))*6.0)/6.0;
-                material.baseColor.rgb = mix(materialParams.nativeSkyData[0].xyz,
-                    height >= 0.0 ? materialParams.nativeSkyData[1].xyz : materialParams.nativeSkyData[2].xyz, band);
-            }
             material.baseColor.rgb += materialParams.floatingSky
                 ? bcFloatingNightSky(variable_sourcePosition.xyz) : bcNightSky(variable_sourcePosition.xyz);
         }

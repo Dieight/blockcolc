@@ -20,15 +20,18 @@ class PreferencesControllerTest {
         assertEquals("mixed",controller.load().value.fontStyle)
         assertEquals("mixed",PreferencesController(storage).load().value.fontStyle)
     }
-    @Test fun everyLightingChoiceIncludingPixelSurvivesReload(){
-        val storage=Memory();val controller=PreferencesController(storage)
-        for(tier in listOf("auto","paper","pixel","performance","balanced","cinematic")){
-            controller.update{it.copy(lightingQuality=tier)}
-            assertEquals(tier,PreferencesController(storage).load().value.lightingQuality)
-        }
-        // An unknown style from a newer client falls back to the default tier.
-        val future=org.json.JSONObject(ClientPreferences().canonical()).put("lightingQuality","hologram")
-        assertEquals("cinematic",ClientPreferences.parse(future).lightingQuality)
+    @Test fun retiredPixelLightingLoadsAndSavesAsPaper(){
+        val expected=ClientPreferences(lightingQuality="paper",themeMode="dark",fontStyle="mixed",minimalMode=true)
+        val beta3=org.json.JSONObject(expected.canonical()).put("lightingQuality","pixel")
+        val storage=Memory(beta3.toString());val controller=PreferencesController(storage)
+
+        assertEquals(PreferencesState(expected),controller.load())
+        assertTrue(runCatching{controller.update{it.copy(lightingQuality="pixel")}}.isFailure)
+        assertEquals(0,storage.writes)
+
+        controller.update{it.copy(focusMinutes=35)}
+        assertEquals("paper",org.json.JSONObject(storage.text!!).getString("lightingQuality"))
+        assertEquals(expected.copy(focusMinutes=35),PreferencesController(storage).load().value)
     }
     @Test fun retiredCustomRoomChoicesDoNotResetPreferencesOrSurviveNewSaves(){
         val desired=ClientPreferences(focusMinutes=30,language="en",fontStyle="mixed")

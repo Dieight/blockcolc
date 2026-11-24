@@ -236,7 +236,7 @@ internal class NativeCloudController private constructor(private val context:Con
         val planWire=if(!value.owned)remotePlanHint?:StrictJson.render(plan)else StrictJson.render(plan)
         val preferences=JSONObject(local.preferences.canonical());resourceChoices.read()?.let{preferences.put("resourceSelection",it)}
         // Keep the preview usable with older versions of the cloud service.
-        preferences.put("lightingQuality",com.blockcolc.preview.world.cloudLightingQuality(local.preferences.lightingQuality))
+        if(local.preferences.lightingQuality=="paper")preferences.put("lightingQuality","performance")
         return facts.copy(entries=facts.entries+("@preferences" to StrictJson.render(preferences))+("@plan" to planWire))
     }
     private fun downloadAsset(key:String):String {
@@ -342,7 +342,8 @@ internal class NativeCloudController private constructor(private val context:Con
                 recovery=recovery.copy(automatic=grant,returnReminder=local.recovery.returnReminder.takeIf{local.recovery.plan==recovery.plan})
             }
             val synced=incoming["@preferences"]?.let(ClientPreferences::parseText)?:local.preferences
-            val preferences=synced.copy(lightingQuality=com.blockcolc.preview.world.adoptedLightingQuality(local.preferences.lightingQuality,synced.lightingQuality))
+            val preferences=if(local.preferences.lightingQuality=="paper"&&synced.lightingQuality=="performance")
+                synced.copy(lightingQuality="paper") else synced
             val replacing=selected=="cloud"&&(local.baseline==null||local.baseline.epoch!=baseline.epoch)
             runtime.cloudApply(local,document,if(replacing)recovery.copy(automatic=null)else recovery,preferences,baseline,replacing,selected=="cloud"&&strategy!=null).get()
             incoming["@preferences"]?.let(::JSONObject)?.optJSONObject("resourceSelection")?.let{selection->

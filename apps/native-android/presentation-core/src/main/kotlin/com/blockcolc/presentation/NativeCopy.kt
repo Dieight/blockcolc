@@ -174,6 +174,5 @@ internal object NativeCopy {
         "第 {0} 页，共 {1} 页" to "Page {0} of {1}",
         "{0} 座" to "{0} buildings",
         "M月d日" to "MMM d",
-        "把纸雕世界画成大像素，负担与纸雕相同。" to "The paper world drawn in large pixels; as light as Paper.",
     )
 }
