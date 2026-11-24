@@ -160,7 +160,9 @@ class NativeWorldPacketCompiler internal constructor(signRasterizer:NativeSignRa
         val visible=camera.volume.visibility;val precipitationContext=NativePrecipitationContext(
             listOf(visible[0][0],visible[1][0],visible[0][2],visible[1][2]),listOf(cloudContext.view.contentWidth,cloudContext.view.contentDepth),ground)
         val rain=com.blockcolc.preview.NativeStartupTrace.measure("packets-rain"){precipitation.prepare(precipitationContext,sample.weather,options.quality.cloudDensity,cloud.randomTail,cancelled,paper)};inputs+=rain.source
-        if(!paper)inputs+=sky.prepare(world.input.spatial.environment==WorldEnvironment.FLOATING,cancelled)
+        // Pixel and paper retain the same small sky owner. The renderer
+        // chooses the pixel dome or the flat paper background at draw time.
+        inputs+=sky.prepare(world.input.spatial.environment==WorldEnvironment.FLOATING,cancelled)
         val stormContext=NativeStormContext(camera.target,cloudContext.view.contentWidth,cloudContext.view.contentDepth,cloudContext.baseY)
         inputs+=lightning.prepare(stormContext,cancelled)
         animal?.let{inputs+=it.second}

@@ -339,7 +339,7 @@ class NativeWorldView(context: Context, private val fixture: String, private val
         }
         val lighting=generated?.lighting?:SourceLighting.read(metadata.getJSONObject("environment"));sourceLighting=lighting
         val post=generated?.post?:SourcePost.read(metadata.getJSONObject("environment").getJSONObject("pipeline"))
-        installLighting(lighting,p.hasSkyBackdrop,post.direct)
+        installLighting(lighting,p,post.direct)
         colorPipeline=NativeColorPipeline(e,context.assets,v,c,lighting.exposure,colorProbe,post,resources.displayMetrics.density).also{it.glassRegions(desiredGlassRegions);it.pixelated(desiredPixelCellDp)}
         syncRasterSize()
         if(generated!=null){generatedPost=post;generatedOwners=generated.sources.associate{it.owner to it.ownerIdentity};generatedGeneration=generated.generation;generatedRevision=generated.revision
@@ -364,8 +364,9 @@ class NativeWorldView(context: Context, private val fixture: String, private val
 
     /** Allocate replacements before retiring live lights. A failed preparation
      * must leave the visible generation and its lighting usable. */
-    private fun installLighting(lighting:SourceLighting,hasSky:Boolean,direct:Boolean=false){
+    private fun installLighting(lighting:SourceLighting,packets:PacketRenderer,direct:Boolean=false){
         val e=checkNotNull(engine);val s=checkNotNull(scene);val staged=mutableListOf<Int>();var nextIndirect:IndirectLight?=null;var nextSky:Skybox?=null
+        val hasSky=packets.hasSkyBackdrop
         var nextShadowLight: SourceLight? = null
         var nextShadowEntity = 0
         try {
@@ -391,10 +392,10 @@ class NativeWorldView(context: Context, private val fixture: String, private val
         nextIndirect=IndirectLight.Builder().irradiance(2,lighting.hemisphereCoefficients()).intensity(1f).build(e)
         // Filament draws its built-in sky on untouched depth after opaque
         // geometry; it would overwrite the source dome (depthWrite=false).
-        if(!hasSky){val color=if(direct)lighting.clearColor.map(NativeColorEncoding::srgb)else lighting.clearColor
+        if(!hasSky||packets.retainsPaperSkybox){val color=if(direct)lighting.clearColor.map(NativeColorEncoding::srgb)else lighting.clearColor
             nextSky=Skybox.Builder().color(color[0],color[1],color[2],1f).build(e)}
         }catch(error:Throwable){for(entity in staged){e.destroyEntity(entity);EntityManager.get().destroy(entity)};nextIndirect?.let{e.destroyIndirectLight(it)};nextSky?.let{e.destroySkybox(it)};throw error}
-        s.indirectLight=nextIndirect;s.skybox=nextSky;for(entity in staged)s.addEntity(entity)
+        s.indirectLight=nextIndirect;s.skybox=if(hasSky)null else nextSky;for(entity in staged)s.addEntity(entity)
         for(entity in lightEntities){s.removeEntity(entity);e.destroyEntity(entity);EntityManager.get().destroy(entity)};lightEntities.clear();lightEntities.addAll(staged)
         indirect?.let{e.destroyIndirectLight(it)};indirect=nextIndirect;sky?.let{e.destroySkybox(it)};sky=nextSky;sourceLighting=lighting
         shadowLight = nextShadowLight
@@ -429,7 +430,7 @@ class NativeWorldView(context: Context, private val fixture: String, private val
                 if (wantsCache && previousShadows == null) stagedShadows = DirectionalShadowCache.create(e)
                 val nextShadows = if (wantsCache) previousShadows ?: stagedShadows else null
                 next.directionalShadows = nextShadows
-                try{next.loadGenerated(input);installLighting(input.lighting,next.hasSkyBackdrop,input.post.direct)}catch(error:Throwable){
+                try{next.loadGenerated(input);installLighting(input.lighting,next,input.post.direct)}catch(error:Throwable){
                     try{next.close()}catch(cleanup:Throwable){error.addSuppressed(cleanup)}
                     throw error
                 }
@@ -476,6 +477,7 @@ class NativeWorldView(context: Context, private val fixture: String, private val
     /** Render-thread only camera commands, independent of scene generation. */
     private fun syncRasterSize(){colorPipeline?.let{pipeline->packets?.let{
         it.pixelated(pipeline.pixelGrid!=null);it.resize(pipeline.sceneWidth,pipeline.sceneHeight)
+        if(it.retainsPaperSkybox)scene?.skybox=if(it.hasSkyBackdrop)null else sky
     }}}
     fun navigate(id:String?,reset:Boolean=false){render.post{
         if(closed||failed||!generatedMode)return@post
@@ -501,7 +503,7 @@ class NativeWorldView(context: Context, private val fixture: String, private val
             retireInteriorLamp(interiorLamp);interiorLamp=stagedLamp;stagedLamp=0
             currentInterior=input;navigation?.interior(input?.pose);if(reset)navigation?.resetView()
             invalidatePicks();project()
-            if(cameraChanged)sourceLighting?.let{installLighting(it,active.hasSkyBackdrop,generatedPost?.direct==true)}
+            if(cameraChanged)sourceLighting?.let{installLighting(it,active,generatedPost?.direct==true)}
             interiorPresented=onPresented;pendingInteriorFrame=true;cameraDirty=true;requestFrame()
         }catch(error:Throwable){retireInteriorLamp(stagedLamp);android.util.Log.e("BlockcolcWorld","Study update failed",error);report("NATIVE_INTERIOR_ERROR")}
     }}
@@ -538,11 +540,11 @@ class NativeWorldView(context: Context, private val fixture: String, private val
         try{
             // Fog-only changes do not allocate new lights. A light replacement
             // stages its own resources; meshes, images and instance rows stay.
-            if(input.lighting.copy(fog=sourceLighting?.fog)!=sourceLighting||!packets.hasSkyBackdrop&&input.directColor!=previous.uniforms.directColor)installLighting(input.lighting,packets.hasSkyBackdrop,input.directColor)
+            if(input.lighting.copy(fog=sourceLighting?.fog)!=sourceLighting||(!packets.hasSkyBackdrop||packets.retainsPaperSkybox)&&input.directColor!=previous.uniforms.directColor)installLighting(input.lighting,packets,input.directColor)
             sourceLighting=input.lighting;colorPipeline?.exposure(input.lighting.exposure)
         }catch(error:Throwable){
             try{packets.updateGeneratedEnvironment(previous.uniforms,previous.camera)
-                if(sourceLighting!=previous.uniforms.lighting||!packets.hasSkyBackdrop&&input.directColor!=previous.uniforms.directColor)installLighting(previous.uniforms.lighting,packets.hasSkyBackdrop,previous.uniforms.directColor)
+                if(sourceLighting!=previous.uniforms.lighting||(!packets.hasSkyBackdrop||packets.retainsPaperSkybox)&&input.directColor!=previous.uniforms.directColor)installLighting(previous.uniforms.lighting,packets,previous.uniforms.directColor)
                 sourceLighting=previous.uniforms.lighting;colorPipeline?.exposure(previous.uniforms.lighting.exposure)
             }catch(rollback:Throwable){error.addSuppressed(rollback)}
             throw error

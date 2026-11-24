@@ -115,11 +115,14 @@ class PacketRenderer(private val engine: Engine, private val scene: Scene, priva
     private var stormScale=Double.NaN
     private var stormOpacity=Float.NaN
     private var stormVisible=false
-    var hasAnimation=false;private set
-    val hasNightAnimation get()=coverage.any{it.optics.night.stars>.01f}
+    private var animatedPackets=false
+    val hasAnimation get()=animatedPackets||hasNightAnimation
+    val hasNightAnimation get()=coverage.any{it.optics.night.stars>.01f&&(!it.optics.sky||showNativeSky)}
     private val sourceEye=DoubleArray(3)
     private var sourceSkyRadius=1.0
-    val hasSkyBackdrop get()=coverage.any{it.optics.sky}
+    var retainsPaperSkybox=false;private set
+    private val showNativeSky get()=!retainsPaperSkybox||pixelStyle
+    val hasSkyBackdrop get()=showNativeSky&&coverage.any{it.optics.sky}
     private val skyTransform=FloatArray(16).apply{this[0]=1f;this[5]=1f;this[10]=1f;this[15]=1f}
     val loadedPackets: Int get() = owners?.snapshot()?.values?.sumOf { it.size } ?: 0
 
@@ -268,6 +271,7 @@ class PacketRenderer(private val engine: Engine, private val scene: Scene, priva
      * No fixture name, file, captured world or JavaScript execution is involved. */
     fun loadGenerated(input:NativeGeneratedScene) {
         check(!closed&&owners==null);projectionOnly=false
+        retainsPaperSkybox=input.camera.paper
         val prepared=input.sources.mapNotNull{source->source.world?.let{generatedSource(source,input.environment,input.camera,input.animals)}}
         adopt(prepared,input.sources.map{it.owner}.toSet(),input.footprint)
         nativeAnimalPrepared=input.animals?.prepared
@@ -282,7 +286,7 @@ class PacketRenderer(private val engine: Engine, private val scene: Scene, priva
                 .falloff(NativeStormFlash.RANGE).castShadows(false).build(engine,light);scene.addEntity(light);stormLight=light}
             catch(error:Throwable){engine.destroyEntity(light);EntityManager.get().destroy(light);throw error}
         }
-        hasAnimation=hasAnimation||stormWeather?.thunderstorm==true
+        animatedPackets=animatedPackets||stormWeather?.thunderstorm==true
         val camera=input.camera;val p=camera.position;val t=camera.target
         projectFog(sqrt((p.x-t.x).pow(2)+(p.y-t.y).pow(2)+(p.z-t.z).pow(2)))
     }
@@ -309,7 +313,7 @@ class PacketRenderer(private val engine: Engine, private val scene: Scene, priva
         updateAnimalActivity(uniforms)
         uniforms.storm?.let{stormWeather=it}
         coverage=draws.map{it.coverage}.distinct()
-        hasAnimation=draws.any{it.coverage.optics.let{o->o.night.stars>0||o.cloud!=null||o.precipitation!=null||o.cascade!=null||o.atlas?.animated==true}||it.entity in animalSlots}||stormWeather?.thunderstorm==true
+        animatedPackets=draws.any{it.coverage.optics.let{o->o.cloud!=null||o.precipitation!=null||o.cascade!=null||o.atlas?.animated==true}||it.entity in animalSlots}||stormWeather?.thunderstorm==true
         return current
     }
     private fun updateAnimalActivity(environment:NativeSceneEnvironment){
@@ -428,7 +432,7 @@ class PacketRenderer(private val engine: Engine, private val scene: Scene, priva
         return doubleArrayOf(a.position.x,a.position.y+.35,a.position.z)
     }
     private fun attach(draw:PacketGpu,visible:Boolean,updateShadows:Boolean=true){
-        val next=visible&&draw.skyVisible
+        val next=visible&&draw.skyVisible&&(draw.environment?.sky==null||showNativeSky)
         if (updateShadows && draw.packet.castShadow && draw.packet.lod?.detail != "distant") {
             directionalShadows?.setCaster(draw.entity, next, draw.staticCaster, draw.material.takeIf { draw.casterDepthOverride })
         }
@@ -565,7 +569,10 @@ class PacketRenderer(private val engine: Engine, private val scene: Scene, priva
             if(environment==null)return
             val pixel=pixelPaletteFor(environment)
             for(draw in paperPackets)paperUniforms(draw.material,environment.lighting,environment.surfaceState,environment.storm?.thunderstorm==true,pixel)
-            for(draw in skyPackets)applySkyUniforms(draw.material,draw.environment?.sky,environment.sky,environment.lighting.exposure,environment.directColor,draw.toneMapped,pixel)
+            for(draw in skyPackets){
+                draw.skyVisible=applySkyUniforms(draw.material,draw.environment?.sky,environment.sky,environment.lighting.exposure,environment.directColor,draw.toneMapped,pixel)
+                attach(draw,true)
+            }
         }
         val old=pixelStyle
         try{applyStyle(value)}catch(error:Throwable){
@@ -649,7 +656,7 @@ class PacketRenderer(private val engine: Engine, private val scene: Scene, priva
         cloudPackets=draws.filter{it.coverage.optics.cloud!=null}
         paperPackets=draws.filter{it.paper}
         animalPackets=draws.filter{it.entity in animalSlots};animalPending=true
-        hasAnimation=draws.any{it.coverage.optics.let{o->o.night.stars>0||o.cloud!=null||o.precipitation!=null||o.cascade!=null||o.atlas?.animated==true}||it.entity in animalSlots}||stormWeather?.thunderstorm==true
+        animatedPackets=draws.any{it.coverage.optics.let{o->o.cloud!=null||o.precipitation!=null||o.cascade!=null||o.atlas?.animated==true}||it.entity in animalSlots}||stormWeather?.thunderstorm==true
     }
     private var constructionIndex:JSONObject?=null
     /** Every admitted threshold is generated by the current production builder,
@@ -955,7 +962,7 @@ class PacketRenderer(private val engine: Engine, private val scene: Scene, priva
             val lambert=cloud?.let{SourceLambert.read(source.lighting,packet.bounds)}
             if (!cachedReceiver) applyLambert(instance,lambert)
             instance.setParameter("stormFlash",stormFlash.position.x.toFloat(),stormFlash.position.y.toFloat(),stormFlash.position.z.toFloat(),stormFlash.intensity)
-            if(cloud!=null||night.stars>0f||weather!=null||animalKind!=null||cascade!=null||atlas?.animated==true)hasAnimation=true
+            if(cloud!=null||weather!=null||animalKind!=null||cascade!=null||atlas?.animated==true)animatedPackets=true
             instance.setParameter("skyBackdrop",optics.sky);instance.setParameter("floatingSky",optics.floatingSky)
             instance.setParameter("normalSign",if(m.getInt("side")==1)-1f else 1f)
             instance.setParameter("fluidSurface",optics.fluidSurface);instance.setParameter("distanceOpacity",optics.distanceOpacity)
@@ -1080,7 +1087,7 @@ class PacketRenderer(private val engine: Engine, private val scene: Scene, priva
         skyPackets=emptyList()
         lodPackets=emptyMap();lodSelector=null
         runtimeData?.let{engine.destroyTexture(it)};runtimeData=null
-        hasAnimation=false
+        animatedPackets=false
         for(a in atlasGpu)a.close();atlasGpu=emptyList()
         footprint=null
         nativeEnvironment=null
