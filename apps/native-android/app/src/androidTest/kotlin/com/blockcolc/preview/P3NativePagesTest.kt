@@ -915,53 +915,6 @@ class P3NativePagesTest {
         assertEquals(ordinary.getLong("presentationIdentity"),ready().getLong("presentationIdentity"))
         compose.waitUntilDoesNotExist(hasText("准备世界…"),20000)
     }
-    @Test fun pixelQualityKeepsThePaperSceneAcrossSettingsAndImmersiveModes()=run(configure={
-        it.copy(lightingQuality="paper",minimalMode=false,focusGlassTransparency=100,themeMode="light")
-    }){
-        fun ready(pixel:Boolean,glass:Boolean=false):JSONObject {
-            var state=JSONObject()
-            compose.waitUntil(90000){renderedWorld()?.let{world->
-                state=worldDiagnostic(world,false)
-                val pipeline=state.optJSONObject("colorPipeline")
-                state.optLong("gpuReadyFrames")>0&&!state.optBoolean("failed")&&state.isNull("pendingPresentation")&&
-                    !state.optBoolean("fencePending")&&state.optJSONObject("navigation")?.optBoolean("opening")==false&&
-                    pipeline!=null&&pipeline.optJSONObject("config")?.optBoolean("pixel")==pixel&&(!glass||pipeline.optInt("glassRegions")>0)
-            }==true}
-            return state
-        }
-        // Wait for the host to adopt the initial frame, including any cold
-        // startup world updates, before measuring a display-only change.
-        compose.waitUntilAtLeastOneExists(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription,"世界已就绪"),90000)
-        val paper=ready(false).getLong("presentationIdentity")
-        val world=checkNotNull(renderedWorld())
-        fun quality(label:String,value:String){
-            nav("设置");compose.onNodeWithText(label).performScrollTo().performClick();nav("计时")
-            compose.waitUntil(10000){!runtime.latest.preferencesSaving&&runtime.latest.preferences.lightingQuality==value}
-        }
-        quality("像素","pixel")
-        val pixels=ready(true)
-        assertSame(world,renderedWorld());assertEquals(paper,pixels.getLong("presentationIdentity"))
-        screen("pixel-ordinary")
-        runtime.updatePreferences{it.copy(minimalMode=true)}
-        compose.waitUntil(10000){runtime.latest.preferences.minimalMode&&!runtime.latest.preferencesSaving}
-        compose.onNodeWithText("极简").performClick()
-        compose.waitUntilDoesNotExist(hasTestTag("mode-transition"),20000)
-        compose.onNodeWithTag("formal-minimal-panel").assertIsDisplayed()
-        assertEquals(paper,ready(true,glass=true).getLong("presentationIdentity"))
-        screen("pixel-minimal")
-        compose.onNodeWithTag("formal-minimal-panel").performTouchInput{doubleClick(Offset(width*.5f,height*.94f))}
-        compose.onNodeWithText("返回普通模式").performClick()
-        compose.waitUntilDoesNotExist(hasTestTag("mode-transition"),20000)
-        quality("纸雕","paper")
-        assertEquals(paper,ready(false).getLong("presentationIdentity"))
-        quality("像素","pixel")
-        assertEquals(paper,ready(true).getLong("presentationIdentity"))
-        compose.onNodeWithText("开始 1 轮").performClick()
-        compose.waitUntil(10000){runtime.latest.phase=="FOCUS"}
-        compose.onNodeWithTag("formal-focus-time").assertIsDisplayed()
-        ready(true,glass=true)
-        screen("pixel-focus")
-    }
     @Test fun returningToTimerAfterASettlementChangePresentsTheNewWorld()=run(configure={it.copy(lightingQuality="performance")}){
         val initialEnvironment=runtime.latest.workspace?.settings?.environment
         val target=if(initialEnvironment=="mosaic-coast") "山谷" else "海岸"

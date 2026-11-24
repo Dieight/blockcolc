@@ -4,25 +4,18 @@ package com.blockcolc.world
  * unused w channels carry direct colour policy and exposure. No new material
  * parameter, source geometry identity or per-frame upload is introduced. */
 object NativeMaterialUniforms {
-    fun pack(role:NativeSkyRole?,sky:NativeSkyState?,exposure:Float,direct:Boolean,toneMapped:Boolean,pixel:NativePixelPalette?=null):FloatArray {
+    fun pack(role:NativeSkyRole?,sky:NativeSkyState?,exposure:Float,direct:Boolean,toneMapped:Boolean):FloatArray {
         require(exposure.isFinite()&&exposure in .01f..100f)
         val data=FloatArray(16)
-        if(role==NativeSkyRole.DOME){val gradient=pixel?.sky?:checkNotNull(sky).gradient
+        if(role==NativeSkyRole.DOME){val gradient=checkNotNull(sky).gradient
             for((column,color)in listOf(gradient.horizon,gradient.zenith,gradient.lower).withIndex()){
                 data[column*4]=color.red;data[column*4+1]=color.green;data[column*4+2]=color.blue
             };data[3]=1f
-        }else if(role!=null){
-            data[3]=2f
-            if(pixel!=null&&role==NativeSkyRole.MOON){
-                val phase=checkNotNull(sky).moonPhase
-                data[0]=phase.illumination;data[1]=phase.waxing;data[2]=phase.limbAngle;data[3]=3f
-            }
-        }
+        }else if(role!=null)data[3]=2f
         val direction=when(role){NativeSkyRole.SUN->checkNotNull(sky).sunDirection;NativeSkyRole.MOON->checkNotNull(sky).moonDirection;else->null}
         val radius=NativeSky.RADIUS*NativeSky.CELESTIAL_RATIO
         data[12]=((direction?.x?:0.0)*radius).toFloat();data[13]=((direction?.y?:0.0)*radius).toFloat();data[14]=((direction?.z?:0.0)*radius).toFloat()
         data[7]=exposure;data[11]=if(!direct)0f else if(toneMapped)1f else 2f
-        if(pixel!=null&&role!=null)data[15]=1f
         return data
     }
 }

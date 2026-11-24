@@ -21,7 +21,7 @@ data class ClientPreferences(
 ) {
     fun validate(){
         require(focusMinutes in 1..180&&habitFocusMinutes in 1..180&&habitTargetRounds in 10..30&&breakMinutes in 0..60)
-        require(lightingQuality in setOf("auto","paper","pixel","performance","balanced","cinematic")&&constructionOutlineVisibility in setOf("off","current","all"))
+        require(lightingQuality in setOf("auto","paper","performance","balanced","cinematic")&&constructionOutlineVisibility in setOf("off","current","all"))
         require(worldColorAdjustment.saturation in 50..150&&worldColorAdjustment.brightness in 80..120&&worldColorAdjustment.contrast in 80..120)
         require(focusGlassTransparency in 0..100&&themeMode in setOf("system","light","dark")&&fontStyle in setOf("pixel","system","mixed"))
         require(language in setOf("zh-CN","en")&&ambientPrimary(ambience.primary)&&ambience.volume in 0..100)
@@ -55,8 +55,11 @@ data class ClientPreferences(
             val imports=sound.optJSONArray("imports");val legacy=imports?.let{a->(0 until a.length()).mapNotNull{a.opt(it) as? String}.firstOrNull(::ambientPrimary)}
             val primary=raw?.takeIf(::ambientPrimary)?:legacy?:"forest-birds"
             val retired=jsString(sound.opt("primary")) in setOf("evening-lakeside","morning-birdsong","calm-ocean")
+            // Beta 3's retired pixel style used the paper scene.
+            val lightingQuality=if(x.opt("lightingQuality")=="pixel") "paper"
+                else choice(x,"lightingQuality","cinematic","auto","paper","performance","balanced","cinematic")
             return ClientPreferences(focus,integer(x,"habitFocusMinutes",focus,1,180),integer(x,"habitTargetRounds",10,10,30),integer(x,"breakMinutes",5,0,60),
-                choice(x,"lightingQuality","cinematic","auto","paper","pixel","performance","balanced","cinematic"),choice(x,"constructionOutlineVisibility","current","off","current","all"),
+                lightingQuality,choice(x,"constructionOutlineVisibility","current","off","current","all"),
                 WorldColor(integer(color,"saturation",100,50,150),integer(color,"brightness",100,80,120),integer(color,"contrast",100,80,120)),
                 bool(x,"showWorldCoordinates",true),integer(x,"focusGlassTransparency",100,0,100),choice(x,"themeMode","system","light","dark"),choice(x,"fontStyle","pixel","system","mixed"),
                 bool(x,"returnToFocusReminders",true),bool(x,"autoContinueFocus"),bool(x,"autoCheckUpdates"),bool(x,"realWeatherEnabled"),bool(x,"minimalMode"),

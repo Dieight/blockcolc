@@ -18,18 +18,18 @@ class PresentationOracleTest {
         }
     }
     @Test fun allFormalPreferencesAndLegacyDefaultsMatch(){
-        // The current native product always starts progressively. This is the
-        // sole retired legacy preference; all remaining formal values match,
-        // except the device-only lighting tiers (paper, pixel) the web never
-        // stores: cloud sync sends them as performance, so native keeps them.
-        fun current(wire:String)=StrictJson.render(JSONObject(wire).apply{remove("progressiveStartup")})
-        fun expected(c:JSONObject)=JSONObject(current(c.getString("canonical"))).apply{
-            val tier=(c.get("input") as? JSONObject)?.opt("lightingQuality");if(tier=="paper"||tier=="pixel")put("lightingQuality",tier)
-        }.let{StrictJson.render(it)}
+        // Native starts progressively and maps the retired Beta 3 tier to paper.
+        fun current(wire:String,input:Any?=null)=StrictJson.render(JSONObject(wire).apply{
+            remove("progressiveStartup")
+            if((input as? JSONObject)?.opt("lightingQuality")=="pixel")put("lightingQuality","paper")
+        })
         val truth=oracle();assertEquals(current(truth.getString("defaults")),ClientPreferences().canonical())
         val cases=truth.getJSONArray("preferences")
         for(i in 0 until cases.length()){
-            val c=cases.getJSONObject(i);val parsed=ClientPreferences.parse(c.get("input"));assertEquals(c.getString("name"),expected(c),parsed.canonical())
+            val c=cases.getJSONObject(i)
+            val input=c.get("input")
+            val parsed=ClientPreferences.parse(input)
+            assertEquals(c.getString("name"),current(c.getString("canonical"),input),parsed.canonical())
             assertEquals(parsed,ClientPreferences.parseText(parsed.canonical()))
         }
         val legacy=JSONObject(ClientPreferences().canonical()).put("progressiveStartup",false)

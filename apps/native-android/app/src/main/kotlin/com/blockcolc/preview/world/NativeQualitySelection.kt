@@ -23,13 +23,3 @@ internal fun automaticQuality(context:Context):String {
     return automaticQuality(WorldDeviceCapabilities(memory.isLowRamDevice,info.totalMem/1_048_576,
         memory.deviceConfigurationInfo.reqGlEsVersion,vulkan,performance))
 }
-
-/** Scene preparation for a lighting choice. The pixel style reuses the paper
- * world and changes only how it is drawn. */
-internal fun nativeSceneQuality(choice:String)=if(choice=="pixel")"paper" else choice
-
-/** Paper and pixel are device-only styles: older cloud services know the
- * four lighting tiers, so they travel as performance and stay local here. */
-private val deviceOnlyQualities=setOf("paper","pixel")
-internal fun cloudLightingQuality(local:String)=if(local in deviceOnlyQualities)"performance" else local
-internal fun adoptedLightingQuality(local:String,synced:String)=if(local in deviceOnlyQualities&&synced=="performance")local else synced
