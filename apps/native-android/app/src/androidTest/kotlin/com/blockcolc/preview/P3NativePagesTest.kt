@@ -2524,8 +2524,11 @@ class P3NativePagesTest {
         configure={it.copy(language="zh-CN",minimalMode=false)}){
         runtime.updatePreferences{it.copy(minimalMode=true)}
         compose.waitUntil(10000){runtime.latest.preferences.minimalMode&&!runtime.latest.preferencesSaving}
-        fun right(label:String):Float=compose.onNode(hasText(label) and hasClickAction()).performScrollTo()
-            .assertIsDisplayed().fetchSemanticsNode().boundsInRoot.right
+        fun right(label:String):Float {
+            val action=compose.onNode(hasText(label) and hasClickAction())
+            if(!action.isDisplayed())action.performScrollTo()
+            return action.assertIsDisplayed().fetchSemanticsNode().boundsInRoot.right
+        }
         val adjust=right("调整")
         assertEquals(adjust,right("极简"),1f)
         for(title in listOf("短", "这一项待推进的任务名称很长，使用窄屏时只给标题自身留出换行空间")){
