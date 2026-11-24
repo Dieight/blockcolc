@@ -96,6 +96,19 @@ class PacketRenderer(private val engine: Engine, private val scene: Scene, priva
     private var cloudPackets=emptyList<PacketGpu>()
     private var stormPackets=emptyList<PacketGpu>()
     private var paperPackets=emptyList<PacketGpu>()
+    private var pixelStyle=false
+    private var pixelPaletteInput:NativeSceneEnvironment?=null
+    private var pixelPalette:NativePixelPalette?=null
+
+    private fun pixelPaletteFor(environment:NativeSceneEnvironment?):NativePixelPalette? {
+        if(!pixelStyle||environment==null)return null
+        if(pixelPaletteInput!==environment){
+            val sky=environment.sky;val surface=environment.surfaceState
+            pixelPalette=if(sky!=null&&surface!=null)NativePixelPalette.from(sky,surface,environment.storm?.thunderstorm==true)else null
+            pixelPaletteInput=environment
+        }
+        return pixelPalette
+    }
     private val stormUploads=mutableMapOf<Int,InstanceRowUploads>()
     private var stormElapsedMs=0.0
     private var stormPose= -1L
@@ -304,8 +317,9 @@ class PacketRenderer(private val engine: Engine, private val scene: Scene, priva
         animalRuntime?.updateActivityScale(if(state.nightFactor>.55f).45 else if(state.clearSky==1f)1.0 else .7)
     }
     private fun applyGeneratedUniforms(draw:PacketGpu,uniforms:NativeSceneEnvironment){
+        val pixel=pixelPaletteFor(uniforms)
         if (draw.paper) {
-            paperUniforms(draw.material, uniforms.lighting, uniforms.surfaceState, uniforms.storm?.thunderstorm == true)
+            paperUniforms(draw.material, uniforms.lighting, uniforms.surfaceState, uniforms.storm?.thunderstorm == true,pixel)
             return
         }
         val state=uniforms.surfaceState
@@ -313,7 +327,7 @@ class PacketRenderer(private val engine: Engine, private val scene: Scene, priva
         val surface=projected.copy(optics=projected.optics.copy(atlas=draw.coverage.optics.atlas))
         val coverage=if(draw.environment?.sky==NativeSkyRole.DOME)surface.copy(optics=surface.optics.copy(night=checkNotNull(uniforms.sky).night.copy(gain=1f)))else surface
         applySurfaceUniforms(draw.material,coverage)
-        draw.skyVisible=applySkyUniforms(draw.material,draw.environment?.sky,uniforms.sky,uniforms.lighting.exposure,uniforms.directColor,draw.toneMapped)
+        draw.skyVisible=applySkyUniforms(draw.material,draw.environment?.sky,uniforms.sky,uniforms.lighting.exposure,uniforms.directColor,draw.toneMapped,pixel)
         if(draw.environment?.sky!=null)attach(draw,true)
         val fog=uniforms.lighting.fog;val color=fog?.color?:listOf(0f,0f,0f)
         draw.material.setParameter("fogEnabled",fogEnabled&&draw.fog&&fog!=null)
@@ -340,8 +354,8 @@ class PacketRenderer(private val engine: Engine, private val scene: Scene, priva
         material.setParameter("skyGain",if(nightReflectionsEnabled)night.gain else 0f)
         vector("skyColdDirection",night.coldDirection);vector("skyGalaxyNormal",night.galaxyNormal)
     }
-    private fun applySkyUniforms(material:MaterialInstance,role:NativeSkyRole?,sky:NativeSkyState?,exposure:Float,direct:Boolean,toneMapped:Boolean):Boolean {
-        val data=NativeMaterialUniforms.pack(role,sky,exposure,direct,toneMapped)
+    private fun applySkyUniforms(material:MaterialInstance,role:NativeSkyRole?,sky:NativeSkyState?,exposure:Float,direct:Boolean,toneMapped:Boolean,pixel:NativePixelPalette?):Boolean {
+        val data=NativeMaterialUniforms.pack(role,sky,exposure,direct,toneMapped,pixel)
         material.setParameter("nativeSkyData",MaterialInstance.FloatElement.MAT4,data,0,1)
         if(role!=null){val color=when(role){NativeSkyRole.DOME->LinearRgb.WHITE;NativeSkyRole.SUN->checkNotNull(sky).sunColor;NativeSkyRole.MOON->checkNotNull(sky).moonColor}
             material.setParameter("baseColor",color.red,color.green,color.blue,if(role==NativeSkyRole.DOME)1f else checkNotNull(sky).opacity)}
@@ -543,6 +557,22 @@ class PacketRenderer(private val engine: Engine, private val scene: Scene, priva
         stormFlash=value;stormFlashPeak=max(stormFlashPeak,value.intensity)
     }
     fun pauseRuntime(){animalRuntime?.pause();stormRuntime?.update(stormElapsedMs,false);applyStormFlash(NativeStormFlash.NONE);for(draw in stormPackets)attach(draw,false);stormVisible=false}
+    fun pixelated(value:Boolean){
+        if(pixelStyle==value)return
+        val environment=nativeEnvironment?.uniforms
+        fun applyStyle(style:Boolean){
+            pixelStyle=style
+            if(environment==null)return
+            val pixel=pixelPaletteFor(environment)
+            for(draw in paperPackets)paperUniforms(draw.material,environment.lighting,environment.surfaceState,environment.storm?.thunderstorm==true,pixel)
+            for(draw in skyPackets)applySkyUniforms(draw.material,draw.environment?.sky,environment.sky,environment.lighting.exposure,environment.directColor,draw.toneMapped,pixel)
+        }
+        val old=pixelStyle
+        try{applyStyle(value)}catch(error:Throwable){
+            try{applyStyle(old)}catch(rollback:Throwable){error.addSuppressed(rollback)}
+            throw error
+        }
+    }
     fun resize(width:Int,height:Int){
         require(width>0&&height>0)
         for(draw in owners?.snapshot().orEmpty().values.flatten())if(!draw.paper)draw.material.setParameter("viewportSize",width.toFloat(),height.toFloat())
@@ -901,7 +931,7 @@ class PacketRenderer(private val engine: Engine, private val scene: Scene, priva
             if (!cachedReceiver) instance.setParameter("weatherGround",ground,TextureSampler(TextureSampler.MinFilter.NEAREST,TextureSampler.MagFilter.NEAREST,TextureSampler.WrapMode.CLAMP_TO_EDGE))
             val color=m.getJSONArray("color");val cloudColor=if(environmentBinding?.cloud==true)checkNotNull(source.nativeCloudColor)else null
             instance.setParameter("baseColor",cloudColor?.red?:color.getDouble(0).toFloat(),cloudColor?.green?:color.getDouble(1).toFloat(),cloudColor?.blue?:color.getDouble(2).toFloat(),m.getDouble("opacity").toFloat())
-            val skyVisible=applySkyUniforms(instance,environmentBinding?.sky,source.nativeSkyState,source.lighting.exposure,source.nativeDirect,m.optBoolean("toneMapped",true))
+            val skyVisible=applySkyUniforms(instance,environmentBinding?.sky,source.nativeSkyState,source.lighting.exposure,source.nativeDirect,m.optBoolean("toneMapped",true),pixelPaletteFor(nativeEnvironment?.uniforms))
             val uv=m.getJSONArray("uvTransform")
             instance.setParameter("uvRowU",if(atlas!=null)1f else uv.getDouble(0).toFloat(),if(atlas!=null)0f else uv.getDouble(3).toFloat(),if(atlas!=null)0f else uv.getDouble(6).toFloat())
             instance.setParameter("uvRowV",if(atlas!=null)0f else uv.getDouble(1).toFloat(),if(atlas!=null)1f else uv.getDouble(4).toFloat(),if(atlas!=null)0f else uv.getDouble(7).toFloat())
@@ -988,7 +1018,8 @@ class PacketRenderer(private val engine: Engine, private val scene: Scene, priva
             val program = program(if(material.getBoolean("transparent"))"paper-fade" else "paper-opaque").createInstance()
             instance = program
             program.setParameter("opacity",material.getDouble("opacity").toFloat())
-            paperUniforms(program,source.lighting,source.nativeSurfaceState,nativeEnvironment?.uniforms?.storm?.thunderstorm == true)
+            val environment=nativeEnvironment?.uniforms
+            paperUniforms(program,source.lighting,source.nativeSurfaceState,environment?.storm?.thunderstorm==true,pixelPaletteFor(environment))
             entity = EntityManager.get().create()
             engine.transformManager.create(entity)
             val b = packet.bounds
@@ -1007,18 +1038,23 @@ class PacketRenderer(private val engine: Engine, private val scene: Scene, priva
         }
     }
 
-    private fun paperUniforms(material:MaterialInstance,lighting:SourceLighting,state:NativeSurfaceState?,storm:Boolean) {
-        val night = state?.nightFactor ?: 0f
-        val directional = lighting.lights.firstOrNull { it.type == "DirectionalLight" }
-        val sun = directional?.color ?: listOf(1f,1f,1f)
-        val cover = if(storm) .70f else if(state?.clearSky == 1f) 1f else .90f
-        val moon=(directional?.intensity?:0f).coerceIn(0f,.55f)
-        val day=1f-night
-        val floor=night*(1f+moon*.26f)
-        material.setParameter("tint",cover*(day*(.98f+.09f*sun[0])+floor*.34f),
-            cover*(day*(.93f+.08f*sun[1])+floor*.43f),cover*(day*(.88f+.10f*sun[2])+floor*.57f))
-        // A small cool fill keeps the cutout edges visible over the darker sky.
-        material.setParameter("nightFill",night*cover*.014f,night*cover*.019f,night*cover*.032f)
+    private fun paperUniforms(material:MaterialInstance,lighting:SourceLighting,state:NativeSurfaceState?,storm:Boolean,pixel:NativePixelPalette?) {
+        if(pixel!=null){
+            material.setParameter("tint",pixel.tint.red,pixel.tint.green,pixel.tint.blue)
+            material.setParameter("nightFill",pixel.fill.red,pixel.fill.green,pixel.fill.blue)
+        }else{
+            val night = state?.nightFactor ?: 0f
+            val directional = lighting.lights.firstOrNull { it.type == "DirectionalLight" }
+            val sun = directional?.color ?: listOf(1f,1f,1f)
+            val cover = if(storm) .70f else if(state?.clearSky == 1f) 1f else .90f
+            val moon=(directional?.intensity?:0f).coerceIn(0f,.55f)
+            val day=1f-night
+            val floor=night*(1f+moon*.26f)
+            material.setParameter("tint",cover*(day*(.98f+.09f*sun[0])+floor*.34f),
+                cover*(day*(.93f+.08f*sun[1])+floor*.43f),cover*(day*(.88f+.10f*sun[2])+floor*.57f))
+            material.setParameter("nightFill",night*cover*.014f,night*cover*.019f,night*cover*.032f)
+        }
+        material.setParameter("lamps",pixel?.lamps?:0f)
         val fog = lighting.fog
         val sky = fog?.color ?: lighting.clearColor
         material.setParameter("mist",sky[0],sky[1],sky[2])

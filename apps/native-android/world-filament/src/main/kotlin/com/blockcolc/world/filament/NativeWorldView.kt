@@ -118,7 +118,7 @@ class NativeWorldView(context: Context, private val fixture: String, private val
     private var sky: Skybox?=null
     private var colorPipeline:NativeColorPipeline?=null
     private var desiredGlassRegions:List<com.blockcolc.world.NativeGlassRegion> = emptyList()
-    private var desiredPixelated=false
+    private var desiredPixelCellDp:Float?=null
     private var sourceLighting:SourceLighting?=null
     private var directionalShadows: DirectionalShadowCache? = null
     private var shadowCamera: NativeSceneCamera? = null
@@ -200,7 +200,9 @@ class NativeWorldView(context: Context, private val fixture: String, private val
     private fun project(width:Int=viewportWidth,height:Int=viewportHeight) {
         val window=NativeViewportWindow.clamped(height,presentationTop,if(presentationHeight>0)presentationHeight else height)
         val visibleHeight=window.height
-        navigation?.let{if(physicalViewportReady)it.resize(width.toDouble()/visibleHeight);val current=it.frame
+        val grid=colorPipeline?.pixelGrid
+        navigation?.let{if(physicalViewportReady)it.resize(width.toDouble()/visibleHeight)
+            it.pixelGrid(grid?.cell?:0,visibleHeight);val current=it.frame
             if(current!=previousNavigation){invalidatePicks();previousNavigation=current}
             target[0]=current.target.x;target[1]=current.target.y;target[2]=current.target.z
             radius=current.distance;fitted=current.fitted;pitch=current.pitch;azimuth=PI/2-current.azimuth;fov=current.fov}
@@ -214,8 +216,8 @@ class NativeWorldView(context: Context, private val fixture: String, private val
             val halfWidth=halfHeight*aspect
             camera?.setProjection(Camera.Projection.ORTHO,-halfWidth,halfWidth,-halfHeight,halfHeight,.1,frame.far+orthographicEyeOffset)
         }else camera?.setProjection(fov,aspect,frame.near,frame.far,Camera.Fov.VERTICAL)
-        camera?.setScaling(1.0,window.scaleY)
-        camera?.setShift(0.0,window.shiftY)
+        camera?.setScaling(grid?.scaleX?:1.0,window.scaleY*(grid?.scaleY?:1.0))
+        camera?.setShift(grid?.shiftX?:0.0,window.shiftY*(grid?.scaleY?:1.0)+(grid?.shiftY?:0.0))
         packets?.projectFog(navigation?.atmosphericDistance?:radius,orthographicEyeOffset)
     }
     private fun report(value:String) {main.post {status(value)}}
@@ -338,7 +340,7 @@ class NativeWorldView(context: Context, private val fixture: String, private val
         val lighting=generated?.lighting?:SourceLighting.read(metadata.getJSONObject("environment"));sourceLighting=lighting
         val post=generated?.post?:SourcePost.read(metadata.getJSONObject("environment").getJSONObject("pipeline"))
         installLighting(lighting,p.hasSkyBackdrop,post.direct)
-        colorPipeline=NativeColorPipeline(e,context.assets,v,c,lighting.exposure,colorProbe,post,resources.displayMetrics.density).also{it.glassRegions(desiredGlassRegions);it.pixelated(desiredPixelated)}
+        colorPipeline=NativeColorPipeline(e,context.assets,v,c,lighting.exposure,colorProbe,post,resources.displayMetrics.density).also{it.glassRegions(desiredGlassRegions);it.pixelated(desiredPixelCellDp)}
         syncRasterSize()
         if(generated!=null){generatedPost=post;generatedOwners=generated.sources.associate{it.owner to it.ownerIdentity};generatedGeneration=generated.generation;generatedRevision=generated.revision
             generatedPresentation=generated.presentationIdentity;pendingGeneratedFrame=Triple(generated.generation,generated.revision,generated.presentationIdentity);pendingGenerated=null
@@ -472,7 +474,9 @@ class NativeWorldView(context: Context, private val fixture: String, private val
         }
     }}
     /** Render-thread only camera commands, independent of scene generation. */
-    private fun syncRasterSize(){colorPipeline?.let{packets?.resize(it.sceneWidth,it.sceneHeight)}}
+    private fun syncRasterSize(){colorPipeline?.let{pipeline->packets?.let{
+        it.pixelated(pipeline.pixelGrid!=null);it.resize(pipeline.sceneWidth,pipeline.sceneHeight)
+    }}}
     fun navigate(id:String?,reset:Boolean=false){render.post{
         if(closed||failed||!generatedMode)return@post
         val orbit=navigation?:return@post;invalidatePicks();if(!orbit.indoors&&!orbit.focus(id))return@post
@@ -503,11 +507,20 @@ class NativeWorldView(context: Context, private val fixture: String, private val
     }}
     /** Paper colours drawn as large square pixels. Display preference only:
      * the generated world, camera and interaction are unchanged. */
-    fun pixelated(value:Boolean){render.post{
-        if(closed||failed||desiredPixelated==value)return@post
-        try{desiredPixelated=value;colorPipeline?.pixelated(value);syncRasterSize();cameraDirty=true;requestFrame()}
-        catch(error:Throwable){android.util.Log.e("BlockcolcWorld","Pixel style failed",error);report("NATIVE_UPDATE_ERROR")}
-    }}
+    fun pixelated(value:Boolean,cellDp:Float=SceneRenderSize.PIXEL_CELL_DP){
+        require(cellDp==SceneRenderSize.PIXEL_CELL_DP||BuildConfig.NATIVE_DIAGNOSTICS&&cellDp in 3f..5f)
+        val wanted=cellDp.takeIf{value}
+        render.post{
+            if(closed||failed||desiredPixelCellDp==wanted)return@post
+            try{
+                colorPipeline?.pixelated(wanted);syncRasterSize()
+                desiredPixelCellDp=wanted;cameraDirty=true;requestFrame()
+            }catch(error:Throwable){
+                try{colorPipeline?.pixelated(desiredPixelCellDp);syncRasterSize()}catch(rollback:Throwable){error.addSuppressed(rollback)}
+                android.util.Log.e("BlockcolcWorld","Pixel style failed",error);report("NATIVE_UPDATE_ERROR")
+            }
+        }
+    }
     /** Lightweight display preference, independent of generation and time. */
     fun glassRegions(value:List<com.blockcolc.world.NativeGlassRegion>){render.post{
         if(closed||failed)return@post
@@ -922,7 +935,11 @@ class NativeWorldView(context: Context, private val fixture: String, private val
                     if(touchMoved)render.post{moveCamera{drag(dx,dy)}}}
             }
             MotionEvent.ACTION_UP->{parent?.requestDisallowInterceptTouchEvent(false)
-                if(optimizeRendering)render.post{gestureChangedCamera=false}
+                val moved=touchMoved||multiTouch
+                if(optimizeRendering||moved)render.post{
+                    gestureChangedCamera=false
+                    if(!closed&&!failed&&moved&&navigation?.settlePixelOrbit()==true){invalidatePicks();cameraDirty=true;requestFrame()}
+                }
                 if(!touchMoved&&!multiTouch&&hypot(event.x-downX,event.y-downY)<=touchSlop){performClick();val x=event.x.toDouble();val y=event.y.toDouble()
                     render.post{if(!closed&&active&&!failed)queryPick(x,y)}
                 }

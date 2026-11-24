@@ -13,6 +13,7 @@ material {
     parameters : [
         { type : sampler2d, name : source, precision : high },
         { type : sampler2d, name : bloom, precision : high },
+        { type : float4, name : sceneUv, precision : high },
         { type : float, name : bloomStrength, precision : high },
         { type : float3, name : worldColor, precision : high },
         { type : bool, name : gradeEnabled },
@@ -24,8 +25,9 @@ fragment {
     @SOURCE_COLOR@
     void material(inout MaterialInputs material) {
         prepareMaterial(material);
-        float3 linear = texture(materialParams_source, uvToRenderTargetUV(getUV0())).rgb;
-        linear += texture(materialParams_bloom, uvToRenderTargetUV(getUV0())).rgb * materialParams.bloomStrength;
+        vec2 uv = uvToRenderTargetUV(getUV0() * materialParams.sceneUv.xy + materialParams.sceneUv.zw);
+        float3 linear = texture(materialParams_source, uv).rgb;
+        linear += texture(materialParams_bloom, uv).rgb * materialParams.bloomStrength;
         float3 rgb = materialParams.sourceEncoded ? linear : bcSourceOETF(bcSourceACES(linear, materialParams.exposure));
         if (materialParams.gradeEnabled) {
             // Formal WorldColorCompositor samples the finished RGBA8 frame.

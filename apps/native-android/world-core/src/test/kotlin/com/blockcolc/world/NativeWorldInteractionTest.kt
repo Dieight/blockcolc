@@ -44,6 +44,28 @@ class NativeWorldInteractionTest {
         assertTrue(NativeWorldNavigation.dot(difference,ray.direction)>0)
         assertEquals(0.0,NativeWorldNavigation.cross(difference,ray.direction).let{NativeWorldNavigation.dot(it,it)},1e-8)
     }
+    @Test fun pixelCameraSnapsTheProjectionAndRayTogetherWithoutChangingOrbitDistance(){
+        val camera=NativeSceneCamera(BlockPoint(13.0,2.0,9.0),BlockPoint(21.0,6.0,17.0),24.0,40.0,
+            SourceCamera(12.0,listOf(listOf(-80.0,-8.0,-80.0),listOf(80.0,40.0,80.0)),360.0,.82,.91,1.5,360.0),paper=true)
+        val orbit=NativeWorldNavigation(camera,emptyList(),.75)
+        val base=orbit.frame
+        orbit.pixelGrid(11,960);orbit.drag(15.0,9.0)
+        assertTrue(orbit.settlePixelOrbit());assertFalse(orbit.settlePixelOrbit())
+        val snapped=orbit.frame
+        assertEquals(base.distance,snapped.distance,0.0)
+        val angle=snapped.azimuth/(kotlin.math.PI/90)
+        assertEquals(kotlin.math.round(angle),angle,1e-9)
+        val expected=NativeWorldNavigation.sub(base.target,snapped.target)
+        val forward=NativeWorldNavigation.unit(NativeWorldNavigation.sub(snapped.target,snapped.eye))
+        assertEquals(0.0,NativeWorldNavigation.dot(forward,expected),1e-8)
+        val screen=checkNotNull(orbit.screen(base.target,720,960))
+        val ray=orbit.ray(screen.first,screen.second,720,960)
+        val fromRay=NativeWorldNavigation.sub(base.target,ray.origin)
+        val error=NativeWorldNavigation.cross(fromRay,ray.direction)
+        assertEquals(0.0,NativeWorldNavigation.dot(error,error),1e-8)
+        orbit.pixelGrid(0,960)
+        assertEquals(base.target,orbit.frame.target)
+    }
     @Test fun focusAndBothResetsMatchActualRendererAcrossAspectsAndWorldSizes(){
         val cases=oracle.getJSONArray("cameras");assertEquals(10,cases.length())
         repeat(cases.length()){i->val case=cases.getJSONObject(i);val input=case.getJSONObject("input");val navigation=NativeWorldNavigation(camera(input),targets(input),input.getDouble("aspect"));val frames=case.getJSONArray("frames")

@@ -26,7 +26,7 @@ class NativeColorPipeline(private val engine:Engine,private val assets:AssetMana
     exposure:Float,private val probe:Boolean,post:SourcePost,private val displayDensity:Float=1f) {
     private data class Pass(val scene:Scene,val view:com.google.android.filament.View,val instance:MaterialInstance,val entity:Int)
     private data class Attachment(val target:RenderTarget,val color:Texture,val depth:Texture?)
-    private data class Shape(val width:Int,val height:Int,val bloom:Boolean,val hdr:Boolean,val glass:Boolean,val outputWidth:Int,val outputHeight:Int,val pixel:Boolean=false)
+    private data class Shape(val width:Int,val height:Int,val bloom:Boolean,val hdr:Boolean,val glass:Boolean,val outputWidth:Int,val outputHeight:Int,val pixelGrid:PixelGrid?=null)
     private data class Targets(val attachments:List<Attachment>)
     private data class Configuration(val post:SourcePost,val shape:Shape,val targets:Targets)
     private val materials=mutableMapOf<String,Material>()
@@ -52,12 +52,13 @@ class NativeColorPipeline(private val engine:Engine,private val assets:AssetMana
     val configuration:SourcePost get()=current.post
     val sceneWidth get()=current.shape.width
     val sceneHeight get()=current.shape.height
+    internal val pixelGrid get()=current.shape.pixelGrid
     val bloomEnabled get()=current.shape.bloom
     val attachmentFormat get()=if(current.shape.hdr)"RGBA16F"else"RGBA8"
     private val linear=TextureSampler(TextureSampler.MinFilter.LINEAR,TextureSampler.MagFilter.LINEAR,TextureSampler.WrapMode.CLAMP_TO_EDGE)
     // Pixel style enlarges the scene without smoothing; glass blur stays linear.
     private val nearest=TextureSampler(TextureSampler.MinFilter.NEAREST,TextureSampler.MagFilter.NEAREST,TextureSampler.WrapMode.CLAMP_TO_EDGE)
-    private var pixelated=false
+    private var pixelCellDp:Float?=null
     private fun program(name:String)=materials.getOrPut(name){
         val bytes=assets.open("$name.filamat").use{it.readBytes()}
         val buffer=ByteBuffer.allocateDirect(bytes.size).put(bytes);buffer.flip()
@@ -140,8 +141,9 @@ class NativeColorPipeline(private val engine:Engine,private val assets:AssetMana
         world.setSampleCount(post.sceneSamples)
         probePass.view.renderTarget=source.target;probePass.view.viewport=Viewport(0,0,shape.width,shape.height)
         terminal.view.viewport=Viewport(0,0,if(shape.glass)shape.width else shape.outputWidth,if(shape.glass)shape.height else shape.outputHeight)
-        val upscale=if(shape.pixel)nearest else linear
+        val upscale=if(shape.pixelGrid!=null)nearest else linear
         terminal.instance.setParameter("source",source.color,upscale)
+        bindPixelGrid(terminal,shape.pixelGrid.takeUnless{shape.glass})
         terminal.instance.setParameter("bloomStrength",if(shape.bloom)post.strength else 0f)
         terminal.instance.setParameter("sourceEncoded",post.direct&&!probe)
         val c=post.worldColor
@@ -168,6 +170,8 @@ class NativeColorPipeline(private val engine:Engine,private val assets:AssetMana
         val encoded=if(shape.glass)a[first].color else source.color
         glassHorizontal.instance.setParameter("source",encoded,linear)
         glassCompose.instance.setParameter("source",encoded,upscale)
+        bindPixelGrid(glassHorizontal,shape.pixelGrid)
+        bindPixelGrid(glassCompose,shape.pixelGrid)
         glassCompose.instance.setParameter("blurred",if(shape.glass)a[first+1].color else source.color,linear)
         glassHorizontal.instance.setParameter("axis",1f,0f)
         glassCompose.instance.setParameter("axis",0f,1f)
@@ -181,10 +185,9 @@ class NativeColorPipeline(private val engine:Engine,private val assets:AssetMana
     }
     fun prepareConfiguration(post:SourcePost,newWidth:Int=current.shape.outputWidth,newHeight:Int=current.shape.outputHeight,failAfterTargets:Int?=null):PreparedColorConfiguration {
         check(!closed);require(newWidth in 1..4096&&newHeight in 1..4096);require(failAfterTargets==null||failAfterTargets in 1..4)
-        val pixel=pixelated&&!probe
-        val size=if(pixel)SceneRenderSize.forPixels(newWidth,newHeight,displayDensity)
-            else SceneRenderSize.forDisplay(newWidth,newHeight,displayDensity,if(post.bloom)2f else 1.5f,probe)
-        val shape=Shape(size.width,size.height,post.bloom&&!probe,probe||!post.bloom&&!post.direct,regions.isNotEmpty()&&!probe,newWidth,newHeight,pixel)
+        val grid=pixelCellDp?.takeUnless{probe}?.let{PixelGrid.forDisplay(newWidth,newHeight,displayDensity,it)}
+        val size=grid?.raster?:SceneRenderSize.forDisplay(newWidth,newHeight,displayDensity,if(post.bloom)2f else 1.5f,probe)
+        val shape=Shape(size.width,size.height,post.bloom&&!probe,probe||!post.bloom&&!post.direct,regions.isNotEmpty()&&!probe,newWidth,newHeight,grid)
         injectedTargetLimit=failAfterTargets
         val prepared=try{state.prepare(post to shape)}finally{injectedTargetLimit=null}
         return object:PreparedColorConfiguration {
@@ -200,10 +203,14 @@ class NativeColorPipeline(private val engine:Engine,private val assets:AssetMana
     }
     /** Render-only style switch: scene size and upscale sampling change; the
      * geometry, camera and colour path stay the same. */
-    fun pixelated(value:Boolean){
-        check(!closed);if(value==pixelated)return
-        val old=pixelated;pixelated=value
-        try{prepareConfiguration(current.post).also{it.commit();it.finish()}}catch(error:Throwable){pixelated=old;throw error}
+    fun pixelated(cellDp:Float?){
+        check(!closed);if(cellDp==pixelCellDp)return
+        val old=pixelCellDp;pixelCellDp=cellDp
+        try{prepareConfiguration(current.post).also{it.commit();it.finish()}}catch(error:Throwable){pixelCellDp=old;throw error}
+    }
+    private fun bindPixelGrid(pass:Pass,grid:PixelGrid?){
+        pass.instance.setParameter("sceneUv",grid?.scaleX?.toFloat()?:1f,grid?.scaleY?.toFloat()?:1f,
+            grid?.offsetX?.toFloat()?:0f,grid?.offsetY?.toFloat()?:0f)
     }
     fun worldColor(value:SourceWorldColor){
         check(!closed);if(value==current.post.worldColor)return
@@ -245,7 +252,8 @@ class NativeColorPipeline(private val engine:Engine,private val assets:AssetMana
     fun diagnostics():JSONObject=JSONObject().put("closed",closed).put("targetsCreated",targetsCreated).put("targetsDestroyed",targetsDestroyed)
         .put("liveTargets",targetsCreated-targetsDestroyed).put("glassRegions",regions.size).put("glassSampling","same-frame-gpu").put("config",state.current?.let{value->JSONObject().put("width",value.shape.width).put("height",value.shape.height)
             .put("outputWidth",value.shape.outputWidth).put("outputHeight",value.shape.outputHeight)
-            .put("bloom",value.shape.bloom).put("hdr",value.shape.hdr).put("pixel",value.shape.pixel).put("sampleCount",value.post.sceneSamples)
+            .put("bloom",value.shape.bloom).put("hdr",value.shape.hdr).put("pixel",value.shape.pixelGrid!=null)
+            .put("pixelCell",value.shape.pixelGrid?.cell?:0).put("sampleCount",value.post.sceneSamples)
             .put("direct",value.post.direct&&!probe)
             .put("strength",value.post.strength.toDouble()).put("sourceTexture",System.identityHashCode(value.targets.attachments[0].color))
             .put("saturation",value.post.worldColor.saturation).put("brightness",value.post.worldColor.brightness).put("contrast",value.post.worldColor.contrast)})
