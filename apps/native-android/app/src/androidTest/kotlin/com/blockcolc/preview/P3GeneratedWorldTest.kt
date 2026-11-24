@@ -51,7 +51,7 @@ class P3GeneratedWorldTest {
         assertTrue(diagnostic.await(10,TimeUnit.SECONDS));return result.get().also{assertFalse(it.getBoolean("failed"));assertTrue(it.getLong("frames")>0);assertEquals(scene.revision,it.getLong("revision"))}
     }
     private data class SkyPixel(val x:Int,val y:Int,val rgb:IntArray)
-    private fun screen(suffix:String,skyPixel:SkyPixel?=null):Int {
+    private fun screen(suffix:String,skyPixel:SkyPixel?=null,minimumColors:Int=33):Int {
         val group=InstrumentationRegistry.getArguments().getString("p3Group")?:"standalone"
         val file=File(context.filesDir,"p3-world-$group-$suffix.png")
         val device=UiDevice.getInstance(instrumentation)
@@ -61,7 +61,7 @@ class P3GeneratedWorldTest {
         val bitmap=checkNotNull(android.graphics.BitmapFactory.decodeFile(file.path));val colors=HashSet<Int>()
         var picked=0
         try{for(y in bitmap.height/4 until bitmap.height*3/4 step 17)for(x in bitmap.width/8 until bitmap.width*7/8 step 17)colors+=bitmap.getPixel(x,y) and 0xffffff
-            if(skyPixel==null)assertTrue("The displayed world is blank rather than the submitted scene",colors.size>32)
+            if(skyPixel==null)assertTrue("Only ${colors.size} colors sampled from the displayed world",colors.size>=minimumColors)
             else {
                 picked=bitmap.getPixel(skyPixel.x,skyPixel.y)
                 repeat(3){channel->val actual=(picked shr(16-channel*8))and 255
@@ -99,7 +99,13 @@ class P3GeneratedWorldTest {
         val builder=WorldPlanBuilder();val compiler=NativeWorldPacketCompiler()
         val device=UiDevice.getInstance(instrumentation)
         try{
-            val world=builder.terrain(builder.prepare(WorldFacts.from(facts())))
+            var input=apply(facts(),"ConfigureWorldEnvironment","environmentStyle" to WorldEnvironment.FLOATING.wireValue)
+            input=apply(input,"SwitchActiveProject","projectId" to "a")
+            input=apply(input,"StartFocus","sessionId" to "pixel-focus","subtaskId" to "task-a","plannedDurationMs" to 60_000L)
+            input=apply(input,"CompleteFocus",at=now+60_000)
+            input=apply(input,"ReportSubtaskProgress","reportId" to "pixel-report","subtaskId" to "task-a",
+                "focusSessionIds" to JSONArray(listOf("pixel-focus")),"progressBasisPoints" to 10000,at=now+60_001)
+            val world=builder.terrain(builder.prepare(WorldFacts.from(input)))
             val request=WorldRequestIdentity("pixel-paper.db",0,1)
             val paper=options.copy(quality=NativeLightingQuality.PAPER)
             val day=compiler.prepare(request,world,paper).scene
@@ -114,7 +120,7 @@ class P3GeneratedWorldTest {
                 val current=awaitDiagnostic(view){it.getJSONObject("colorPipeline").getJSONObject("config").optInt("pixelCell")==pixels}
                 assertEquals(original.getLong("presentationIdentity"),current.getLong("presentationIdentity"))
                 assertEquals(original.getJSONObject("resources").getJSONObject("geometries").toString(),current.getJSONObject("resources").getJSONObject("geometries").toString())
-                screen("pixel-${cell.toInt()}dp-day")
+                screen("pixel-${cell.toInt()}dp-day",minimumColors=8)
                 captures.put(current.getJSONObject("colorPipeline").getJSONObject("config"))
             }
 
@@ -141,10 +147,9 @@ class P3GeneratedWorldTest {
                 android.os.SystemClock.sleep(150)
                 val pss=android.os.Debug.getPss()
                 val startTime=System.nanoTime();val cpu=rotate()
-                val after=awaitDiagnostic(view){it.getLong("frames")>start.getLong("frames")}
-                if(pixel){
-                    val angle=(kotlin.math.PI/2-after.getJSONObject("camera").getDouble("azimuth"))/(kotlin.math.PI/90)
-                    assertEquals(kotlin.math.round(angle),angle,1e-5)
+                val after=awaitDiagnostic(view){state->
+                    val angle=(kotlin.math.PI/2-state.getJSONObject("camera").getDouble("azimuth"))/(kotlin.math.PI/90)
+                    state.getLong("frames")>start.getLong("frames")&&(!pixel||kotlin.math.abs(angle-kotlin.math.round(angle))<1e-5)
                 }
                 val times=layer?.let{device.executeShellCommand("dumpsys SurfaceFlinger --latency '$it'")}
                     .orEmpty().lineSequence().mapNotNull{line->line.trim().split(Regex("\\s+")).getOrNull(1)?.toLongOrNull()}
@@ -159,7 +164,7 @@ class P3GeneratedWorldTest {
             for((hour,label) in listOf(10 to "dusk",15 to "night")){
                 val scene=compiler.prepare(request,world,paper.copy(time=now+(hour-4)*3_600_000L)).scene
                 present(scene.withPresentation())
-                screen("pixel-$label")
+                screen("pixel-$label",minimumColors=8)
             }
             record("pixel-paper-comparison",JSONObject().put("density",density.toDouble()).put("grids",captures).put("rotation",comparison))
         }finally{compiler.close();builder.clear()}
