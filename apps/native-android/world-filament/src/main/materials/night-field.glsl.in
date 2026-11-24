@@ -17,16 +17,22 @@ vec3 bcNightSkyField(vec3 direction, bool floatingBackdrop){
   vec3 d=normalize(direction);float horizon=floatingBackdrop?1.0:smoothstep(0.015,0.13,d.y);
   if(horizon<0.001 || bcSkyStars+bcSkyGalaxy+bcSkyAurora<0.001)return vec3(0);
   vec2 uv=vec2(atan(d.z,d.x)/6.2831853+0.5,asin(clamp(d.y,-1.0,1.0))/3.1415926+0.5);
-  vec2 cell=floor(uv*vec2(320,160)),within=fract(uv*vec2(320,160));
-  cell.x=mod(cell.x,320.0);
+  bool pixelStyle=materialParams.nativeSkyData[3].w > 0.5;
+  vec2 grid=pixelStyle?vec2(160,80):vec2(320,160);
+  vec2 cell=floor(uv*grid),within=fract(uv*grid);
+  cell.x=mod(cell.x,grid.x);
   float seed=bcSkyHash(cell),star=step(1.0-0.014*bcSkyDensity,seed);
   float size=mix(0.1,0.24,bcSkyHash(cell+4.7));
   // Keep subpixel stars sampled in a distant water/ice reflection, without
   // turning every star into a screen-space sprite or a large bright disc.
   vec2 dx=dFdx(uv),dy=dFdy(uv);dx.x=sign(dx.x)*min(abs(dx.x),1.0-abs(dx.x));dy.x=sign(dy.x)*min(abs(dy.x),1.0-abs(dy.x));
-  float pixel=max(length(dx*vec2(320,160)),length(dy*vec2(320,160)));
+  float pixel=max(length(dx*grid),length(dy*grid));
   float edge=max(0.045,min(.2,pixel*.65));
   float dotStar=1.0-smoothstep(size,size+edge,length(within-vec2(0.5)));
+  if(pixelStyle){
+    vec2 distance=abs(within-vec2(0.5));
+    dotStar=step(max(distance.x,distance.y),clamp(pixel*.57,0.15,0.43))*0.80;
+  }
   float twinkle=0.92+0.08*sin(bcSkyTime*1.3+seed*121.0);
   vec3 stars=mix(vec3(0.65,0.79,1.0),vec3(1.0,0.86,0.67),bcSkyHash(cell+8.0))*dotStar*star*bcSkyStars*twinkle*1.5;
   float band=abs(dot(d,normalize(bcSkyGalaxyNormal)));

@@ -2,6 +2,7 @@ material {
     name:"blockcolc-glass-blur", shadingModel:unlit, vertexDomain:device, flipUV:false,
     culling:none, depthCulling:false, depthWrite:false, requires:[uv0],
     parameters:[{ type:sampler2d, name:source, precision:high },
+        { type:float4, name:sceneUv, precision:high },
         { type:float4, name:rect0 }, { type:float4, name:rect1 }, { type:float4, name:rect2 }, { type:float4, name:rect3 },
         { type:float4, name:style0 }, { type:float4, name:style1 }, { type:float4, name:style2 }, { type:float4, name:style3 },
         { type:float4, name:ceilings }, { type:float4, name:floors }, { type:float2, name:axis }]
@@ -21,9 +22,11 @@ fragment {
 
     void material(inout MaterialInputs m) {
         prepareMaterial(m);
-        vec2 uv=getUV0(); int i=panel(uv);
+        vec2 rasterUv=getUV0();
+        vec2 uv=(rasterUv-materialParams.sceneUv.zw)/materialParams.sceneUv.xy;
+        int i=panel(uv);
         vec3 rgb=vec3(0.0); float weights=0.0;
-        if(i<0)rgb=texture(materialParams_source,uvToRenderTargetUV(uv)).rgb;
+        if(i<0)rgb=texture(materialParams_source,uvToRenderTargetUV(rasterUv)).rgb;
         else {
             vec4 r=rectangle(i),s=style(i);
             vec2 stepUv=materialParams.axis*s.xy/3.0;
@@ -31,6 +34,7 @@ fragment {
             for(int k=-6;k<=6;k++) {
                 float weight=exp(-float(k*k)/8.0);
                 vec2 p=clamp(uv+float(k)*stepUv,r.xy+vec2(0.00001),r.zw-vec2(0.00001));
+                p=p*materialParams.sceneUv.xy+materialParams.sceneUv.zw;
                 rgb+=texture(materialParams_source,uvToRenderTargetUV(p)).rgb*weight; weights+=weight;
             }
             rgb/=weights;
