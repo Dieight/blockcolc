@@ -924,10 +924,14 @@ class P3NativePagesTest {
                 state=worldDiagnostic(world,false)
                 val pipeline=state.optJSONObject("colorPipeline")
                 state.optLong("gpuReadyFrames")>0&&!state.optBoolean("failed")&&state.isNull("pendingPresentation")&&
+                    !state.optBoolean("fencePending")&&state.optJSONObject("navigation")?.optBoolean("opening")==false&&
                     pipeline!=null&&pipeline.optJSONObject("config")?.optBoolean("pixel")==pixel&&(!glass||pipeline.optInt("glassRegions")>0)
             }==true}
             return state
         }
+        // Wait for the host to adopt the initial frame, including any cold
+        // startup world updates, before measuring a display-only change.
+        compose.waitUntilAtLeastOneExists(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription,"世界已就绪"),90000)
         val paper=ready(false).getLong("presentationIdentity")
         val world=checkNotNull(renderedWorld())
         fun quality(label:String,value:String){
