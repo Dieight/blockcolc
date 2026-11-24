@@ -110,6 +110,7 @@ class P3GeneratedWorldTest {
             val paper=options.copy(quality=NativeLightingQuality.PAPER)
             val day=compiler.prepare(request,world,paper).scene
             val original=present(day)
+            assertFalse(original.getJSONObject("resources").getJSONObject("nativeSkyVisible").getBoolean("DOME"))
             val reference=AtomicReference<com.blockcolc.world.filament.NativeWorldView>()
             foreground.scenario.onActivity{reference.set(checkNotNull(it.generatedWorld))}
             val view=reference.get();val density=view.resources.displayMetrics.density
@@ -119,6 +120,7 @@ class P3GeneratedWorldTest {
                 val pixels=(cell*density).let{kotlin.math.floor(it+.5f).toInt()}
                 val current=awaitDiagnostic(view){it.getJSONObject("colorPipeline").getJSONObject("config").optInt("pixelCell")==pixels}
                 assertEquals(original.getLong("presentationIdentity"),current.getLong("presentationIdentity"))
+                assertTrue(current.getJSONObject("resources").getJSONObject("nativeSkyVisible").getBoolean("DOME"))
                 assertEquals(original.getJSONObject("resources").getJSONObject("geometries").toString(),current.getJSONObject("resources").getJSONObject("geometries").toString())
                 screen("pixel-${cell.toInt()}dp-day",minimumColors=8)
                 captures.put(current.getJSONObject("colorPipeline").getJSONObject("config"))
@@ -146,7 +148,9 @@ class P3GeneratedWorldTest {
                 }
                 android.os.SystemClock.sleep(150)
                 val pss=android.os.Debug.getPss()
-                val startTime=System.nanoTime();val cpu=rotate()
+                val startTime=System.nanoTime()
+                android.os.Trace.beginSection(if(pixel)"blockcolc:pixel-orbit"else"blockcolc:paper-orbit")
+                val cpu=try{rotate()}finally{android.os.Trace.endSection()}
                 val after=awaitDiagnostic(view){state->
                     val angle=(kotlin.math.PI/2-state.getJSONObject("camera").getDouble("azimuth"))/(kotlin.math.PI/90)
                     state.getLong("frames")>start.getLong("frames")&&(!pixel||kotlin.math.abs(angle-kotlin.math.round(angle))<1e-5)
