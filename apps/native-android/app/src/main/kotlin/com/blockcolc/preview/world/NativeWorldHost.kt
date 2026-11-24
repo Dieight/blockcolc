@@ -61,7 +61,10 @@ internal val LocalColdWorldCacheTag=staticCompositionLocalOf<String?>{null}
     val context=LocalContext.current;val ui=LocalNativeUi.current
     val cacheTag=LocalColdWorldCacheTag.current
     val owner=remember(context,interaction,cacheTag){NativeWorldHostOwner(context,interaction,cacheTag)}
-    val effectiveQuality=if(quality=="auto")remember(context){automaticQuality(context)}else quality
+    val chosenQuality=if(quality=="auto")remember(context){automaticQuality(context)}else quality
+    // Pixel is the paper world shown at a lower render scale: one prepared
+    // scene serves both, so switching between them never rebuilds the world.
+    val effectiveQuality=nativeSceneQuality(chosenQuality)
     val backdrop=LocalNativeBackdrop.current
     val nativeView=androidx.compose.ui.platform.LocalView.current
     var measuredBounds by remember{mutableStateOf(Rect.Zero)}
@@ -76,7 +79,7 @@ internal val LocalColdWorldCacheTag=staticCompositionLocalOf<String?>{null}
     val density=androidx.compose.ui.platform.LocalDensity.current
     val preparingHidden=retainSurface&&foreground&&(owner.settlementChanging||owner.qualityChanging)&&!owner.error
     val wantedSettlement=backdrop?.requestedSettlement?:input?.environmentStyle
-    val wantedQuality=backdrop?.requestedQuality?:effectiveQuality
+    val wantedQuality=nativeSceneQuality(backdrop?.requestedQuality?:chosenQuality)
     val appearanceReady=owner.presentedAppearance(wantedSettlement,wantedQuality)
     SideEffect{
         backdrop?.ready=owner.hasScene&&!owner.loading&&!owner.error&&appearanceReady
@@ -88,7 +91,7 @@ internal val LocalColdWorldCacheTag=staticCompositionLocalOf<String?>{null}
         backdrop?.retryWorld=owner::retry
         if(appearanceReady&&backdrop!=null){
             if(input?.environmentStyle==backdrop.requestedSettlement)backdrop.requestedSettlement=null
-            if(effectiveQuality==backdrop.requestedQuality)backdrop.requestedQuality=null
+            if(chosenQuality==backdrop.requestedQuality)backdrop.requestedQuality=null
         }
         val current=runtime.latest
         owner.openingTarget=if(backdrop?.immersive==true)null else current.activeProject?.takeIf{id->
@@ -127,6 +130,7 @@ internal val LocalColdWorldCacheTag=staticCompositionLocalOf<String?>{null}
         owner.request(input,renderVisible,effectiveQuality,buildingCondition,outlineVisibility,resourceSelection,prepareWorld,retainSurface&&foreground)
     }
     LaunchedEffect(worldColor){owner.color(worldColor)}
+    LaunchedEffect(chosenQuality){owner.pixel(chosenQuality=="pixel")}
     val furniture=remember(room){room?.placed?.map{p->NativeInteriorItem(p.owned.item.id,p.slot.x,p.slot.y,p.slot.z,p.slot.mount==com.blockcolc.presentation.RoomMount.WALL,p.slot.quarterTurns)}.orEmpty()}
     LaunchedEffect(interaction.indoors,furniture,interaction.selected,interaction.resetVersion){
         // Leave the room before focusing an outdoor owner. The render queue
@@ -221,6 +225,7 @@ internal class NativeWorldHostOwner(context:Context,private val interaction:Nati
     var qualityChanging by mutableStateOf(false);private set
     private var preparationAllowed=true
     private var worldColor=SourceWorldColor()
+    private var pixelated=false
     private var selected:String?=null;private var resetVersion=0L
     var openingTarget:String?=null
     private var openingConsumed=false
@@ -366,10 +371,11 @@ internal class NativeWorldHostOwner(context:Context,private val interaction:Nati
             if(!closed&&key==viewKey&&active&&hasScene&&!loading&&!error&&!interaction.indoors&&interaction.resetVersion==resetVersion&&interaction.selected==selected&&presentation==pendingPresentation&&resident==target?.sceneIdentity&&resident?.replacementGeneration==generation&&resident.revision==revision&&id in targetIds)interaction.pick(id)
         }, optimizeRendering = !stockShadows)
         view=next;roomScene?.let{candidate->val ticket=roomEpoch;next.interior(candidate,onPresented={if(!closed&&roomEpoch==ticket&&view===next)roomLoading=false})}
-        presentProjection();next.visibleRegion(clipBottom);pendingView=null;next.navigate(selected);if(!openingConsumed)next.prepareOpening(openingTarget);next.worldColor(worldColor);if(active)next.resume();return next
+        presentProjection();next.visibleRegion(clipBottom);pendingView=null;next.navigate(selected);if(!openingConsumed)next.prepareOpening(openingTarget);next.worldColor(worldColor);next.pixelated(pixelated);if(active)next.resume();return next
     }
     fun navigate(id:String?,version:Long){if(closed)return;val reset=version!=resetVersion;selected=id;resetVersion=version;view?.navigate(id,reset)}
     fun color(value:SourceWorldColor){if(closed||worldColor==value)return;worldColor=value;view?.worldColor(value)}
+    fun pixel(value:Boolean){if(closed||pixelated==value)return;pixelated=value;view?.pixelated(value)}
     fun atmosphere(value:NativeAtmosphereFacts?){
         if(closed||atmosphere==value)return
         atmosphere=value;stopEnvironment()

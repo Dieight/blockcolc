@@ -116,7 +116,7 @@ import java.util.UUID
             NativeSettingAnchor("光影质量"){
                 val context=LocalContext.current
                 val automatic=remember(context){automaticQuality(context)}
-                val tiers=listOf("auto" to ui.text("自动"),"paper" to ui.text("纸雕"),"performance" to ui.text("流畅"),"balanced" to ui.text("均衡"),"cinematic" to ui.text("精致"))
+                val tiers=listOf("auto" to ui.text("自动"),"paper" to ui.text("纸雕"),"pixel" to ui.text("像素"),"performance" to ui.text("流畅"),"balanced" to ui.text("均衡"),"cinematic" to ui.text("精致"))
                 var selectedQuality by remember{mutableStateOf<String?>(null)}
                 var qualityFailure by remember{mutableStateOf<String?>(null)}
                 LaunchedEffect(prefs.lightingQuality,s.preferencesSaving,s.message){
@@ -136,6 +136,7 @@ import java.util.UUID
                             val explanations=listOf(
                                 ui.text("根据设备内存和图形能力选择。本机：{0}。",tiers.first{it.first==automatic}.second),
                                 ui.text("用纸雕色块表现世界，渲染负担最低。"),
+                                ui.text("把纸雕世界画成大像素，负担与纸雕相同。"),
                                 ui.text("保留立体光影，减少云层和特效细节。"),
                                 ui.text("云层和阴影更丰富，画质与性能折中。"),
                                 ui.text("最完整的云层、阴影和光照细节。"),
