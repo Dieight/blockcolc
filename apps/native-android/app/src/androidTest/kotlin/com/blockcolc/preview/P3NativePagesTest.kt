@@ -2520,6 +2520,24 @@ class P3NativePagesTest {
         compose.waitUntil(10000){runtime.latest.phase=="FOCUS"}
     }
 
+    @Test fun timerMinimalEntranceStaysOnTheAdjustEdgeWhenTheTaskTitleChanges()=run(formalUiInitial(),
+        configure={it.copy(language="zh-CN",minimalMode=false)}){
+        runtime.updatePreferences{it.copy(minimalMode=true)}
+        compose.waitUntil(10000){runtime.latest.preferences.minimalMode&&!runtime.latest.preferencesSaving}
+        fun right(label:String):Float=compose.onNode(hasText(label) and hasClickAction()).performScrollTo()
+            .assertIsDisplayed().fetchSemanticsNode().boundsInRoot.right
+        val adjust=right("调整")
+        assertEquals(adjust,right("极简"),1f)
+        for(title in listOf("短", "这一项待推进的任务名称很长，使用窄屏时只给标题自身留出换行空间")){
+            val receipt="timer-title-"+UUID.randomUUID()
+            runtime.command(DomainEngine.command("RenameProject","title" to title),receipt)
+            compose.waitUntil(10000){runtime.latest.projects.any{it.title==title}&&runtime.latest.receipts.any{it.id==receipt&&it.saved}}
+            assertEquals(adjust,right("调整"),1f)
+            assertEquals(adjust,right("极简"),1f)
+        }
+        screen("aligned-timer-actions")
+    }
+
     @Test fun formalWorkbenchPagesAndMinimalControlsMatchSourceGeometry()=run(formalUiInitial(),configure={it.copy(themeMode="light",fontStyle="pixel",focusMinutes=25,breakMinutes=5,quickNotesEnabled=false)}){
         compose.onNodeWithText("我的第一座工坊").assertIsDisplayed()
         compose.onNodeWithText(" · 第 1 / 3 项").assertIsDisplayed();compose.onNodeWithText("确定目标").assertIsDisplayed()

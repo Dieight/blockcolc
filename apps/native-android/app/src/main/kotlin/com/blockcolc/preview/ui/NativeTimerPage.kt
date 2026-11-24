@@ -102,14 +102,14 @@ import java.util.*
                 Column(Modifier.fillMaxSize().then(panelMotion).padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
                     Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
                         NativeText(if(timer.mode==PlanMode.MARATHON)ui.text("本场安排")else project.title,NativeTextRole.CAPTION,Modifier.weight(1f),maxLines=2)
-                        if(s.preferences.minimalMode)FormalTextAction(ui.text("极简"),"expand",{onMinimal(true)})
+                        if(s.preferences.minimalMode)FormalTextAction(ui.text("极简"),"expand",{onMinimal(true)},Modifier.widthIn(min=80.dp))
                     }
                     Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(LocalNativePageScroll.current?:rememberScrollState()),verticalArrangement=Arrangement.spacedBy(8.dp),horizontalAlignment=Alignment.CenterHorizontally){
                         NativeText(if(timer.mode==PlanMode.MARATHON)ui.text("按结束时间排程")else if(project.habit)s.blueprintNames[s.projects.find{it.id==project.id}?.blueprint]?:project.title else task?.title?:project.title,NativeTextRole.SECTION,Modifier.fillMaxWidth())
                         if(project.habit)NativeText(ui.text("{0} / {1} 轮",details?.habitApplied?:0,details?.habitTarget?:0),NativeTextRole.CAPTION,Modifier.fillMaxWidth())
                         Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
                             NativeText(planSummary,NativeTextRole.CAPTION,Modifier.weight(1f))
-                            FormalTextAction(ui.text("调整"),"edit",::adjust,enabled=!s.busy)
+                            FormalTextAction(ui.text("调整"),"edit",::adjust,Modifier.widthIn(min=80.dp),!s.busy)
                         }
                         NativeText(clock,NativeTextRole.CLOCK,Modifier.padding(vertical=4.dp),accent=true)
                         NativeDateCountdown(countdown,now)
@@ -147,11 +147,10 @@ import java.util.*
                     Column(Modifier.fillMaxWidth().verticalScroll(LocalNativePageScroll.current?:rememberScrollState()).heightIn(min=viewport).padding(start=20.dp,end=20.dp,top=8.dp,bottom=4.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
                         Row(Modifier.fillMaxWidth().heightIn(min=44.dp),verticalAlignment=Alignment.CenterVertically){
                             if(marathon)NativeText(ui.text("本场安排"),NativeTextRole.CAPTION,Modifier.weight(1f),MaterialTheme.colorScheme.onSurfaceVariant)
-                            else{
+                            else Row(Modifier.weight(1f),verticalAlignment=Alignment.CenterVertically){
                                 NativeText(project.title,NativeTextRole.CAPTION,Modifier.weight(1f,fill=false),MaterialTheme.colorScheme.onSurfaceVariant,maxLines=1)
                                 val context=if(project.habit)ui.text("第 {0} 座建筑",details?.habitCycle?:1)else if(step>=0)ui.text("第 {0} / {1} 项",step+1,construction.size)else null
                                 if(context!=null)NativeText(" · $context",NativeTextRole.CAPTION,color=MaterialTheme.colorScheme.onSurfaceVariant,maxLines=1)
-                                Spacer(Modifier.weight(1f))
                             }
                             if(s.preferences.minimalMode)FormalTextAction(ui.text("极简"),"expand",{onMinimal(true)},Modifier.widthIn(min=80.dp))
                         }
