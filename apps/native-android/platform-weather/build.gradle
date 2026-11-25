@@ -18,7 +18,11 @@ dependencies {
 
 // Same ignored machine-local credential format as the current Android app.
 // Neither source inventories nor diagnostics include these values.
-def configFile=new File(rootProject.projectDir,'../../weather_api.txt')
+def weatherConfigPath=providers.gradleProperty('nativeWeatherConfigFile').orNull
+def configFile=rootProject.file(weatherConfigPath?:'../../weather_api.txt')
+def signedCandidate=providers.gradleProperty('nativeUpgradeCandidate').getOrElse('false')=='true'
+if((weatherConfigPath!=null||signedCandidate)&&!configFile.isFile())
+    throw new GradleException('Set -PnativeWeatherConfigFile to the local weather credential file before building the signed candidate.')
 def apiHost='';def apiKey=''
 if(configFile.isFile()) {
     def lines=configFile.readLines('UTF-8')

@@ -30,7 +30,9 @@ class TimerPresentationTest {
             assertEquals(TimerSurface.FOCUS,view.surface);assertEquals(25*60000-1000L,view.remainingMs)
             assertEquals(3,view.totalRounds);assertEquals(0,view.completedRounds)
             assertEquals(mode==PlanMode.ROUNDS,view.taskTitle!=null);assertEquals(mode!=PlanMode.ROUNDS,view.minimalReport)
-            assertEquals(mode!=PlanMode.ROUNDS,view.mayCancelRunning)
+            assertTrue(view.mayCancelRunning)
+            val single=TimerPresentation.from(doc,RecoveryContext(plan.copy(totalRounds=1)),ClientPreferences(),now+1000)
+            assertFalse(single.mayCancelRunning)
         }
     }
     @Test fun waitingIncludesFutureRestAndNeverOffersTheRunningCancellationOrMarathonEditor(){

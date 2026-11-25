@@ -41,7 +41,7 @@ data class TimerPresentation(val surface:TimerSurface,val planId:String?,val mod
             return TimerPresentation(surface,p?.id,p?.mode,completed,p?.totalRounds?:1,project,title,deadline?:p?.exactEndAt,remaining,
                 p?.mode in setOf(PlanMode.MINIMAL,PlanMode.MARATHON),
                 p?.mode==PlanMode.MARATHON&&surface==TimerSurface.PREPARED,
-                p!=null&&p.extensionStartedAt==null&&p.mode!=PlanMode.ROUNDS&&p.totalRounds>1&&surface in setOf(TimerSurface.FOCUS,TimerSurface.REST),task,
+                p!=null&&p.extensionStartedAt==null&&p.totalRounds>1&&surface in setOf(TimerSurface.FOCUS,TimerSurface.REST),task,
                 integrityNotice(s, active, surface, now, events),p?.extensionStartedAt?.takeIf{surface==TimerSurface.FOCUS})
         }
 

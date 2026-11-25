@@ -384,9 +384,10 @@ private fun NativeIntegrations(controller: NativeCloudController, account: Strin
         NativeToggle(tr("上报专注并结算","Report and settle focus"), value=upload, enabled=!busy) { upload=it }
         NativeSeparator()
         NativeToggle(tr("读取好友","Read friends"), value=read, enabled=!busy) { read=it }
-        Text(tr("令牌有效期","Token expiry"), style=MaterialTheme.typography.bodySmall)
-        NativeSegments(listOf("30" to tr("30 天","30 days"), "90" to tr("90 天","90 days"), "365" to tr("一年","1 year")),
-            days, { days=it }, !busy)
+        NativeSeparator()
+        NativeSettingsOptionTitle(tr("令牌有效期","Token expiry"))
+        NativeSegments(listOf("30","90","365").map { it to tr("$it 天","$it days") }, days, { days=it }, !busy)
+        NativeSeparator()
         NativeInlineAction(tr("生成令牌","Generate token"), {
             send("POST", JSONObject().put("name",name).put("uploadFocus",upload).put("readFriends",read).put("days",days.toInt()))
         }, "plus", enabled=name.isNotBlank() && (upload || read) && !busy, pending=busy)

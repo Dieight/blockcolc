@@ -33,13 +33,18 @@ class FocusCoordinator(private val store: NativeStateStore, val databaseIdentity
         val intent = spec.json("confirm")
         return change(requestId, intent) { m -> m.confirm(spec,now) }
     }
-    @Synchronized fun begin(requestId:String,spec:PlanRequest,automatic:Boolean,now:Long):Operation=change(requestId,spec.json("begin").put("automatic",automatic)){m->
+    @Synchronized fun begin(requestId:String,spec:PlanRequest,automatic:Boolean,now:Long,replacingUnstartedPlanId:String?=null):Operation=change(
+        requestId,spec.json("begin").put("automatic",automatic).apply{if(replacingUnstartedPlanId!=null)put("replacingUnstartedPlanId",replacingUnstartedPlanId)}
+    ){m->
+        if(replacingUnstartedPlanId!=null){
+            require(spec.mode==PlanMode.MINIMAL)
+            m.clearUnstartedPlan(replacingUnstartedPlanId)
+        }
         m.confirm(spec,now);m.start(requestId,automatic,now)
     }
     @Synchronized fun amend(requestId:String,expectedPlanId:String,spec:PlanRequest,now:Long):Operation=change(requestId,spec.json("amend").put("expectedPlanId",expectedPlanId)){m->
-        val p=m.context.plan?:throw FocusFailure("PLAN_NOT_FOUND")
-        require(p.id==expectedPlanId&&p.phase==PlanPhase.READY&&!p.hasStarted&&m.active()==null){"Only a never-started confirmed plan can be edited"}
-        m.context=RecoveryContext();m.confirm(spec,now)
+        m.clearUnstartedPlan(expectedPlanId)
+        m.confirm(spec,now)
     }
     @Synchronized fun acknowledgeReturnReminder(requestId:String,key:String):Operation=change(requestId,DomainEngine.command("ack-return-reminder","key" to key)){m->
         if(m.context.returnReminder?.let{it.database==databaseIdentity&&it.key==key}==true)m.context=m.context.copy(returnReminder=null)
@@ -92,7 +97,10 @@ class FocusCoordinator(private val store: NativeStateStore, val databaseIdentity
             if (active != null && DomainTime.millis(active.getString("endsAt")) <= now) { m.advance(now); return@change }
             val p = m.context.plan
             if(p?.extensionStartedAt!=null)throw FocusFailure("EXTENSION_REQUIRES_FINISH")
-            if(cancelPlan&&p!=null){require(p.mode!=PlanMode.ROUNDS){"Ordinary rounds do not cancel the whole plan"};require(category!=null||active==null&&!p.hasStarted&&p.completedSessionIds.isEmpty()){"Choose a cancellation reason"}}
+            if(cancelPlan&&p!=null){
+                require(p.mode!=PlanMode.ROUNDS||p.totalRounds>1&&p.hasStarted){"Only started multi-round ordinary plans can be cancelled"}
+                require(category!=null||active==null&&!p.hasStarted&&p.completedSessionIds.isEmpty()){"Choose a cancellation reason"}
+            }
             m.context = m.context.copy(automatic = null)
             if (active != null) {
                 val command = if (early) DomainEngine.command("CompleteFocusEarly", "reportId" to "early:$requestId") else DomainEngine.command("CancelFocus", "interruptionCategory" to category)
@@ -287,6 +295,11 @@ class FocusCoordinator(private val store: NativeStateStore, val databaseIdentity
             val latest = facts.optJSONObject(facts.length() - 1) ?: return false
             return latest.optString("interruptionReason") == "app-switch-limit" &&
                 latest.getString("id").startsWith("session:${plan.id}:")
+        }
+        fun clearUnstartedPlan(expectedPlanId:String){
+            val plan=context.plan?:throw FocusFailure("PLAN_NOT_FOUND")
+            if(plan.id!=expectedPlanId||plan.phase!=PlanPhase.READY||plan.hasStarted||active()!=null)throw FocusFailure("PLAN_NOT_READY")
+            context=RecoveryContext()
         }
         fun confirm(spec:PlanRequest,now:Long){
             require(active()==null&&context.plan==null){"A plan is already pending"}

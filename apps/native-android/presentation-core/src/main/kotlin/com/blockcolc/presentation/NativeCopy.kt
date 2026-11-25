@@ -50,6 +50,8 @@ internal object NativeCopy {
         "正在准备视图" to "Preparing view",
         "混合字体" to "Mixed fonts",
         "专注操作区" to "Focus controls","显示结束操作" to "Show end controls","隐藏结束操作" to "Hide end controls",
+        "结束后续轮次，保留已完成轮次" to "Stop future rounds and keep completed rounds",
+        "已完成轮次会保留。当前未完成轮次会按中断记录。" to "Completed rounds are kept. The current round is recorded as interrupted.",
         "有效离开 {0}/{1} 次" to "Times away {0}/{1}",
         "已达离开次数上限，计划结束" to "Departure limit reached. Plan ended.",
         "专注时双击面板下方空白显示结束按钮，再双击可收起。休息后双击时间继续。提前完成或中止后，由你确认再开始。" to "Double-tap the blank area below the panel to show End, and double-tap again to hide it. After a break, double-tap the time to continue. Starting again after ending early or stopping needs your confirmation.",

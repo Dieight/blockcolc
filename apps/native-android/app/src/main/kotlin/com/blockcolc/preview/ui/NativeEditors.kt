@@ -176,7 +176,7 @@ private data class ManualFocusSheet(val planId:String,val timer:TimerPresentatio
         }else if(operation==null){
             NativeText(timer?.taskTitle?:ui.text(if(habit)"习惯专注"else"本次专注"),NativeTextRole.BODY)
             if(!resting){
-                FormalEndChoice(ui.text("中断本轮"),ui.text("保留已有任务进度，不计完整轮次")+if(deferred)ui.text("；本轮计划继续")else"","stop",enabled){operation="interrupt"}
+                FormalEndChoice(ui.text("中断本轮"),ui.text("保留已有任务进度，不计完整轮次")+if(deferred||timer.totalRounds>1)ui.text("；本轮计划继续")else"","stop",enabled){operation="interrupt"}
                 val detail=when{
                     deferred&&habit->if((timer?.completedRounds?:0)+1>=(timer?.totalRounds?:1))"推进当前习惯建筑，并结束本场计划"else"推进当前习惯建筑，并继续本场计划"
                     deferred->if((timer?.completedRounds?:0)+1>=(timer?.totalRounds?:1))"记录本轮，并进入本场统一汇报"else"记录本轮，并继续本场计划"
@@ -185,7 +185,7 @@ private data class ManualFocusSheet(val planId:String,val timer:TimerPresentatio
                 }
                 FormalEndChoice(ui.text(if(request.busy)"正在保存…"else if(deferred||habit)"提前完成本轮"else"提前完成任务"),ui.text(detail),"check",enabled,request.busy){request.submit{runtime.decideFocus(FocusDecision.CompleteEarly,it)}}
             }else FormalGlassAction(ui.text("结束休息"),{request.submit{runtime.decideFocus(FocusDecision.EndRest,it)}},pending=request.busy,enabled=enabled,reading=true)
-            if(timer?.mayCancelRunning==true)FormalEndChoice(ui.text("取消整个计划"),ui.text("结束后续轮次，已完成轮次仍可汇报"),"close",enabled){operation="cancel"}
+            if(timer.mayCancelRunning)FormalEndChoice(ui.text("取消整个计划"),ui.text("结束后续轮次，保留已完成轮次"),"close",enabled){operation="cancel"}
         }else if(operation=="interrupt"){
             NativeText(ui.text("选择一项便于以后复盘，也可以不记录。"),NativeTextRole.BODY)
             for((id,label) in options+listOf(null to "不记录"))FormalGlassAction(ui.text(if(request.busy)"正在保存…"else label),{
@@ -194,7 +194,7 @@ private data class ManualFocusSheet(val planId:String,val timer:TimerPresentatio
             },pending=request.busy,enabled=enabled,reading=true)
             FormalGlassAction(ui.text("返回"),{operation=null},enabled=enabled,reading=true)
         }else{
-            NativeText(ui.text("已完成轮次会保留并进入汇报；当前未完成轮次会按中断记录。"),NativeTextRole.BODY)
+            NativeText(ui.text("已完成轮次会保留。当前未完成轮次会按中断记录。"),NativeTextRole.BODY)
             for((id,label) in options)FormalGlassAction(ui.text(label),{category=id},enabled=enabled,selected=category==id,reading=true)
             NativeTextEntry(ui.text("补充说明（可选）"),note,{if(it.text.length<=200)note=it},enabled,singleLine=false)
             NativeText(ui.text("{0} / 200 字",note.text.length),NativeTextRole.CAPTION)

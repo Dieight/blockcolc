@@ -238,7 +238,7 @@ import java.util.UUID
     }
 }
 
-@Composable private fun NativeSettingsOptionTitle(title:String,actions:@Composable RowScope.()->Unit={}){
+@Composable internal fun NativeSettingsOptionTitle(title:String,actions:@Composable RowScope.()->Unit={}){
     Row(Modifier.fillMaxWidth().heightIn(min=48.dp).padding(bottom=4.dp),verticalAlignment=Alignment.CenterVertically,
         horizontalArrangement=Arrangement.spacedBy(NativeSettingActionGap)){
         Text(title,Modifier.weight(1f),style=MaterialTheme.typography.bodyLarge)

@@ -39,6 +39,36 @@ class FocusActionsTest {
             assertEquals(PlanPhase.REPORT,c.load().recovery.plan!!.phase);assertEquals(1,c.load().domain.json().getJSONArray("focusHistory").length())
         }
     }
+    @Test fun minimalStartCanReplaceOnlyTheUnstartedPlanShownByTheClock() {
+        val preferences=PreferencesController(Memory())
+        JdbcStateDatabase(temporary.newFolder().toPath().resolve("state.db")).use { db ->
+            val store=NativeStateStore(db)
+            store.initialize(initial())
+            val coordinator=FocusCoordinator(store,"test")
+            val actions=FocusActions(coordinator,preferences)
+            val ordinary=FocusDraft("p","t",PlanMode.ROUNDS,DraftSchedule.Rounds(2))
+            val ready=actions.confirm("save-ordinary","ordinary",ordinary,now).state
+            assertEquals(ready,coordinator.resume(now+1000){error("A draft cannot start when reopening the app")}.state)
+            val minimal=FocusDraft("p",null,PlanMode.MINIMAL,DraftSchedule.EndAt(now+55*60000),"ordinary")
+            assertThrows(FocusFailure::class.java) {
+                actions.begin("stale-plan","minimal",minimal.copy(replacingUnstartedPlanId="other"),now+1000)
+            }
+            assertThrows(IllegalStateException::class.java) {
+                actions.begin("expired-draft","minimal",minimal.copy(schedule=DraftSchedule.EndAt(now)),now+1000)
+            }
+            assertEquals(ready,coordinator.load())
+            val started=actions.begin("begin-minimal","minimal",minimal,now+1000).state
+            assertEquals(ready.token.revision+1,started.token.revision)
+            assertEquals("minimal",started.recovery.plan?.id)
+            assertEquals(PlanMode.MINIMAL,started.recovery.plan?.mode)
+            assertTrue(started.domain.activeFocusSession()!!.isNull("subtaskId"))
+            assertThrows(FocusFailure::class.java) {
+                actions.begin("active-plan","another",minimal.copy(replacingUnstartedPlanId="minimal"),now+2000)
+            }
+            assertEquals(started,coordinator.load())
+        }
+    }
+
     @Test fun manualEarlyCompletionRevokesAutoAndTheLastRoundNeverResetsTheDenominator(){
         val memory=Memory();val prefs=PreferencesController(memory);prefs.update{it.copy(focusMinutes=1,breakMinutes=0,autoContinueFocus=true)}
         JdbcStateDatabase(temporary.newFolder().toPath().resolve("state.db")).use{db->

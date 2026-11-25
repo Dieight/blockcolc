@@ -202,7 +202,7 @@ import java.util.*
         }else{
           NativeGlass(s.preferences.focusGlassTransparency,panel.then(if(wide)Modifier else Modifier.height(focusPanelHeight)).testTag("formal-minimal-panel").onGloballyPositioned{onPanelTop(it.positionInRoot().y.roundToInt())}.then(reveal)){
             Box(Modifier.fillMaxSize().windowInsetsPadding(focusInsets).then(panelMotion).padding(horizontal=20.dp,vertical=16.dp)){
-              if(minimal&&timer.surface==TimerSurface.IDLE){
+              if(minimal&&timer.surface in setOf(TimerSurface.IDLE,TimerSurface.PREPARED)){
                 val pages=remember(s.preferences.quickNotesEnabled,minimalFriends!=null){
                     buildList{
                         if(s.preferences.quickNotesEnabled)add("notes")
@@ -230,7 +230,13 @@ import java.util.*
                             }
                         },timer={
                             var end by rememberSaveable{mutableStateOf<Long?>(null)}
-                            NativeClockPicker(end,now,s.preferences.focusMinutes,s.preferences.breakMinutes,doubleConfirm=true,enabled=project!=null&&!s.busy,clockStyle=MaterialTheme.typography.displayLarge,onChange={end=it},onConfirm={deadline->project?.let{p->start.submit{runtime.beginFocus(FocusDraft(p.id,null,PlanMode.MINIMAL,DraftSchedule.EndAt(deadline)),it)}}})
+                            NativeClockPicker(end,now,s.preferences.focusMinutes,s.preferences.breakMinutes,doubleConfirm=true,enabled=project!=null&&!s.busy,clockStyle=MaterialTheme.typography.displayLarge,onChange={end=it},onConfirm={deadline->
+                                project?.let { owner ->
+                                    val replacing = timer.planId.takeIf { timer.surface == TimerSurface.PREPARED }
+                                    val draft = FocusDraft(owner.id,null,PlanMode.MINIMAL,DraftSchedule.EndAt(deadline),replacing)
+                                    start.submit { runtime.beginFocus(draft,it) }
+                                }
+                            })
                         },controls={
                             Box(Modifier.fillMaxWidth().height(48.dp),contentAlignment=Alignment.Center){
                                 if(revealed)FormalTextAction(ui.text("返回普通模式"),"",{onMinimal(false)},Modifier.offset(y=(-8).dp))

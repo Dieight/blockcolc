@@ -26,7 +26,8 @@ sealed interface DraftSchedule {
     data class Rounds(val count:Int):DraftSchedule
     data class EndAt(val epochMs:Long):DraftSchedule
 }
-data class FocusDraft(val projectId:String,val subtaskId:String?,val mode:PlanMode,val schedule:DraftSchedule) {
+data class FocusDraft(val projectId:String,val subtaskId:String?,val mode:PlanMode,val schedule:DraftSchedule,
+    val replacingUnstartedPlanId:String?=null) {
     /** Called again at confirmation against the latest saved state. Building
      * this request never switches a project, commits a plan or starts a timer. */
     fun prepare(id:String,domain:DomainDocument,recovery:RecoveryContext,preferences:ClientPreferences,now:Long):PlanRequest {

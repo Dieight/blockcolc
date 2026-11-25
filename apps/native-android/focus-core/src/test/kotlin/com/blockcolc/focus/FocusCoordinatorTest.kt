@@ -245,6 +245,29 @@ class FocusCoordinatorTest {
         c.command("report",DomainEngine.command("ReportSubtaskProgress","reportId" to "r","subtaskId" to "read","focusSessionIds" to JSONArray().put(session),"progressBasisPoints" to 5000),at+10001)
         assertNull(c.load().recovery.plan);assertEquals(1,c.load().domain.json().getJSONArray("focusHistory").length())
     }
+    @Test fun cancellingOrdinaryMultiRoundFocusPreservesTheAlreadyReportedRound()=run { _, _, c ->
+        c.confirm("ordinary",spec(PlanMode.ROUNDS,rest=0),at)
+        c.start("first",false,at)
+        c.reconcile("first-due",at+1000)
+        val completed=c.load().recovery.plan!!.completedSessionIds.single()
+        c.command("first-report",DomainEngine.command("ReportSubtaskProgress","reportId" to "first-report",
+            "subtaskId" to "read","focusSessionIds" to JSONArray().put(completed),"progressBasisPoints" to 5000),at+1001)
+        val second=c.start("second",true,at+1002).state
+        assertNotNull(second.recovery.automatic)
+        val cancelled=c.manual("cancel-all",false,true,"fatigue",null,at+1500).state
+        assertNull(cancelled.recovery.plan)
+        assertNull(cancelled.recovery.automatic)
+        assertNull(cancelled.domain.activeFocusSession())
+        val facts=cancelled.domain.projectionJson()
+        val history=facts.getJSONArray("focusHistory")
+        assertEquals(2,history.length())
+        assertEquals("completed",history.getJSONObject(0).getString("status"))
+        assertEquals("interrupted",history.getJSONObject(1).getString("status"))
+        assertEquals("fatigue",history.getJSONObject(1).getString("interruptionCategory"))
+        assertEquals(completed,facts.getJSONArray("progressReports").getJSONObject(0).getJSONArray("focusSessionIds").getString(0))
+        assertEquals(cancelled,c.resume(at+10000){error("The cancelled plan cannot restart")}.state)
+    }
+
     @Test fun cancellationKeepsEarnedWorkAndReasonUntilItsSingleReportCommits() = run { _, _, c ->
         c.confirm("confirm",spec(PlanMode.MARATHON),at);c.start("start",false,at);c.reconcile("due",at+1000)
         c.manual("cancel-plan",false,true,"fatigue","",at+1100)
