@@ -357,7 +357,7 @@ private fun NativeIntegrations(controller: NativeCloudController, account: Strin
     LaunchedEffect(account) { send() }
     val current = settings
     if (current == null) {
-        NativeInlineAction(tr("读取接入设置","Load integration settings"), { send() }, "refresh", enabled=!busy, pending=busy)
+        NativeInlineAction(tr("读取接入设置","Load integration settings"), { send() }, "reset", enabled=!busy, pending=busy)
         CloudError(problem)
         return
     }
@@ -389,7 +389,7 @@ private fun NativeIntegrations(controller: NativeCloudController, account: Strin
             days, { days=it }, !busy)
         NativeInlineAction(tr("生成令牌","Generate token"), {
             send("POST", JSONObject().put("name",name).put("uploadFocus",upload).put("readFriends",read).put("days",days.toInt()))
-        }, "add", enabled=name.isNotBlank() && (upload || read) && !busy, pending=busy)
+        }, "plus", enabled=name.isNotBlank() && (upload || read) && !busy, pending=busy)
     } else {
         NativeInlineAction(tr("接入令牌仅显示一次","Copy your token before closing"), {
             val data = android.content.ClipData.newPlainText("blockcolc token", secret)

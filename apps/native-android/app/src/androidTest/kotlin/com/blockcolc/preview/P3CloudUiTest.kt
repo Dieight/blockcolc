@@ -140,6 +140,34 @@ class P3CloudUiTest {
         assertEquals(0,privateFetches.get())
     }
 
+    @Test fun integrationsDisclosureRemainsUsableWhenLoadingFails() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val directory = File(context.noBackupFilesDir, "cloud-test-" + UUID.randomUUID())
+        val controller = NativeCloudController.isolated(context, PreviewRuntime.get(context), CloudTransport(context), directory)
+        val account = JSONObject().put("id", "integration-fixture").put("username", "integration_fixture")
+        val resources = UiResources.load()
+        try {
+            compose.setContent {
+                NativeTheme(ClientPreferences(language = "en"), resources, reduceMotion = true) {
+                    NativeCloudPanels(controller, CloudView(ready = true, account = account), true, false, {}, {})
+                }
+            }
+            val disclosure = compose.onNodeWithText("App integrations")
+            disclosure.performScrollTo().performClick()
+            val retry = compose.onNodeWithText("Load integration settings")
+            val error = compose.onNodeWithText("Sign in again to continue.")
+            compose.waitUntil(5000) { compose.onAllNodesWithText("Sign in again to continue.").fetchSemanticsNodes().isNotEmpty() }
+            error.performScrollTo().assertIsDisplayed()
+            retry.performScrollTo().assertIsEnabled().performClick()
+            compose.waitUntil(5000) { compose.onAllNodesWithText("Sign in again to continue.").fetchSemanticsNodes().isNotEmpty() }
+            disclosure.performScrollTo().performClick()
+            retry.assertDoesNotExist()
+        } finally {
+            controller.testClose()
+            check(directory.delete())
+        }
+    }
+
     @Test fun accountFormRegistersAndFriendControlsRemainBilingual(){
         val instrumentation=InstrumentationRegistry.getInstrumentation();val context=instrumentation.targetContext
         val runtime=PreviewRuntime.get(context);val database=runtime.testDatabase(true,prepareAssets=false).get(30,TimeUnit.SECONDS)
