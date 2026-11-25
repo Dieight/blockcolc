@@ -168,6 +168,7 @@ internal object NativeCopy {
         "{0} – {1} · 共 {2} 天" to "{0} – {1} · {2} days",
         "清除搜索" to "Clear search",
         "请在账户与云同步中将本机设为执行设备。" to "Set this device as the execution device in Account & cloud.",
+        "这个账号正在其他软件专注。请结束后再试。" to "This account is focusing in another app. End that session and try again.",
         "日期无效" to "Invalid date",
         "未设置" to "Not set",
         "已分配 {0} / {1} 轮" to "{0} of {1} rounds assigned",

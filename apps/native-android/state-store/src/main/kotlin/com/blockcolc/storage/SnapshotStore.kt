@@ -8,13 +8,14 @@ import org.json.JSONObject
 
 data class BackupRoot(val id: String, val kind: String, val createdAt: String, val date: String?, val sourceRevision: Long, val reason: String, val source: String?, val domainSha: String, val bytes: Long)
 data class BackupArchive(val id: String, val createdAt: String, val date: String?, val sourceRevision: Long,
-    val reason: String, val source: String?, val domain: DomainDocument)
+    val reason: String, val source: String?, val domain: DomainDocument, val preferences: String? = null)
 data class RollbackRequest(val createdAt: String, val reason: String, val source: String)
 data class DailyCapture(val root: BackupRoot?, val changed: Boolean, val overBudget: Boolean = false)
 internal data class PreparedSnapshot(val manifest: String, val manifestSha: String, val domainSha: String, val blocks: Map<String, String>) {
     val bytes: Long by lazy { StrictJson.utf8Size(manifest) + blocks.values.sumOf(StrictJson::utf8Size) }
 }
 internal data class SnapshotBlockRow(val body:String,val bytes:String)
+internal data class SnapshotContents(val domain: DomainDocument, val preferences: String?)
 
 /** Independent content-addressed roots; no daily patch chains and no local automatic grant. */
 internal object SnapshotStore {
@@ -23,13 +24,15 @@ internal object SnapshotStore {
     fun metadataBytes(id: String, kind: String, at: String, date: String?, revision: Long, reason: String, source: String?, domainSha: String, manifestSha: String): Long =
         StrictJson.measure(JSONObject().put("id", id).put("kind", kind).put("createdAt", at).put("date", date ?: JSONObject.NULL)
             .put("sourceRevision", revision).put("reason", reason).put("source", source ?: JSONObject.NULL).put("domainSha", domainSha).put("manifestSha", manifestSha))
-    fun prepare(domain: DomainDocument): PreparedSnapshot {
+    fun prepare(domain: DomainDocument, preferences: String? = null): PreparedSnapshot {
         val layout = RecordLayout.split(domain); val blocks = LinkedHashMap<String, String>()
         fun block(value: String): String = StrictJson.sha(value).also { blocks[it] = value }
         val values = JSONObject(); layout.values.forEach { (k, v) -> values.put(k, block(v)) }
         val records = JSONArray(); layout.records.forEach { r -> records.put(JSONObject().put("section", r.section).put("key", r.key).put("ordinal", r.ordinal).put("sha", block(r.canonical))) }
         val assets = JSONArray(); layout.assets.toSortedMap().forEach { (sha, body) -> check(block(body) == sha); assets.put(sha) }
-        val manifest = StrictJson.render(JSONObject().put("schema", 1).put("values", values).put("records", records).put("assets", assets))
+        val data = JSONObject().put("schema", 1).put("values", values).put("records", records).put("assets", assets)
+        if (preferences != null) data.put("preferences", block(BackupCodec.preferenceWire(StrictJson.parse(preferences, 65536))))
+        val manifest = StrictJson.render(data)
         return PreparedSnapshot(manifest, StrictJson.sha(manifest), domain.sha256, java.util.Collections.unmodifiableMap(blocks))
     }
     fun save(sql: SqlSession, id: String, kind: String, at: String, date: String?, revision: Long, reason: String, source: String?, prepared: PreparedSnapshot): BackupRoot {
@@ -56,13 +59,18 @@ internal object SnapshotStore {
             root.copy(bytes = size + metadataBytes(id, root.kind, root.createdAt, root.date, root.sourceRevision, root.reason, root.source, root.domainSha, row[9] as String))
         }
     }
-    fun read(sql: SqlSession, id: String,known:ValidatedRecordContent?=null,transactionBlocks:Map<String,SnapshotBlockRow>?=null): DomainDocument {
+    fun read(sql: SqlSession, id: String,known:ValidatedRecordContent?=null,transactionBlocks:Map<String,SnapshotBlockRow>?=null): DomainDocument =
+        contents(sql,id,known,transactionBlocks).domain
+
+    fun contents(sql: SqlSession, id: String,known:ValidatedRecordContent?=null,transactionBlocks:Map<String,SnapshotBlockRow>?=null): SnapshotContents {
         try {
             val root = sql.query("SELECT manifest,manifest_sha,domain_sha FROM backup_roots WHERE id=?", listOf(id)).singleOrNull() ?: throw BackupRejected("Recovery root not found")
             val manifest = root[0] as String
             if (StrictJson.sha(manifest) != root[1]) throw StorageCorruption("Backup manifest digest mismatch")
             val m = StrictJson.parse(manifest) as JSONObject
-            check(m.keys().asSequence().toSet() == setOf("schema", "values", "records", "assets") && m.get("schema") is Number && m.getDouble("schema") == 1.0)
+            check(m.keys().asSequence().toSet() - "preferences" == setOf("schema", "values", "records", "assets") &&
+                m.get("schema") is Number && m.getDouble("schema") == 1.0)
+            val preferenceKey = if (m.has("preferences")) m.get("preferences").also { check(it is String) } as String else null
             val links = sql.query("SELECT sha FROM backup_links WHERE root_id=?", listOf(id)).map { it[0] as String }.toSet()
             val used = HashSet<String>(); val cache = HashMap<String, String>(); var bytes = 0L
             // History roots contain thousands of small immutable records.
@@ -76,6 +84,7 @@ internal object SnapshotStore {
                 val values=m.getJSONObject("values");values.keys().forEach{accessOrder.add(values.get(it) as String)}
                 val records=m.getJSONArray("records");for(i in 0 until records.length())accessOrder.add(records.getJSONObject(i).get("sha") as String)
                 val assets=m.getJSONArray("assets");for(i in 0 until assets.length())accessOrder.add(assets.get(i) as String)
+                if (preferenceKey != null) accessOrder.add(preferenceKey)
             }
             val batches=accessOrder.toList().chunked(64)
             val batchById=HashMap<String,Int>()
@@ -117,18 +126,19 @@ internal object SnapshotStore {
             val assets = m.getJSONArray("assets"); val assetIds = (0 until assets.length()).map { i -> check(assets.get(i) is String); assets.getString(i) }
             check(assetIds.toSet().size == assetIds.size)
             val assetBodies=assetIds.associateWith{block(it)}
+            val preferences = preferenceKey?.let { BackupCodec.preferenceWire(StrictJson.parse(block(it), 65536)) }
             // Only identical, fully checked stored content can reuse a domain
             // that has already passed semantic validation. A declared SHA or
             // revision alone never authorizes this path; every block, size,
             // link and asset reference remains checked in this transaction.
             if(known!=null&&known.domain.sha256==root[2]&&RecordLayout.contentDigest(values,rows,RecordLayout.verifiedAssetKeysDigest(assetBodies.keys))==known.digest){
                 check(used==links&&RecordLayout.referencedAssets(rows)==assetIds.toSet())
-                return known.domain
+                return SnapshotContents(known.domain, preferences)
             }
             val referencedAssets = HashSet<String>()
             val domain = RecordLayout.join(values, rows) { sha -> check(sha in assetIds); referencedAssets.add(sha); block(sha) }
             check(used == links && referencedAssets == assetIds.toSet() && domain.sha256 == root[2])
-            return domain
+            return SnapshotContents(domain, preferences)
         } catch (e: BackupRejected) { throw e } catch (e: StorageCorruption) { throw e }
         catch (e: Exception) { throw StorageCorruption("Recovery data invalid; current state unchanged", e) }
     }

@@ -1,5 +1,7 @@
 package com.blockcolc.presentation
 
+import com.blockcolc.domain.countsAsFocusRound
+
 import com.blockcolc.domain.DomainDocument
 import com.blockcolc.domain.DomainTime
 import com.blockcolc.focus.FocusProjection
@@ -52,7 +54,7 @@ object TodayFocusProjection {
         val goals=state.getJSONArray("dailyGoals")
         val goal=(0 until goals.length()).map{goals.getJSONObject(it)}.find{it.getString("date")==date}
         val target=if(goal==null)8 else if(goal.getBoolean("enabled"))goal.getInt("targetPomodoros")else null
-        val completed=history.count{it.getString("status")!="interrupted"&&it.getString("completedLocalDate")==date}
+        val completed=history.count{countsAsFocusRound(it)&&it.getString("completedLocalDate")==date}
         return TodayFocusTimeline(date,series.sumOf{it.totalMs},completed,target,series)
     }
 }

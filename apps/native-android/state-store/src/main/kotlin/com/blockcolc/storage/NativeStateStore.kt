@@ -45,16 +45,39 @@ class NativeStateStore(private val db: SqlDatabase, private val checkpoint: (Str
     private var rootsCheckpoint:RootsCheckpoint?=null
     private val cacheCharacters=1024*1024 // At most 2 MiB of UTF-16 per proof/document.
     private val largeDocumentCharacters=32*1024*1024 // One immutable document; no retained large row copy.
+    private var backupPreferences: () -> String? = { null }
+    fun bindBackupPreferences(read: () -> String?) { backupPreferences = read }
+
+    // The workspace commit adopts the next settings in the same transaction.
+    // Android retries the AtomicFile write on the next open after a crash.
+    private fun stagePreferences(sql: SqlSession, wire: String?) {
+        if (wire == null) return
+        val canonical = BackupCodec.preferenceWire(StrictJson.parse(wire, 65536))
+        sql.execute("CREATE TABLE IF NOT EXISTS restored_preferences (id INTEGER PRIMARY KEY CHECK(id=1),canonical TEXT NOT NULL)")
+        sql.execute("INSERT OR REPLACE INTO restored_preferences(id,canonical) VALUES(1,?)", listOf(canonical))
+    }
+    fun pendingPreferences(): String? = db.transaction { sql ->
+        if (sql.query("SELECT name FROM sqlite_master WHERE type='table' AND name='restored_preferences'").isEmpty()) null
+        else sql.query("SELECT canonical FROM restored_preferences WHERE id=1").singleOrNull()?.get(0) as String?
+    }
+    fun acknowledgePreferences(wire: String) = db.transaction { sql ->
+        sql.execute("DELETE FROM restored_preferences WHERE id=1 AND canonical=?", listOf(wire))
+    }
     fun load(): StoredState? = db.transaction { read(it) }
     private fun cloudTable(sql:SqlSession){sql.execute("CREATE TABLE IF NOT EXISTS cloud_baseline(account TEXT PRIMARY KEY NOT NULL,canonical TEXT NOT NULL)")}
     fun cloudBaseline(account:String):CloudBaseline?=db.transaction{sql->cloudTable(sql);sql.query("SELECT canonical FROM cloud_baseline WHERE account=?",listOf(account)).singleOrNull()?.let{CloudBaseline.parse(it[0] as String)}}
-    fun acknowledgeCloud(baseline:CloudBaseline)=db.transaction{sql->cloudTable(sql);sql.execute("INSERT OR REPLACE INTO cloud_baseline(account,canonical) VALUES(?,?)",listOf(baseline.account,baseline.canonical()))}
+    fun acknowledgeCloud(baseline:CloudBaseline,restoredPreferences:String?=null)=db.transaction{sql->
+        cloudTable(sql)
+        stagePreferences(sql,restoredPreferences)
+        sql.execute("INSERT OR REPLACE INTO cloud_baseline(account,canonical) VALUES(?,?)",listOf(baseline.account,baseline.canonical()))
+    }
     /** The remote receipt and adopted local facts have one SQLite commit.
      * A crash cannot bless a baseline while leaving older domain rows. */
-    fun adoptCloud(expected:StateToken,requestId:String,domain:DomainDocument,recovery:RecoveryContext,baseline:CloudBaseline,replacement:Boolean=false,preserveRollback:Boolean=replacement):CommitReceipt {
+    fun adoptCloud(expected:StateToken,requestId:String,domain:DomainDocument,recovery:RecoveryContext,baseline:CloudBaseline,replacement:Boolean=false,preserveRollback:Boolean=replacement,restoredPreferences:String?=null):CommitReceipt {
         db.transaction{cloudTable(it)}
         val rollback=if(preserveRollback)RollbackRequest(com.blockcolc.domain.DomainTime.format(System.currentTimeMillis()),"cloud-replace",baseline.account)else null
         return write(expected,requestId,domain,recovery,replacement,null,rollback){sql->
+            stagePreferences(sql,restoredPreferences)
             sql.execute("INSERT OR REPLACE INTO cloud_baseline(account,canonical) VALUES(?,?)",listOf(baseline.account,baseline.canonical()))
         }
     }
@@ -62,6 +85,7 @@ class NativeStateStore(private val db: SqlDatabase, private val checkpoint: (Str
         domain: DomainDocument,
         recovery: RecoveryContext = RecoveryContext(),
         archives: Sequence<BackupArchive> = emptySequence(),
+        restoredPreferences: String? = null,
     ): StoredState {
         recovery.validate(domain, 0)
         val local = recovery.canonical()
@@ -77,13 +101,14 @@ class NativeStateStore(private val db: SqlDatabase, private val checkpoint: (Str
                 require(archive.id.isNotBlank() && archive.sourceRevision >= 0)
                 val kind = if (archive.date == null) "rollback" else "daily"
                 if (kind == "daily") require(++daily <= 1) else require(++rollbacks <= 2)
-                val snapshot = SnapshotStore.prepare(archive.domain)
+                val snapshot = SnapshotStore.prepare(archive.domain, archive.preferences)
                 val root = SnapshotStore.save(sql, archive.id, kind, archive.createdAt, archive.date, archive.sourceRevision,
                     archive.reason, archive.source, snapshot)
                 if (kind == "daily") require(root.bytes <= SnapshotStore.DAILY_BYTES)
             }
             checkpoint("before-meta")
             sql.execute("INSERT INTO state_meta(id,layout_version,revision,replacement_generation,domain_sha) VALUES(1,?,0,0,?)", listOf(StateSchema.VERSION, domain.sha256))
+            stagePreferences(sql, restoredPreferences)
             checkpoint("before-commit")
             prepared
         }
@@ -97,11 +122,16 @@ class NativeStateStore(private val db: SqlDatabase, private val checkpoint: (Str
     fun commit(expected: StateToken, requestId: String, domain: DomainDocument, recovery: RecoveryContext, intentSha: String? = null, rollback: RollbackRequest? = null): CommitReceipt = write(expected, requestId, domain, recovery, false, intentSha, rollback)
     /** Domain replacement always clears local plans and grants, even if imported session IDs match. */
     fun replace(expected: StateToken, requestId: String, domain: DomainDocument): CommitReceipt = write(expected, requestId, domain, RecoveryContext(), true, null, null)
-    fun importBackup(expected: StateToken, requestId: String, backup: ParsedBackup, at: String): CommitReceipt = write(expected, requestId, backup.domain, RecoveryContext(), true, backup.checksum, RollbackRequest(at, "before-import", backup.checksum))
+    fun importBackup(expected: StateToken, requestId: String, backup: ParsedBackup, at: String): CommitReceipt =
+        write(expected, requestId, backup.domain, RecoveryContext(), true, backup.checksum, RollbackRequest(at, "before-import", backup.checksum)) {
+            stagePreferences(it, backup.preferences)
+        }
     fun restore(expected: StateToken, requestId: String, rootId: String, at: String): CommitReceipt {
         receipt(expected.replacementGeneration, requestId, StrictJson.sha("restore:$rootId"))?.let { return it }
-        val domain = db.transaction { SnapshotStore.read(it, rootId,validated?.content) }
-        return write(expected, requestId, domain, RecoveryContext(), true, StrictJson.sha("restore:$rootId"), RollbackRequest(at, "before-restore", rootId))
+        val snapshot = db.transaction { SnapshotStore.contents(it, rootId,validated?.content) }
+        return write(expected, requestId, snapshot.domain, RecoveryContext(), true, StrictJson.sha("restore:$rootId"), RollbackRequest(at, "before-restore", rootId)) {
+            stagePreferences(it, snapshot.preferences)
+        }
     }
     fun backupRoots(): List<BackupRoot> = db.transaction(::checkedBackupRoots)
     private fun checkedBackupRoots(sql:SqlSession):List<BackupRoot>{
@@ -127,7 +157,7 @@ class NativeStateStore(private val db: SqlDatabase, private val checkpoint: (Str
         if(stamp!=null)rootsCheckpoint=RootsCheckpoint(stamp,result)
         return result
     }
-    fun exportBackup(at: String): String = BackupCodec.write(load()?.domain ?: throw StorageConflict("NOT_INITIALIZED"), at)
+    fun exportBackup(at: String): String = BackupCodec.write(load()?.domain ?: throw StorageConflict("NOT_INITIALIZED"), at, preferences = backupPreferences())
     fun receipt(generation: Long, requestId: String, intentSha: String): CommitReceipt? = db.transaction { sql ->
         val meta = meta(sql) ?: return@transaction null
         val row = sql.query("SELECT intent_sha,committed_revision,committed_generation,rollback_id FROM command_receipts WHERE base_generation=? AND request_id=?", listOf(generation, requestId)).singleOrNull() ?: return@transaction null
@@ -159,7 +189,7 @@ class NativeStateStore(private val db: SqlDatabase, private val checkpoint: (Str
             roots.singleOrNull()?.takeIf{it.date!!>=date}
         }
         if(existing!=null)return DailyCapture(existing,false)
-        val prepared = SnapshotStore.prepare(state.domain)
+        val prepared = SnapshotStore.prepare(state.domain, backupPreferences())
         return db.transaction { sql ->
             if (meta(sql)?.token != expected) throw StorageConflict("REVISION_CONFLICT")
             // Matching daily content still checks every persisted block/link.
@@ -199,7 +229,7 @@ class NativeStateStore(private val db: SqlDatabase, private val checkpoint: (Str
             require(!replacement && old.opt("activeProjectId") == id && old.isNull("activeFocusSession") && project(old)?.getString("status") == "active"
                 && next.isNull("activeProjectId") && next.isNull("activeFocusSession") && project(next)?.getString("status") == "deleted") { "Delete rollback target does not match the confirmed deletion" }
         }
-        val prepared = if (rollback != null) SnapshotStore.prepare(before.domain) else null
+        val prepared = if (rollback != null) SnapshotStore.prepare(before.domain, backupPreferences()) else null
         val committed = db.transaction { sql ->
             val meta = meta(sql) ?: throw StorageConflict("NOT_INITIALIZED")
             val old = sql.query("SELECT request_sha,kind,committed_revision,committed_generation,rollback_id,intent_sha FROM command_receipts WHERE base_generation=? AND request_id=?", listOf(expected.replacementGeneration, requestId)).singleOrNull()

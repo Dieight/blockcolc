@@ -34,6 +34,21 @@ class BackupCodecTest {
         assertTrue(runCatching { BackupCodec.read(ambiguous) }.isFailure)
         assertTrue(runCatching { BackupCodec.read(byteArrayOf(0xff.toByte())) }.isFailure)
     }
+    @Test fun portablePreferencesAreCoveredByTheChecksumInEitherDomainFormat() {
+        val sample = oracle().getJSONArray("outputs").getJSONObject(0)
+        val doc = DomainDocument.fromJson(sample.getJSONObject("domain"))
+        val at = sample.getString("exportedAt")
+        val settings = """{"breakMinutes":5,"focusMinutes":45,"habitFocusMinutes":25,"habitTargetRounds":12}"""
+        for (compact in listOf(false, true)) {
+            val wire = BackupCodec.write(doc, at, compact, settings)
+            val restored = BackupCodec.read(wire)
+            assertEquals(3, restored.schema)
+            assertEquals(doc, restored.domain)
+            assertEquals(settings, restored.preferences)
+            assertTrue(runCatching { BackupCodec.read(wire.replace("\"habitTargetRounds\":12", "\"habitTargetRounds\":13")) }.isFailure)
+        }
+        assertNull(BackupCodec.read(BackupCodec.write(doc, at)).preferences)
+    }
     @Test fun measuredBytesEqualEncodedCanonicalBytesWithoutMaterializingTwice() {
         val cases = listOf("{\"emoji\":\"😀\",\"control\":\"\\u0001\\n\\t\",\"n\":1e30}", "[null,true,false,0.3,\"汉字\"]")
         for (c in cases) { val v = StrictJson.parse(c); assertEquals(StrictJson.render(v).toByteArray(Charsets.UTF_8).size.toLong(), StrictJson.measure(v)) }

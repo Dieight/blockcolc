@@ -7,10 +7,10 @@ import com.blockcolc.domain.StrictJson
 import org.json.JSONArray
 import org.json.JSONObject
 
-data class ParsedBackup(val schema: Int, val exportedAt: String, val checksum: String, val domain: DomainDocument)
+data class ParsedBackup(val schema: Int, val exportedAt: String, val checksum: String, val domain: DomainDocument, val preferences: String? = null)
 class BackupRejected(detail: String, cause: Throwable? = null) : IllegalArgumentException(detail, cause)
 
-/** Complete formal envelope 1/2, not the former read-only focus projection. */
+/** Domain-only versions 1/2 and version 3 with portable client preferences. */
 object BackupCodec {
     private const val FORMAT = "tomato-clock-backup"
     private val slots = mapOf("projects" to "importedBlueprint", "habitBuildings" to "importedBlueprint", "buildingBlueprintResources" to "blueprint", "decorationBlueprintResources" to "blueprint")
@@ -27,32 +27,58 @@ object BackupCodec {
     fun read(text: String): ParsedBackup = try {
         val x = exact(StrictJson.parse(text), "format schemaVersion exportedAt payload checksum")
         check(x.get("format") == FORMAT, "Unknown backup format")
-        val schema = integer(x.get("schemaVersion")); check(schema == 1L || schema == 2L, "Unsupported backup version")
+        val schema = integer(x.get("schemaVersion")); check(schema in 1L..3L, "Unsupported backup version")
         check(x.get("exportedAt") is String, "Invalid export instant"); val at = DomainTime.instant(x.getString("exportedAt"))
         check(x.get("checksum") is String && Regex("[a-f0-9]{64}").matches(x.getString("checksum")), "Invalid checksum")
         val checksum = x.getString("checksum"); x.remove("checksum")
         check(StrictJson.sha(StrictJson.render(x)) == checksum, "Backup checksum mismatch")
-        val raw = if (schema == 2L) unpack(x.get("payload")) else x.get("payload")
+        val envelope = if (schema == 3L) exact(x.get("payload"), "domain domainVersion preferences") else null
+        val domainVersion = envelope?.let { integer(it.get("domainVersion")) } ?: schema
+        check(domainVersion in 1L..2L, "Invalid backup domain version")
+        val payload = envelope?.get("domain") ?: x.get("payload")
+        val preferences = envelope?.let { preferenceWire(it.get("preferences")) }
+        val raw = if (domainVersion == 2L) unpack(payload) else payload
         check(raw is JSONObject, "Invalid domain payload")
         // Both schema branches above produce a private decoder-owned tree.
         // No mutable JSON is returned to a caller. Transferring this ownership
         // avoids a second archive-sized tree during domain normalization.
-        ParsedBackup(schema.toInt(), at, checksum, DomainDocument.fromOwnedJson(raw as JSONObject))
+        ParsedBackup(schema.toInt(), at, checksum, DomainDocument.fromOwnedJson(raw as JSONObject), preferences)
     } catch (e: BackupRejected) { throw e } catch (e: Exception) { throw BackupRejected("Invalid backup; current data unchanged", e) }
 
-    fun write(domain: DomainDocument, exportedAt: String, compact: Boolean = false): String {
+    fun write(domain: DomainDocument, exportedAt: String, compact: Boolean = false, preferences: String? = null): String {
         DomainTime.instant(exportedAt)
         val root = JSONObject().put("format", FORMAT).put("schemaVersion", 1).put("exportedAt", exportedAt).put("payload", domain.json())
-        val legacySize = StrictJson.measure(root) + 78 // comma, quoted checksum key/value; exact final check below
+        val legacySize = StrictJson.measure(root) + 78 + (preferences?.let { StrictJson.utf8Size(it) + 56 } ?: 0)
         if (compact || legacySize > StrictJson.FILE_LIMIT) {
             check(legacySize <= StrictJson.EXPANDED_LIMIT, "Backup exceeds expanded budget")
             val packed = pack(root.getJSONObject("payload"))
             unpack(StrictJson.copy(packed)) // Apply the same amplification gate to exported archives.
             root.put("schemaVersion", 2).put("payload", packed)
         }
+        if (preferences != null) {
+            val settings = StrictJson.parse(preferences, 65536)
+            preferenceWire(settings)
+            val payload = JSONObject().put("domainVersion", root.getInt("schemaVersion"))
+                .put("domain", root.get("payload")).put("preferences", settings)
+            root.put("schemaVersion", 3).put("payload", payload)
+        }
         root.put("checksum", StrictJson.sha(StrictJson.render(root)))
         check(StrictJson.measure(root) <= StrictJson.FILE_LIMIT, "Backup exceeds file budget")
         return StrictJson.render(root)
+    }
+    internal fun preferenceWire(settings: Any): String {
+        check(settings is JSONObject, "Invalid backup preferences")
+        val value = settings as JSONObject
+        check(value.opt("focusMinutes") is Number && value.opt("breakMinutes") is Number, "Incomplete backup preferences")
+        if (value.has("resourceSelection")) {
+            val selection = exact(value.get("resourceSelection"), "activeId baseId")
+            val sha = Regex("[a-f0-9]{64}")
+            for (key in listOf("activeId", "baseId")) {
+                val resource = selection.get(key)
+                check(resource == JSONObject.NULL || resource is String && sha.matches(resource), "Invalid backup resource selection")
+            }
+        }
+        return StrictJson.render(value).also { check(StrictJson.utf8Size(it) <= 65536, "Backup preferences too large") }
     }
     private fun mapSlots(state: JSONObject, convert: (Any) -> Any): JSONObject {
         for ((collection, slot) in slots) {

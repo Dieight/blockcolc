@@ -1,4 +1,4 @@
-import { addLocalDays, dailyGoalForDate, localDateOf, type DomainState, type ISODate, type ISOInstant } from '@blockcolc/domain';
+import { addLocalDays, countsAsFocusRound, dailyGoalForDate, localDateOf, type DomainState, type ISODate, type ISOInstant } from '@blockcolc/domain';
 import { projectFocusAttribution } from '@blockcolc/application';
 
 export type FocusHistory = DomainState['focusHistory'];
@@ -92,7 +92,7 @@ export function focusWindowSummary(state: DomainState, endDate: ISODate, days: n
   return {
     minutes: Math.round(sessions.reduce((sum, session) => sum + session.actualDurationMs, 0) / 60_000),
     activeDays: new Set(sessions.filter((session) => session.actualDurationMs > 0).map(focusSessionLocalDate)).size,
-    completed: sessions.filter((session) => session.status === 'completed').length,
+    completed: sessions.filter((session) => session.status === 'completed' && countsAsFocusRound(session)).length,
     early: sessions.filter((session) => session.status === 'completed-early').length,
     interrupted: sessions.filter((session) => session.status === 'interrupted').length,
   };
@@ -158,7 +158,7 @@ export interface SettlementTotals {
 export function settlementTotals(state: DomainState): SettlementTotals {
   return {
     totalMinutes: Math.round(state.focusHistory.reduce((sum, session) => sum + session.actualDurationMs, 0) / 60_000),
-    completedRounds: state.focusHistory.filter((session) => session.status === 'completed' || session.status === 'completed-early').length,
+    completedRounds: state.focusHistory.filter(countsAsFocusRound).length,
     buildings: state.habitBuildings.length + state.projects.filter((project) => project.status === 'monument').length,
   };
 }

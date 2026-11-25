@@ -135,7 +135,7 @@ export class FocusViewerStore {
     const capturedAt = new Date(Math.min(now, Math.max(head.changed, Date.parse(observed?.updatedAt) || 0))).toISOString();
     const start = Date.parse(observed?.startedAt), end = Date.parse(observed?.estimatedEndsAt);
     const openEnded = observed?.estimatedEndsAt === null;
-    const active = observed?.currentName && presence.expires > now && start <= now && (openEnded || end > now);
+    const active = observed?.currentName && observed.externalState !== 'rest' && presence.expires > now && start <= now && (openEnded || end > now);
     const snapshot = {
       currentName: active ? observed.currentName : null,
       startedAt: active ? observed.startedAt : null,

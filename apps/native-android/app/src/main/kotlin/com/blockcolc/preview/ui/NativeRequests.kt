@@ -55,7 +55,11 @@ import java.util.UUID
 
 @Composable internal fun NativeRequestError(reason:String?,message:String="保存失败，请重试。"){
     if(reason==null)return
-    val key=if(reason=="CLOUD_VIEW_ONLY")"请在账户与云同步中将本机设为执行设备。"else message
+    val key=when(reason){
+        "CLOUD_VIEW_ONLY"->"请在账户与云同步中将本机设为执行设备。"
+        "EXTERNAL_FOCUS_IN_PROGRESS"->"这个账号正在其他软件专注。请结束后再试。"
+        else->message
+    }
     Text(LocalNativeUi.current.text(key),color=MaterialTheme.colorScheme.error,modifier=Modifier.semantics{liveRegion=LiveRegionMode.Polite})
 }
 

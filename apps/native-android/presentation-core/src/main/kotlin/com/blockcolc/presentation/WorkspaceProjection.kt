@@ -1,9 +1,13 @@
 package com.blockcolc.presentation
 
+import com.blockcolc.domain.countsAsFocusRound
+
 import com.blockcolc.domain.DomainDocument
 import com.blockcolc.domain.DomainTime
 import com.blockcolc.focus.FocusProjection
 import java.time.LocalDate
+import java.time.Instant
+import java.time.ZoneId
 import org.json.JSONObject
 
 data class DailyTarget(val date:String,val target:Int,val enabled:Boolean,val completed:Int,val reached:Boolean)
@@ -44,14 +48,24 @@ data class WorkspaceProjection(val today:String,val settings:WorkspaceSettings,v
             data class Totals(var duration:Long=0,var completed:Int=0,var interrupted:Int=0)
             val totals=HashMap<String,Totals>()
             val sessionDates=HashMap<String,String>()
+            val externalTime=HashMap<String,Map<String,Long>>()
             for(session in rows("focusHistory")){
                 val interrupted=session.getString("status")=="interrupted"
                 val date=if(interrupted)DomainTime.localDate(session.getString("interruptedAt"),session.getString("timeZoneAtStart"))
                     else session.getString("completedLocalDate")
-                sessionDates[session.getString("id")]=date
+                val id=session.getString("id")
+                sessionDates[id]=date
                 val day=totals.getOrPut(date){Totals()}
-                day.duration+=session.getLong("actualDurationMs")
-                if(interrupted)day.interrupted++ else day.completed++
+                val duration=session.getLong("actualDurationMs")
+                if (session.has("external") && DomainTime.localDate(session.getString("startedAt"),zone)!=date) {
+                    val segments = splitTimeByDay(DomainTime.millis(session.getString("startedAt")), duration, ZoneId.of(zone))
+                    if (segments.size == 1 && segments.containsKey(date)) day.duration += duration
+                    else {
+                        externalTime[id] = segments
+                        segments.forEach { (dayKey,ms) -> totals.getOrPut(dayKey){Totals()}.duration += ms }
+                    }
+                } else day.duration += duration
+                if(interrupted)day.interrupted++ else if(countsAsFocusRound(session))day.completed++
             }
             val goals=rows("dailyGoals").map{g->DailyTarget(g.getString("date"),g.getInt("targetPomodoros"),g.getBoolean("enabled"),totals[g.getString("date")]?.completed?:0,!g.isNull("reachedAt"))}
             val goalsByDate=goals.associateBy{it.date}
@@ -61,22 +75,42 @@ data class WorkspaceProjection(val today:String,val settings:WorkspaceSettings,v
                 DayStatistics(date,day?.duration?:0,day?.completed?:0,day?.interrupted?:0,
                     goalsByDate[date]?.let{if(it.enabled)it.target else 0}?:8,emptyList())
             }
-            return WorkspacePreparation(WorkspaceProjection(today,settings,projects,goals,days,details=WorkspaceDetails.PREPARING),s,sessionDates)
+            return WorkspacePreparation(WorkspaceProjection(today,settings,projects,goals,days,details=WorkspaceDetails.PREPARING),s,sessionDates,externalTime)
+        }
+        private fun splitTimeByDay(start: Long, duration: Long, zone: ZoneId): Map<String,Long> {
+            var cursor = start
+            val end = start + duration
+            val slices = linkedMapOf<String,Long>()
+            while (cursor < end) {
+                val date = Instant.ofEpochMilli(cursor).atZone(zone).toLocalDate()
+                val boundary = date.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
+                val stop = minOf(end, boundary)
+                slices[date.toString()] = stop - cursor
+                cursor = stop
+            }
+            return slices
         }
     }
 }
 
 /** Date and goal totals come from verified history. Attribution and world
  * memories can then be computed independently from the same snapshot. */
-class WorkspacePreparation internal constructor(val summary:WorkspaceProjection,private val state:JSONObject,private val sessionDates:Map<String,String>){
+class WorkspacePreparation internal constructor(val summary:WorkspaceProjection,private val state:JSONObject,private val sessionDates:Map<String,String>,
+    private val externalTime:Map<String,Map<String,Long>>){
     fun complete():WorkspaceProjection{
         val attribution=FocusProjection.reportedAttribution(state).getJSONArray("sessions").let{a->List(a.length()){a.getJSONObject(it)}}
-        val byDate=attribution.groupBy{sessionDates.getValue(it.getString("sessionId"))}
+        val byDate=HashMap<String,MutableList<Pair<JSONObject,Long>>>()
+        for (entry in attribution) {
+            val id = entry.getString("sessionId")
+            val segments = externalTime[id]
+            if (segments == null) byDate.getOrPut(sessionDates.getValue(id)){arrayListOf()}.add(entry to FocusProjection.reportedDuration(entry))
+            else segments.forEach { (day,ms) -> byDate.getOrPut(day){arrayListOf()}.add(entry to ms) }
+        }
         val days=summary.days.map{day->
-            val targets=byDate[day.date].orEmpty().groupBy{a->if(a.getString("kind")=="unallocated")"unknown" else a.getString("kind")+":"+a.getString("targetId")}.map{(key,items)->
-                val first=items.first();val unknown=first.getString("kind")=="unallocated"
+            val targets=byDate[day.date].orEmpty().groupBy{(a,_)->if(a.getString("kind")=="unallocated")"unknown" else a.getString("kind")+":"+a.getString("targetId")}.map{(key,items)->
+                val first=items.first().first;val unknown=first.getString("kind")=="unallocated"
                 TimeTarget(key,if(first.isNull("projectId"))null else first.getString("projectId"),if(first.isNull("subtaskId"))null else first.getString("subtaskId"),
-                    first.getString("projectTitle"),if(first.isNull("targetTitle"))null else first.getString("targetTitle"),items.sumOf(FocusProjection::reportedDuration),unknown)
+                    first.getString("projectTitle"),if(first.isNull("targetTitle"))null else first.getString("targetTitle"),items.sumOf{it.second},unknown)
             }.sortedByDescending{it.durationMs}
             day.copy(targets=targets)
         }

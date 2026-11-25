@@ -4,6 +4,7 @@ import { isIP } from 'node:net';
 import { join } from 'node:path';
 import { ApiError, fail } from './wire.mjs';
 import { FocusViewerStore, VIEWER_SESSION_SECONDS } from './focus-viewer-store.mjs';
+import { isIntegrationApi } from './integrations.mjs';
 
 const COOKIE = '__Host-blockcolc_viewer';
 const COOKIES = 'Path=/; HttpOnly; Secure; SameSite=Lax';
@@ -63,7 +64,7 @@ function page(query, key) {
   return Number(raw);
 }
 
-export function createFocusViewer(cloud, { owner, from, origin, webRoot, onError = () => {} }) {
+export function createFocusViewer(cloud, { owner, from, origin, webRoot, integrationHandler, onError = () => {} }) {
   const site = new URL(origin);
   fail(site.protocol === 'https:' && site.origin === origin);
   const store = new FocusViewerStore(cloud, { owner, from });
@@ -134,6 +135,7 @@ export function createFocusViewer(cloud, { owner, from, origin, webRoot, onError
       const remote = req.socket.remoteAddress;
       const peer = remote === '127.0.0.1' && typeof forwarded === 'string' && isIP(forwarded) ? forwarded : remote;
       limit('request:' + peer, 180, 60_000);
+      if (integrationHandler && isIntegrationApi(path)) { await integrationHandler(req, res, peer); return; }
       if (method === 'POST') fail(req.headers.origin === origin, 'FORBIDDEN', 403);
       if (method === 'POST' && ['/api/login', '/api/register'].includes(path)) {
         params(url, []);

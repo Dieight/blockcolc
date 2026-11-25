@@ -1,5 +1,5 @@
 import { assertISODate, assertValidTimeZone, localDateOf } from "./calendar.js";
-import { MAX_BUILDING_BLUEPRINTS, SIGN_DYE_COLORS } from "./model.js";
+import { countsAsFocusRound, MAX_BUILDING_BLUEPRINTS, SIGN_DYE_COLORS } from "./model.js";
 import { HOLIDAY_IDS, holidaysOnDate } from './holidays.js';
 import { DEFAULT_BIRTHDAY, isBirthdayDateValid } from './birthday.js';
 import type {
@@ -488,7 +488,8 @@ function parseFocusSession(raw: unknown, path: string): FocusSession {
   const keys = status === "interrupted"
     ? ["id", "projectId", "subtaskId", "startedAt", "endsAt", "plannedDurationMs", "timeZoneAtStart", "status", "interruptedAt", "interruptionReason", "interruptionCategory", "interruptionNote", "actualDurationMs", "marathon", "settledAt"]
     : ["id", "projectId", "subtaskId", "startedAt", "endsAt", "plannedDurationMs", "timeZoneAtStart", "status", "completedAt", "completedLocalDate", "actualDurationMs", "marathon", "settledAt"];
-  const x = objectWithOptional(raw, path, [...keys, "deferredSettlement"], ["marathon", "settledAt", "deferredSettlement", ...(status === "interrupted" ? ["interruptionNote"] : [])]);
+  const optional = ["marathon", "settledAt", "deferredSettlement", ...(status === "interrupted" ? ["interruptionNote"] : []), ...(status === "completed" ? ["external"] : [])];
+  const x = objectWithOptional(raw, path, [...keys, "deferredSettlement", ...(status === "completed" ? ["external"] : [])], optional);
   const active = parseActiveSessionFields(x, path);
   if (status === "completed" || status === "completed-early") {
     const completedAt = instant(x.completedAt, path + ".completedAt");
@@ -499,6 +500,16 @@ function parseFocusSession(raw: unknown, path: string): FocusSession {
     const actualDurationMs = integer(x.actualDurationMs, path + ".actualDurationMs", 0, active.plannedDurationMs);
     const expectedActual = status === "completed" ? active.plannedDurationMs : Date.parse(completedAt) - Date.parse(active.startedAt);
     if (actualDurationMs !== expectedActual) invalid(path + ".actualDurationMs", "does not match the actual focus interval");
+    if (x.external !== undefined) {
+      if (active.subtaskId !== null || active.marathon || active.settledAt) invalid(path + ".external", "invalid external focus context");
+      const external = object(x.external, path + ".external", ["source", "roundMs", "credited"]);
+      const source = nonBlankString(external.source, path + ".external.source");
+      if (source.length > 64) invalid(path + ".external.source", "must be at most 64 characters");
+      const roundMs = integer(external.roundMs, path + ".external.roundMs", 60000, 10800000);
+      if (actualDurationMs > roundMs || (external.credited === false && actualDurationMs === roundMs)) invalid(path + ".external.roundMs", "invalid credited duration");
+      return { ...active, status, completedAt, completedLocalDate, actualDurationMs,
+        external: { source, roundMs, credited: boolean(external.credited, path + ".external.credited") } };
+    }
     return { ...active, status, completedAt, completedLocalDate, actualDurationMs };
   }
   const interruptedAt = instant(x.interruptedAt, path + ".interruptedAt");
@@ -673,7 +684,7 @@ function validateReferences(state: DomainState): void {
     unique(report.focusSessionIds, path + ".focusSessionIds");
     for (const id of report.focusSessionIds) {
       const session = sessions.get(id);
-      if (!session || (session.status !== "completed" && session.status !== "completed-early")) invalid(path + ".focusSessionIds", `unknown or incomplete session ${id}`);
+      if (!session || !countsAsFocusRound(session)) invalid(path + ".focusSessionIds", `unknown or incomplete session ${id}`);
       if (report.allocation === "explicit" && session.marathon !== true) invalid(path + ".focusSessionIds", `explicit allocation requires marathon session ${id}`);
       if (report.shared === true) {
         // Marathon settlement reports: one remainder block may support every
@@ -717,7 +728,7 @@ function validateReferences(state: DomainState): void {
     let latestCompletion = "";
     for (const id of building.focusSessionIds) {
       const session = sessions.get(id);
-      if (!session || (session.status !== "completed" && session.status !== "completed-early")) invalid(path + ".focusSessionIds", `unknown or incomplete session ${id}`);
+      if (!session || !countsAsFocusRound(session)) invalid(path + ".focusSessionIds", `unknown or incomplete session ${id}`);
       if (session.marathon !== true && (session.projectId !== building.habitProjectId || session.subtaskId !== null)) invalid(path + ".focusSessionIds", `session ${id} has inconsistent habit ownership`);
       if (usedSessions.has(id) || habitSessionIds.has(id)) invalid(path + ".focusSessionIds", `session ${id} is reused`);
       habitSessionIds.add(id);
@@ -729,7 +740,7 @@ function validateReferences(state: DomainState): void {
     if (project.kind !== "habit") continue;
     for (const id of project.habit!.completedFocusSessionIds) {
       const session = sessions.get(id);
-      if (!session || (session.status !== "completed" && session.status !== "completed-early")) invalid("$.projects[].habit.completedFocusSessionIds", `unknown or incomplete session ${id}`);
+      if (!session || !countsAsFocusRound(session)) invalid("$.projects[].habit.completedFocusSessionIds", `unknown or incomplete session ${id}`);
       if (session.marathon !== true && (session.projectId !== project.id || session.subtaskId !== null)) invalid("$.projects[].habit.completedFocusSessionIds", `session ${id} has inconsistent habit ownership`);
       if (usedSessions.has(id) || habitSessionIds.has(id)) invalid("$.projects[].habit.completedFocusSessionIds", `session ${id} is reused`);
       habitSessionIds.add(id);
@@ -737,14 +748,15 @@ function validateReferences(state: DomainState): void {
   }
   for (const session of state.focusHistory) {
     const project = projects.get(session.projectId)!;
-    if (project.kind === "habit" && session.deferredSettlement !== true && (session.status === "completed" || session.status === "completed-early") && !habitSessionIds.has(session.id)) {
+    if (session.external && project.kind !== "habit") invalid("$.focusHistory", "external focus must belong to a habit");
+    if (project.kind === "habit" && session.deferredSettlement !== true && countsAsFocusRound(session) && !habitSessionIds.has(session.id)) {
       invalid("$.focusHistory", `habit completion ${session.id} is not assigned to a building cycle`);
     }
   }
   unique(state.dailyGoals.map((item) => item.date), "$.dailyGoals[].date");
   for (const [index, goal] of state.dailyGoals.entries()) {
     const completions = state.focusHistory
-      .filter((item): item is Exclude<FocusSession, { status: "interrupted" }> => item.status !== "interrupted" && item.completedLocalDate === goal.date)
+      .filter((item): item is Exclude<FocusSession, { status: "interrupted" }> => countsAsFocusRound(item) && item.completedLocalDate === goal.date)
       .sort((left, right) => left.completedAt.localeCompare(right.completedAt));
     if (goal.enabled && goal.reachedAt === null && completions.length >= goal.targetPomodoros) invalid(`$.dailyGoals[${index}].reachedAt`, "enabled goal at or above target must be reached");
     if (goal.reachedAt !== null) {

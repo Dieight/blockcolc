@@ -13,6 +13,7 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.io.IOException
 import java.net.SocketTimeoutException
 import java.util.UUID
 import java.util.concurrent.CopyOnWriteArrayList
@@ -136,6 +137,35 @@ internal class NativeCloudController private constructor(private val context:Con
         return if(timeoutMillis==null)transport.request("/v1/"+path,method,session?.token,wire)
             else transport.request("/v1/"+path,method,session?.token,wire,timeoutMillis)
     }
+    internal fun reserveNativeFocus(request: String): Boolean {
+        val login = session ?: return false
+        val generation = execution
+        if (generation <= 0 || !runtime.cloudIoAllowed(isolatedTransport)) return false
+        val body = JSONObject().put("generation", generation).put("request", request)
+        try {
+            transport.request("/v1/execution/focus/start", "POST", login.token, StrictJson.render(body), timeoutMillis = 2200)
+            return session === login
+        } catch (failure: CloudFailure) {
+            when (failure.code) {
+                "NOT_FOUND", "HTTP_404", "REQUEST_TIMEOUT" -> return false
+                "UNAUTHORIZED", "EXECUTION_CHANGED" -> throw com.blockcolc.focus.FocusFailure("CLOUD_VIEW_ONLY")
+                else -> throw com.blockcolc.focus.FocusFailure(failure.code)
+            }
+        } catch (_: IOException) {
+            // Focus already supports offline execution. The cloud still applies
+            // its execution and interval checks when the record reconnects.
+            return false
+        }
+    }
+    internal fun cancelNativeReservation(request: String) {
+        val login = session ?: return
+        presenceWorker.execute {
+            if (session === login) runCatching {
+                transport.request("/v1/execution/focus/cancel", "POST", login.token,
+                    StrictJson.render(JSONObject().put("request", request)), timeoutMillis = 2200)
+            }
+        }
+    }
     private fun errorCode(error:Throwable):String{
         val causes=generateSequence(error){it.cause}.toList()
         return causes.filterIsInstance<CloudFailure>().firstOrNull()?.code?:when{
@@ -153,7 +183,7 @@ internal class NativeCloudController private constructor(private val context:Con
         val revoked=code=="UNAUTHORIZED"
         if(revoked)runCatching{runtime.cloudPermission(false).get()}
         val keys=cloud?.details?.optJSONArray("keys")?.let{a->List(a.length()){a.optString(it)}.filter(String::isNotEmpty)}.orEmpty()
-        val choice=code in setOf("EXECUTION_CHANGED","DOMAIN_CONFLICT","PLAN_CONFLICT","SYNC_CONFLICT","WORKSPACE_REPLACED")
+        val choice=code in setOf("EXECUTION_CHANGED","DOMAIN_CONFLICT","PLAN_CONFLICT","SYNC_CONFLICT","WORKSPACE_REPLACED","EXTERNAL_FOCUS_OVERLAP")
         publish{current->
             val result=when{choice->CloudResult.NEEDS_CHOICE;code=="LOCAL_CHANGED"->CloudResult.RETRY_PENDING;else->CloudResult.FAILED}
             current.copy(ready=true,requestBusy=false,owned=if(revoked)false else current.owned,error=code,
@@ -400,6 +430,24 @@ internal class NativeCloudController private constructor(private val context:Con
         }
         continuation.invokeOnCancellation{request.cancel(false)}
     }
+    internal suspend fun integrations(account: String, method: String = "GET", input: JSONObject? = null, deleteId: String? = null): JSONObject =
+        suspendCancellableCoroutine { continuation ->
+            val request = friendsWorker.submit {
+                if (continuation.isActive) continuation.resumeWith(runCatching {
+                    val login = session?.takeIf { it.account == account && runtime.cloudIoAllowed(isolatedTransport) }
+                        ?: throw CloudFailure("UNAUTHORIZED")
+                    val path = when (method) {
+                        "POST" -> "tokens"
+                        "DELETE" -> "tokens/" + checkNotNull(deleteId).also { require(Regex("[a-f0-9-]{36}").matches(it)) }
+                        else -> "manage"
+                    }
+                    val response = transport.request("/v1/integrations/$path", method, login.token, input?.let(StrictJson::render), timeoutMillis = 15000)
+                    if (session !== login) throw CloudFailure("UNAUTHORIZED")
+                    response
+                })
+            }
+            continuation.invokeOnCancellation { request.cancel(false) }
+        }
     private fun refreshAccount():JSONObject{
         val login=checkNotNull(session)
         val choice=accountOutbox.pending(login.account)
@@ -416,7 +464,13 @@ internal class NativeCloudController private constructor(private val context:Con
     fun respond(id:String,action:String)=worker.execute{perform{api("friends/respond","POST",JSONObject().put("id",id).put("action",action));refreshChangedFriends()}}
     fun sharing(id:String,policy:JSONObject?)=worker.execute{perform{api("friends/sharing","POST",JSONObject().put("id",id).put("sharing",policy?:JSONObject.NULL));refreshChangedFriends()}}
     fun revokeDevice(id:String)=runAction(CloudAction.REVOKE_DEVICE){api("devices/revoke","POST",JSONObject().put("id",id));sync()}
-    fun captureBackup()=runAction(CloudAction.BACKUP){api("backup/capture","POST",JSONObject());sync()}
+    fun captureBackup()=runAction(CloudAction.BACKUP){
+        when(val synced=sync()){
+            CloudResult.COMPLETE->{api("backup/capture","POST",JSONObject());sync()}
+            CloudResult.RETRY_PENDING->throw CloudFailure("BACKUP_NOT_SYNCED")
+            else->synced
+        }
+    }
     fun restoreBackup()=runAction(CloudAction.RESTORE){
         val head=api("workspace");api("backup/restore","POST",JSONObject().put("revision",head.getLong("revision")).put("requestId",UUID.randomUUID().toString()));sync("cloud")
     }

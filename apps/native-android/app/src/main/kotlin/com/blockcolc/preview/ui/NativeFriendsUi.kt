@@ -404,13 +404,18 @@ internal fun groupedFriendCode(code:String)=code.chunked(6).joinToString(" ")
 @Composable private fun friendStatus(friend:JSONObject):String?{
     if(friend.optBoolean("stale"))return cloudText("实时状态暂不可用","Live status unavailable")
     val task=(friend.opt("currentName") as? String)?.takeIf{it.isNotBlank()}
-    return when{
+    val status = when{
+        friend.optString("state")=="rest"->listOfNotNull(task,cloudText("休息中","Resting")).distinct().joinToString(" · ")
         friend.optString("focusState")=="paused"->listOfNotNull(task,cloudText("已暂停","Paused")).joinToString(" · ")
         task!=null->task
         friend.optBoolean("focusing")->cloudText("专注中","Focusing")
         friend.has("focusing")->cloudText("暂未专注","Not focusing")
         else->null
     }
+    val source = friend.optJSONObject("source")
+    return if (source?.optString("kind")=="integration")
+        listOfNotNull(status,source.optString("name").takeIf(String::isNotBlank)).joinToString(" · ").ifBlank { null }
+    else status
 }
 
 @Composable private fun friendPeriod(friend:JSONObject):String?{

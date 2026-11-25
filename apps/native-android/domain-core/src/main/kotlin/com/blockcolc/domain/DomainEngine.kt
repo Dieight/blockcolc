@@ -108,7 +108,7 @@ internal class DomainMutation(val s: JSONObject, val c: JSONObject, val now: Str
         return objects("focusHistory").any { it.getString("status") == "completed" && it.getString("projectId") == id && it.opt("marathon") != true && it.getString("id") !in reported }
     }
     fun ensureGoal(date: String): JSONObject = objects("dailyGoals").find { it.getString("date") == date } ?: JSONObject().put("date", date).put("targetPomodoros", 8).put("reachedAt", JSONObject.NULL).put("enabled", true).also { array("dailyGoals").put(it) }
-    fun completions(date: String) = objects("focusHistory").filter { it.getString("status") != "interrupted" && it.getString("completedLocalDate") == date }
+    fun completions(date: String) = objects("focusHistory").filter { countsAsFocusRound(it) && it.getString("completedLocalDate") == date }
     fun blueprint(value: Any, decoration: Boolean = false): JSONObject {
         val bp = StrictJson.copy(value) as JSONObject; DomainValidation.blueprint(bp, "$.command.blueprint", decoration); return bp
     }

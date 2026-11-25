@@ -43,6 +43,7 @@ class CloudTransport(context:Context,private val base:String="https://107.150.98
         require(timeoutMillis in 1000..600000)
         val budget=minOf(timeoutMillis,totalTimeoutMillis)
         val connection=(if(proxy==null)URL(base+path).openConnection()else URL(base+path).openConnection(proxy)) as HttpsURLConnection
+        connection.setRequestProperty("X-Blockcolc-Focus-Credits", "1")
         connection.sslSocketFactory=ssl;connection.connectTimeout=minOf(15000L,budget).toInt();connection.readTimeout=minOf(90000L,budget).toInt()
         connection.instanceFollowRedirects=false;connection.requestMethod=method
         connection.setRequestProperty("Accept","application/json");token?.let{connection.setRequestProperty("Authorization","Bearer $it")}

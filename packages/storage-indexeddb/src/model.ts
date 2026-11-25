@@ -14,7 +14,10 @@ export interface BackupEnvelopeV2 extends Omit<BackupEnvelopeV1, 'schemaVersion'
   payload: CompactBackupPayload;
 }
 export type BackupEnvelope = BackupEnvelopeV1 | BackupEnvelopeV2;
-export interface ParsedBackupEnvelope extends Omit<BackupEnvelopeV1, 'schemaVersion'> { schemaVersion: 1 | 2 }
+export interface ParsedBackupEnvelope extends Omit<BackupEnvelopeV1, 'schemaVersion'> {
+  schemaVersion: 1 | 2 | 3;
+  preferences?: Record<string, unknown>;
+}
 
 export interface StateSummary {
   isEmpty: boolean;
@@ -31,7 +34,7 @@ export interface StateSummary {
 }
 
 export interface ImportPreview {
-  schemaVersion: 1 | 2;
+  schemaVersion: 1 | 2 | 3;
   exportedAt: ISOInstant;
   checksum: string;
   summary: StateSummary;

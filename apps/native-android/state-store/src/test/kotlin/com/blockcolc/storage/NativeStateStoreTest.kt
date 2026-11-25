@@ -18,6 +18,30 @@ class NativeStateStoreTest {
     @get:Rule val temporary = TemporaryFolder()
     private fun state(name: String) = DomainDocument.fromJson(JSONObject(javaClass.getResource("/state-oracle.json")!!.readText()).getJSONObject("states").getJSONObject(name))
     private fun database() = JdbcStateDatabase(temporary.root.toPath().resolve("state.db"))
+    @Test fun recoveryRootsAndFileImportStagePreferencesWithTheWorkspace() {
+        val old = """{"breakMinutes":5,"focusMinutes":45,"habitFocusMinutes":25,"habitTargetRounds":12}"""
+        val new = """{"breakMinutes":5,"focusMinutes":45,"habitFocusMinutes":60,"habitTargetRounds":30}"""
+        val stamp = "2026-10-01T09:00:00.000Z"
+        var current = old
+        database().use { db ->
+            val store = NativeStateStore(db)
+            store.bindBackupPreferences { current }
+            val initial = store.initialize(com.blockcolc.domain.DomainEngine.initial("UTC"))
+            val daily = checkNotNull(store.captureDaily(initial.token, stamp).root)
+            val export = BackupCodec.read(store.exportBackup(stamp))
+            assertEquals(old, export.preferences)
+            current = new
+            val imported = store.importBackup(initial.token, "with-portable-prefs", export, stamp)
+            assertEquals(old, NativeStateStore(db).pendingPreferences())
+            store.acknowledgePreferences(old)
+            val rollback = checkNotNull(imported.rollbackId)
+            val restored = store.restore(imported.token, "restore-import-rollback", rollback, stamp)
+            assertEquals(new, store.pendingPreferences())
+            store.acknowledgePreferences(new)
+            store.restore(restored.token, "restore-daily-preferences", daily.id, stamp)
+            assertEquals(old, NativeStateStore(db).pendingPreferences())
+        }
+    }
     private fun ready() = RecoveryContext(SavedPlan("plan", "host", "read", PlanMode.ROUNDS, 2, emptyList(), PlanPhase.READY, 60000, 300000), ContinuationGrant("grant", 0, null))
     private fun active() = ready().let { it.copy(plan = it.plan!!.copy(phase = PlanPhase.FOCUS, currentSessionId = "s1", phaseEndsAt = "2026-10-01T08:01:00.000Z",hasStarted=true)) }
     private class Observed(private val delegate:SqlDatabase,private val stamped:Boolean=false):SqlDatabase {

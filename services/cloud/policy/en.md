@@ -22,6 +22,8 @@ When you enable Real weather, Blockcolc sends your location to QWeather for weat
 
 Friends is off by default. You can choose to share live status, the activity name, start and end times, or daily focus totals. Regular friends accept an invitation. Manage what they can see in Account or the friend’s details.
 
+You can issue a token to an external app and give it permission to report and settle your focus, or to read the data available to you from friends who have opted into external sharing. You can separately opt in to letting friends see your shares in their connected apps. The server keeps a token hash, name, permissions, and expiry. Revoking a token stops its future access.
+
 Sign in to the focus report to view focus data shared by the site owner. The owner can see today’s visitors’ usernames and visit times and the total visits by account. The browser uses a session cookie to keep you signed in.
 
 ## Retention and security

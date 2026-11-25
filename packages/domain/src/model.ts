@@ -166,12 +166,22 @@ export type FocusInterruptionCategory =
   | "device-or-app"
   | "other";
 
-export type FocusSession = FocusSessionBase &
+export interface ExternalFocusFragment {
+  source: string;
+  roundMs: number;
+  credited: boolean;
+}
+
+export type FocusSession = FocusSessionBase & { external?: ExternalFocusFragment } &
   (
     | { status: "completed"; completedAt: ISOInstant; completedLocalDate: ISODate; actualDurationMs: number }
     | { status: "completed-early"; completedAt: ISOInstant; completedLocalDate: ISODate; actualDurationMs: number }
     | { status: "interrupted"; interruptedAt: ISOInstant; interruptionReason: FocusInterruptionReason; interruptionCategory: FocusInterruptionCategory | null; interruptionNote?: string; actualDurationMs: number }
   );
+
+export function countsAsFocusRound(session: FocusSession): session is Exclude<FocusSession, { status: "interrupted" }> {
+  return session.status !== "interrupted" && session.external?.credited !== false;
+}
 
 export interface DailyGoal {
   date: ISODate;

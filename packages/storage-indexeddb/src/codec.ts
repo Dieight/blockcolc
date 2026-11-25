@@ -58,8 +58,8 @@ export async function parseBackup(input: string): Promise<ParsedBackupEnvelope> 
   }
   const envelope = exactObject(raw, ["format", "schemaVersion", "exportedAt", "payload", "checksum"]);
   if (envelope.format !== "tomato-clock-backup") throw new BackupValidationError("Unknown backup format");
-  if (envelope.schemaVersion !== 1 && envelope.schemaVersion !== 2) throw new BackupValidationError("Unsupported backup schema version");
-  const schemaVersion: 1 | 2 = envelope.schemaVersion;
+  if (envelope.schemaVersion !== 1 && envelope.schemaVersion !== 2 && envelope.schemaVersion !== 3) throw new BackupValidationError("Unsupported backup schema version");
+  const schemaVersion: 1 | 2 | 3 = envelope.schemaVersion;
   const exportedAt = validInstant(envelope.exportedAt, "exportedAt");
   if (typeof envelope.checksum !== "string" || !/^[a-f0-9]{64}$/.test(envelope.checksum)) {
     throw new BackupValidationError("Invalid backup checksum");
@@ -67,13 +67,25 @@ export async function parseBackup(input: string): Promise<ParsedBackupEnvelope> 
   const rawUnsigned = { format: "tomato-clock-backup" as const, schemaVersion, exportedAt, payload: envelope.payload };
   if (await sha256(rawUnsigned) !== envelope.checksum) throw new BackupValidationError("Backup checksum mismatch");
   let payload: DomainState;
+  let preferences: Record<string, unknown> | undefined;
   try {
-    payload = cloneAndParseState(schemaVersion === 2 ? unpackBackupPayload(envelope.payload) : envelope.payload);
+    const portable = schemaVersion === 3 ? exactObject(envelope.payload, ["domain", "domainVersion", "preferences"]) : undefined;
+    const domainVersion = portable?.domainVersion ?? schemaVersion;
+    if (domainVersion !== 1 && domainVersion !== 2) throw new BackupValidationError("Invalid backup domain version");
+    if (portable) {
+      const value = portable.preferences;
+      if (value === null || typeof value !== "object" || Array.isArray(value)) throw new BackupValidationError("Invalid backup preferences");
+      preferences = value as Record<string, unknown>;
+      if (typeof preferences.focusMinutes !== "number" || typeof preferences.breakMinutes !== "number" ||
+          new TextEncoder().encode(JSON.stringify(preferences)).byteLength > 65536) throw new BackupValidationError("Invalid backup preferences");
+    }
+    const rawState = portable ? portable.domain : envelope.payload;
+    payload = cloneAndParseState(domainVersion === 2 ? unpackBackupPayload(rawState) : rawState);
   } catch (cause) {
     throw new BackupValidationError("Invalid domain state", { cause });
   }
-  const normalized = { format: "tomato-clock-backup" as const, schemaVersion, exportedAt, payload };
-  return { ...normalized, checksum: envelope.checksum };
+  const normalized: Omit<ParsedBackupEnvelope, "checksum"> = { format: "tomato-clock-backup", schemaVersion, exportedAt, payload };
+  return { ...normalized, checksum: envelope.checksum, ...(preferences ? { preferences } : {}) };
 }
 
 function assertBackupSize(input: string): void {
@@ -109,7 +121,7 @@ export function stateSummary(state: DomainState | null): StateSummary {
     activeBlueprintId: active?.blueprintId ?? null,
     blueprintIds: [...new Set(state.projects.map((project) => project.blueprintId))].sort(),
     monumentCount: state.projects.filter((project) => project.status === "monument").length,
-    completedFocusCount: state.focusHistory.filter((session) => session.status === "completed").length,
+    completedFocusCount: state.focusHistory.filter((session) => session.status === "completed" && session.external?.credited !== false).length,
     interruptedFocusCount: state.focusHistory.filter((session) => session.status === "interrupted").length,
     progressReportCount: state.progressReports.length,
   };

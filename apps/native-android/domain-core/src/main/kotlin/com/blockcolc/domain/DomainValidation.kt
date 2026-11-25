@@ -343,7 +343,8 @@ internal object DomainValidation {
             "interrupted" -> "status interruptedAt interruptionReason interruptionCategory actualDurationMs"
             else -> "status completedAt completedLocalDate actualDurationMs"
         }
-        shape(x, p, "id projectId subtaskId startedAt endsAt plannedDurationMs timeZoneAtStart $fields", "marathon settledAt deferredSettlement" + if (status == "interrupted") " interruptionNote" else "")
+        val optional = when (status) { "interrupted" -> " interruptionNote"; "completed" -> " external"; else -> "" }
+        shape(x, p, "id projectId subtaskId startedAt endsAt plannedDurationMs timeZoneAtStart $fields", "marathon settledAt deferredSettlement" + optional)
         text(x.get("id"), "$p.id"); text(x.get("projectId"), "$p.projectId"); nullable(x.get("subtaskId"), "$p.subtaskId")
         val start = instant(x.get("startedAt"), "$p.startedAt"); val end = instant(x.get("endsAt"), "$p.endsAt"); val duration = int(x.get("plannedDurationMs"), "$p.plannedDurationMs", 1)
         val tz = zone(x.get("timeZoneAtStart"), "$p.timeZoneAtStart")
@@ -363,6 +364,14 @@ internal object DomainValidation {
             return
         }
         val actual = int(x.get("actualDurationMs"), "$p.actualDurationMs", 0, duration)
+        if (x.has("external")) {
+            val e = shape(x.get("external"), "$p.external", "source roundMs credited")
+            val round = int(e.get("roundMs"), "$p.external.roundMs", 60000, 10800000)
+            val credited = bool(e.get("credited"), "$p.external.credited")
+            requireInput(text(e.get("source"), "$p.external.source").length <= 64 && x.isNull("subtaskId") &&
+                !x.has("marathon") && !x.has("settledAt") && actual <= round && (credited || actual < round),
+                "$p.external", "Invalid external focus fragment")
+        }
         val finish = if (status == "interrupted") instant(x.get("interruptedAt"), "$p.interruptedAt") else instant(x.get("completedAt"), "$p.completedAt")
         if (status == "completed") requireInput(finish == end && actual == duration, p, "Natural completion must match deadline")
         else requireInput(finish >= start && finish < end && actual == millis(finish) - millis(start), p, "Invalid actual focus interval")

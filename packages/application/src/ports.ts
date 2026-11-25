@@ -21,7 +21,7 @@ export interface StateRepository {
 }
 
 export interface BackupImportPreview {
-  schemaVersion: 1 | 2;
+  schemaVersion: 1 | 2 | 3;
   exportedAt: ISOInstant;
   checksum: string;
   summary: {

@@ -269,6 +269,7 @@ class PreviewRuntime private constructor(private val context: Context):Workspace
         val measured=P2MeasuredDatabase(database)
         val store = (if(recordingTest)NativeStateStore(measured)else NativeStateStore(measured,domainReadCache)).also{this.store=it}
         if(recordingTest)isolatePresentation(name)
+        store.bindBackupPreferences(::backupPreferenceWire)
         P2Trace.event("database-open-start")
         NativeStartupTrace.measure("database-first-read",benchmark=true) {
             if (NativeStartupTrace.measureInitialRead{store.load()} == null) {
@@ -277,7 +278,27 @@ class PreviewRuntime private constructor(private val context: Context):Workspace
             }
         }
         P2Trace.event("database-validated")
+        applyRestoredPreferences(store)
         return FocusCoordinator(store,name).also{coordinator=it}
+    }
+    private val backupResourceChoices by lazy { CloudResourceChoices(context) }
+    private fun backupPreferenceWire(): String? {
+        val saved = clientPreferences.load().takeUnless { it.readFailed }?.value ?: return null
+        val preferences = JSONObject(saved.canonical())
+        if (!recordingTest) backupResourceChoices.read()?.let { preferences.put("resourceSelection", it) }
+        return StrictJson.render(preferences)
+    }
+
+    private fun applyRestoredPreferences(storage: NativeStateStore) {
+        val wire = storage.pendingPreferences() ?: return
+        clientPreferences.update { ClientPreferences.parseText(wire) }
+        if (!recordingTest) JSONObject(wire).optJSONObject("resourceSelection")?.let { selection ->
+            val active = selection.opt("activeId") as? String
+            val base = selection.opt("baseId") as? String
+            backupResourceChoices.save(active, base)
+            com.blockcolc.preview.resources.NativeResourceController.get(context).cloudSelection(active, base)
+        }
+        storage.acknowledgePreferences(wire)
     }
     private fun prepareRewards(c:FocusCoordinator,force:Boolean=false):FocusCoordinator{
         if(rewardsPreparedFor==(c.databaseIdentity to latest.generation))return c
@@ -670,11 +691,25 @@ class PreviewRuntime private constructor(private val context: Context):Workspace
     }
     override fun startPlan(uiRequest:String?){
         NativeStartupTrace.point("focus-action-accepted")
-        enqueue("start-plan",uiRequest){c->FocusActions(c,clientPreferences).start(uiRequest?:id(),System.currentTimeMillis())}
+        enqueue("start-plan",uiRequest){c->
+            val request = uiRequest ?: id()
+            withFocusReservation(request) { FocusActions(c,clientPreferences).start(request,System.currentTimeMillis()) }
+        }
     }
     override fun beginFocus(draft:FocusDraft,uiRequest:String){
         NativeStartupTrace.point("focus-action-accepted")
-        enqueue("begin-focus",uiRequest){c->FocusActions(c,clientPreferences).begin(uiRequest,id(),draft,System.currentTimeMillis())}
+        enqueue("begin-focus",uiRequest){c->
+            withFocusReservation(uiRequest) { FocusActions(c,clientPreferences).begin(uiRequest,id(),draft,System.currentTimeMillis()) }
+        }
+    }
+    private fun withFocusReservation(request: String, start: () -> Operation): Operation {
+        val cloud = if (!recordingTest && cloudGate.ownsAccountExecution()) NativeCloudController.peek() else null
+        val reserved = cloud?.reserveNativeFocus(request) == true
+        try { return start() }
+        catch (error: Exception) {
+            if (reserved && error !is CommittedStateUnavailable) cloud?.cancelNativeReservation(request)
+            throw error
+        }
     }
     override fun amendPlan(planId:String,draft:FocusDraft,uiRequest:String)=enqueue("amend-plan",uiRequest){c->FocusActions(c,clientPreferences).amend(uiRequest,planId,id(),draft,System.currentTimeMillis())}
     fun focus(mode: PlanMode, rounds: Int, focusMinutes: Int, restMinutes: Int, automatic: Boolean, selected: String?, endAt: Long? = null) = enqueue("start-focus") { c ->
@@ -718,7 +753,12 @@ class PreviewRuntime private constructor(private val context: Context):Workspace
     }
     fun create(title: String, habit: Boolean) = command(if (habit) DomainEngine.command("CreateHabitProject", "projectId" to id(), "title" to title, "blueprintId" to "builtin-small-workshop", "targetRounds" to 10)
         else DomainEngine.command("CreateProject", "projectId" to id(), "title" to title, "blueprintId" to "builtin-small-workshop", "subtasks" to JSONArray().put(JSONObject().put("id", id()).put("title", "第一件小事"))))
-    override fun restore(root: String,uiRequest:String?) = enqueue("restore",uiRequest) { it.restore(uiRequest?:id(), root, System.currentTimeMillis()) }
+    override fun restore(root: String,uiRequest:String?) = enqueue("restore",uiRequest) {
+        val operation = it.restore(uiRequest?:id(), root, System.currentTimeMillis())
+        try { applyRestoredPreferences(checkNotNull(store)) }
+        catch (error: Exception) { throw CommittedStateUnavailable(CommitReceipt(operation.state.token, operation.replayed), error) }
+        operation
+    }
     override fun refreshBackups(uiRequest:String){
         val expected=latest.roomContext
         actor.execute{
@@ -733,7 +773,10 @@ class PreviewRuntime private constructor(private val context: Context):Workspace
             }
         }
     }
-    override fun refreshWorkspace(uiRequest:String)=enqueue("refresh-workspace",uiRequest){Operation(it.load())}
+    override fun refreshWorkspace(uiRequest:String)=enqueue("refresh-workspace",uiRequest){
+        applyRestoredPreferences(checkNotNull(store))
+        Operation(it.load())
+    }
     fun example() = enqueue("example-import") { c ->
         check(BuildConfig.NATIVE_DIAGNOSTICS)
         require(c.load().domain.json().getJSONArray("projects").length() == 0) { "示例只能载入空的隔离预览" }
@@ -793,12 +836,16 @@ class PreviewRuntime private constructor(private val context: Context):Workspace
                     // the old DB/WAL remain recoverable and old tickets lose identity.
                     val name = "p2-recovered-${id()}.db"; val fresh = AndroidStateDatabase(context, name)
                     try {
-                        val store = NativeStateStore(P2MeasuredDatabase(fresh)); store.initialize(backup.domain);val verified=store.load()!!;check(verified.domain==backup.domain)
+                        val store = NativeStateStore(P2MeasuredDatabase(fresh))
+                        store.bindBackupPreferences(::backupPreferenceWire)
+                        store.initialize(backup.domain, restoredPreferences = backup.preferences)
+                        val verified=store.load()!!;check(verified.domain==backup.domain)
                         check(prefs.edit().putString("database", name).commit()) { "数据库切换未保存" }
                         committed=true;val prior=db;db=fresh;this.store=store;coordinator=FocusCoordinator(store,name);initialized=true;adopted=verified
                         try{prior?.close()}catch(error:Exception){android.util.Log.w("BlockcolcP3","Recovery committed; previous connection did not close cleanly",error)}
                     } catch (e: Exception) { if(!committed)fresh.close();throw e }
                 } else { val c = open();adopted=c.importBackup(id(),backup,System.currentTimeMillis()).state;committed=true;initialized=true }
+                applyRestoredPreferences(checkNotNull(store))
                 discardPendingImport()
                 finishSetup()
                 // The transaction has completed. Retire the old workspace and
@@ -819,6 +866,7 @@ class PreviewRuntime private constructor(private val context: Context):Workspace
     /** A host lease is consumed by the actual stop, independently of session handoff. */
     internal fun cloudCapture(account:String):Future<CloudLocal> = actor.submit<CloudLocal>{
         check(!recordingTest||cloudTesting){"TEST_WORKSPACE"};val c=open(prepareAssets=false);val state=c.load()
+        if(latest.refreshRequired)applyRestoredPreferences(checkNotNull(store))
         CloudLocal(c.databaseIdentity,state.token,state.domain,state.recovery,clientPreferences.load().value,checkNotNull(store).cloudBaseline(account))
     }
     internal fun cloudPresenceCapture(account:String,knownExecution:Long):Future<Pair<StoredState,Long>?> = actor.submit<Pair<StoredState,Long>?>{
@@ -841,11 +889,14 @@ class PreviewRuntime private constructor(private val context: Context):Workspace
         val acceptedRecovery=recovery.copy(automatic=recovery.automatic.takeIf{preferences.autoContinueFocus},
             returnReminder=recovery.returnReminder.takeIf{preferences.returnToFocusReminders})
         acceptedRecovery.validate(domain,current.token.replacementGeneration)
-        if(preferences!=expected.preferences)clientPreferences.update{preferences}
-        if(domain==current.domain&&acceptedRecovery==current.recovery){checkNotNull(store).acknowledgeCloud(baseline)
-            if(preferences!=expected.preferences)publish(latest.copy(preferences=preferences))
+        val storage = checkNotNull(store)
+        val settings = preferences.takeIf { it != expected.preferences }?.canonical()
+        if(domain==current.domain&&acceptedRecovery==current.recovery){
+            storage.acknowledgeCloud(baseline, settings)
+            if(settings!=null){applyRestoredPreferences(storage);publish(latest.copy(preferences=preferences))}
         }else{
-            checkNotNull(store).adoptCloud(current.token,"cloud:${id()}",domain,acceptedRecovery,baseline,replacement,preserveRollback)
+            storage.adoptCloud(current.token,"cloud:${id()}",domain,acceptedRecovery,baseline,replacement,preserveRollback,settings)
+            if(settings!=null)applyRestoredPreferences(storage)
             val state=c.load();adopt(state)
             if(latest.setupRequired){val root=domain.projectionJson()
                 if(root.getJSONArray("projects").length()+root.getJSONArray("habitBuildings").length()>0)finishSetup()}

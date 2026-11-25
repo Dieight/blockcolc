@@ -4,6 +4,7 @@ import { promisify } from 'node:util';
 import { mkdirSync,writeFileSync,readFileSync,existsSync,renameSync,unlinkSync,readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { ApiError,fail,sha,canonical,hashPattern,assembleDomain,assetKeys,validateExtra,validateKey,validatePlanDomain,sharing,defaultSharing,accountDate } from './wire.mjs';
+import { Integrations } from './integrations.mjs';
 const derive=promisify(scrypt),DAY=86400000;
 const random=()=>randomBytes(32).toString('base64url');
 const cleanDevice=(id,name)=>{fail(typeof id==='string'&&/^[a-zA-Z0-9_-]{16,80}$/.test(id),'INVALID_DEVICE');fail(typeof name==='string'&&name.length>0&&name.length<=64);};
@@ -28,6 +29,7 @@ export class CloudStore {
       CREATE TABLE IF NOT EXISTS external_sources(id TEXT PRIMARY KEY,user TEXT UNIQUE NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,kind TEXT NOT NULL,origin TEXT NOT NULL,remote_account TEXT NOT NULL DEFAULT '',enabled INTEGER NOT NULL DEFAULT 1,projection TEXT,updated INTEGER,expires INTEGER NOT NULL DEFAULT 0,error TEXT);`);
     if(!this.db.prepare('PRAGMA table_info(external_sources)').all().some(c=>c.name==='remote_account'))this.db.exec("ALTER TABLE external_sources ADD COLUMN remote_account TEXT NOT NULL DEFAULT ''");
     this.authInFlight=0;
+    this.integrations=new Integrations(this);
   }
   transaction(work){this.db.exec('BEGIN IMMEDIATE');try{const result=work();this.db.exec('COMMIT');return result;}catch(error){this.db.exec('ROLLBACK');throw error;}}
   close(){this.db.close();}
@@ -79,8 +81,10 @@ export class CloudStore {
   removeDevice(user,id){
     this.db.prepare('DELETE FROM sessions WHERE user=? AND device=?').run(user,id);
     this.db.prepare('DELETE FROM devices WHERE user=? AND id=?').run(user,id);
-    if(this.db.prepare('UPDATE heads SET owner=NULL,execution=execution+1 WHERE user=? AND owner=?').run(user,id).changes)
-      this.db.prepare('DELETE FROM presence WHERE user=?').run(user);
+    if(this.db.prepare('UPDATE heads SET owner=NULL,execution=execution+1 WHERE user=? AND owner=?').run(user,id).changes){
+      this.integrations.forgetNativeReservations(user);
+      if(!this.integrations.externalBusy(user))this.db.prepare('DELETE FROM presence WHERE user=?').run(user);
+    }
   }
   revokeDevice(s,id){fail(typeof id==='string');this.transaction(()=>{this.assertSession(s);this.removeDevice(s.user,id);});}
   updateAccount(s,input){this.assertSession(s);const current=this.account(s.user),policy=input.sharing==null?current.sharing:sharing(input.sharing);
@@ -136,15 +140,23 @@ export class CloudStore {
   workspace(s){const h=this.head(s.user);return {schema:1,epoch:h.epoch,revision:h.revision,entries:this.entries(s.user),execution:{owner:h.owner,generation:h.execution},devices:this.devices(s),backup:this.backupInfo(s)};}
   claim(s,{generation,takeover=false}){this.assertSession(s);return this.transaction(()=>{const h=this.head(s.user);fail(Number.isSafeInteger(generation)&&generation===h.execution,'EXECUTION_CHANGED',409);
     fail(h.owner==null||h.owner===s.device||takeover===true,'EXECUTING_ELSEWHERE',409);
-    if(h.owner!==s.device){this.db.prepare('UPDATE heads SET owner=?,execution=execution+1,changed=? WHERE user=?').run(s.device,this.clock(),s.user);this.db.prepare('DELETE FROM presence WHERE user=?').run(s.user);}
+    if(h.owner!==s.device){
+      this.db.prepare('UPDATE heads SET owner=?,execution=execution+1,changed=? WHERE user=?').run(s.device,this.clock(),s.user);
+      this.integrations.forgetNativeReservations(s.user);
+      if(!this.integrations.externalBusy(s.user))this.db.prepare('DELETE FROM presence WHERE user=?').run(s.user);
+    }
     const actual=this.head(s.user);return {owner:actual.owner,generation:actual.execution};});}
   release(s,{generation}){return this.transaction(()=>{const h=this.head(s.user);fail(h.owner===s.device&&h.execution===generation,'EXECUTION_CHANGED',409);
-    this.db.prepare('UPDATE heads SET owner=NULL,execution=execution+1,changed=? WHERE user=?').run(this.clock(),s.user);this.db.prepare('DELETE FROM presence WHERE user=?').run(s.user);return {owner:null,generation:h.execution+1};});}
+    this.db.prepare('UPDATE heads SET owner=NULL,execution=execution+1,changed=? WHERE user=?').run(this.clock(),s.user);
+    this.integrations.forgetNativeReservations(s.user);
+    if(!this.integrations.externalBusy(s.user))this.db.prepare('DELETE FROM presence WHERE user=?').run(s.user);
+    return {owner:null,generation:h.execution+1};});}
   commit(s,input){this.assertSession(s);fail(input&&typeof input.requestId==='string'&&/^[a-zA-Z0-9_:-]{8,128}$/.test(input.requestId));
     fail(Array.isArray(input.changes)&&input.changes.length<=100000);const requestSha=sha(canonical(input));
     return this.transaction(()=>{
       const replay=this.db.prepare('SELECT request_sha,result FROM receipts WHERE user=? AND id=?').get(s.user,input.requestId);
       if(replay){fail(replay.request_sha===requestSha,'REQUEST_ID_REUSED',409);return JSON.parse(replay.result);}
+      this.integrations.expire(s.user,this.clock());
       const h=this.head(s.user);fail(h.epoch===input.epoch,'WORKSPACE_REPLACED',409);
       const entries=this.entries(s.user),conflicts=[],seen=new Set();
       for(const change of input.changes){
@@ -156,12 +168,19 @@ export class CloudStore {
       }
       if(conflicts.length)throw new ApiError(409,'SYNC_CONFLICT',{keys:conflicts});
       const protectedChange=input.changes.some(c=>c.key==='$/activeFocusSession'||c.key==='@plan'||c.key.startsWith('focusHistory/')||c.key.startsWith('progressReports/'));
-      if(protectedChange)fail(h.owner===s.device&&input.execution===h.execution,'EXECUTION_CHANGED',409);
+      if(protectedChange){
+        fail(h.owner===s.device&&input.execution===h.execution,'EXECUTION_CHANGED',409);
+        fail(!this.integrations.externalBusy(s.user),'EXTERNAL_FOCUS_IN_PROGRESS',409);
+        this.integrations.assertNativeIntervals(s.user,input.changes);
+      }
       for(const key of ['@preferences','@plan'])if(entries[key]!=null)validateExtra(key,entries[key]);
       validatePlanDomain(entries,assembleDomain(entries,key=>this.asset(s.user,key)));
       const size=Object.values(entries).reduce((sum,text)=>sum+Buffer.byteLength(text),0);fail(size<=100*1024*1024,'WORKSPACE_TOO_LARGE',413);
       for(const change of input.changes){if(change.canonical==null)this.db.prepare('DELETE FROM entries WHERE user=? AND key=?').run(s.user,change.key);
         else this.db.prepare('INSERT INTO entries VALUES(?,?,?,?) ON CONFLICT(user,key) DO UPDATE SET canonical=excluded.canonical,sha=excluded.sha').run(s.user,change.key,change.canonical,sha(change.canonical));}
+      if(protectedChange&&(JSON.parse(entries['$/activeFocusSession']??'null')||JSON.parse(entries['@plan']??'{}').plan?.hasStarted||input.changes.some(c=>c.key.startsWith('focusHistory/')))){
+        this.integrations.forgetNativeReservations(s.user);
+      }
       this.db.prepare('UPDATE heads SET revision=revision+1,changed=? WHERE user=?').run(this.clock(),s.user);
       const result={epoch:h.epoch,revision:h.revision+1};
       this.db.prepare('INSERT INTO receipts VALUES(?,?,?,?,?)').run(s.user,input.requestId,requestSha,canonical(result),this.clock());
@@ -177,12 +196,15 @@ export class CloudStore {
     // can silently reapply changes made against the discarded history.
     return this.transaction(()=>{const replay=this.db.prepare('SELECT request_sha,result FROM receipts WHERE user=? AND id=?').get(s.user,requestId);
       if(replay){fail(replay.request_sha===requestSha,'REQUEST_ID_REUSED',409);return JSON.parse(replay.result);}
+      this.integrations.expire(s.user,this.clock());
+      fail(!this.integrations.externalBusy(s.user),'EXTERNAL_FOCUS_IN_PROGRESS',409);
       const h=this.head(s.user);fail(h.revision===revision,'SYNC_CONFLICT',409);
       if(keepExecution)fail(Number.isSafeInteger(execution)&&h.execution===execution&&h.owner===s.device,'EXECUTION_CHANGED',409);
       for(const key of ['@preferences','@plan'])if(entries[key]!=null)validateExtra(key,entries[key]);validatePlanDomain(entries,assembleDomain(entries,k=>this.asset(s.user,k)));
       this.db.prepare('DELETE FROM entries WHERE user=?').run(s.user);
       for(const [key,value]of Object.entries(entries))this.db.prepare('INSERT INTO entries VALUES(?,?,?,?)').run(s.user,key,value,sha(value));
       this.db.prepare('UPDATE heads SET epoch=?,revision=revision+1,owner=?,execution=execution+1,changed=? WHERE user=?').run(randomUUID(),keepExecution?s.device:null,this.clock(),s.user);
+      this.integrations.forgetNativeReservations(s.user);
       this.db.prepare('DELETE FROM presence WHERE user=?').run(s.user);const result=this.workspace(s);
       this.db.prepare('INSERT INTO receipts VALUES(?,?,?,?,?)').run(s.user,requestId,requestSha,canonical(result),this.clock());return result;});
   }
@@ -191,6 +213,7 @@ export class CloudStore {
     fail(/^\d{4}-\d{2}-\d{2}$/.test(day));const old=this.db.prepare('SELECT date FROM backups WHERE user=?').get(user);if(old&&old.date>day)return this.backupInfo({user});
     // Validate all referenced bytes before replacing the sole recovery root.
     assembleDomain(entries,key=>this.asset(user,key));
+    if(entries['@preferences']!=null)validateExtra('@preferences',entries['@preferences']);
     return this.transaction(()=>{const manifest={schema:1,entries:{},assets:[...assetKeys(entries)]};
       for(const [key,wire] of Object.entries(entries)){if(key==='@plan')continue;const digest=sha(wire);manifest.entries[key]=digest;
         this.db.prepare('INSERT OR IGNORE INTO backup_blocks VALUES(?,?,?)').run(user,digest,wire);}
@@ -232,6 +255,10 @@ export class CloudStore {
     if(value===null)this.db.prepare('DELETE FROM friend_sharing WHERE user=? AND friend=?').run(s.user,id);
     else this.db.prepare('INSERT INTO friend_sharing VALUES(?,?,?) ON CONFLICT(user,friend) DO UPDATE SET value=excluded.value').run(s.user,id,canonical(sharing(value)));return {ok:true};}
   presence(s,value,execution){this.assertSession(s);const h=this.head(s.user);fail(h.owner===s.device&&h.execution===execution,'EXECUTION_CHANGED',409);
+    if(this.integrations.externalBusy(s.user)){
+      fail(value?.currentName==null,'EXTERNAL_FOCUS_IN_PROGRESS',409);
+      return {ok:true};
+    }
     fail(value&&typeof value==='object'&&Object.keys(value).sort().join()==='currentName,estimatedElapsedMs,estimatedEndsAt,startedAt,todayActualFocusMs');
     const now=this.clock();fail(Number.isSafeInteger(value.todayActualFocusMs)&&value.todayActualFocusMs>=0&&value.todayActualFocusMs<=DAY);
     const timed=value.estimatedEndsAt!==null;
@@ -296,8 +323,12 @@ export class CloudStore {
     const live=this.db.prepare('SELECT value,expires FROM presence WHERE user=?').get(id),snapshot=live?JSON.parse(live.value):null;
     base.visible=policy;if(policy.time)base.updatedAt=snapshot?.updatedAt??null;
     if(live&&live.expires>this.clock()){
-      if(policy.status)base.focusing=snapshot.currentName!=null;
-      if(policy.name)base.currentName=snapshot.currentName;
+      if(policy.status){
+        base.focusing=snapshot.currentName!=null&&snapshot.externalState!=='rest';
+        if(snapshot.sourceName)base.source={kind:'integration',name:snapshot.sourceName};
+        if(snapshot.externalState)base.state=snapshot.externalState;
+      }
+      if(policy.name)base.currentName=snapshot.externalState?snapshot.taskName:snapshot.currentName;
       if(policy.time){base.startedAt=snapshot.startedAt;base.endsAt=snapshot.estimatedEndsAt;
         if(snapshot.currentName!=null&&snapshot.estimatedEndsAt===null)base.waitingForEnd=true;
       }

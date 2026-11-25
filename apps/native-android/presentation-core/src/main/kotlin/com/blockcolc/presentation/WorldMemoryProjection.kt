@@ -1,5 +1,7 @@
 package com.blockcolc.presentation
 
+import com.blockcolc.domain.countsAsFocusRound
+
 import com.blockcolc.domain.DomainDocument
 import com.blockcolc.domain.DomainEngine
 import com.blockcolc.domain.DomainTime
@@ -32,9 +34,12 @@ object WorldMemoryProjection {
         val projectsById=projects.associateBy{it.getString("id")}
         val reportsByProject=reports.groupBy{it.getString("projectId")}
         fun known(row:JSONObject)=row.getString("kind")!="unallocated"
-        fun complete(row:JSONObject)=row.getString("status")!="interrupted"&&row.getLong("actualDurationMs")>0
+        fun complete(row:JSONObject)=countsAsFocusRound(row)&&row.getLong("actualDurationMs")>0
         fun interrupted(row:JSONObject)=row.getString("status")=="interrupted"&&row.getLong("actualDurationMs")>0
         fun duration(rows:List<JSONObject>)=rows.sumOf(FocusProjection::reportedDuration)
+        fun cycleDuration(rows:List<JSONObject>)=rows.sumOf{row->
+            row.optJSONObject("external")?.takeIf{it.getBoolean("credited")}?.getLong("roundMs")?:FocusProjection.reportedDuration(row)
+        }
         val knownRows=attribution.filter(::known)
         val finiteByProject=knownRows.filter{it.getString("kind")=="finite-subtask"}.groupBy{it.optString("projectId")}
         val attributedByTarget=knownRows.groupBy{it.optString("targetId")}
@@ -72,7 +77,7 @@ object WorldMemoryProjection {
         for(habit in habits){
             val id=habit.getString("id");val own=attributedByTarget[id].orEmpty();val expected=ids(habit,"focusSessionIds").toSet();val knownIds=own.map{it.getString("sessionId")}.toSet();val unknown=expected-knownIds
             archives+=BuildingArchive(id,habit.getString("habitProjectId"),habit.getString("habitTitle"),habit.getLong("cycleNumber"),habit.getString("completedAt"),expected.size,
-                duration(own),own.count(::complete),own.count(::interrupted),duration(own.filter(::interrupted)),unknown.size,unknown.mapNotNull{historyById[it]}.sumOf{it.getLong("actualDurationMs")},emptyList())
+                cycleDuration(own),own.count(::complete),own.count(::interrupted),duration(own.filter(::interrupted)),unknown.size,unknown.mapNotNull{historyById[it]}.sumOf{it.getLong("actualDurationMs")},emptyList())
         }
         // Metadata only: a page refresh must not canonicalize or hash every
         // imported blueprint's voxels merely to display a memory title.
@@ -93,7 +98,8 @@ object WorldMemoryProjection {
             val next=project?.takeIf{it.getString("kind")=="finite"}?.getJSONArray("subtasks")?.let{a->List(a.length()){a.getJSONObject(it)}.firstOrNull{it.getInt("progressBasisPoints")<10000}?.getString("title")}
             val habitCount=habit?.getJSONArray("completedFocusSessionIds")?.length();val habitTarget=habit?.getInt("targetRounds")
             BuildingMemoryFact(building.id,building.projectId,building.title,building.cycleNumber,building.status,building.active,building.blueprint,
-                building.completion,building.condition,duration(sessions),sessions.count(::complete),sessions.count(::interrupted),duration(sessions.filter(::interrupted)),archive?.unknownRounds?:0,archive?.unknownMs?:0,lastDate,next,
+                building.completion,building.condition,if(building.cycleNumber!=null)cycleDuration(sessions) else duration(sessions),
+                sessions.count(::complete),sessions.count(::interrupted),duration(sessions.filter(::interrupted)),archive?.unknownRounds?:0,archive?.unknownMs?:0,lastDate,next,
                 if(habitCount!=null&&habitTarget!=null)minOf(habitCount+1,habitTarget)else null,habitTarget,habit?.getBoolean("awaitingNextBuilding")==true)
         }
         val plots=(visible.map{it.getLong("settlementIndex")}+habits.map{it.getLong("settlementIndex")}).toSet()

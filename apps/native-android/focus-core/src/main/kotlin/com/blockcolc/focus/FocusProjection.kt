@@ -78,6 +78,7 @@ object FocusProjection {
             }
             val out = JSONObject().put("sessionId", sessionId).put("endedAt", f.getString(if (f.getString("status") == "interrupted") "interruptedAt" else "completedAt"))
                 .put("timeZoneAtStart", f.getString("timeZoneAtStart")).put("actualDurationMs", f.getLong("actualDurationMs")).put("status", f.getString("status"))
+            f.optJSONObject("external")?.let { out.put("external", it) }
             if (owner != null) { owner.keys().forEach { out.put(it, owner.get(it)) }; out.put("reason", JSONObject.NULL) }
             else {
                 out.put("kind", "unallocated").put("projectTitle", "未分配 / 不可追溯").put("reason", reason ?: "missing-session")

@@ -56,6 +56,7 @@ test('logout hides the signed-out device, preserves the other device, and fences
 });
 test('extended focus stays live without a fixed end and respects friend time sharing',async t=>{
   const {store,setNow}=fixture(t),{session:a}=await user(store),{session:b}=await user(store,'bob');
+  const viewingDevice=await otherDevice(store);
   const {generation}=store.claim(a,{generation:0});
   const policy={status:true,name:true,time:true,daily:false};
   store.updateAccount(a,{friendsEnabled:true,sharing:policy});store.updateAccount(b,{friendsEnabled:true});
@@ -67,6 +68,8 @@ test('extended focus stays live without a fixed end and respects friend time sha
   assert.equal(live.waitingForEnd,true);assert.equal(live.estimatedEndsAt,null);assert.equal(live.currentName,'专注中');
   const friend=()=>store.friends(b).find(row=>row.id===a.user);
   assert.equal(friend().waitingForEnd,true);assert.equal(friend().focusing,true);
+  store.logout(viewingDevice);
+  assert.equal(friend().focusing,true);
   store.updateAccount(a,{sharing:{...policy,time:false}});assert.equal(friend().waitingForEnd,undefined);
   setNow('2026-11-15T10:01:31Z');
   assert.equal(viewer.snapshot().live.snapshot.currentName,null);assert.equal(friend().stale,true);

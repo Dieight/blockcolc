@@ -1,5 +1,7 @@
 package com.blockcolc.presentation
 
+import com.blockcolc.domain.countsAsFocusRound
+
 import org.json.JSONObject
 
 data class AchievementDefinition(val id:String,val title:String,val description:String,val metric:String,val target:Int,val unit:String)
@@ -39,7 +41,7 @@ object AchievementProjection {
         for(session in sessions){
             val interrupted=session.getString("status")=="interrupted";val at=session.getString(if(interrupted)"interruptedAt" else "completedAt")
             milestones.getValue("focus-minutes").add(Point(at,session.getLong("actualDurationMs")))
-            if(!interrupted){milestones.getValue("completed-rounds").add(Point(at,1));if(dates.add(session.getString("completedLocalDate")))milestones.getValue("focus-days").add(Point(at,1))}
+            if(countsAsFocusRound(session)){milestones.getValue("completed-rounds").add(Point(at,1));if(dates.add(session.getString("completedLocalDate")))milestones.getValue("focus-days").add(Point(at,1))}
         }
         val finalReports=rows("progressReports").filter{it.getInt("progressBasisPoints")==10000}.groupBy{it.getString("projectId")}.mapValues{(_,items)->items.maxOf{it.getString("reportedAt")}}
         for(project in rows("projects")){

@@ -7,6 +7,7 @@ import { request as httpRequest } from 'node:http';
 import { Readable } from 'node:stream';
 import { CloudStore } from '../src/store.mjs';
 import { createFocusViewer } from '../src/focus-viewer.mjs';
+import { createCloudHandler } from '../src/server.mjs';
 import { canonical, sha } from '../src/wire.mjs';
 
 const origin = 'https://focus.test';
@@ -33,7 +34,7 @@ test('account viewer keeps mobile execution, scope, visit counts and live data s
   };
   store.presence(phone, snapshot, 1);
   for (const file of ['account.html', 'account.js', 'account.css', 'viewer.css', 'viewer.js']) writeFileSync(join(directory, file), file);
-  const server = createFocusViewer(store, { owner: phone.user, from: '2026-11-14', origin, webRoot: directory });
+  const server = createFocusViewer(store, { owner: phone.user, from: '2026-11-14', origin, webRoot: directory, integrationHandler: createCloudHandler(store) });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(async () => {
     const stopped = new Promise(resolve => server.close(resolve));
@@ -43,18 +44,28 @@ test('account viewer keeps mobile execution, scope, visit counts and live data s
     rmSync(directory, { recursive: true, force: true });
   });
   const base = 'http://127.0.0.1:' + server.address().port;
-  const request = (path, { cookie, input, from = origin } = {}) => new Promise((resolve, reject) => {
+  const request = (path, { cookie, input, from = origin, apiToken, method = input === undefined ? 'GET' : 'POST' } = {}) => new Promise((resolve, reject) => {
     const req = httpRequest(base + path, {
-      method: input === undefined ? 'GET' : 'POST',
+      method,
       headers: {
         Host: 'focus.test',
         ...(cookie ? { Cookie: cookie } : {}),
+        ...(apiToken ? { Authorization: 'Bearer ' + apiToken } : {}),
         ...(input !== undefined ? { Origin: from, 'Content-Type': 'application/json' } : {}),
       },
     }, res => resolve(new Response(Readable.toWeb(res), { status: res.statusCode, headers: res.headers })));
     req.on('error', reject);
     req.end(input === undefined ? undefined : JSON.stringify(input));
   });
+  const partner = store.integrations.issue(phone,{name:'Partner',uploadFocus:true,readFriends:true,days:30}).token;
+  const externalRead = await request('/v1/integrations/friends',{apiToken:partner});
+  assert.equal(externalRead.status,200);
+  assert.deepEqual((await externalRead.json()).friends,[]);
+  const externalStart = await request('/v1/integrations/focus',{apiToken:partner,method:'PUT',input:{state:'focus',sessionId:'viewer-test',sequence:1}});
+  assert.equal(externalStart.status,409);
+  assert.equal((await externalStart.json()).error,'NATIVE_FOCUS_IN_PROGRESS');
+  assert.notEqual((await request('/v1/integrations/manage',{apiToken:registered.token})).status,200);
+  assert.notEqual((await request('/v1/workspace',{apiToken:registered.token})).status,200);
   const login = async (action, username, credential = password) => {
     const response = await request('/api/' + action, { input: { username, password: credential } });
     assert.equal(response.status, 200);

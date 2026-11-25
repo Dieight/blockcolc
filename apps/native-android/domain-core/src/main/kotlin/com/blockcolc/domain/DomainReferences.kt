@@ -61,7 +61,7 @@ internal object DomainReferences {
             val path = "$.progressReports[$i]"; ownership(report.getString("projectId"), report.get("subtaskId"), path)
             val supported = ids(report, "focusSessionIds"); check(supported.isNotEmpty(), "$path.focusSessionIds", "Empty report"); unique(supported, "$path.focusSessionIds")
             for (id in supported) {
-                val s = sessions[id]; check(s != null && s.getString("status") != "interrupted", "$path.focusSessionIds", "Unknown/incomplete focus"); s!!
+                val s = sessions[id]; check(s != null && countsAsFocusRound(s), "$path.focusSessionIds", "Unknown/incomplete focus"); s!!
                 val explicit = report.optString("allocation") == "explicit"
                 check(!explicit || s.opt("marathon") == true, "$path.focusSessionIds", "Explicit allocation requires marathon")
                 if (report.opt("shared") == true) { check(id !in used, "$path.focusSessionIds", "Already consumed by regular report"); shared.add(id) }
@@ -85,7 +85,7 @@ internal object DomainReferences {
         unique((projects + buildings).map { it.getLong("settlementIndex") }, "$.projects[].settlementIndex")
         val habitUsed = HashSet<String>()
         fun habitUse(id: String, projectId: String, path: String): String {
-            val s = sessions[id]; check(s != null && s.getString("status") != "interrupted", path, "Unknown/incomplete habit focus"); s!!
+            val s = sessions[id]; check(s != null && countsAsFocusRound(s), path, "Unknown/incomplete habit focus"); s!!
             check(s.opt("marathon") == true || (s.getString("projectId") == projectId && s.isNull("subtaskId")), path, "Inconsistent habit ownership")
             check(id !in used && habitUsed.add(id), path, "Session reused by habit cycle"); return s.getString("completedAt")
         }
@@ -97,9 +97,14 @@ internal object DomainReferences {
             check(latest == b.getString("completedAt"), "$path.completedAt", "Wrong final completion")
         }
         for (p in projects.filter { it.getString("kind") == "habit" }) for (id in ids(p.getJSONObject("habit"), "completedFocusSessionIds")) habitUse(id, p.getString("id"), "$.projects[].habit.completedFocusSessionIds")
-        for (s in history) check(byProject.getValue(s.getString("projectId")).getString("kind") != "habit" || s.opt("deferredSettlement") == true || s.getString("status") == "interrupted" || s.getString("id") in habitUsed, "$.focusHistory", "Habit completion not assigned to cycle")
+        for (s in history) {
+            val habit = byProject.getValue(s.getString("projectId")).getString("kind") == "habit"
+            check(!s.has("external") || habit, "$.focusHistory", "External focus must belong to a habit")
+            check(!habit || s.opt("deferredSettlement") == true || !countsAsFocusRound(s) || s.getString("id") in habitUsed,
+                "$.focusHistory", "Habit completion not assigned to cycle")
+        }
         val goals = objects(root, "dailyGoals"); namedUnique(goals, "date", "$.dailyGoals[].date")
-        val completedByDate = history.filter { it.getString("status") != "interrupted" }.groupBy { it.getString("completedLocalDate") }
+        val completedByDate = history.filter(::countsAsFocusRound).groupBy { it.getString("completedLocalDate") }
         for ((i, goal) in goals.withIndex()) {
             val completions = completedByDate[goal.getString("date")].orEmpty()
             check(!goal.getBoolean("enabled") || !goal.isNull("reachedAt") || completions.size < goal.getLong("targetPomodoros"), "$.dailyGoals[$i].reachedAt", "Enabled goal must be reached")

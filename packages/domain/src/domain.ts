@@ -8,7 +8,7 @@ import {
   localDateOf,
 } from "./calendar.js";
 import { parseDecorationBlueprint, parseImportedBlueprint } from "./validation.js";
-import { FOCUS_INTEGRITY_GRACE_MS, MAX_BUILDING_BLUEPRINTS } from "./model.js";
+import { countsAsFocusRound, FOCUS_INTEGRITY_GRACE_MS, MAX_BUILDING_BLUEPRINTS } from "./model.js";
 import type {
   Clock,
   CommandResult,
@@ -108,7 +108,99 @@ export function dailyGoalForDate(state: DomainState, date: string): DailyGoal {
 
 export function completedPomodorosOn(state: DomainState, date: string): number {
   assertISODate(date);
-  return state.focusHistory.filter((session) => session.status !== "interrupted" && session.completedLocalDate === date).length;
+  return state.focusHistory.filter((session) => countsAsFocusRound(session) && session.completedLocalDate === date).length;
+}
+
+export interface ExternalFocusSettlement {
+  receipt: string;
+  source: string;
+  title: string | null;
+  roundMs: number;
+  targetRounds: number;
+  defaultBlueprint: () => string;
+  intervals: readonly { from: number; to: number }[];
+}
+
+/** The account service supplies verified, non-overlapping focus intervals.
+ * A fragment records actual time once. Only the fragment reaching a full
+ * round links into the regular habit-building cycle. */
+export function settleExternalFocus(previous: DomainState, settlement: ExternalFocusSettlement) {
+  const state = copyDomainState(previous);
+  const { receipt, source, roundMs, targetRounds, intervals } = settlement;
+  if (intervals.length === 0) return { state: previous, rounds: 0, focusMs: 0, projectId: null };
+  requireHabitTargetRounds(targetRounds);
+  if (!Number.isSafeInteger(roundMs) || roundMs < 60000 || roundMs > 10800000) throw new Error("Invalid external focus round");
+  const from = intervals[0]!.from;
+  const usable = (project: Project) => project.kind === "habit" && (project.status === "active" || project.status === "paused");
+  const title = settlement.title?.trim().normalize("NFC");
+  const matching = state.projects.filter(project => usable(project) && Date.parse(project.createdAt) <= from &&
+    title && project.title.trim().normalize("NFC") === title);
+  const defaultId = "external-focus-habit";
+  let project = matching.length === 1 ? matching[0] : state.projects.find(item => usable(item) && item.id.startsWith(defaultId + ":"));
+  if (!project) {
+    const id = defaultId + ":" + receipt;
+    const createdAt = new Date(from).toISOString();
+    project = {
+      id, title: "外部专注", kind: "habit", settlementIndex: nextSettlementIndex(state), blueprintId: settlement.defaultBlueprint(),
+      importedBlueprint: null, createdAt, status: state.activeProjectId === null ? "active" : "paused",
+      subtaskStructureLocked: true, subtasks: [], habit: { cycleNumber: 1, targetRounds, completedFocusSessionIds: [], awaitingNextBuilding: false },
+    };
+    if (state.projects.length === 0 && state.worldSettings.worldSeed === "world-default") state.worldSettings.worldSeed = `world-${id}`;
+    if (state.activeProjectId === null) state.activeProjectId = id;
+    state.projects.push(project);
+    state.projectConditions.push({ projectId: id, conditionBasisPoints: 10000,
+      inactivityAnchorAt: state.decayPolicy.enabled ? createdAt : null, assessedMissedPlannedDays: 0 });
+  }
+  const habit = requireHabit(project);
+  const created = Date.parse(project.createdAt);
+  // A preference change starts a new tally at its new duration. Previously
+  // earned rounds and the original elapsed time stay in history.
+  let pending = state.focusHistory.reduce((total, row) => total + (row.projectId === project.id && row.external?.roundMs === roundMs
+    ? row.actualDurationMs - (row.external.credited ? roundMs : 0) : 0), 0);
+  if (!Number.isSafeInteger(pending) || pending < 0 || pending >= roundMs) throw new Error("Invalid external focus remainder");
+  let rounds = 0, focusMs = 0, part = 0;
+  const events: DomainEvent[] = [];
+  const completedDays = new Set<string>();
+  const timeZone = state.calendar.timeZone;
+  const prefix = "external-focus:" + receipt + ":";
+  if (state.focusHistory.some(item => item.id.startsWith(prefix))) throw new Error("Repeated external focus settlement");
+  for (const interval of intervals) {
+    // A delayed record can precede the automatic habit's first observation.
+    if (interval.from < created) project.createdAt = new Date(Math.min(Date.parse(project.createdAt), interval.from)).toISOString();
+    let cursor = interval.from;
+    while (cursor < interval.to) {
+      const length = Math.min(interval.to - cursor, roundMs - pending);
+      pending += length;
+      focusMs += length;
+      const endedAt = new Date(cursor + length).toISOString();
+      const day = localDateOf(endedAt, timeZone);
+      const row: FocusSession = {
+        id: prefix + part++, projectId: project.id, subtaskId: null, startedAt: new Date(cursor).toISOString(), endsAt: endedAt,
+        plannedDurationMs: length, timeZoneAtStart: timeZone, status: "completed", completedAt: endedAt,
+        completedLocalDate: day, actualDurationMs: length, external: { source, roundMs, credited: pending === roundMs },
+      };
+      state.focusHistory.push(row);
+      if (pending === roundMs) {
+        if (habit.awaitingNextBuilding) {
+          if (project.id.startsWith(defaultId + ":")) project.blueprintId = settlement.defaultBlueprint();
+          habit.targetRounds = targetRounds;
+          habit.awaitingNextBuilding = false;
+        }
+        advanceHabitBuilding(state, project, row, events);
+        completedDays.add(day);
+        rounds++;
+        pending = 0;
+      }
+      cursor += length;
+    }
+  }
+  state.focusHistory.sort((a, b) => a.startedAt.localeCompare(b.startedAt));
+  for (const date of completedDays) {
+    const completed = state.focusHistory.filter(countsAsFocusRound).filter(row => row.completedLocalDate === date);
+    const threshold = completed[dailyGoalForDate(state, date).targetPomodoros - 1];
+    if (threshold) reachGoalForDate(state, date, threshold.completedAt, events, threshold.projectId);
+  }
+  return { state, rounds, focusMs, projectId: project.id };
 }
 
 function handle(state: DomainState, command: DomainCommand, clock: Clock): CommandResult {
@@ -921,6 +1013,10 @@ function advanceHabitBuilding(state: DomainState, project: Project, session: Foc
   if (state.habitBuildings.some((building) => building.id === buildingId)) throw new Error("Habit building ID already exists");
   const completedSettlementIndex = project.settlementIndex;
   project.settlementIndex = nextSettlementIndex(state);
+  const completedAt = session.external
+    ? state.focusHistory.filter(row => habit.completedFocusSessionIds.includes(row.id))
+      .reduce((latest, row) => { const end = row.status === "interrupted" ? row.interruptedAt : row.completedAt; return end > latest ? end : latest; }, session.endsAt)
+    : session.status === "interrupted" ? session.interruptedAt : session.completedAt;
   state.habitBuildings.push({
     id: buildingId,
     habitProjectId: project.id,
@@ -931,7 +1027,7 @@ function advanceHabitBuilding(state: DomainState, project: Project, session: Foc
     importedBlueprint: structuredClone(project.importedBlueprint),
     targetRounds: habit.targetRounds,
     focusSessionIds: [...habit.completedFocusSessionIds],
-    completedAt: session.status === "interrupted" ? session.interruptedAt : session.completedAt,
+    completedAt,
   });
   habit.cycleNumber += 1;
   habit.completedFocusSessionIds = [];
