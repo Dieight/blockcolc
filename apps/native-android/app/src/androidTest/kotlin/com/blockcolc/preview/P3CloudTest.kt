@@ -1,6 +1,5 @@
 package com.blockcolc.preview
 
-import android.os.SystemClock
 import androidx.test.platform.app.InstrumentationRegistry
 import com.blockcolc.cloud.CloudTransport
 import com.blockcolc.domain.DomainEngine
@@ -85,13 +84,11 @@ class P3CloudTest {
             assertEquals(runtime.latest.preferences.canonical(),StrictJson.render(sharedPreferences))
             val execution=api("execution/claim","POST",JSONObject().put("generation",head.getJSONObject("execution").getLong("generation")).put("takeover",true))
             val key="quickNotes/tablet-note";val note=StrictJson.render(JSONObject().put("ordinal",0).put("value",JSONObject().put("id","tablet-note").put("text","来自另一台设备").put("completed",false).put("createdAt",com.blockcolc.domain.DomainTime.format(System.currentTimeMillis()))))
-            api("workspace/commit","POST",JSONObject().put("requestId",UUID.randomUUID().toString()).put("epoch",head.getString("epoch")).put("execution",execution.getLong("generation"))
+            api("sync/commit","POST",JSONObject().put("requestId",UUID.randomUUID().toString()).put("epoch",head.getString("epoch")).put("execution",execution.getLong("generation"))
                 .put("changes",org.json.JSONArray().put(JSONObject().put("key",key).put("before",JSONObject.NULL).put("canonical",note))))
             val before=client.snapshot().lastSync!!;client.refresh();await{!client.snapshot().busy&&(client.snapshot().lastSync!=before||client.snapshot().error!=null)}
             assertNull(client.snapshot().error);assertFalse(client.snapshot().owned);assertTrue(runtime.latest.notes.any{it.id=="tablet-note"})
             assertEquals(CloudReceipt(CloudAction.SYNC,CloudResult.COMPLETE),client.snapshot().receipt)
-            val blocked="blocked-"+UUID.randomUUID();runtime.startPlan(blocked);await{runtime.latest.receipts.any{it.id==blocked}}
-            assertFalse(runtime.latest.receipts.last{it.id==blocked}.saved);assertNull(runtime.testRead().get().domain.activeFocusSession())
             val noteRequest="note-"+UUID.randomUUID();runtime.command(DomainEngine.command("AddQuickNote","noteId" to "phone-note","text" to "offline first"),noteRequest)
             await{runtime.latest.receipts.any{it.id==noteRequest}}
             val old=client.snapshot().lastSync!!;client.refresh();await{!client.snapshot().busy&&(client.snapshot().lastSync!=old||client.snapshot().error!=null)};assertNull(client.snapshot().error)
@@ -106,18 +103,13 @@ class P3CloudTest {
             // continuation grant. A deliberate live takeover above does.
             assertNull(runtime.testRead().get().recovery.plan)
             assertNull(runtime.testRead().get().recovery.automatic)
-            if(checkPresence)verifyLivePresenceDuringWorkspaceSync(runtime,client,transport,project.id,task)
+            if(checkPresence)verifyPersistedFocus(runtime,client,{ api(it) },project.id,task)
             await{!client.snapshot().busy}
             val remote=api("workspace")
             api("workspace/replace","POST",JSONObject().put("revision",remote.getLong("revision"))
                 .put("entries",remote.getJSONObject("entries")).put("requestId",UUID.randomUUID().toString()))
-            val lastSuccessfulSync=client.snapshot().lastSync
             client.refresh()
-            await{client.snapshot().receipt==CloudReceipt(CloudAction.SYNC,CloudResult.NEEDS_CHOICE,"WORKSPACE_REPLACED")}
-            assertFalse(client.snapshot().busy)
-            assertEquals(lastSuccessfulSync,client.snapshot().lastSync)
-            client.choose("cloud")
-            await{client.snapshot().receipt==CloudReceipt(CloudAction.USE_CLOUD,CloudResult.COMPLETE)}
+            await{client.snapshot().receipt==CloudReceipt(CloudAction.SYNC,CloudResult.COMPLETE)}
             assertFalse(client.snapshot().choiceRequired)
             verifyDeviceLogoutAndReplacement(runtime,client,transport,directory,token,project.id,task)
             val originalDomain=runtime.testRead().get().domain.sha256
@@ -160,8 +152,8 @@ class P3CloudTest {
         val replaced=api("workspace")
         api("execution/claim","POST",JSONObject().put("generation",replaced.getJSONObject("execution").getLong("generation")))
         client.refresh()
-        await{!client.snapshot().busy&&client.snapshot().choiceRequired}
-        assertEquals("WORKSPACE_REPLACED",client.snapshot().error)
+        await{!client.snapshot().busy&&client.snapshot().receipt==CloudReceipt(CloudAction.SYNC,CloudResult.COMPLETE)}
+        assertFalse(client.snapshot().choiceRequired)
         assertEquals(listOf(login.device),client.snapshot().devices.map{it.getString("id")})
         assertTrue(client.snapshot().owned)
 
@@ -172,8 +164,8 @@ class P3CloudTest {
         val stop="merge-stop-"+UUID.randomUUID()
         runtime.decideFocus(FocusDecision.Interrupt(FocusEndReason.OTHER),stop)
         await{runtime.latest.receipts.any{it.id==stop&&it.saved}}
-        client.choose("merge")
-        await{!client.snapshot().busy&&client.snapshot().receipt==CloudReceipt(CloudAction.MERGE,CloudResult.COMPLETE)}
+        client.refresh()
+        await{!client.snapshot().busy&&client.snapshot().receipt==CloudReceipt(CloudAction.SYNC,CloudResult.COMPLETE)}
         assertTrue(client.snapshot().owned);assertFalse(client.snapshot().choiceRequired)
         val merged=api("workspace")
         assertTrue(merged.getJSONObject("entries").has("focusHistory/$active"))
@@ -193,37 +185,28 @@ class P3CloudTest {
         }
     }
 
-    private fun verifyLivePresenceDuringWorkspaceSync(runtime:PreviewRuntime,client:NativeCloudController,transport:CloudTransport,project:String,task:String){
-        fun status()=transport.request("/v1/test/presence",timeoutMillis=3000)
-        fun hold(action:String)=transport.request("/v1/test/presence-hold","POST",body=JSONObject().put("action",action).toString())
-        val restoredAt=client.snapshot().lastSync
+    private fun verifyPersistedFocus(runtime:PreviewRuntime,client:NativeCloudController,api:(String)->JSONObject,project:String,task:String){
+        val begin="live-start-"+UUID.randomUUID()
+        runtime.beginFocus(FocusDraft(project,task,PlanMode.ROUNDS,DraftSchedule.Rounds(1)),begin)
+        await{runtime.latest.receipts.any{it.id==begin&&it.saved}}
+        val active=runtime.testRead().get().domain.activeFocusSession()!!.getString("id")
         client.refresh()
-        await(5000){client.snapshot().lastSync!=restoredAt&&client.snapshot().owned&&!client.snapshot().busy}
-        hold("hold")
-        try{
-            client.refresh()
-            await(5000){status().getBoolean("held")}
-            val begin="live-start-"+UUID.randomUUID()
-            val started=SystemClock.elapsedRealtime()
-            runtime.beginFocus(FocusDraft(project,task,PlanMode.ROUNDS,DraftSchedule.Rounds(1)),begin)
-            await(5000){runtime.latest.receipts.any{it.id==begin&&it.saved}}
-            await(5000){!status().getJSONObject("snapshot").isNull("currentName")}
-            val startVisible=SystemClock.elapsedRealtime()-started
-            val active=status()
-            assertTrue(active.getBoolean("held"))
-            val deadline=runtime.testRead().get(5,TimeUnit.SECONDS).domain.activeFocusSession()!!.getString("endsAt")
-            assertEquals(deadline,active.getJSONObject("snapshot").getString("estimatedEndsAt"))
-            val stop="live-stop-"+UUID.randomUUID()
-            val stopped=SystemClock.elapsedRealtime()
-            runtime.decideFocus(FocusDecision.Interrupt(FocusEndReason.OTHER),stop)
-            await(5000){runtime.latest.receipts.any{it.id==stop&&it.saved}}
-            await(5000){status().getJSONObject("snapshot").isNull("currentName")}
-            val stopVisible=SystemClock.elapsedRealtime()-stopped
-            val idle=status()
-            assertTrue(idle.getBoolean("held"))
-            File(context.filesDir,"p3-cloud-presence.json").writeText(JSONObject()
-                .put("workspaceHeld",true).put("startVisibleWithinMs",startVisible)
-                .put("stopVisibleWithinMs",stopVisible).toString())
-        }finally{hold("release")}
+        await{client.snapshot().receipt==CloudReceipt(CloudAction.SYNC,CloudResult.COMPLETE)}
+        val live=api("sync/head")
+        assertTrue(live.getBoolean("focusLocked"))
+        assertEquals(active,JSONObject(api("workspace").getJSONObject("entries")
+            .getString("\$/activeFocusSession")).getString("id"))
+
+        val stop="live-stop-"+UUID.randomUUID()
+        runtime.decideFocus(FocusDecision.Interrupt(FocusEndReason.OTHER),stop)
+        await{runtime.latest.receipts.any{it.id==stop&&it.saved}}
+        client.refresh()
+        await{client.snapshot().receipt==CloudReceipt(CloudAction.SYNC,CloudResult.COMPLETE)}
+        val entries=api("workspace").getJSONObject("entries")
+        assertEquals("null",entries.getString("\$/activeFocusSession"))
+        assertTrue(entries.has("focusHistory/$active"))
+        val settled=api("sync/head")
+        assertTrue(settled.getJSONObject("packages").getJSONObject("focus").getLong("revision")>
+            live.getJSONObject("packages").getJSONObject("focus").getLong("revision"))
     }
 }

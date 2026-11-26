@@ -53,7 +53,30 @@ data class CloudWorkspace(val entries:Map<String,String>,val assets:Map<String,S
     }
 }
 
-data class CloudBaseline(val account:String,val epoch:String,val revision:Long,val hashes:Map<String,String>,val execution:Long=0){
-    fun canonical()=StrictJson.render(JSONObject().put("account",account).put("epoch",epoch).put("revision",revision).put("hashes",JSONObject(hashes)).put("execution",execution))
-    companion object {fun parse(text:String):CloudBaseline {val x=JSONObject(text);val hashes=x.getJSONObject("hashes");return CloudBaseline(x.getString("account"),x.getString("epoch"),x.getLong("revision"),hashes.keys().asSequence().associateWith{hashes.getString(it)},x.optLong("execution"))}}
+data class CloudPackageHead(val revision: Long, val hash: String) {
+    fun json() = JSONObject().put("revision", revision).put("hash", hash)
+
+    companion object {
+        fun readAll(document: JSONObject?): Map<String, CloudPackageHead> {
+            if(document==null)return emptyMap()
+            return document.keys().asSequence().associateWith { name ->
+                val item = document.getJSONObject(name)
+                CloudPackageHead(item.getLong("revision"), item.getString("hash"))
+            }
+        }
+    }
+}
+
+data class CloudBaseline(val account:String,val epoch:String,val revision:Long,val hashes:Map<String,String>,
+    val execution:Long=0, val packages:Map<String,CloudPackageHead> = emptyMap()){
+    fun canonical()=StrictJson.render(JSONObject().put("account",account).put("epoch",epoch).put("revision",revision)
+        .put("hashes",JSONObject(hashes)).put("execution",execution).put("packages",JSONObject(packages.mapValues { it.value.json() })))
+    companion object {
+        fun parse(text:String):CloudBaseline {
+            val x=JSONObject(text);val hashes=x.getJSONObject("hashes")
+            return CloudBaseline(x.getString("account"),x.getString("epoch"),x.getLong("revision"),
+                hashes.keys().asSequence().associateWith{hashes.getString(it)},x.optLong("execution"),
+                CloudPackageHead.readAll(x.optJSONObject("packages")))
+        }
+    }
 }

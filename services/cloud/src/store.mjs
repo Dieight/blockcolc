@@ -5,6 +5,7 @@ import { mkdirSync,writeFileSync,readFileSync,existsSync,renameSync,unlinkSync,r
 import { join } from 'node:path';
 import { ApiError,fail,sha,canonical,hashPattern,assembleDomain,assetKeys,validateExtra,validateKey,validatePlanDomain,sharing,defaultSharing,accountDate } from './wire.mjs';
 import { Integrations } from './integrations.mjs';
+import { SyncV2, focusEffect, focusEntry, hasOverlappingHistory } from './sync-v2.mjs';
 const derive=promisify(scrypt),DAY=86400000;
 const random=()=>randomBytes(32).toString('base64url');
 const cleanDevice=(id,name)=>{fail(typeof id==='string'&&/^[a-zA-Z0-9_-]{16,80}$/.test(id),'INVALID_DEVICE');fail(typeof name==='string'&&name.length>0&&name.length<=64);};
@@ -18,7 +19,10 @@ export class CloudStore {
       CREATE TABLE IF NOT EXISTS sessions(token TEXT PRIMARY KEY,user TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,device TEXT NOT NULL,expires INTEGER NOT NULL);
       CREATE INDEX IF NOT EXISTS sessions_device ON sessions(user,device,expires);
       CREATE TABLE IF NOT EXISTS heads(user TEXT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,epoch TEXT NOT NULL,revision INTEGER NOT NULL DEFAULT 0,owner TEXT,execution INTEGER NOT NULL DEFAULT 0,changed INTEGER NOT NULL);
-      CREATE TABLE IF NOT EXISTS entries(user TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,key TEXT NOT NULL,canonical TEXT NOT NULL,sha TEXT NOT NULL,PRIMARY KEY(user,key));
+      CREATE TABLE IF NOT EXISTS sync_entries(user TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,key TEXT NOT NULL,canonical TEXT NOT NULL,sha TEXT NOT NULL,
+        package TEXT GENERATED ALWAYS AS (CASE WHEN key IN ('$/activeFocusSession','@plan') OR key GLOB 'focusHistory/*' OR key GLOB 'progressReports/*' THEN 'focus' ELSE 'building' END) STORED,
+        PRIMARY KEY(user,key));
+      CREATE INDEX IF NOT EXISTS sync_entries_package ON sync_entries(user,package,key);
       CREATE TABLE IF NOT EXISTS receipts(user TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,id TEXT NOT NULL,request_sha TEXT NOT NULL,result TEXT NOT NULL,created INTEGER NOT NULL,PRIMARY KEY(user,id));
       CREATE TABLE IF NOT EXISTS assets(user TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,sha TEXT NOT NULL,bytes INTEGER NOT NULL,created INTEGER NOT NULL,PRIMARY KEY(user,sha));
       CREATE TABLE IF NOT EXISTS backup_blocks(user TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,sha TEXT NOT NULL,canonical TEXT NOT NULL,PRIMARY KEY(user,sha));
@@ -30,6 +34,7 @@ export class CloudStore {
     if(!this.db.prepare('PRAGMA table_info(external_sources)').all().some(c=>c.name==='remote_account'))this.db.exec("ALTER TABLE external_sources ADD COLUMN remote_account TEXT NOT NULL DEFAULT ''");
     this.authInFlight=0;
     this.integrations=new Integrations(this);
+    this.sync=new SyncV2(this);
   }
   transaction(work){this.db.exec('BEGIN IMMEDIATE');try{const result=work();this.db.exec('COMMIT');return result;}catch(error){this.db.exec('ROLLBACK');throw error;}}
   close(){this.db.close();}
@@ -72,8 +77,11 @@ export class CloudStore {
     this.db.prepare('DELETE FROM sessions WHERE user=? AND device=?').run(user,device);
     this.db.prepare('INSERT INTO sessions VALUES(?,?,?,?)').run(sha(token),user,device,now+90*DAY);
   });return {token,account:this.account(user)};}
-  authenticate(token){fail(typeof token==='string'&&token.length<=128,'UNAUTHORIZED',401);const s=this.db.prepare('SELECT * FROM sessions WHERE token=? AND expires>?').get(sha(token),this.clock());
-    fail(s,'UNAUTHORIZED',401);this.db.prepare('UPDATE devices SET last_seen=? WHERE user=? AND id=?').run(this.clock(),s.user,s.device);return s;}
+  authenticate(token,{touch=true}={}){fail(typeof token==='string'&&token.length<=128,'UNAUTHORIZED',401);const now=this.clock();
+    const s=this.db.prepare('SELECT * FROM sessions WHERE token=? AND expires>?').get(sha(token),now);
+    fail(s,'UNAUTHORIZED',401);
+    if(touch)this.db.prepare('UPDATE devices SET last_seen=? WHERE user=? AND id=? AND last_seen<?').run(now,s.user,s.device,now-300000);
+    return s;}
   assertSession(s){const row=this.db.prepare('SELECT * FROM sessions WHERE token=?').get(s.token);fail(row&&row.user===s.user&&row.device===s.device&&row.expires>this.clock(),'UNAUTHORIZED',401);}
   logout(s){this.transaction(()=>{this.assertSession(s);this.removeDevice(s.user,s.device);});}
   devices(s){return this.db.prepare(`SELECT d.id,d.name,d.last_seen FROM devices d WHERE d.user=? AND EXISTS
@@ -90,7 +98,10 @@ export class CloudStore {
   updateAccount(s,input){this.assertSession(s);const current=this.account(s.user),policy=input.sharing==null?current.sharing:sharing(input.sharing);
     const name=input.name??current.name,zone=input.timeZone??current.timeZone,enabled=input.friendsEnabled??current.friendsEnabled;
     fail(typeof enabled==='boolean'&&typeof name==='string'&&name.trim().length>0&&name.length<=64);accountDate(this.clock(),zone);
-    this.db.prepare('UPDATE accounts SET name=?,zone=?,sharing=?,friends_enabled=? WHERE id=?').run(name.trim(),zone,canonical(policy),enabled?1:0,s.user);
+    this.transaction(()=>{
+      this.db.prepare('UPDATE accounts SET name=?,zone=?,sharing=?,friends_enabled=? WHERE id=?').run(name.trim(),zone,canonical(policy),enabled?1:0,s.user);
+      if(zone!==current.timeZone)this.sync.refreshDayTotals(s.user,zone);
+    });
     // Filter friends' access on read so permission changes apply immediately.
     return this.account(s.user);}
   async changePassword(session,input){
@@ -117,7 +128,7 @@ export class CloudStore {
       renewViewer(salt);
     });
   }
-  entries(user){return Object.fromEntries(this.db.prepare('SELECT key,canonical FROM entries WHERE user=? ORDER BY key').all(user).map(r=>[r.key,r.canonical]));}
+  entries(user){return Object.fromEntries(this.db.prepare('SELECT key,canonical FROM sync_entries WHERE user=? ORDER BY key').all(user).map(r=>[r.key,r.canonical]));}
   head(user){const h=this.db.prepare('SELECT * FROM heads WHERE user=?').get(user);fail(h,'UNAUTHORIZED',401);return h;}
   assetPath(user,key){fail(hashPattern.test(key));return join(this.directory,'assets',user,key);}
   putAsset(s,key,body){this.assertSession(s);fail(hashPattern.test(key)&&Buffer.isBuffer(body));fail(body.length<=100*1024*1024,'ASSET_TOO_LARGE',413);fail(sha(body)===key,'ASSET_DIGEST');
@@ -151,41 +162,67 @@ export class CloudStore {
     this.integrations.forgetNativeReservations(s.user);
     if(!this.integrations.externalBusy(s.user))this.db.prepare('DELETE FROM presence WHERE user=?').run(s.user);
     return {owner:null,generation:h.execution+1};});}
-  commit(s,input){this.assertSession(s);fail(input&&typeof input.requestId==='string'&&/^[a-zA-Z0-9_:-]{8,128}$/.test(input.requestId));
+  commit(s,input,{protocol2=false}={}){this.assertSession(s);fail(input&&typeof input.requestId==='string'&&/^[a-zA-Z0-9_:-]{8,128}$/.test(input.requestId));
     fail(Array.isArray(input.changes)&&input.changes.length<=100000);const requestSha=sha(canonical(input));
     return this.transaction(()=>{
+      const response=result=>protocol2?{...result,state:this.sync.pull(s,{epoch:input.knownEpoch,known:input.known??{}})}:result;
       const replay=this.db.prepare('SELECT request_sha,result FROM receipts WHERE user=? AND id=?').get(s.user,input.requestId);
-      if(replay){fail(replay.request_sha===requestSha,'REQUEST_ID_REUSED',409);return JSON.parse(replay.result);}
+      if(replay){fail(replay.request_sha===requestSha,'REQUEST_ID_REUSED',409);return response(JSON.parse(replay.result));}
       this.integrations.expire(s.user,this.clock());
       const h=this.head(s.user);fail(h.epoch===input.epoch,'WORKSPACE_REPLACED',409);
-      const entries=this.entries(s.user),conflicts=[],seen=new Set();
+      const previous=this.entries(s.user),conflicts=[],seen=new Set(),accepted=[];
       for(const change of input.changes){
         validateKey(change.key);fail(!seen.has(change.key));seen.add(change.key);
         fail(change.before===null||hashPattern.test(change.before));fail(change.canonical===null||typeof change.canonical==='string');
-        const current=entries[change.key],actual=current==null?null:sha(current);
+        const current=previous[change.key]??null;
+        if(change.canonical===current&&protocol2)continue;
+        const actual=current==null?null:sha(current);
         if(actual!==change.before&&change.canonical!==current)conflicts.push(change.key);
-        if(change.canonical==null)delete entries[change.key];else{fail(Buffer.byteLength(change.canonical)<=4*1024*1024,'ENTITY_TOO_LARGE',413);JSON.parse(change.canonical);entries[change.key]=change.canonical;}
+        else accepted.push(change);
       }
-      if(conflicts.length)throw new ApiError(409,'SYNC_CONFLICT',{keys:conflicts});
-      const protectedChange=input.changes.some(c=>c.key==='$/activeFocusSession'||c.key==='@plan'||c.key.startsWith('focusHistory/')||c.key.startsWith('progressReports/'));
-      if(protectedChange){
-        fail(h.owner===s.device&&input.execution===h.execution,'EXECUTION_CHANGED',409);
+      if(conflicts.length&&!protocol2)throw new ApiError(409,'SYNC_CONFLICT',{keys:conflicts});
+      let protectedChange=accepted.some(c=>focusEntry(c.key))||conflicts.some(focusEntry);
+      let canAcquire=protocol2&&protectedChange&&h.owner!==s.device&&!this.sync.locked(s.user);
+      let changes=accepted;
+      if(protocol2&&protectedChange&&(conflicts.some(focusEffect)||h.owner!==s.device&&!canAcquire||input.execution!==h.execution||
+        this.integrations.externalBusy(s.user)||hasOverlappingHistory(changes,previous))){
+        // A focus transition and its dependent effects form one transaction.
+        for(const change of accepted)if(focusEffect(change.key))conflicts.push(change.key);
+        changes=accepted.filter(change=>!focusEffect(change.key));
+        protectedChange=false;
+        canAcquire=false;
+      }
+      if(protectedChange&&changes.length){
+        fail((h.owner===s.device||canAcquire)&&input.execution===h.execution,'EXECUTION_CHANGED',409);
         fail(!this.integrations.externalBusy(s.user),'EXTERNAL_FOCUS_IN_PROGRESS',409);
-        this.integrations.assertNativeIntervals(s.user,input.changes);
+        this.integrations.assertNativeIntervals(s.user,changes);
+      }
+      const entries={...previous};
+      for(const change of changes){
+        if(change.canonical==null)delete entries[change.key];
+        else{fail(Buffer.byteLength(change.canonical)<=4*1024*1024,'ENTITY_TOO_LARGE',413);JSON.parse(change.canonical);entries[change.key]=change.canonical;}
+      }
+      if(protocol2&&!changes.length){
+        const result={epoch:h.epoch,revision:h.revision,winners:Object.fromEntries(conflicts.map(key=>[key,previous[key]??null]))};
+        this.db.prepare('INSERT INTO receipts VALUES(?,?,?,?,?)').run(s.user,input.requestId,requestSha,canonical(result),this.clock());
+        return response(result);
       }
       for(const key of ['@preferences','@plan'])if(entries[key]!=null)validateExtra(key,entries[key]);
       validatePlanDomain(entries,assembleDomain(entries,key=>this.asset(s.user,key)));
       const size=Object.values(entries).reduce((sum,text)=>sum+Buffer.byteLength(text),0);fail(size<=100*1024*1024,'WORKSPACE_TOO_LARGE',413);
-      for(const change of input.changes){if(change.canonical==null)this.db.prepare('DELETE FROM entries WHERE user=? AND key=?').run(s.user,change.key);
-        else this.db.prepare('INSERT INTO entries VALUES(?,?,?,?) ON CONFLICT(user,key) DO UPDATE SET canonical=excluded.canonical,sha=excluded.sha').run(s.user,change.key,change.canonical,sha(change.canonical));}
-      if(protectedChange&&(JSON.parse(entries['$/activeFocusSession']??'null')||JSON.parse(entries['@plan']??'{}').plan?.hasStarted||input.changes.some(c=>c.key.startsWith('focusHistory/')))){
+      if(canAcquire)this.db.prepare('UPDATE heads SET owner=?,execution=execution+1 WHERE user=?').run(s.device,s.user);
+      for(const change of changes){if(change.canonical==null)this.db.prepare('DELETE FROM sync_entries WHERE user=? AND key=?').run(s.user,change.key);
+        else this.db.prepare('INSERT INTO sync_entries VALUES(?,?,?,?) ON CONFLICT(user,key) DO UPDATE SET canonical=excluded.canonical,sha=excluded.sha').run(s.user,change.key,change.canonical,sha(change.canonical));}
+      if(protectedChange&&(JSON.parse(entries['$/activeFocusSession']??'null')||JSON.parse(entries['@plan']??'{}').plan?.hasStarted||changes.some(c=>c.key.startsWith('focusHistory/')))){
         this.integrations.forgetNativeReservations(s.user);
       }
       this.db.prepare('UPDATE heads SET revision=revision+1,changed=? WHERE user=?').run(this.clock(),s.user);
+      this.sync.record(s.user,changes.map(change=>change.key));
       const result={epoch:h.epoch,revision:h.revision+1};
+      if(protocol2)result.winners=Object.fromEntries(conflicts.map(key=>[key,previous[key]??null]));
       this.db.prepare('INSERT INTO receipts VALUES(?,?,?,?,?)').run(s.user,input.requestId,requestSha,canonical(result),this.clock());
       this.db.prepare('DELETE FROM receipts WHERE user=? AND created<?').run(s.user,this.clock()-30*DAY);
-      return result;
+      return response(result);
     });
   }
   replace(s,{revision,entries,requestId,execution}){this.assertSession(s);fail(Number.isSafeInteger(revision)&&entries&&typeof entries==='object'&&!Array.isArray(entries));
@@ -201,10 +238,12 @@ export class CloudStore {
       const h=this.head(s.user);fail(h.revision===revision,'SYNC_CONFLICT',409);
       if(keepExecution)fail(Number.isSafeInteger(execution)&&h.execution===execution&&h.owner===s.device,'EXECUTION_CHANGED',409);
       for(const key of ['@preferences','@plan'])if(entries[key]!=null)validateExtra(key,entries[key]);validatePlanDomain(entries,assembleDomain(entries,k=>this.asset(s.user,k)));
-      this.db.prepare('DELETE FROM entries WHERE user=?').run(s.user);
-      for(const [key,value]of Object.entries(entries))this.db.prepare('INSERT INTO entries VALUES(?,?,?,?)').run(s.user,key,value,sha(value));
+      const oldKeys=Object.keys(this.entries(s.user));
+      this.db.prepare('DELETE FROM sync_entries WHERE user=?').run(s.user);
+      for(const [key,value]of Object.entries(entries))this.db.prepare('INSERT INTO sync_entries VALUES(?,?,?,?)').run(s.user,key,value,sha(value));
       this.db.prepare('UPDATE heads SET epoch=?,revision=revision+1,owner=?,execution=execution+1,changed=? WHERE user=?').run(randomUUID(),keepExecution?s.device:null,this.clock(),s.user);
       this.integrations.forgetNativeReservations(s.user);
+      this.sync.record(s.user,[...new Set([...oldKeys,...Object.keys(entries)])],{reset:true});
       this.db.prepare('DELETE FROM presence WHERE user=?').run(s.user);const result=this.workspace(s);
       this.db.prepare('INSERT INTO receipts VALUES(?,?,?,?,?)').run(s.user,requestId,requestSha,canonical(result),this.clock());return result;});
   }
@@ -271,8 +310,19 @@ export class CloudStore {
     const expires=timed?Math.min(now+90000,Date.parse(value.estimatedEndsAt)):now+90000;
     this.db.prepare('INSERT INTO presence VALUES(?,?,?) ON CONFLICT(user) DO UPDATE SET value=excluded.value,expires=excluded.expires').run(s.user,canonical({...value,updatedAt:new Date(now).toISOString()}),expires);
     return {ok:true};}
+  liveStatus(user){
+    const row=this.db.prepare('SELECT value,expires FROM presence WHERE user=?').get(user);
+    const external=row?{value:JSON.parse(row.value),persistent:false,expires:row.expires}:null;
+    const saved=this.sync.live(user);
+    if(external&&external.expires>this.clock()&&(external.value.externalState||
+      (saved?.value.updatedAt??'')<=external.value.updatedAt))return external;
+    return saved??external;
+  }
   dayTotals(user,zone){
-    const history=this.db.prepare("SELECT canonical FROM entries WHERE user=? AND key LIKE 'focusHistory/%'").all(user),totals={};
+    return this.sync.dayTotals(user,zone)??this.calculateDayTotals(user,zone);
+  }
+  calculateDayTotals(user,zone){
+    const history=this.db.prepare("SELECT canonical FROM sync_entries WHERE user=? AND key LIKE 'focusHistory/%'").all(user),totals={};
     for(const record of history){const value=JSON.parse(record.canonical).value;let cursor=Date.parse(value.startedAt),end=cursor+value.actualDurationMs;
       while(cursor<end){const day=accountDate(cursor,zone);let next=end;
         if(accountDate(end-1,zone)!==day){let low=cursor+1,high=Math.min(end,cursor+30*3600000);
@@ -320,9 +370,9 @@ export class CloudStore {
     const override=this.db.prepare('SELECT value FROM friend_sharing WHERE user=? AND friend=?').get(s.user,id);base.sharing=override?JSON.parse(override.value):null;
     if(row.status!=='accepted'||!account.friendsEnabled)return base;
     const policy=this.visibleFriendPolicy(account,s.user);
-    const live=this.db.prepare('SELECT value,expires FROM presence WHERE user=?').get(id),snapshot=live?JSON.parse(live.value):null;
+    const live=this.liveStatus(id),snapshot=live?.value;
     base.visible=policy;if(policy.time)base.updatedAt=snapshot?.updatedAt??null;
-    if(live&&live.expires>this.clock()){
+    if(live&&(live.persistent||live.expires>this.clock())){
       if(policy.status){
         base.focusing=snapshot.currentName!=null&&snapshot.externalState!=='rest';
         if(snapshot.sourceName)base.source={kind:'integration',name:snapshot.sourceName};
@@ -330,13 +380,14 @@ export class CloudStore {
       }
       if(policy.name)base.currentName=snapshot.externalState?snapshot.taskName:snapshot.currentName;
       if(policy.time){base.startedAt=snapshot.startedAt;base.endsAt=snapshot.estimatedEndsAt;
+        if(snapshot.estimated)base.estimated=true;
         if(snapshot.currentName!=null&&snapshot.estimatedEndsAt===null)base.waitingForEnd=true;
       }
     }else if(policy.status||policy.name||policy.time)base.stale=true;
     if(policy.daily){
       if(summary){
         const head=this.head(id);
-        base.historyRevision=[head.epoch,head.revision,account.timeZone,accountDate(this.clock(),account.timeZone)].join(':');
+        base.historyRevision=[head.epoch,this.sync.packageHeads(id).focus.revision,account.timeZone,accountDate(this.clock(),account.timeZone)].join(':');
       }else base.days=this.friendDayRows(account).slice(0,366);
     }
     return base;

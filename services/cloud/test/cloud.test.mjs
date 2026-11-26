@@ -213,7 +213,7 @@ test('multiple friend summaries keep history behind separate per-friend disclosu
   for(let i=0;i<370;i++){
     const startedAt=new Date(Date.UTC(2026,10,15,8)-i*86400000).toISOString();
     const wire=canonical({ordinal:i,value:{startedAt,actualDurationMs:60000}});
-    store.db.prepare('INSERT INTO entries VALUES(?,?,?,?)').run(shared.user,'focusHistory/day-'+i,wire,sha(wire));
+    store.db.prepare('INSERT INTO sync_entries VALUES(?,?,?,?)').run(shared.user,'focusHistory/day-'+i,wire,sha(wire));
   }
   const server=createCloudServer(store);
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));

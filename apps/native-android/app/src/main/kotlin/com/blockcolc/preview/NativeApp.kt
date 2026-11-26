@@ -244,6 +244,7 @@ private val NATIVE_UI_PROCESS=java.util.UUID.randomUUID().toString()
     var friendsOpen by rememberSaveable{mutableStateOf(false)}
     DisposableEffect(cloud){val remove=cloud.subscribe{cloudView=it};onDispose{remove()}}
     LaunchedEffect(s.ready){if(s.ready)cloud.start()}
+    LaunchedEffect(cloud,foreground){cloud.foreground(foreground)}
     NativeCloudPanels(cloud,cloudView,accountOpen,friendsOpen,{accountOpen=false},{friendsOpen=false})
     val backdrop=LocalNativeBackdrop.current
     var everReady by remember{mutableStateOf(false)}
@@ -275,6 +276,8 @@ private val NATIVE_UI_PROCESS=java.util.UUID.randomUUID().toString()
     var swipeJob by remember{mutableStateOf<kotlinx.coroutines.Job?>(null)}
     val pageMoving=page!=settledPage||swipeTarget!=null
     fun clearSwipe(){swipeJob?.cancel();swipeJob=null;swipeSettling=false;swipeTarget=null;swipeOffset.floatValue=0f}
+    val showSyncIssue=page=="timer"&&cloudView.account!=null&&cloudView.syncIssue!=null
+    LaunchedEffect(showSyncIssue){if(showSyncIssue)clearSwipe()}
     val pageOrder=listOf("timer","tasks","statistics","settings")
     val pageDirection=if(pageOrder.indexOf(page)>=pageOrder.indexOf(settledPage))1f else -1f
     val pageFocus=androidx.compose.ui.platform.LocalFocusManager.current
@@ -489,7 +492,7 @@ private val NATIVE_UI_PROCESS=java.util.UUID.randomUUID().toString()
           awaitPointerEventScope{while(true){val event=awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
               if(pagesPrepared.size<4){pageTouchActive=event.changes.any{it.pressed};lastPageInteraction=android.os.SystemClock.uptimeMillis()}
           }}
-      }.nativePageSwipe(enabled=foreground&&startupOpen&&!immersive&&!modeMotion&&!s.busy&&projectEditor==null&&editor==null&&!goal&&!manual&&!tutorial&&!about&&!accountOpen&&!friendsOpen&&s.importSummary==null&&s.backupImportIssue==null&&page==settledPage&&!swipeSettling,
+      }.nativePageSwipe(enabled=foreground&&startupOpen&&!immersive&&!showSyncIssue&&!modeMotion&&!s.busy&&projectEditor==null&&editor==null&&!goal&&!manual&&!tutorial&&!about&&!accountOpen&&!friendsOpen&&s.importSummary==null&&s.backupImportIssue==null&&page==settledPage&&!swipeSettling,
           excluded={point->point.x<with(density){24.dp.toPx()}||point.x>viewportWidth-with(density){24.dp.toPx()}||point.y>=viewportHeight-navigationHeight||page=="timer"&&(if(wideTimer)point.x<swipeWorldEdge else point.y<normalReferenceHeight)},
           onStart={dx->
               val target=pageOrder.getOrNull(pageOrder.indexOf(settledPage)+if(dx<0)1 else -1)
@@ -553,7 +556,8 @@ private val NATIVE_UI_PROCESS=java.util.UUID.randomUUID().toString()
                     Box(Modifier.fillMaxSize().graphicsLayer{alpha=if(timerVisible)1f else 0f;translationX=routeX("timer")}.then(if(timerActive)Modifier else Modifier.clearAndSetSemantics{}).layout{measurable,constraints->val measured=measurable.measure(constraints);layout(measured.width,measured.height){if(timerVisible)measured.place(0,0)}}){key("$pageIdentity/timer"){NativePageActivation(timerActive){NativePageState("$pageIdentity/timer",timerScroll,timerMemory){NativeTimerPage(s,runtime,displayedMinimal,displayedImmersive,pool,submit.busy,delivered,submit.error,selectedTask,
                         onMinimal={minimalSelection.value=it},onAdjust={editor=it},onManual={manual=true},onCreate={projectEditor=ProjectEditor()},
                         onSubmit={draft->if(!submit.busy&&!delivered){heldReport=pool;submit.submit{runtime.submitReport(draft,it)}}},onWorldHeight={if(!displayedImmersive)worldHeight=it},memory=worldInteraction.memory,onCloseMemory=worldInteraction::closeMemory,panelVisibility=panelAlpha.asState(),active=timerActive,onPanelTop={timerPanelTop=it},wide=wideTimer,wideWorld=wideWorld,
-                        minimalFriends=if(cloudView.account?.optBoolean("friendsEnabled")==true)({shown->NativeMinimalFriends(cloudView,shown&&foreground&&!friendsOpen,cloud::refreshFriends)}) else null)}}}}
+                        minimalFriends=if(cloudView.account?.optBoolean("friendsEnabled")==true)({shown->NativeMinimalFriends(cloudView,shown&&foreground&&!friendsOpen,cloud::refreshFriends)}) else null,
+                        clockNow=runtime::focusNow)}}}}
                     for(preparedPage in pagesPrepared.filter{it!="timer"})key(preparedPage){
                         val activePage=projectEditor==null&&!immersive&&page==preparedPage&&startupOpen&&foreground&&!pageMoving
                         var held by remember{mutableStateOf(s)}
@@ -579,7 +583,9 @@ private val NATIVE_UI_PROCESS=java.util.UUID.randomUUID().toString()
                     }
                 }
             }
-            if(!displayedImmersive)Row(Modifier.fillMaxWidth().onSizeChanged{navigationHeight=it.height}.background(MaterialTheme.colorScheme.surface)
+            if(showSyncIssue&&!displayedImmersive)Spacer(Modifier.fillMaxWidth().onSizeChanged{navigationHeight=it.height}
+                .navigationBarsPadding().height(68.dp))
+            else if(!displayedImmersive)Row(Modifier.fillMaxWidth().onSizeChanged{navigationHeight=it.height}.background(MaterialTheme.colorScheme.surface)
                 .windowInsetsPadding(safeSides).navigationBarsPadding(),horizontalArrangement=Arrangement.SpaceEvenly){
                 for((key,label,icon)in listOf(Triple("timer","计时","clock"),Triple("tasks","任务","tasks"),Triple("statistics","统计","chart"),Triple("settings","设置","gear"))){
                     var motion by remember{mutableIntStateOf(0)}
@@ -596,6 +602,7 @@ private val NATIVE_UI_PROCESS=java.util.UUID.randomUUID().toString()
                 }
             }
         }
+        if(showSyncIssue)NativeSyncIssueBanner(cloud,cloudView,Modifier.align(Alignment.BottomCenter))
         if(modeMotion)Box(Modifier.fillMaxSize().testTag("mode-transition").pointerInput(Unit){
             awaitPointerEventScope{while(true)awaitPointerEvent().changes.forEach{it.consume()}}
         })

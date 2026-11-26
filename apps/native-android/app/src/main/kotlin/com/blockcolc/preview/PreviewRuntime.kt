@@ -54,7 +54,7 @@ class PreviewRuntime private constructor(private val context: Context):Workspace
     private val deviceCloudGate=CloudExecutionGate(context)
     internal var cloudGate=deviceCloudGate;private set
     @Volatile private var cloudTesting=false
-    val platform = FocusPlatform(context)
+    val platform = FocusPlatform(context,::focusNow)
     private val actor = ScheduledThreadPoolExecutor(1) { r -> Thread(r, "blockcolc-p2-actor") }.apply { removeOnCancelPolicy = true }
     private val domainReadCache by lazy{
         val cache=com.blockcolc.storage.android.AndroidDomainReadCache(context.applicationContext)
@@ -116,7 +116,6 @@ class PreviewRuntime private constructor(private val context: Context):Workspace
     }
     private val listeners = java.util.concurrent.CopyOnWriteArraySet<(PreviewSnapshot) -> Unit>()
     private val worldListeners=java.util.concurrent.CopyOnWriteArraySet<(CommittedWorldInput)->Unit>()
-    private val cloudFocusListeners=java.util.concurrent.CopyOnWriteArraySet<()->Unit>()
     private val celebrationState=androidx.compose.runtime.mutableStateOf(NativeCelebrations())
     var celebrations:NativeCelebrations
         get()=celebrationState.value
@@ -160,19 +159,17 @@ class PreviewRuntime private constructor(private val context: Context):Workspace
             .put("events",JSONArray(result.events.map{JSONObject(it)})).put("after",result.state.domain.canonical).put("replayed",result.replayed))
     }}
     private fun id() = UUID.randomUUID().toString()
+    internal fun focusNow():Long = if(recordingTest)System.currentTimeMillis() else
+        NativeCloudController.peek()?.focusNow() ?: System.currentTimeMillis()
     fun subscribe(listener: (PreviewSnapshot) -> Unit): () -> Unit { listeners.add(listener); listener(latest); return { listeners.remove(listener) } }
     fun subscribeWorld(listener:(CommittedWorldInput)->Unit):()->Unit {
         check(Looper.myLooper()==Looper.getMainLooper());worldListeners.add(listener);committedWorld?.let(listener)
         return {worldListeners.remove(listener)}
     }
-    internal fun subscribeCloudFocus(listener:()->Unit):()->Unit{
-        cloudFocusListeners.add(listener)
-        return {cloudFocusListeners.remove(listener)}
-    }
     fun start() = enqueue("startup") { c ->
         // The Activity can resume while the actor is still opening the DB.
         // Reconcile deadlines and the saved foreground observation together.
-        c.observeLifecycle(true,"app-switch",System.currentTimeMillis()){ "resume:${id()}" }
+        c.observeLifecycle(true,"app-switch",focusNow()){ "resume:${id()}" }
     }
     private fun observeCloudFocus(state:StoredState){
         if((recordingTest&&!cloudTesting)||!cloudGate.ownsAccountExecution())return
@@ -183,7 +180,6 @@ class PreviewRuntime private constructor(private val context: Context):Workspace
         if(moment==lastCloudFocus)return
         lastCloudFocus=moment
         if(!recordingTest)NativeCloudController.get(context,this).start()
-        cloudFocusListeners.forEach{it()}
     }
     private fun committedEvents(result:Operation){
         if(!result.replayed)observeCloudFocus(result.state)
@@ -492,7 +488,7 @@ class PreviewRuntime private constructor(private val context: Context):Workspace
             }
         }catch(error:Exception){android.util.Log.w("BlockcolcP2","Facts saved; platform projection unavailable",error);publish(display.copy(message="记录已保存，系统提醒暂不可用"))}
         display.ticket?.let{ticket->
-            val delay=maxOf(0,DomainTime.millis(ticket.end)-System.currentTimeMillis())
+            val delay=maxOf(0,DomainTime.millis(ticket.end)-focusNow())
             future=actor.schedule({receive(ticket.json().toString()){}},delay,TimeUnit.MILLISECONDS)
         }
         return false
@@ -565,7 +561,7 @@ class PreviewRuntime private constructor(private val context: Context):Workspace
         P2Trace.event("state-published")
         if(projectFocusPlatform(c,display,events){adopt(it)})return
         if(recordingTest) P2OperationCost.section("test-live-diagnostic") {
-            val now=System.currentTimeMillis()
+            val now=focusNow()
             val notices=context.getSystemService(android.app.NotificationManager::class.java).activeNotifications.map{item->
                 val n=item.notification;val ticking=n.extras.getBoolean(android.app.Notification.EXTRA_SHOW_CHRONOMETER,false)
                 JSONObject().put("id",item.id).put("when",n.`when`).put("chronometer",ticking).put("timeoutAfter",if(android.os.Build.VERSION.SDK_INT>=26)n.timeoutAfter else 0)
@@ -598,7 +594,7 @@ class PreviewRuntime private constructor(private val context: Context):Workspace
                     NativeStartupTrace.point("receiver-execution-not-owned")
                     platform.update(null,PreviewSnapshot());return@execute
                 }
-                val now=System.currentTimeMillis()
+                val now=focusNow()
                 // Reject another database/generation/session and early wakes
                 // before packaged-asset preparation can write anything.
                 if(ticket!=null){
@@ -687,33 +683,19 @@ class PreviewRuntime private constructor(private val context: Context):Workspace
      * sheet is only a draft. In particular a marathon stays on the ordinary
      * timer page until the user explicitly starts the confirmed plan. */
     override fun confirmPlan(draft:FocusDraft,uiRequest:String?)=enqueue("confirm-plan",uiRequest){c->
-        FocusActions(c,clientPreferences).confirm(uiRequest?:id(),id(),draft,System.currentTimeMillis())
+        FocusActions(c,clientPreferences).confirm(uiRequest?:id(),id(),draft,focusNow())
     }
     override fun startPlan(uiRequest:String?){
         NativeStartupTrace.point("focus-action-accepted")
-        enqueue("start-plan",uiRequest){c->
-            val request = uiRequest ?: id()
-            withFocusReservation(request) { FocusActions(c,clientPreferences).start(request,System.currentTimeMillis()) }
-        }
+        enqueue("start-plan",uiRequest){c->FocusActions(c,clientPreferences).start(uiRequest?:id(),focusNow())}
     }
     override fun beginFocus(draft:FocusDraft,uiRequest:String){
         NativeStartupTrace.point("focus-action-accepted")
-        enqueue("begin-focus",uiRequest){c->
-            withFocusReservation(uiRequest) { FocusActions(c,clientPreferences).begin(uiRequest,id(),draft,System.currentTimeMillis()) }
-        }
+        enqueue("begin-focus",uiRequest){c->FocusActions(c,clientPreferences).begin(uiRequest,id(),draft,focusNow())}
     }
-    private fun withFocusReservation(request: String, start: () -> Operation): Operation {
-        val cloud = if (!recordingTest && cloudGate.ownsAccountExecution()) NativeCloudController.peek() else null
-        val reserved = cloud?.reserveNativeFocus(request) == true
-        try { return start() }
-        catch (error: Exception) {
-            if (reserved && error !is CommittedStateUnavailable) cloud?.cancelNativeReservation(request)
-            throw error
-        }
-    }
-    override fun amendPlan(planId:String,draft:FocusDraft,uiRequest:String)=enqueue("amend-plan",uiRequest){c->FocusActions(c,clientPreferences).amend(uiRequest,planId,id(),draft,System.currentTimeMillis())}
+    override fun amendPlan(planId:String,draft:FocusDraft,uiRequest:String)=enqueue("amend-plan",uiRequest){c->FocusActions(c,clientPreferences).amend(uiRequest,planId,id(),draft,focusNow())}
     fun focus(mode: PlanMode, rounds: Int, focusMinutes: Int, restMinutes: Int, automatic: Boolean, selected: String?, endAt: Long? = null) = enqueue("start-focus") { c ->
-        val now = System.currentTimeMillis(); val current = c.load()
+        val now = focusNow(); val current = c.load()
         if (current.recovery.plan == null) {
             val p = current.domain.json().getJSONArray("projects").let { a -> List(a.length()) { a.getJSONObject(it) } }.first { it.getString("id") == current.domain.json().getString("activeProjectId") }
             val task = if (mode == PlanMode.MINIMAL || p.getString("kind") == "habit") null else selected ?: p.getJSONArray("subtasks").getJSONObject(0).getString("id")
@@ -721,11 +703,11 @@ class PreviewRuntime private constructor(private val context: Context):Workspace
         }
         c.start(id(), automatic, now)
     }
-    fun manual(early: Boolean, whole: Boolean = false,category:String?="other",note:String?=null,uiRequest:String?=null) = enqueue("manual",uiRequest) { it.manual(uiRequest?:id(), early, whole, category, note, System.currentTimeMillis()) }
+    fun manual(early: Boolean, whole: Boolean = false,category:String?="other",note:String?=null,uiRequest:String?=null) = enqueue("manual",uiRequest) { it.manual(uiRequest?:id(), early, whole, category, note, focusNow()) }
     override fun submitReport(draft:ReportDraft,uiRequest:String?){
         NativeStartupTrace.point("report-input-accepted")
         enqueue("report-draft",uiRequest){c->
-            FocusActions(c,clientPreferences).report(uiRequest?:id(),draft,System.currentTimeMillis(),::id).also {
+            FocusActions(c,clientPreferences).report(uiRequest?:id(),draft,focusNow(),::id).also {
                 NativeStartupTrace.point("report-saved")
             }
         }
@@ -740,7 +722,7 @@ class PreviewRuntime private constructor(private val context: Context):Workspace
         if(uiPrefs.getBoolean("setupRequired",false)&&!uiPrefs.edit().putBoolean("setupRequired",false).commit())android.util.Log.w("BlockcolcP3","First-use completion marker could not be saved")
     }
     fun report(progress: Int, projectId: String, taskId: String?, rounds: Int) = enqueue("report") { c ->
-        val plan = c.load().recovery.plan ?: throw FocusFailure("PLAN_NOT_FOUND"); val now = System.currentTimeMillis(); val request = id()
+        val plan = c.load().recovery.plan ?: throw FocusFailure("PLAN_NOT_FOUND"); val now = focusNow(); val request = id()
         if (plan.mode == PlanMode.ROUNDS) c.command(request, DomainEngine.command("ReportSubtaskProgress", "reportId" to id(), "subtaskId" to plan.subtaskId, "focusSessionIds" to JSONArray().put(plan.completedSessionIds.last()), "progressBasisPoints" to progress), now)
         else {
             val entries = JSONArray(); val habits = JSONArray()
@@ -869,14 +851,6 @@ class PreviewRuntime private constructor(private val context: Context):Workspace
         if(latest.refreshRequired)applyRestoredPreferences(checkNotNull(store))
         CloudLocal(c.databaseIdentity,state.token,state.domain,state.recovery,clientPreferences.load().value,checkNotNull(store).cloudBaseline(account))
     }
-    internal fun cloudPresenceCapture(account:String,knownExecution:Long):Future<Pair<StoredState,Long>?> = actor.submit<Pair<StoredState,Long>?>{
-        check(!recordingTest||cloudTesting){"TEST_WORKSPACE"}
-        if(!cloudGate.ownsAccountExecution())return@submit null
-        val c=open(prepareAssets=false)
-        // A fresh claim can change the fence without changing any workspace row.
-        val fence=knownExecution.takeIf{it>0}?:checkNotNull(store).cloudBaseline(account)?.execution?.takeIf{it>0}?:return@submit null
-        c.load() to fence
-    }
     internal fun cloudAcknowledge(expected:CloudLocal,baseline:CloudBaseline):Future<Unit> = actor.submit<Unit>{
         check((!recordingTest||cloudTesting)&&databaseName()==expected.database){"WORKSPACE_CHANGED"}
         check(open(prepareAssets=false).load().token.replacementGeneration==expected.token.replacementGeneration){"WORKSPACE_CHANGED"}
@@ -927,7 +901,7 @@ class PreviewRuntime private constructor(private val context: Context):Workspace
     fun foreground(foreground: Boolean, screenLocked: Boolean = false) {
         val reason=if(foreground){navigation.cancel();"app-switch"}else navigation.backgroundReason(screenLocked)
         enqueue(if(foreground)"RecordFocusForegrounded"else"RecordFocusBackgrounded",lockUi=false,prepareRewardsBefore=false){c->
-            val now=System.currentTimeMillis()
+            val now=focusNow()
             val deadline=latest.ticket?.let{DomainTime.millis(it.end)}
             // Visibility bookkeeping cannot award a new reward before the
             // saved phase deadline. Due reconciliation still needs the pool.
