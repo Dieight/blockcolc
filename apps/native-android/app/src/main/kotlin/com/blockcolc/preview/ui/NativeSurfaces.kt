@@ -56,7 +56,7 @@ internal val LocalNativeSettingsActions=staticCompositionLocalOf{false}
     }
 }
 
-@Composable private fun NativeRefreshingGlyph(){
+@Composable internal fun NativeRefreshingGlyph(){
     if(LocalNativeUi.current.reduceMotion){PixelGlyph("reset",Modifier.size(20.dp));return}
     val transition=rememberInfiniteTransition(label="refresh")
     val rotation=transition.animateFloat(0f,360f,infiniteRepeatable(tween(900,easing=LinearEasing)),label="rotation")

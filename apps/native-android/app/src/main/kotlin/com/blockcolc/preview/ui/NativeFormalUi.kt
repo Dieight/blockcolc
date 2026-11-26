@@ -43,14 +43,18 @@ internal enum class NativeTextRole { CAPTION, BODY, SECTION, TITLE, NUMBER, CLOC
 @Composable internal fun FormalCard(modifier:Modifier=Modifier,padding:Dp=16.dp,content:@Composable ColumnScope.()->Unit){
     Column(modifier.fillMaxWidth().border(1.dp,MaterialTheme.colorScheme.outlineVariant).background(MaterialTheme.colorScheme.surface).padding(1.dp).padding(padding),content=content)
 }
-@Composable internal fun FormalTextAction(label:String,icon:String,onClick:()->Unit,modifier:Modifier=Modifier,enabled:Boolean=true){
+@Composable internal fun FormalTextAction(label:String,icon:String,onClick:()->Unit,modifier:Modifier=Modifier,enabled:Boolean=true,
+    maxLines:Int=Int.MAX_VALUE,pending:Boolean=false,disabledColor:Color=MaterialTheme.colorScheme.onSurfaceVariant){
     var motion by remember{mutableIntStateOf(0)}
     val interaction=remember{MutableInteractionSource()}
-    Row(modifier.sizeIn(minWidth=44.dp,minHeight=44.dp).clickable(enabled=enabled,role=Role.Button,interactionSource=interaction,indication=null){motion++;onClick()}
-        .nativePressMotion(interaction,enabled),
+    val actionable=enabled&&!pending
+    val ink=if(actionable||pending)LocalContentColor.current else disabledColor
+    Row(modifier.sizeIn(minWidth=44.dp,minHeight=44.dp).clickable(enabled=actionable,role=Role.Button,interactionSource=interaction,indication=null){motion++;onClick()}
+        .nativePressMotion(interaction,actionable).semantics{if(pending)stateDescription=label},
         horizontalArrangement=Arrangement.spacedBy(8.dp,Alignment.CenterHorizontally),verticalAlignment=Alignment.CenterVertically){
-        if(icon.isNotEmpty())NativeMotionGlyph(icon,motion,Modifier.size(20.dp),if(enabled)LocalContentColor.current else MaterialTheme.colorScheme.onSurfaceVariant)
-        NativeText(label,NativeTextRole.BODY,Modifier.weight(1f,fill=false),color=if(enabled)LocalContentColor.current else MaterialTheme.colorScheme.onSurfaceVariant,accent=true)
+        if(pending&&icon=="reset")NativeRefreshingGlyph()
+        else if(icon.isNotEmpty())NativeMotionGlyph(icon,motion,Modifier.size(20.dp),ink)
+        NativeText(label,NativeTextRole.BODY,Modifier.weight(1f,fill=false),color=ink,maxLines=maxLines,accent=true)
     }
 }
 /** The source uses this quieter glass action for immersed settlement/end. */

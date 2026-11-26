@@ -1,5 +1,6 @@
 package com.blockcolc.preview.ui
 
+import android.os.SystemClock
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.text.BasicTextField
@@ -13,6 +14,7 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.LiveRegionMode
@@ -23,11 +25,13 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.blockcolc.preview.*
 import com.blockcolc.cloud.AccountPreferenceOutbox
 import com.blockcolc.cloud.CloudFailure
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 import java.util.concurrent.atomic.AtomicReference
@@ -36,19 +40,41 @@ import java.util.concurrent.atomic.AtomicReference
 
 @Composable internal fun NativeSyncIssueBanner(controller:NativeCloudController,view:CloudView,modifier:Modifier=Modifier){
     val color=MaterialTheme.colorScheme
-    val updating=view.working(CloudAction.SYNC)
-    Column(modifier.fillMaxWidth().testTag("home-sync-issue").background(color.error)
-        .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal)).navigationBarsPadding()
-        .padding(horizontal=16.dp,vertical=10.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
-        Row(Modifier.semantics{liveRegion=LiveRegionMode.Polite},verticalAlignment=Alignment.CenterVertically,
-            horizontalArrangement=Arrangement.spacedBy(8.dp)){
-            NativeMotionGlyph("cloud",0,Modifier.size(20.dp),color.onError)
-            Text(cloudText("云同步未完成","Cloud sync incomplete"),color=color.onError,style=MaterialTheme.typography.titleSmall)
+    val retry=view.syncRetry
+    val updating=view.working(CloudAction.SYNC)||retry.inFlight
+    val seconds by produceState(retry.secondsUntilRetry(SystemClock.elapsedRealtime()),retry.nextAt){
+        value=null
+        val deadline=retry.nextAt?:return@produceState
+        while(true){
+            val now=SystemClock.elapsedRealtime()
+            val remaining=retry.secondsUntilRetry(now)?:break
+            value=remaining
+            if(remaining==0L)break
+            delay((deadline-now-(remaining-1)*1000).coerceAtLeast(1L))
         }
-        Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){
-            NativeAction(cloudText("重新同步","Sync again"),controller::refresh,Modifier.weight(1f),
-                pending=updating,enabled=!view.busy||updating,primary=false,icon="reset")
-            NativeAction(cloudText("忽略","Ignore"),controller::ignoreSyncIssue,Modifier.weight(1f),primary=false,icon="close")
+    }
+    val retryLabel=when{
+        updating->cloudText("同步中","Syncing")
+        seconds!=null->cloudText("重新同步 ${seconds}s","Retry ${seconds}s")
+        else->cloudText("重新同步","Sync again")
+    }
+    val english=LocalNativeUi.current.language=="en"
+    BoxWithConstraints(modifier.fillMaxWidth().testTag("home-sync-issue").background(color.error)
+        .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal)).navigationBarsPadding()
+        .padding(horizontal=16.dp).heightIn(min=68.dp),contentAlignment=Alignment.Center){
+        val compact=maxWidth<(if(english)380.dp else 310.dp)||LocalDensity.current.fontScale>1.25f
+        Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(10.dp)){
+            Row(Modifier.weight(1f).semantics{liveRegion=LiveRegionMode.Polite},verticalAlignment=Alignment.CenterVertically,
+                horizontalArrangement=Arrangement.spacedBy(8.dp)){
+                if(!compact)NativeMotionGlyph("cloud",0,Modifier.size(20.dp),color.onError)
+                Text(cloudText("云同步未完成","Cloud sync incomplete"),color=color.onError,
+                    style=MaterialTheme.typography.bodyLarge,maxLines=1,overflow=TextOverflow.Ellipsis)
+            }
+            CompositionLocalProvider(LocalContentColor provides color.onError){
+                FormalTextAction(retryLabel,if(compact)"" else "reset",controller::refresh,enabled=!view.busy,
+                    maxLines=1,pending=updating,disabledColor=color.onError.copy(alpha=.8f))
+                FormalTextAction(cloudText("忽略","Ignore"),if(compact)"" else "close",controller::ignoreSyncIssue,maxLines=1)
+            }
         }
     }
 }

@@ -32,8 +32,9 @@ internal data class CloudView(val ready:Boolean=false,val requestBusy:Boolean=fa
     val choiceRequired:Boolean=false,val conflicts:List<String> = emptyList(),val owner:String?=null,val owned:Boolean=false,
     val devices:List<JSONObject> = emptyList(),val friends:List<JSONObject> = emptyList(),val backup:JSONObject?=null,val lastSync:Long?=null,
     val accountPending:Boolean=false,val receipt:CloudReceipt?=null,val friendsError:String?=null,
-    val friendOrder:List<String> = emptyList(),val syncIssue:String?=null,val syncIssueIgnored:Boolean=false){
+    val friendOrder:List<String> = emptyList(),val syncRetry:CloudSyncRetry = CloudSyncRetry()){
     val busy get()=requestBusy||receipt?.result==CloudResult.WORKING
+    val syncIssue get()=syncRetry.visibleError
     fun working(action:CloudAction)=receipt?.action==action&&receipt.result==CloudResult.WORKING
 }
 
@@ -69,6 +70,7 @@ internal class NativeCloudController private constructor(private val context:Con
     private var remoteHead:JSONObject?=null
     private var focusEditable=false
     private var delayed:ScheduledFuture<*>?=null
+    private var scheduledPoll:ScheduledFuture<*>?=null
     private val assets=File(directory,"cloud-assets")
     fun snapshot()=value
     fun subscribe(listener:(CloudView)->Unit):()->Unit{listeners.add(listener);listener(value);return{listeners.remove(listener)}}
@@ -120,9 +122,6 @@ internal class NativeCloudController private constructor(private val context:Con
                 failure(error, synchronizing = true)
             }
         }
-        worker.scheduleWithFixedDelay({
-            if (foreground && session != null) perform(false, synchronizing = true) { poll() }
-        }, 10, 10, TimeUnit.SECONDS)
     }
 
     @Synchronized fun changed() {
@@ -130,17 +129,35 @@ internal class NativeCloudController private constructor(private val context:Con
         localChanges.incrementAndGet()
         delayed?.cancel(false)
         delayed = worker.schedule({
-            perform(false, synchronizing = true) {
-                if (localChanges.get() != acknowledgedChanges) sync(header = remoteHead, profile = false)
-            }
+            if (localChanges.get() != acknowledgedChanges && value.syncRetry.failures == 0)
+                perform(false, synchronizing = true) { sync(header = remoteHead, profile = false) }
         }, 150, TimeUnit.MILLISECONDS)
     }
 
     fun foreground(active: Boolean) {
         val previous = foreground
         foreground = active
-        if (active && !previous && started && session != null)
-            worker.execute { perform(false, synchronizing = true) { poll() } }
+        if (active == previous || !started) return
+        worker.execute {
+            if (!foreground) scheduleNextPoll()
+            else if (session != null && scheduledPoll == null && !value.working(CloudAction.SYNC))
+                perform(false, synchronizing = true) { poll() }
+        }
+    }
+
+    // Worker-owned so the countdown and the actual retry use the same deadline.
+    private fun scheduleNextPoll() {
+        scheduledPoll?.cancel(false)
+        scheduledPoll = null
+        val due = if (foreground && session != null && !worker.isShutdown) SystemClock.elapsedRealtime() + CLOUD_SYNC_INTERVAL_MS else null
+        if (due != null) scheduledPoll = worker.schedule({
+            scheduledPoll = null
+            if (foreground && session != null && !value.working(CloudAction.SYNC))
+                perform(false, synchronizing = true) { poll() }
+        }, (due - SystemClock.elapsedRealtime()).coerceAtLeast(0L), TimeUnit.MILLISECONDS)
+        if (value.syncRetry.failures > 0) publish { current ->
+            current.copy(syncRetry = current.syncRetry.copy(nextAt = due, inFlight = false))
+        }
     }
 
     fun focusNow(): Long? = serverClock?.takeIf { session != null }
@@ -176,7 +193,10 @@ internal class NativeCloudController private constructor(private val context:Con
             known.optBoolean("focusLocked")==head.optBoolean("focusLocked")
         if (same && localChanges.get() == acknowledgedChanges) {
             remoteHead = head
-            if (value.syncIssue != null || value.syncIssueIgnored) publish { it.copy(syncIssue = null, syncIssueIgnored = false, lastSync = System.currentTimeMillis()) }
+            if (value.syncRetry.failures > 0) publish { current ->
+                current.copy(syncRetry = CloudSyncRetry(), lastSync = System.currentTimeMillis(),
+                    error = current.error.takeUnless { it == current.syncRetry.lastError })
+            }
         } else sync(header = head, profile = false)
     }
     private fun api(path:String,method:String="GET",body:JSONObject?=null,timeoutMillis:Long?=null):JSONObject{
@@ -208,21 +228,28 @@ internal class NativeCloudController private constructor(private val context:Con
             current.copy(ready=true,requestBusy=false,owned=if(revoked)false else current.owned,error=code,
                 conflicts=if(choice)keys else current.conflicts,choiceRequired=current.choiceRequired||choice,
                 receipt=action?.let{CloudReceipt(it,result,code)}?:current.receipt,
-                syncIssue=if(synchronizing&&code!="LOCAL_CHANGED"&&!current.syncIssueIgnored)code else current.syncIssue)
+                syncRetry=if(synchronizing&&session!=null&&code!="LOCAL_CHANGED")current.syncRetry.failed(code) else current.syncRetry)
         }
     }
     private fun perform(showBusy:Boolean=true,synchronizing:Boolean=false,work:()->Unit){
-        if(!runtime.cloudIoAllowed(isolatedTransport))return
+        if(!runtime.cloudIoAllowed(isolatedTransport)){
+            if(synchronizing)scheduleNextPoll()
+            return
+        }
         if(showBusy)publish{it.copy(requestBusy=true,error=null)}
+        if(synchronizing&&value.syncRetry.failures>0)publish{it.copy(syncRetry=it.syncRetry.copy(nextAt=null,inFlight=true))}
         try {
             work()
         }catch(error:Exception){failure(error,synchronizing=synchronizing)}
         catch(error:OutOfMemoryError){failure(error,synchronizing=synchronizing)}
-        finally{if(showBusy)publish{it.copy(requestBusy=false)}}
+        finally{
+            if(showBusy)publish{it.copy(requestBusy=false)}
+            if(synchronizing)scheduleNextPoll()
+        }
     }
     private fun runAction(action:CloudAction,work:()->CloudResult){
         synchronized(viewGate){
-            if(value.busy)return
+            if(value.busy||action==CloudAction.SYNC&&value.syncRetry.inFlight)return
             value=value.copy(receipt=CloudReceipt(action,CloudResult.WORKING),error=null)
         }
         notifyView()
@@ -238,6 +265,7 @@ internal class NativeCloudController private constructor(private val context:Con
                 if(value.receipt?.result==CloudResult.RETRY_PENDING)changed()
             }
             catch(error:OutOfMemoryError){failure(error,action)}
+            finally { if(action==CloudAction.SYNC)scheduleNextPoll() }
         }
     }
     fun login(username:String,password:String,register:Boolean)=worker.execute{perform(synchronizing=true){
@@ -259,12 +287,13 @@ internal class NativeCloudController private constructor(private val context:Con
         storage.write(null);session=null;resetSyncState()
         runtime.cloudPermission(owned=true,bound=false).get();publish{CloudView(ready=true)}
     }}
-    private fun resetSyncState(){execution=0;remoteHead=null;serverClock=null;acknowledgedChanges=-1L;remotePlanHint=null;focusEditable=false}
+    private fun resetSyncState(){execution=0;remoteHead=null;serverClock=null;acknowledgedChanges=-1L;remotePlanHint=null;focusEditable=false
+        scheduledPoll?.cancel(false);scheduledPoll=null}
     fun refresh(){
-        publish{it.copy(syncIssueIgnored=false)}
+        publish{it.copy(syncRetry=it.syncRetry.copy(ignored=false))}
         runAction(CloudAction.SYNC){sync()}
     }
-    fun ignoreSyncIssue(){publish{it.copy(syncIssue=null,syncIssueIgnored=true)}}
+    fun ignoreSyncIssue(){publish{it.copy(syncRetry=it.syncRetry.copy(ignored=true))}}
     fun choose(strategy:String){
         val action=when(strategy){"cloud"->CloudAction.USE_CLOUD;"local"->CloudAction.REPLACE_CLOUD;else->error("Unknown sync strategy")}
         runAction(action){sync(strategy)}
@@ -419,7 +448,7 @@ internal class NativeCloudController private constructor(private val context:Con
         acknowledgedChanges = dirtyAtStart
         publish { current ->
             current.copy(choiceRequired = false, conflicts = emptyList(), error = null,
-                lastSync = System.currentTimeMillis(), syncIssue = null, syncIssueIgnored = false,
+                lastSync = System.currentTimeMillis(), syncRetry = CloudSyncRetry(),
                 receipt = current.receipt?.let {
                     if (it.result == CloudResult.RETRY_PENDING) CloudReceipt(it.action, CloudResult.COMPLETE) else it
                 })
