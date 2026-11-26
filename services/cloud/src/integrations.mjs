@@ -135,13 +135,13 @@ export class Integrations {
 
   runFor(user) { return this.db.prepare('SELECT * FROM integration_runs WHERE user=?').get(user); }
   hasSettledFocus(user) {
-    return this.db.prepare("SELECT 1 FROM entries WHERE user=? AND key GLOB 'focusHistory/external-focus:*' LIMIT 1").get(user) !== undefined;
+    return this.db.prepare("SELECT 1 FROM sync_entries WHERE user=? AND key GLOB 'focusHistory/external-focus:*' LIMIT 1").get(user) !== undefined;
   }
   assertNativeIntervals(user, changes) {
     const incoming = changes.filter(change => change.canonical != null && (change.key === '$/activeFocusSession' ||
       (change.key.startsWith('focusHistory/') && !change.key.startsWith('focusHistory/external-focus:'))));
     if (!incoming.length) return;
-    const confirmed = this.db.prepare("SELECT canonical FROM entries WHERE user=? AND key GLOB 'focusHistory/external-focus:*'").all(user);
+    const confirmed = this.db.prepare("SELECT canonical FROM sync_entries WHERE user=? AND key GLOB 'focusHistory/external-focus:*'").all(user);
     const external = confirmed.map(({ canonical: wire }) => {
       const value = JSON.parse(wire).value;
       return [Date.parse(value.startedAt), Date.parse(value.completedAt)];
@@ -178,7 +178,7 @@ export class Integrations {
     return { ok: true };
   }
   assertAvailable(user, now) {
-    const executionEntries = Object.fromEntries(this.db.prepare("SELECT key,canonical FROM entries WHERE user=? AND key IN ('$/activeFocusSession','@plan')")
+    const executionEntries = Object.fromEntries(this.db.prepare("SELECT key,canonical FROM sync_entries WHERE user=? AND key IN ('$/activeFocusSession','@plan')")
       .all(user).map(row => [row.key,row.canonical]));
     fail(!activeNativePlan(executionEntries), 'NATIVE_FOCUS_IN_PROGRESS', 409);
     const observed = this.db.prepare('SELECT value FROM presence WHERE user=? AND expires>?').get(user, now);
@@ -220,9 +220,14 @@ export class Integrations {
       const { entries } = splitDomain(parseDomainState(state));
       const size = Object.values(entries).reduce((bytes, wire) => bytes + Buffer.byteLength(wire), 0);
       fail(size <= 100 * 1024 * 1024, 'WORKSPACE_TOO_LARGE', 413);
-      const write = this.db.prepare('INSERT INTO entries VALUES(?,?,?,?) ON CONFLICT(user,key) DO UPDATE SET canonical=excluded.canonical,sha=excluded.sha');
-      for (const [entry, wire] of Object.entries(entries)) if (oldEntries[entry] !== wire) write.run(user, entry, wire, sha(wire));
+      const write = this.db.prepare('INSERT INTO sync_entries VALUES(?,?,?,?) ON CONFLICT(user,key) DO UPDATE SET canonical=excluded.canonical,sha=excluded.sha');
+      const changed = [];
+      for (const [entry, wire] of Object.entries(entries)) if (oldEntries[entry] !== wire) {
+        write.run(user, entry, wire, sha(wire));
+        changed.push(entry);
+      }
       this.db.prepare('UPDATE heads SET revision=revision+1,changed=? WHERE user=?').run(this.cloud.clock(), user);
+      this.cloud.sync.record(user, changed);
     }
     const reply = { settled: true, ...result };
     this.db.prepare('INSERT INTO integration_focus_receipts VALUES(?,?,?,?)').run(user, key, this.cloud.clock(), canonical(reply));

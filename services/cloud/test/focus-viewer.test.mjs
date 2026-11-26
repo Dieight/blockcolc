@@ -24,7 +24,7 @@ test('account viewer keeps mobile execution, scope, visit counts and live data s
   store.claim(phone, { generation: 0 });
   const putHistory = (id, startedAt, actualDurationMs) => {
     const wire = canonical({ ordinal: 0, value: { startedAt, actualDurationMs } });
-    store.db.prepare('INSERT INTO entries VALUES(?,?,?,?)').run(phone.user, 'focusHistory/' + id, wire, sha(wire));
+    store.db.prepare('INSERT INTO sync_entries VALUES(?,?,?,?)').run(phone.user, 'focusHistory/' + id, wire, sha(wire));
   };
   putHistory('one', '2026-11-15T14:00:00Z', 1_800_000);
   putHistory('two', '2026-11-14T15:45:00Z', 1_800_000);

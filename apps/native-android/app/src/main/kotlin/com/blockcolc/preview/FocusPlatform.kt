@@ -12,7 +12,7 @@ import com.blockcolc.domain.DomainTime
 import com.blockcolc.focus.DeadlineTicket
 
 /** Projection only. It never changes sessions or maintains a second timer. */
-class FocusPlatform(private val context: Context) {
+class FocusPlatform(private val context: Context,private val focusClock:()->Long=System::currentTimeMillis) {
     private val alarms = context.getSystemService(AlarmManager::class.java)
     private val notifications = context.getSystemService(NotificationManager::class.java)
     private var previous: PendingIntent? = null
@@ -86,7 +86,7 @@ class FocusPlatform(private val context: Context) {
             .putExtra("ticket", ticket.json().toString())
         val pending = PendingIntent.getBroadcast(context, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         previous = pending
-        val at = DomainTime.millis(ticket.end)
+        val at = System.currentTimeMillis() + (DomainTime.millis(ticket.end)-focusClock())
         try {
             if (exactAllowed()) alarms.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pending)
             else alarms.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pending)
@@ -117,10 +117,12 @@ class FocusPlatform(private val context: Context) {
         if(live&&colorOs&&Build.VERSION.SDK_INT>=36)compactFocusLabel(state)?.let{label->
             runCatching{Notification.Builder::class.java.getMethod("setShortCriticalText",String::class.java).invoke(b,label)}
         }
-        val remaining = ticket?.let { DomainTime.millis(it.end) - System.currentTimeMillis() } ?: 0
-        if(extended!=null)b.setWhen(DomainTime.millis(extended)).setShowWhen(true).setUsesChronometer(true)
+        val now=focusClock()
+        val wallNow=System.currentTimeMillis()
+        val remaining = ticket?.let { DomainTime.millis(it.end) - now } ?: 0
+        if(extended!=null)b.setWhen(wallNow+DomainTime.millis(extended)-now).setShowWhen(true).setUsesChronometer(true)
         else if (remaining > 0 && ticket != null&&Build.VERSION.SDK_INT>=26) {
-            b.setWhen(DomainTime.millis(ticket.end)).setShowWhen(true).setUsesChronometer(true)
+            b.setWhen(wallNow+remaining).setShowWhen(true).setUsesChronometer(true)
             b.setChronometerCountDown(true)
             // Even if an OEM delays/kills the receiver, the stale countdown is
             // removed at its deadline instead of counting below zero forever.

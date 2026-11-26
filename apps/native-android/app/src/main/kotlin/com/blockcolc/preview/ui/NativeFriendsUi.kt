@@ -223,7 +223,7 @@ internal fun groupedFriendCode(code:String)=code.chunked(6).joinToString(" ")
     LaunchedEffect(accountId){
         while(true){
             controller.refreshFriends()
-            delay(6_000)
+            delay(10_000)
         }
     }
     if(empty)Text(cloudText("还没有好友","No friends yet"),style=MaterialTheme.typography.bodyMedium)
@@ -297,7 +297,7 @@ internal fun groupedFriendCode(code:String)=code.chunked(6).joinToString(" ")
     LaunchedEffect(account,visible){
         if(visible&&account!=null)while(true){
             refresh()
-            delay(6_000)
+            delay(10_000)
         }
     }
     val friends=remember(view.friends,view.friendOrder){view.orderedFriends()}
@@ -422,6 +422,13 @@ internal fun groupedFriendCode(code:String)=code.chunked(6).joinToString(" ")
     val start=(friend.opt("startedAt") as? String)?.let{runCatching{Instant.parse(it)}.getOrNull()}
     val end=(friend.opt("endsAt") as? String)?.let{runCatching{Instant.parse(it)}.getOrNull()}
     if(start==null&&end==null)return null
+    if(start!=null&&friend.optBoolean("estimated")&&friend.optBoolean("focusing")){
+        fun now()=NativeCloudController.peek()?.focusNow()?:System.currentTimeMillis()
+        var current by remember(start){mutableLongStateOf(now())}
+        LaunchedEffect(start){while(true){current=now();delay(10_000)}}
+        val elapsed=formatDuration((current-start.toEpochMilli()).coerceAtLeast(0))
+        return cloudText("预计已持续 $elapsed","Estimated duration $elapsed")
+    }
     val zone=ZoneId.systemDefault()
     val today=LocalDate.now(zone)
     val english=LocalNativeUi.current.language=="en"

@@ -95,7 +95,7 @@ test('scope, friendship and opt-in gate the HTTPS-facing integration contract', 
   assert.equal(f.store.integrations.report(writer.token, { state: 'idle', sessionId: 'online-bob', sequence: 2 }).focusMs, 30_000);
   assert.deepEqual(await request('/workspace', buddy.token), [409, { error: 'CLIENT_UPDATE_REQUIRED' }]);
   const workspace = await fetch(base + '/workspace', { headers:{
-    authorization:'Bearer ' + buddy.token, 'x-blockcolc-focus-credits':'1',
+    authorization:'Bearer ' + buddy.token, 'x-blockcolc-focus-credits':'1', 'x-blockcolc-sync-protocol':'2',
   }});
   assert.equal(workspace.status,200);
   assert(Object.keys((await workspace.json()).entries).some(key=>key.startsWith('focusHistory/external-focus:')));

@@ -90,7 +90,7 @@ test('a public source has one durable account, no login and explicit read-only f
   assert.equal(store.friends(session).length,0);store.invite(session,first.friendCode);
   let friend=store.friends(session)[0];assert.equal(friend.status,'accepted');assert.equal(friend.readOnly,true);assert.equal(friend.source.kind,'mutsumi-focus');assert.equal(friend.days[0].actualFocusMs,1800000);
   assert.ok(!Object.hasOwn(friend,'sharing'));assert.ok(!Object.hasOwn(friend,'visible'));
-  assert.equal(store.db.prepare('SELECT count(*) n FROM entries WHERE user=?').get(first.account).n,0);
+  assert.equal(store.db.prepare('SELECT count(*) n FROM sync_entries WHERE user=?').get(first.account).n,0);
   assert.equal(store.db.prepare('SELECT count(*) n FROM devices WHERE user=?').get(first.account).n,0);
   await assert.rejects(store.login({username:source.accountUsername,password:'synthetic-correct-password',deviceId:'another_device_12345',deviceName:'test'}),{code:'LOGIN_FAILED'});
   assert.throws(()=>store.friendPolicy(session,first.account,{status:true,name:true,time:true,daily:true}),{code:'READ_ONLY_FRIEND'});

@@ -39,10 +39,11 @@ import java.util.*
 
 /** Same workbench and symmetric FocusFace slots as the formal WorldScreenV7.
  * The application owns planning and recovery; this page only presents them. */
-@Composable internal fun NativeTimerPage(s:WorkspaceUiState,runtime:WorkspaceActions,minimal:Boolean,immersive:Boolean,pool:ReportPool?,reportPending:Boolean,delivered:Boolean,reportError:String?,selectedTask:String?,onMinimal:(Boolean)->Unit,onAdjust:(PlanEditorModel)->Unit,onManual:()->Unit,onCreate:()->Unit,onSubmit:(ReportDraft)->Unit,onWorldHeight:(Int)->Unit,memory:String?,onCloseMemory:()->Unit,panelVisibility:State<Float>?=null,active:Boolean=true,onPanelTop:(Int)->Unit={},wide:Boolean=false,wideWorld:Dp=0.dp,minimalFriends:(@Composable (Boolean)->Unit)?=null){
+@Composable internal fun NativeTimerPage(s:WorkspaceUiState,runtime:WorkspaceActions,minimal:Boolean,immersive:Boolean,pool:ReportPool?,reportPending:Boolean,delivered:Boolean,reportError:String?,selectedTask:String?,onMinimal:(Boolean)->Unit,onAdjust:(PlanEditorModel)->Unit,onManual:()->Unit,onCreate:()->Unit,onSubmit:(ReportDraft)->Unit,onWorldHeight:(Int)->Unit,memory:String?,onCloseMemory:()->Unit,panelVisibility:State<Float>?=null,active:Boolean=true,onPanelTop:(Int)->Unit={},wide:Boolean=false,wideWorld:Dp=0.dp,minimalFriends:(@Composable (Boolean)->Unit)?=null,clockNow:()->Long=System::currentTimeMillis){
     val ui=LocalNativeUi.current;val timer=s.timer?:return
-    var now by remember(timer.planId,timer.surface,timer.deadline){mutableLongStateOf(System.currentTimeMillis())}
-    LaunchedEffect(active,timer.planId,timer.surface,timer.deadline){while(active&&isActive){now=System.currentTimeMillis();delay(250)}}
+    var now by remember(timer.planId,timer.surface,timer.deadline){mutableLongStateOf(clockNow())}
+    val currentClock by rememberUpdatedState(clockNow)
+    LaunchedEffect(active,timer.planId,timer.surface,timer.deadline){while(active&&isActive){now=currentClock();delay(250)}}
     val countdown=LocalDateCountdownPreference.current?.value
     val project=s.choices.find{it.id==timer.projectId}?:s.choices.find{it.id==s.activeProject}
     val task=project?.tasks?.find{it.id==timer.subtaskId}?:project?.tasks?.find{it.id==selectedTask}?:project?.tasks?.firstOrNull{it.progress<10000}

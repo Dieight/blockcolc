@@ -14,6 +14,7 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
@@ -32,6 +33,26 @@ import org.json.JSONObject
 import java.util.concurrent.atomic.AtomicReference
 
 @Composable internal fun cloudText(zh:String,en:String)=if(LocalNativeUi.current.language=="en")en else zh
+
+@Composable internal fun NativeSyncIssueBanner(controller:NativeCloudController,view:CloudView,modifier:Modifier=Modifier){
+    val color=MaterialTheme.colorScheme
+    val updating=view.working(CloudAction.SYNC)
+    Column(modifier.fillMaxWidth().testTag("home-sync-issue").background(color.error)
+        .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal)).navigationBarsPadding()
+        .padding(horizontal=16.dp,vertical=10.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
+        Row(Modifier.semantics{liveRegion=LiveRegionMode.Polite},verticalAlignment=Alignment.CenterVertically,
+            horizontalArrangement=Arrangement.spacedBy(8.dp)){
+            NativeMotionGlyph("cloud",0,Modifier.size(20.dp),color.onError)
+            Text(cloudText("云同步未完成","Cloud sync incomplete"),color=color.onError,style=MaterialTheme.typography.titleSmall)
+        }
+        Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){
+            NativeAction(cloudText("重新同步","Sync again"),controller::refresh,Modifier.weight(1f),
+                pending=updating,enabled=!view.busy||updating,primary=false,icon="reset")
+            NativeAction(cloudText("忽略","Ignore"),controller::ignoreSyncIssue,Modifier.weight(1f),primary=false,icon="close")
+        }
+    }
+}
+
 @Composable internal fun CloudField(label:String,value:String,onChange:(String)->Unit,secret:Boolean=false,enabled:Boolean=true){
     var visible by remember{mutableStateOf(false)}
     LaunchedEffect(value.isEmpty()){if(value.isEmpty())visible=false}
@@ -68,7 +89,7 @@ import java.util.concurrent.atomic.AtomicReference
         "EXECUTION_CHANGED","EXECUTING_ELSEWHERE"->if(english)"Another device controls this plan. Refresh or take over."else"计划由另一台设备执行，请刷新或主动接管。"
         "BACKUP_NOT_SYNCED"->if(english)"Local changes are still syncing. Try backing up again."else"本机改动正在同步，稍后再备份。"
         "EXTERNAL_FOCUS_IN_PROGRESS"->if(english)"This account is focusing in another app."else"这个账号正在其他软件专注。"
-        "CLIENT_UPDATE_REQUIRED"->if(english)"Update Blockcolc to sync external focus records."else"请更新方块钟后同步第三方专注记录。"
+        "CLIENT_UPDATE_REQUIRED"->if(english)"Update Blockcolc to continue cloud sync."else"请更新方块钟后继续云同步。"
         "EXTERNAL_FOCUS_OVERLAP"->if(english)"An offline record overlaps an accepted external session."else"有本机离线记录与已同步的第三方专注重叠。"
         "FRIEND_NOT_FOUND"->if(english)"Friend not found or friends are disabled."else"没有找到好友，或对方未开启好友功能。"
         "LOCAL_CHANGED"->if(english)"Local changes were kept; syncing will retry."else"本机新改动已保留，将重新同步。"
@@ -86,13 +107,11 @@ import java.util.concurrent.atomic.AtomicReference
     val receipt=view.receipt
     val label=when(receipt?.result){
         CloudResult.WORKING->when(receipt.action){
-            CloudAction.MERGE->cloudText("正在合并…","Merging…")
             CloudAction.USE_CLOUD,CloudAction.REPLACE_CLOUD->cloudText("正在替换工作区…","Replacing workspace…")
             else->cloudText("正在处理…","Working…")
         }
         CloudResult.COMPLETE->when(receipt.action){
             CloudAction.SYNC->cloudText("同步完成","Sync complete")
-            CloudAction.MERGE->cloudText("合并并同步完成","Merged and synced")
             CloudAction.USE_CLOUD->cloudText("已使用云端内容","Cloud workspace applied")
             CloudAction.REPLACE_CLOUD->cloudText("已用本机内容替换云端","Cloud workspace replaced")
             CloudAction.TAKEOVER->cloudText("已接管计划","Plan taken over")
@@ -186,7 +205,6 @@ import java.util.concurrent.atomic.AtomicReference
             if(view.choiceRequired){
                 Text(tr("本机与云端都有内容，请选择一次。替换前保留本机回滚点；相同记录的冲突不会擅自覆盖。","Both workspaces have content. Choose once. A local rollback is kept before replacement; conflicting records are not overwritten."),style=MaterialTheme.typography.bodySmall)
                 val choices=listOf(
-                    Triple("merge",CloudAction.MERGE,tr("合并独立改动","Merge independent changes")),
                     Triple("cloud",CloudAction.USE_CLOUD,tr("使用云端内容","Use cloud workspace")),
                     Triple("local",CloudAction.REPLACE_CLOUD,tr("以本机替换云端","Replace cloud with this device"))
                 )
@@ -294,7 +312,7 @@ import java.util.concurrent.atomic.AtomicReference
             },Modifier.fillMaxWidth(),pending=view.busy)
             else->NativeFriendsPanel(controller,view,onRemove={removing=it})
         }
-        CloudError(view.friendsError?:view.error)
+        CloudError(view.friendsError)
     }
     NativeSheet(Unit.takeIf{restoreConfirm},{tr("恢复云端备份？","Restore cloud backup?")},{restoreConfirm=false}){
         Text(tr("本机当前内容会先保留回滚点。其他设备需重新选择同步方式。","A local rollback is kept first. Other devices must choose how to sync again."))

@@ -130,12 +130,13 @@ export class FocusViewerStore {
   snapshot() {
     const now = this.cloud.clock(), head = this.cloud.head(this.owner);
     const days = this.daily(now, head);
-    const presence = this.db.prepare('SELECT value,expires FROM presence WHERE user=?').get(this.owner);
-    const observed = presence ? JSON.parse(presence.value) : null;
+    const presence = this.cloud.liveStatus(this.owner);
+    const observed = presence?.value;
     const capturedAt = new Date(Math.min(now, Math.max(head.changed, Date.parse(observed?.updatedAt) || 0))).toISOString();
     const start = Date.parse(observed?.startedAt), end = Date.parse(observed?.estimatedEndsAt);
     const openEnded = observed?.estimatedEndsAt === null;
-    const active = observed?.currentName && observed.externalState !== 'rest' && presence.expires > now && start <= now && (openEnded || end > now);
+    const active = observed?.currentName && observed.externalState !== 'rest' && start <= now &&
+      (presence.persistent || presence.expires > now && (openEnded || end > now));
     const snapshot = {
       currentName: active ? observed.currentName : null,
       startedAt: active ? observed.startedAt : null,
@@ -143,6 +144,7 @@ export class FocusViewerStore {
       estimatedElapsedMs: active ? Math.max(0, Date.parse(capturedAt) - start) : 0,
       todayActualFocusMs: Math.min(DAY, days.totals[days.date] ?? 0),
       ...(active && openEnded ? { waitingForEnd: true } : {}),
+      ...(active && observed.estimated ? { estimated: true } : {}),
     };
     return {
       live: { schemaVersion: 1, sourceEpoch: head.epoch, revision: head.revision, capturedAt, snapshot },

@@ -41,7 +41,9 @@ export function createCloudHandler(store,{onError=()=>{}}={}){
         }
         throw new ApiError(405,'METHOD_NOT_ALLOWED');
       }
-      const session=store.authenticate(header.slice(7));limit('user:'+session.user,240,60000);
+      const session=store.authenticate(header.slice(7),{touch:path!=='/v1/sync/head'});limit('user:'+session.user,240,60000);
+      if((path.startsWith('/v1/workspace')||path.startsWith('/v1/execution')||path.startsWith('/v1/backup'))&&
+          req.headers['x-blockcolc-sync-protocol']!=='2')throw new ApiError(409,'CLIENT_UPDATE_REQUIRED');
       if((path==='/v1/workspace'||path.startsWith('/v1/workspace/')||path==='/v1/backup/restore') &&
           req.headers['x-blockcolc-focus-credits']!=='1' && store.integrations.hasSettledFocus(session.user)){
         throw new ApiError(409,'CLIENT_UPDATE_REQUIRED');
@@ -55,10 +57,16 @@ export function createCloudHandler(store,{onError=()=>{}}={}){
       else if(req.method==='POST'&&path==='/v1/logout'){store.logout(session);result={ok:true};}
       else if(req.method==='GET'&&path==='/v1/devices')result={devices:store.devices(session)};
       else if(req.method==='POST'&&path==='/v1/devices/revoke'){store.revokeDevice(session,(await authorizedJson()).id);result={ok:true};}
-      else if(req.method==='GET'&&path==='/v1/workspace')result=store.workspace(session);
-      else if(req.method==='POST'&&['/v1/workspace/commit','/v1/workspace/replace'].includes(path)){
+      else if(req.method==='GET'&&path==='/v1/sync/head')result=store.sync.head(session);
+      else if(req.method==='POST'&&path==='/v1/sync/pull')result=store.sync.pull(session,await authorizedJson(4096));
+      else if(req.method==='POST'&&path==='/v1/sync/commit'){
+        fail(largeReads<2,'SERVER_BUSY',503);largeReads++;large=true;
+        result=store.commit(session,await authorizedJson(100*1024*1024),{protocol2:true});
+      }else if(req.method==='GET'&&path==='/v1/workspace')result=store.workspace(session);
+      else if(req.method==='POST'&&path==='/v1/workspace/commit')throw new ApiError(409,'CLIENT_UPDATE_REQUIRED');
+      else if(req.method==='POST'&&path==='/v1/workspace/replace'){
         fail(largeReads<2,'SERVER_BUSY',503);largeReads++;large=true;const input=await authorizedJson(100*1024*1024);
-        result=path.endsWith('/commit')?store.commit(session,input):store.replace(session,input);
+        result=store.replace(session,input);
       }else if(req.method==='POST'&&path==='/v1/execution/claim')result=store.claim(session,await authorizedJson());
       else if(req.method==='POST'&&path==='/v1/execution/release')result=store.release(session,await authorizedJson());
       else if(req.method==='POST'&&path==='/v1/execution/focus/start')result=store.integrations.nativeStart(session,await authorizedJson(4096));
@@ -81,7 +89,7 @@ export function createCloudHandler(store,{onError=()=>{}}={}){
       else if(req.method==='POST'&&path==='/v1/friends/invite')result=store.invite(session,(await authorizedJson()).code);
       else if(req.method==='POST'&&path==='/v1/friends/respond'){const v=await authorizedJson();result=store.relation(session,v.id,v.action);}
       else if(req.method==='POST'&&path==='/v1/friends/sharing'){const v=await authorizedJson();result=store.friendPolicy(session,v.id,v.sharing);}
-      else if(req.method==='POST'&&path==='/v1/presence'){const v=await authorizedJson();result=store.presence(session,v.snapshot,v.execution);}
+      else if(req.method==='POST'&&path==='/v1/presence')throw new ApiError(409,'CLIENT_UPDATE_REQUIRED');
       else throw new ApiError(404,'NOT_FOUND');
       send(result??{ok:true});
     }catch(error){
