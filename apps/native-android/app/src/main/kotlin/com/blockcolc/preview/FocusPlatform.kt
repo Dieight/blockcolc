@@ -86,11 +86,12 @@ class FocusPlatform(private val context: Context,private val focusClock:()->Long
             .putExtra("ticket", ticket.json().toString())
         val pending = PendingIntent.getBroadcast(context, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         previous = pending
-        val at = System.currentTimeMillis() + (DomainTime.millis(ticket.end)-focusClock())
+        val at = android.os.SystemClock.elapsedRealtime() + (DomainTime.millis(ticket.end) - focusClock()).coerceAtLeast(0L)
+        val alarmType = AlarmManager.ELAPSED_REALTIME_WAKEUP
         try {
-            if (exactAllowed()) alarms.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pending)
-            else alarms.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pending)
-        } catch (_: SecurityException) { alarms.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pending) }
+            if (exactAllowed()) alarms.setExactAndAllowWhileIdle(alarmType, at, pending)
+            else alarms.setAndAllowWhileIdle(alarmType, at, pending)
+        } catch (_: SecurityException) { alarms.setAndAllowWhileIdle(alarmType, at, pending) }
         if (notificationAllowed()) {
             notifications.notify(liveTag(ticket),LIVE, notification(state, ticket))
             if (exactAllowed() && state.automaticAuthorized) {

@@ -123,7 +123,7 @@ import java.util.concurrent.atomic.AtomicReference
         "TLS_UNAVAILABLE"->if(english)"Unable to verify the cloud connection. Check the device date and time."else"无法验证云端连接，请检查设备日期和时间。"
         "CLOUD_EMPTY"->if(english)"The cloud workspace is empty. Your local records are kept."else"云端暂无记录，本机内容已保留。"
         "CLOUD_DEVICE_MEMORY_LIMIT"->if(english)"This device ran out of memory while syncing."else"同步时设备可用内存不足。"
-        "CLOUD_ASSET_DIGEST","CLOUD_RESPONSE_TOO_LARGE"->if(english)"The cloud data did not pass verification."else"云端数据未通过校验。"
+        "CLOUD_ASSET_DIGEST","CLOUD_PACKAGE_DIGEST","CLOUD_RESPONSE_TOO_LARGE"->if(english)"The cloud data did not pass verification."else"云端数据未通过校验。"
         else->if(english)"Sync is unavailable. Local focus and data remain usable; try again later."else"同步暂不可用，本地专注和记录仍可使用，请稍后重试。"
     }
     Text(message,color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodySmall)

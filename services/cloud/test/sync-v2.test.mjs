@@ -49,10 +49,13 @@ test('the focus delta and estimated presence share one transaction and survive a
   f.commit(f.input({}, base));
   const idle = f.store.sync.head(f.session);
   const begun = f.local({ type: 'StartFocus', sessionId: 'first', projectId: 'project', subtaskId: 'task', plannedDurationMs: 60 * minute });
+  // Uploading an offline start must not move the start or end of the round.
+  f.advance(30_000);
   const reply = f.commit(f.input(base, begun));
   assert.deepEqual(Object.keys(reply.state.delta), ['focus']);
   assert.deepEqual(reply.state.packages.building, idle.packages.building);
   assert.equal(f.store.liveStatus(f.session.user).value.startedAt, new Date(start).toISOString());
+  assert.equal(f.store.liveStatus(f.session.user).value.estimatedEndsAt, new Date(start + 60 * minute).toISOString());
   assert.equal(f.store.liveStatus(f.session.user).value.estimated, true);
 
   f.advance(60 * minute);
@@ -77,6 +80,7 @@ test('a competing transition returns the winner and never commits its dependent 
   const f = await fixture(t);
   const base = project(f);
   f.commit(f.input({}, base));
+  f.store.release(f.session, { generation: f.store.head(f.session.user).execution });
   const began = f.local({ type: 'StartFocus', sessionId: 'winner', projectId: 'project', subtaskId: 'task', plannedDurationMs: minute });
   const wins = f.input(base, began);
   const rival = { ...began, '$/activeFocusSession': began['$/activeFocusSession'].replace('winner', 'loser') };
@@ -147,20 +151,52 @@ test('one-time bootstrap indexes an existing workspace without replacing its fac
   assert.deepEqual(f.store.sync.head(f.session), migrated);
 });
 
-test('the old workspace HTTP client is asked to upgrade and the v2 head is read-only', async t => {
+test('legacy HTTP and v2 clients share data and the v2 head is read-only', async t => {
   const f = await fixture(t);
   const server = createCloudServer(f.store);
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise(resolve => server.close(resolve)));
   const base = `http://127.0.0.1:${server.address().port}/v1`;
   const headers = { authorization: 'Bearer ' + f.token };
+  const post = (path, payload) => fetch(base + path, { method: 'POST', headers, body: JSON.stringify(payload) });
+  const initial = project(f);
+  const legacyCommit = await post('/workspace/commit', f.input({}, initial));
+  assert.equal(legacyCommit.status, 200);
   const old = await fetch(base + '/workspace', { headers });
-  assert.equal(old.status, 409);
-  assert.equal((await old.json()).error, 'CLIENT_UPDATE_REQUIRED');
+  assert.equal(old.status, 200);
+  assert.deepEqual((await old.json()).entries, initial);
+  const v2 = await post('/sync/pull', { known: {} });
+  assert.deepEqual((await v2.json()).delta.building.entries, Object.fromEntries(
+    Object.entries(initial).filter(([key]) => key !== '$/activeFocusSession')));
+  const legacyPresence = await post('/presence', { execution: f.store.head(f.session.user).execution, snapshot:
+    { currentName: 'Legacy task', startedAt: new Date(start).toISOString(), estimatedElapsedMs: 0,
+      estimatedEndsAt: new Date(start + minute).toISOString(), todayActualFocusMs: 0 } });
+  assert.equal(legacyPresence.status, 200);
+  assert.equal(f.store.liveStatus(f.session.user).value.currentName, 'Legacy task');
+  const note = f.local({ type: 'AddQuickNote', noteId: 'new-client', text: 'Read by the legacy client' });
+  assert.equal((await post('/sync/commit', f.input(initial, note))).status, 200);
+  assert.deepEqual((await (await fetch(base + '/workspace', { headers })).json()).entries, note);
   const before = f.store.devices(f.session)[0].last_seen;
   f.advance(6 * minute);
   const head = await fetch(base + '/sync/head', { headers });
   assert.equal(head.status, 200);
   assert.equal((await head.json()).schema, 2);
   assert.equal(f.store.devices(f.session)[0].last_seen, before);
+});
+
+test('an idle watching device cannot silently take over or commit focus effects', async t => {
+  const f = await fixture(t);
+  const base = project(f);
+  f.commit(f.input({}, base));
+  const begun = f.local({ type: 'StartFocus', sessionId: 'viewer', projectId: 'project', subtaskId: 'task', plannedDurationMs: minute });
+  const signedIn = f.store.session(f.session.user, 'test-device-000002', 'Watching device');
+  const viewer = f.store.authenticate(signedIn.token);
+  const result = f.commit(f.input(base, begun), viewer);
+  assert.equal(result.winners['$/activeFocusSession'], 'null');
+  assert.equal(result.state.execution.owner, f.session.device);
+  assert.equal(f.store.liveStatus(f.session.user).value.currentName, null);
+  f.store.claim(viewer, { generation: result.state.execution.generation, takeover: true });
+  const takeover = f.commit(f.input(base, begun), viewer);
+  assert.equal(takeover.state.execution.owner, viewer.device);
+  assert.equal(takeover.state.focusLocked, true);
 });

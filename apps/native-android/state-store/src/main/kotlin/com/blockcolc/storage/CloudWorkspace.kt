@@ -2,6 +2,7 @@ package com.blockcolc.storage
 
 import com.blockcolc.domain.DomainDocument
 import com.blockcolc.domain.StrictJson
+import org.json.JSONArray
 import org.json.JSONObject
 
 /** Portable facts only. File handles, OS permissions, authentication and
@@ -9,6 +10,25 @@ import org.json.JSONObject
 data class CloudWorkspace(val entries:Map<String,String>,val assets:Map<String,String>) {
     val hashes:Map<String,String> get()=entries.mapValues{StrictJson.sha(it.value)}
     companion object {
+        private val packages = setOf("building", "focus")
+
+        fun packageOf(key: String): String = when {
+            key == "\$/activeFocusSession" || key == "@plan" ||
+                key.startsWith("focusHistory/") || key.startsWith("progressReports/") -> "focus"
+            else -> "building"
+        }
+
+        fun matchesPackages(hashes: Map<String, String>, heads: Map<String, CloudPackageHead>): Boolean {
+            if (heads.keys != packages) return false
+            val input = packages.associateWith { StringBuilder() }
+            for (key in hashes.keys.sorted()) {
+                input.getValue(packageOf(key))
+                    .append(StrictJson.render(JSONArray(listOf(key, hashes.getValue(key)))))
+                    .append('\n')
+            }
+            return input.all { (name, wire) -> StrictJson.sha(wire.toString()) == heads.getValue(name).hash }
+        }
+
         private fun slot(section:String)=when(section){"projects","habitBuildings"->"importedBlueprint";"buildingBlueprintResources","decorationBlueprintResources"->"blueprint";else->null}
         fun split(domain:DomainDocument):CloudWorkspace {
             val layout=RecordLayout.split(domain)

@@ -182,7 +182,7 @@ export class CloudStore {
       }
       if(conflicts.length&&!protocol2)throw new ApiError(409,'SYNC_CONFLICT',{keys:conflicts});
       let protectedChange=accepted.some(c=>focusEntry(c.key))||conflicts.some(focusEntry);
-      let canAcquire=protocol2&&protectedChange&&h.owner!==s.device&&!this.sync.locked(s.user);
+      let canAcquire=protocol2&&protectedChange&&h.owner==null&&!this.sync.locked(s.user);
       let changes=accepted;
       if(protocol2&&protectedChange&&(conflicts.some(focusEffect)||h.owner!==s.device&&!canAcquire||input.execution!==h.execution||
         this.integrations.externalBusy(s.user)||hasOverlappingHistory(changes,previous))){
@@ -202,6 +202,7 @@ export class CloudStore {
         if(change.canonical==null)delete entries[change.key];
         else{fail(Buffer.byteLength(change.canonical)<=4*1024*1024,'ENTITY_TOO_LARGE',413);JSON.parse(change.canonical);entries[change.key]=change.canonical;}
       }
+      this.db.prepare('DELETE FROM receipts WHERE user=? AND created<?').run(s.user,this.clock()-30*DAY);
       if(protocol2&&!changes.length){
         const result={epoch:h.epoch,revision:h.revision,winners:Object.fromEntries(conflicts.map(key=>[key,previous[key]??null]))};
         this.db.prepare('INSERT INTO receipts VALUES(?,?,?,?,?)').run(s.user,input.requestId,requestSha,canonical(result),this.clock());
@@ -217,11 +218,13 @@ export class CloudStore {
         this.integrations.forgetNativeReservations(s.user);
       }
       this.db.prepare('UPDATE heads SET revision=revision+1,changed=? WHERE user=?').run(this.clock(),s.user);
+      if(protocol2&&changes.some(c=>c.key==='$/activeFocusSession'||c.key==='@plan')){
+        this.db.prepare('DELETE FROM presence WHERE user=?').run(s.user);
+      }
       this.sync.record(s.user,changes.map(change=>change.key));
       const result={epoch:h.epoch,revision:h.revision+1};
       if(protocol2)result.winners=Object.fromEntries(conflicts.map(key=>[key,previous[key]??null]));
       this.db.prepare('INSERT INTO receipts VALUES(?,?,?,?,?)').run(s.user,input.requestId,requestSha,canonical(result),this.clock());
-      this.db.prepare('DELETE FROM receipts WHERE user=? AND created<?').run(s.user,this.clock()-30*DAY);
       return response(result);
     });
   }
@@ -312,11 +315,11 @@ export class CloudStore {
     return {ok:true};}
   liveStatus(user){
     const row=this.db.prepare('SELECT value,expires FROM presence WHERE user=?').get(user);
-    const external=row?{value:JSON.parse(row.value),persistent:false,expires:row.expires}:null;
+    const observed=row?{value:JSON.parse(row.value),persistent:false,expires:row.expires}:null;
     const saved=this.sync.live(user);
-    if(external&&external.expires>this.clock()&&(external.value.externalState||
-      (saved?.value.updatedAt??'')<=external.value.updatedAt))return external;
-    return saved??external;
+    if(observed?.value.externalState&&observed.expires>this.clock())return observed;
+    if(observed&&(saved?.value.updatedAt??'')<=observed.value.updatedAt)return observed;
+    return saved??observed;
   }
   dayTotals(user,zone){
     return this.sync.dayTotals(user,zone)??this.calculateDayTotals(user,zone);

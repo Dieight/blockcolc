@@ -3,7 +3,8 @@ import { canonical, fail, sha } from './wire.mjs';
 const packages = ['building', 'focus'];
 const retainedRevisions = 512;
 const emptyHash = sha('');
-const focusEffects = new Set(['projects', 'habitBuildings', 'dailyGoals', 'projectConditions', 'decorationRewards', 'retiredSubtaskIds']);
+const focusEffects = new Set(['projects', 'habitBuildings', 'dailyGoals', 'projectConditions',
+  'decorationRewards', 'holidayRewards', 'retiredSubtaskIds']);
 
 export function focusEntry(key) {
   return key === '$/activeFocusSession' || key === '@plan' ||
@@ -85,12 +86,12 @@ export class SyncV2 {
 
   head(s) {
     const h = this.cloud.head(s.user);
-    const controls = h.owner == null ? this.db.prepare("SELECT key,canonical FROM sync_entries WHERE user=? AND key IN ('$/activeFocusSession','@plan')").all(s.user) : [];
+    const focusLocked = this.locked(s.user);
     return {
       schema: 2, epoch: h.epoch, revision: h.revision, serverTime: this.cloud.clock(),
       execution: { owner: h.owner, generation: h.execution }, packages: this.packageHeads(s.user),
-      focusLocked: this.locked(s.user),
-      claimable: h.owner == null && !controls.some(row => row.key === '@plan' ? JSON.parse(row.canonical).plan : JSON.parse(row.canonical)),
+      focusLocked,
+      claimable: h.owner == null && !focusLocked,
       backup: this.cloud.backupInfo(s),
     };
   }
@@ -129,7 +130,7 @@ export class SyncV2 {
       const changed = keys.filter(key => packageFor(key) === name);
       if (!changed.length) continue;
       const revision = heads[name].revision + 1;
-      const hash = sha(entries.all(user, name)
+      const hash = sha(entries.all(user, name).sort((a, b) => a.key < b.key ? -1 : a.key > b.key ? 1 : 0)
         .map(row => canonical([row.key, row.sha]) + '\n').join(''));
       writePackage.run(user, name, revision, hash);
       for (const key of changed) writeChange.run(user, name, key, revision);
@@ -153,9 +154,8 @@ export class SyncV2 {
     if (previous?.phase === phase && previous.session === session && !preserveTime) return;
     const seenStart = Date.parse(phase === 'rest' ? plan.restStartedAt : plan?.extensionStartedAt ?? active?.startedAt);
     const seenEnd = Date.parse(phase === 'rest' ? plan.phaseEndsAt : active?.marathon ? plan?.exactEndAt ?? active.endsAt : active?.endsAt);
-    const begin = active || phase === 'rest' ? (preserveTime && Number.isFinite(seenStart) ? Math.min(now, seenStart) : now) : null;
-    const until = begin != null && phase !== 'extension' && Number.isFinite(seenStart) && seenEnd > seenStart ?
-      (active?.marathon ? Math.max(begin + 1, seenEnd) : begin + seenEnd - seenStart) : null;
+    const begin = active || phase === 'rest' ? (Number.isFinite(seenStart) ? Math.min(now, seenStart) : now) : null;
+    const until = begin != null && phase !== 'extension' && seenEnd > begin ? seenEnd : null;
     let currentName = null;
     if (phase === 'focus' || phase === 'extension') {
       const project = JSON.parse(entry.get(user, 'projects/' + active.projectId)?.canonical ?? 'null')?.value;

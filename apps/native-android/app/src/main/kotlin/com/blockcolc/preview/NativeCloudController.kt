@@ -8,12 +8,14 @@ import android.os.SystemClock
 import android.provider.Settings
 import com.blockcolc.cloud.*
 import com.blockcolc.domain.StrictJson
+import com.blockcolc.focus.FocusFailure
 import com.blockcolc.presentation.ClientPreferences
 import com.blockcolc.storage.*
 import kotlinx.coroutines.suspendCancellableCoroutine
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.io.IOException
 import java.net.SocketTimeoutException
 import java.util.UUID
 import java.util.concurrent.CopyOnWriteArrayList
@@ -205,6 +207,34 @@ internal class NativeCloudController private constructor(private val context:Con
         return if(timeoutMillis==null)transport.request("/v1/"+path,method,session?.token,wire)
             else transport.request("/v1/"+path,method,session?.token,wire,timeoutMillis)
     }
+    internal fun reserveNativeFocus(request: String): Boolean {
+        val login = session ?: return false
+        val generation = execution
+        if (generation <= 0 || !runtime.cloudIoAllowed(isolatedTransport)) return false
+        val body = JSONObject().put("generation", generation).put("request", request)
+        try {
+            transport.request("/v1/execution/focus/start", "POST", login.token, StrictJson.render(body), timeoutMillis = 2200)
+            return session === login
+        } catch (failure: CloudFailure) {
+            when (failure.code) {
+                "NOT_FOUND", "HTTP_404", "REQUEST_TIMEOUT" -> return false
+                "UNAUTHORIZED", "EXECUTION_CHANGED" -> throw FocusFailure("CLOUD_VIEW_ONLY")
+                else -> throw FocusFailure(failure.code)
+            }
+        } catch (_: IOException) {
+            // Offline intervals are still checked when the device reconnects.
+            return false
+        }
+    }
+    internal fun cancelNativeReservation(request: String) {
+        val login = session ?: return
+        worker.execute {
+            if (session === login) runCatching {
+                transport.request("/v1/execution/focus/cancel", "POST", login.token,
+                    StrictJson.render(JSONObject().put("request", request)), timeoutMillis = 2200)
+            }
+        }
+    }
     private fun errorCode(error:Throwable):String{
         val causes=generateSequence(error){it.cause}.toList()
         return causes.filterIsInstance<CloudFailure>().firstOrNull()?.code?:when{
@@ -303,7 +333,7 @@ internal class NativeCloudController private constructor(private val context:Con
         val control=remote.getJSONObject("execution")
         val owner=control.opt("owner") as? String
         val owned=owner==session?.device
-        val editable=owned||!remote.optBoolean("focusLocked")
+        val editable=owned
         if(remoteHead==null||editable!=focusEditable||control.getLong("generation")!=execution)runtime.cloudPermission(editable).get()
         focusEditable=editable
         execution=control.getLong("generation")
@@ -315,9 +345,6 @@ internal class NativeCloudController private constructor(private val context:Con
         runtime.cloudPermission(true).get();publish{it.copy(owned=true,owner=device,choiceRequired=false,conflicts=emptyList())}
         sync("cloud",takeover=true)
     }
-    private fun entries(x:JSONObject):Map<String,String>{val out=x.getJSONObject("entries");return out.keys().asSequence().associateWith{out.getString(it)}}
-    private fun engineEntry(key:String)=key=="\$/activeFocusSession"||key=="@plan"||
-        key.startsWith("focusHistory/")||key.startsWith("progressReports/")
     private fun localEntries(local:CloudLocal):CloudWorkspace {
         val facts=CloudWorkspace.split(local.domain);val recovery=JSONObject(local.recovery.canonical())
         val plan=JSONObject().put("plan",recovery.get("plan")).put("automaticEnabled",local.recovery.automatic!=null)
@@ -357,6 +384,14 @@ internal class NativeCloudController private constructor(private val context:Con
             if (updates.isNull(key)) target.remove(key) else target[key] = updates.getString(key)
         }
     }
+    private fun applyDelta(target: MutableMap<String, String>, received: JSONObject) {
+        val delta = received.optJSONObject("delta") ?: return
+        for (name in delta.keys()) {
+            val update = delta.getJSONObject(name)
+            if (update.getBoolean("snapshot")) target.keys.removeAll { CloudWorkspace.packageOf(it) == name }
+            applyEntries(target, update.getJSONObject("entries"))
+        }
+    }
 
     private fun sync(
         strategy: String? = null, takeover: Boolean = false, header: JSONObject? = null, profile: Boolean = true,
@@ -370,7 +405,7 @@ internal class NativeCloudController private constructor(private val context:Con
         }
         var status = header ?: fetchHead()
         adoptHead(status)
-        if (status.optBoolean("claimable") && strategy != "cloud") {
+        if (status.optBoolean("claimable")) {
             api("execution/claim", "POST", JSONObject().put("generation", execution))
             status = fetchHead()
             adoptHead(status)
@@ -386,7 +421,7 @@ internal class NativeCloudController private constructor(private val context:Con
         val changes = if (strategy == "cloud" || reset) emptyList() else
             CloudWorkspace.changes(encoded.entries, previous?.hashes.orEmpty())
         var preserveLocal = reset || strategy == "cloud"
-        val remote: JSONObject
+        var remote: JSONObject
         if (strategy == "local" && status.getLong("revision") != 0L) {
             if (!value.owned) throw CloudFailure("EXECUTION_CHANGED")
             uploadAssets(encoded.assets)
@@ -409,18 +444,22 @@ internal class NativeCloudController private constructor(private val context:Con
                 api("sync/pull", "POST", JSONObject().put("epoch", if (strategy == "cloud") JSONObject.NULL else knownEpoch ?: JSONObject.NULL)
                     .put("known", known))
         }
-        val delta = remote.optJSONObject("delta")
-        if (delta != null) for (name in delta.keys()) {
-            val update = delta.getJSONObject(name)
-            if (update.getBoolean("snapshot")) incoming.keys.removeAll { key -> engineEntry(key) == (name == "focus") }
-            applyEntries(incoming, update.getJSONObject("entries"))
+        applyDelta(incoming, remote)
+        var hashes = incoming.mapValues { StrictJson.sha(it.value) }
+        if (!CloudWorkspace.matchesPackages(hashes, packageHeads(remote))) {
+            remote = api("sync/pull", "POST", JSONObject().put("known", JSONObject()))
+            incoming.clear()
+            applyDelta(incoming, remote)
+            hashes = incoming.mapValues { StrictJson.sha(it.value) }
+            if (!CloudWorkspace.matchesPackages(hashes, packageHeads(remote))) throw CloudFailure("CLOUD_PACKAGE_DIGEST")
+            preserveLocal = true
         }
         if (incoming.isEmpty()) throw CloudFailure("CLOUD_EMPTY")
 
         adoptHead(remote)
         remotePlanHint = incoming["@plan"]
         val baseline = CloudBaseline(login.account, remote.getString("epoch"), remote.getLong("revision"),
-            incoming.mapValues { StrictJson.sha(it.value) }, execution, packageHeads(remote))
+            hashes, execution, packageHeads(remote))
         if (incoming != encoded.entries || takeover) {
             val document = CloudWorkspace.join(incoming, ::downloadAsset)
             var recovery = CloudWorkspace.recovery(incoming, document)
@@ -435,7 +474,9 @@ internal class NativeCloudController private constructor(private val context:Con
             val synced = incoming["@preferences"]?.let(ClientPreferences::parseText) ?: local.preferences
             val preferences = if (local.preferences.lightingQuality == "paper" && synced.lightingQuality == "performance")
                 synced.copy(lightingQuality = "paper") else synced
-            runtime.cloudApply(local, document, recovery, preferences, baseline, replacement = reset, preserveRollback = preserveLocal).get()
+            val replaced = previous != null && previous.epoch != baseline.epoch
+            runtime.cloudApply(local, document, recovery, preferences, baseline, replacement = replaced,
+                preserveRollback = preserveLocal || replaced).get()
             incoming["@preferences"]?.let(::JSONObject)?.optJSONObject("resourceSelection")?.let { selection ->
                 resourceChoices.save(selection.opt("activeId") as? String, selection.opt("baseId") as? String)
                 com.blockcolc.preview.resources.NativeResourceController.get(context).cloudSelection(selection.opt("activeId") as? String,

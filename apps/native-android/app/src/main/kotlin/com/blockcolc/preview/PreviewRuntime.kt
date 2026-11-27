@@ -179,7 +179,7 @@ class PreviewRuntime private constructor(private val context: Context):Workspace
             active?.getString("endsAt")?:plan?.phaseEndsAt)
         if(moment==lastCloudFocus)return
         lastCloudFocus=moment
-        if(!recordingTest)NativeCloudController.get(context,this).start()
+        if(!recordingTest)NativeCloudController.get(context,this).apply { start(); changed() }
     }
     private fun committedEvents(result:Operation){
         if(!result.replayed)observeCloudFocus(result.state)
@@ -687,11 +687,25 @@ class PreviewRuntime private constructor(private val context: Context):Workspace
     }
     override fun startPlan(uiRequest:String?){
         NativeStartupTrace.point("focus-action-accepted")
-        enqueue("start-plan",uiRequest){c->FocusActions(c,clientPreferences).start(uiRequest?:id(),focusNow())}
+        enqueue("start-plan",uiRequest){c->
+            val request = uiRequest ?: id()
+            withFocusReservation(request) { FocusActions(c,clientPreferences).start(request,focusNow()) }
+        }
     }
     override fun beginFocus(draft:FocusDraft,uiRequest:String){
         NativeStartupTrace.point("focus-action-accepted")
-        enqueue("begin-focus",uiRequest){c->FocusActions(c,clientPreferences).begin(uiRequest,id(),draft,focusNow())}
+        enqueue("begin-focus",uiRequest){c->
+            withFocusReservation(uiRequest) { FocusActions(c,clientPreferences).begin(uiRequest,id(),draft,focusNow()) }
+        }
+    }
+    private fun withFocusReservation(request: String, start: () -> Operation): Operation {
+        val cloud = if (!recordingTest && cloudGate.ownsAccountExecution()) NativeCloudController.peek() else null
+        val reserved = cloud?.reserveNativeFocus(request) == true
+        try { return start() }
+        catch (error: Exception) {
+            if (reserved && error !is CommittedStateUnavailable) cloud?.cancelNativeReservation(request)
+            throw error
+        }
     }
     override fun amendPlan(planId:String,draft:FocusDraft,uiRequest:String)=enqueue("amend-plan",uiRequest){c->FocusActions(c,clientPreferences).amend(uiRequest,planId,id(),draft,focusNow())}
     fun focus(mode: PlanMode, rounds: Int, focusMinutes: Int, restMinutes: Int, automatic: Boolean, selected: String?, endAt: Long? = null) = enqueue("start-focus") { c ->
@@ -865,7 +879,7 @@ class PreviewRuntime private constructor(private val context: Context):Workspace
         acceptedRecovery.validate(domain,current.token.replacementGeneration)
         val storage = checkNotNull(store)
         val settings = preferences.takeIf { it != expected.preferences }?.canonical()
-        if(domain==current.domain&&acceptedRecovery==current.recovery){
+        if(!preserveRollback&&domain==current.domain&&acceptedRecovery==current.recovery){
             storage.acknowledgeCloud(baseline, settings)
             if(settings!=null){applyRestoredPreferences(storage);publish(latest.copy(preferences=preferences))}
         }else{
