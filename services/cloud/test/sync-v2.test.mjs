@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CloudStore } from '../src/store.mjs';
+import { FocusViewerStore } from '../src/focus-viewer-store.mjs';
 import { createCloudServer } from '../src/server.mjs';
 import { sha, splitDomain } from '../src/wire.mjs';
 import { createInitialState, execute } from '../build/domain.mjs';
@@ -74,6 +75,55 @@ test('the focus delta and estimated presence share one transaction and survive a
   assert.equal(f.store.dayTotals(f.session.user, 'UTC')['2026-11-26'], 60 * minute);
   assert.equal(f.commit(finish).revision, settled.revision);
   assert.equal(f.store.dayTotals(f.session.user, 'UTC')['2026-11-26'], 60 * minute);
+});
+
+test('a missing finish becomes stale on the friend card and viewer without fabricating history', async t => {
+  const f = await fixture(t);
+  const base = project(f);
+  const active = f.local({ type: 'StartFocus', sessionId: 'stale-round', projectId: 'project', subtaskId: 'task', plannedDurationMs: 25 * minute });
+  f.commit(f.input({}, base));
+  f.commit(f.input(base, active));
+  const buddy = await f.store.register({ username: 'reader', password: 'local-test-reader', name: 'Reader',
+    deviceId: 'test-device-reader', deviceName: 'Reader', timeZone: 'UTC' });
+  const reader = f.store.authenticate(buddy.token);
+  f.store.updateAccount(reader, { friendsEnabled: true });
+  f.store.updateAccount(f.session, { friendsEnabled: true, sharing: {status:true,name:true,time:true,daily:true} });
+  f.store.invite(f.session, buddy.account.friendCode);
+  f.store.relation(reader, f.session.user, 'accept');
+  const viewer = new FocusViewerStore(f.store, { owner: f.session.user, from: '2026-11-26' });
+  f.advance(25 * minute + 89_999);
+  assert.equal(f.store.friends(reader)[0].focusing, true);
+  f.advance(1);
+  assert.ok(f.store.friends(reader)[0].stale);
+  f.advance(111 * 60 * minute);
+  const unknown = f.store.friends(reader)[0];
+  assert.equal(unknown.focusing, undefined);
+  assert.equal(unknown.startedAt, undefined);
+  assert.equal(unknown.currentName, undefined);
+  assert.deepEqual(unknown.days, []);
+  const waiting = viewer.snapshot().live.snapshot;
+  assert.equal(waiting.currentName, null);
+  assert.equal(waiting.estimatedElapsedMs, 0);
+  assert.equal(waiting.stale, true);
+  f.commit(f.input(active, f.local({ type: 'CompleteFocus' })));
+  assert.equal(f.store.friends(reader)[0].focusing, false);
+  assert.equal(f.store.friends(reader)[0].stale, undefined);
+  assert.equal(f.store.dayTotals(f.session.user, 'UTC')['2026-11-26'], 25 * minute);
+  assert.equal(viewer.snapshot().live.snapshot.stale, undefined);
+});
+
+test('a delayed legacy heartbeat cannot revive a committed end', async t => {
+  const f = await fixture(t);
+  const base = project(f);
+  f.commit(f.input({}, base));
+  const active = f.local({ type: 'StartFocus', sessionId: 'settled', projectId: 'project', subtaskId: 'task', plannedDurationMs: 25 * minute });
+  f.commit(f.input(base, active));
+  f.advance(5 * minute);
+  f.commit(f.input(active, f.local({ type: 'CancelFocus' })));
+  f.advance(1000);
+  f.store.presence(f.session, { currentName:'Task', startedAt:new Date(start).toISOString(), estimatedElapsedMs:5 * minute,
+    estimatedEndsAt:new Date(start + 25 * minute).toISOString(), todayActualFocusMs:5 * minute }, 1);
+  assert.equal(f.store.liveStatus(f.session.user).value.currentName, null);
 });
 
 test('a competing transition returns the winner and never commits its dependent edits', async t => {
@@ -149,6 +199,30 @@ test('one-time bootstrap indexes an existing workspace without replacing its fac
   const migrated = f.store.sync.head(f.session);
   f.reopen();
   assert.deepEqual(f.store.sync.head(f.session), migrated);
+});
+
+test('migration keeps a legacy idle observation newer than the beginning of the saved round', async t => {
+  const f = await fixture(t);
+  const base = project(f);
+  const active = f.local({ type: 'StartFocus', sessionId: 'legacy-still-saved', projectId: 'project', subtaskId: 'task', plannedDurationMs: 25 * minute });
+  f.commit(f.input({}, base));
+  f.commit(f.input(base, active));
+  f.advance(8 * minute);
+  f.store.presence(f.session, { currentName:null, startedAt:null, estimatedElapsedMs:0,
+    estimatedEndsAt:null, todayActualFocusMs:8 * minute }, 1);
+  // Both the old database import and a Beta 8 database may still contain
+  // the stale active fact despite the phone having reported idle.
+  f.store.db.exec('CREATE TABLE entries AS SELECT user,key,canonical,sha FROM sync_entries; DELETE FROM sync_entries; ' +
+    'DELETE FROM sync_v2_migrations; DELETE FROM sync_v2_changes; DELETE FROM sync_v2_packages; DELETE FROM sync_v2_focus;');
+  f.advance(2 * minute);
+  f.reopen();
+  assert.equal(f.store.liveStatus(f.session.user).value.currentName, null);
+  assert.equal(f.store.liveStatus(f.session.user).stale, undefined);
+  const before = f.store.sync.head(f.session).packages;
+  f.store.db.exec("UPDATE sync_v2_focus SET value=json_remove(value, '$.statusExpiresAt', '$.closedThrough'); DELETE FROM sync_v2_migrations WHERE version=3");
+  f.reopen();
+  assert.equal(f.store.liveStatus(f.session.user).value.currentName, null);
+  assert.deepEqual(f.store.sync.head(f.session).packages, before);
 });
 
 test('legacy HTTP and v2 clients share data and the v2 head is read-only', async t => {

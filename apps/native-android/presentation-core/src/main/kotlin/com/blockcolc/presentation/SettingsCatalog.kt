@@ -23,6 +23,7 @@ object SettingsCatalog {
         SettingsEntry("专注完整性","protection","专注完整性","Focus integrity",keywords="离开次数 阈值 excursions threshold"),
         SettingsEntry("计划专注日","protection","计划专注日","Planned focus days",keywords="星期 rest weekdays"),
         SettingsEntry("返回专注提醒","protection","返回专注提醒","Return-to-focus reminders"),
+        SettingsEntry("计时闹钟","protection","计时闹钟","Timer alarms",keywords="轮次 休息 振动 震动 铃声 round break sound vibrate"),
         SettingsEntry("通知与后台","protection","通知与后台","Notifications & background",keywords="流体云 灵动岛 电池 ColorOS OriginOS battery"),
         SettingsEntry("主题","appearance","主题","Theme",keywords="深色 浅色 dark light"),
         SettingsEntry("界面语言","appearance","界面语言","App language",keywords="English 简体中文"),

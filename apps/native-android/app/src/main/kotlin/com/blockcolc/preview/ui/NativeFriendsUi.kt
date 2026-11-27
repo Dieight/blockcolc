@@ -311,14 +311,14 @@ internal fun groupedFriendCode(code:String)=code.chunked(6).joinToString(" ")
         Column(Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState())){
             for((index,friend) in friends.withIndex())key(friend.optString("id")){
                 if(index>0)HorizontalDivider(color=divider)
+                val live = rememberFriendLiveStatus(friend)
                 Row(Modifier.fillMaxWidth().padding(vertical=8.dp),verticalAlignment=Alignment.CenterVertically,
                     horizontalArrangement=Arrangement.spacedBy(10.dp)){
-                    val focusing=friend.optBoolean("focusing")&&!friend.optBoolean("stale")
-                    Box(Modifier.size(7.dp).background(if(focusing)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline))
+                    Box(Modifier.size(7.dp).background(if(live.focusing)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline))
                     Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(4.dp)){
                         Text(friend.optString("name"),style=MaterialTheme.typography.bodyMedium)
-                        friendStatus(friend)?.let{Text(it,style=MaterialTheme.typography.bodySmall)}
-                        friendPeriod(friend)?.let{Text(it,style=MaterialTheme.typography.bodySmall)}
+                        friendStatus(friend,live)?.let{Text(it,style=MaterialTheme.typography.bodySmall)}
+                        friendPeriod(friend,live)?.let{Text(it,style=MaterialTheme.typography.bodySmall)}
                     }
                 }
             }
@@ -362,15 +362,16 @@ internal fun groupedFriendCode(code:String)=code.chunked(6).joinToString(" ")
         }
     }
 
-    val summary=friendStatus(friend)
-    val time=friendPeriod(friend)
+    val live=rememberFriendLiveStatus(friend)
+    val summary=friendStatus(friend,live)
+    val time=friendPeriod(friend,live)
     val description=listOfNotNull(summary,time).joinToString("\n").ifEmpty{null}
     Column(modifier.fillMaxWidth().border(1.dp,if(dragging)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant)
         .background(MaterialTheme.colorScheme.surface).padding(horizontal=14.dp)){
         NativeDisclosure(name,description,expanded,{expanded=it},
             titleStyle=MaterialTheme.typography.titleMedium,descriptionStyle=MaterialTheme.typography.bodyMedium,
             leading={
-                val color=if(friend.optBoolean("focusing"))MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
+                val color=if(live.focusing)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
                 Box(Modifier.size(8.dp).background(color))
             }){
             Column(Modifier.fillMaxWidth().padding(bottom=12.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){
@@ -401,15 +402,50 @@ internal fun groupedFriendCode(code:String)=code.chunked(6).joinToString(" ")
     }
 }
 
-@Composable private fun friendStatus(friend:JSONObject):String?{
-    if(friend.optBoolean("stale"))return cloudText("实时状态暂不可用","Live status unavailable")
+internal data class FriendLiveStatus(val stale: Boolean, val idle: Boolean, val focusing: Boolean, val estimatedMs: Long?)
+
+private fun JSONObject.instant(key: String): Instant? =
+    (opt(key) as? String)?.let { runCatching { Instant.parse(it) }.getOrNull() }
+
+internal fun friendLiveStatus(friend: JSONObject, now: Long): FriendLiveStatus {
+    val estimated = friend.optBoolean("estimated")
+    val start = friend.instant("startedAt")?.toEpochMilli()
+    val end = friend.instant("endsAt")?.toEpochMilli()
+    val expiry = friend.instant("statusExpiresAt")?.toEpochMilli() ?: if (estimated) {
+        end ?: friend.instant("updatedAt")?.toEpochMilli()?.let { it + 3 * 60 * 60_000L + 90_000 }
+    } else null
+    val rest = friend.optString("state") == "rest"
+    val paused = friend.optString("focusState") == "paused"
+    val idle = friend.opt("focusing") == false && !rest && !paused
+    val stale = friend.optBoolean("stale") || (!idle && expiry != null && now >= expiry)
+    val focusing = !stale && !rest && !paused && friend.optBoolean("focusing")
+    val elapsed = if (focusing && estimated && start != null) (minOf(now, end ?: now) - start).coerceAtLeast(0) else null
+    return FriendLiveStatus(stale, idle, focusing, elapsed)
+}
+
+@Composable private fun rememberFriendLiveStatus(friend: JSONObject): FriendLiveStatus {
+    fun now() = NativeCloudController.peek()?.focusNow() ?: System.currentTimeMillis()
+    val ticks = !friend.optBoolean("stale") && (friend.optBoolean("estimated") || friend.has("statusExpiresAt"))
+    var current by remember(friend) { mutableLongStateOf(now()) }
+    LaunchedEffect(friend,ticks) {
+        if (ticks) while (!friendLiveStatus(friend,current).stale) {
+            delay(10_000)
+            current = now()
+        }
+    }
+    return friendLiveStatus(friend, current)
+}
+
+@Composable private fun friendStatus(friend:JSONObject,live:FriendLiveStatus):String?{
+    if(live.stale)return if(friend.optBoolean("readOnly"))cloudText("实时状态暂不可用","Live status unavailable")
+        else cloudText("等待同步","Waiting for sync")
     val task=(friend.opt("currentName") as? String)?.takeIf{it.isNotBlank()}
     val status = when{
         friend.optString("state")=="rest"->listOfNotNull(task,cloudText("休息中","Resting")).distinct().joinToString(" · ")
         friend.optString("focusState")=="paused"->listOfNotNull(task,cloudText("已暂停","Paused")).joinToString(" · ")
+        live.idle->cloudText("暂未专注","Not focusing")
         task!=null->task
-        friend.optBoolean("focusing")->cloudText("专注中","Focusing")
-        friend.has("focusing")->cloudText("暂未专注","Not focusing")
+        live.focusing->cloudText("专注中","Focusing")
         else->null
     }
     val source = friend.optJSONObject("source")
@@ -418,15 +454,13 @@ internal fun groupedFriendCode(code:String)=code.chunked(6).joinToString(" ")
     else status
 }
 
-@Composable private fun friendPeriod(friend:JSONObject):String?{
-    val start=(friend.opt("startedAt") as? String)?.let{runCatching{Instant.parse(it)}.getOrNull()}
-    val end=(friend.opt("endsAt") as? String)?.let{runCatching{Instant.parse(it)}.getOrNull()}
+@Composable private fun friendPeriod(friend:JSONObject,live:FriendLiveStatus):String?{
+    if (live.stale || live.idle) return null
+    val start=friend.instant("startedAt")
+    val end=friend.instant("endsAt")
     if(start==null&&end==null)return null
-    if(start!=null&&friend.optBoolean("estimated")&&friend.optBoolean("focusing")){
-        fun now()=NativeCloudController.peek()?.focusNow()?:System.currentTimeMillis()
-        var current by remember(start){mutableLongStateOf(now())}
-        LaunchedEffect(start){while(true){current=now();delay(10_000)}}
-        val elapsed=formatDuration((current-start.toEpochMilli()).coerceAtLeast(0))
+    if(live.estimatedMs!=null){
+        val elapsed=formatDuration(live.estimatedMs)
         return cloudText("预计已持续 $elapsed","Estimated duration $elapsed")
     }
     val zone=ZoneId.systemDefault()

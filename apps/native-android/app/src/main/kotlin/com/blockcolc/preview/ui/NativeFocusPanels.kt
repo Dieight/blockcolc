@@ -9,7 +9,6 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.*
@@ -23,25 +22,63 @@ import androidx.compose.ui.graphics.graphicsLayer
 import com.blockcolc.presentation.*
 import com.blockcolc.preview.*
 import com.blockcolc.storage.PlanMode
+import kotlinx.coroutines.delay
 import java.util.UUID
 
 data class PlanEditorModel(val token:String=UUID.randomUUID().toString(),val projectId:String?,val taskId:String?,val mode:PlanMode=PlanMode.ROUNDS,
     val rounds:Int=1,val endAt:Long?=null,val replacingPlanId:String?=null)
 
-/** Revealing controls never ends or changes the saved session. The blank
- * touch target is separate from the clock, world gestures and other buttons. */
-@Composable fun NativeFocusExitControl(enabled:Boolean,onEnd:()->Unit,modifier:Modifier=Modifier,hintRequest:Int=0){
-    val ui=LocalNativeUi.current
-    var revealed by rememberSaveable{mutableStateOf(false)}
-    var hint by remember{mutableStateOf(true)}
-    // Shown on entry; a single tap on the panel shows it again for a moment.
-    var localRequest by remember{mutableIntStateOf(0)}
-    LaunchedEffect(hintRequest,localRequest){
-        hint=true
-        kotlinx.coroutines.delay(if(hintRequest==0&&localRequest==0)3800 else 3000)
-        hint=false
+internal enum class FocusExitVisibility { HIDDEN, HINT, ACTION }
+
+@Stable internal class FocusExitControls {
+    var visibility by mutableStateOf(FocusExitVisibility.HINT)
+        private set
+    var hintRequests by mutableIntStateOf(0)
+        private set
+
+    fun showHint() {
+        if (visibility != FocusExitVisibility.ACTION) {
+            hintRequests++
+            visibility = FocusExitVisibility.HINT
+        }
     }
-    fun toggleEndControl(){revealed=!revealed;hint=false}
+
+    fun toggleAction() {
+        visibility = if (visibility == FocusExitVisibility.ACTION) FocusExitVisibility.HIDDEN else FocusExitVisibility.ACTION
+    }
+
+    fun hide() { visibility = FocusExitVisibility.HIDDEN }
+}
+
+@Composable internal fun rememberFocusExitControls(): FocusExitControls {
+    val controls = remember { FocusExitControls() }
+    LaunchedEffect(controls.visibility, controls.hintRequests) {
+        val timeout = when (controls.visibility) {
+            FocusExitVisibility.HIDDEN -> return@LaunchedEffect
+            FocusExitVisibility.HINT -> if (controls.hintRequests == 0) 3800L else 3000L
+            FocusExitVisibility.ACTION -> 5000L
+        }
+        delay(timeout)
+        controls.hide()
+    }
+    return controls
+}
+
+internal fun Modifier.focusExitGestures(controls: FocusExitControls, enabled: Boolean): Modifier =
+    pointerInput(controls, enabled) {
+        if (enabled) detectTapGestures(onDoubleTap = { controls.toggleAction() }, onTap = { controls.showHint() })
+    }
+
+@Composable fun NativeFocusExitControl(enabled: Boolean, onEnd: () -> Unit) {
+    val controls = rememberFocusExitControls()
+    NativeFocusExitControl(controls, enabled, onEnd, Modifier.focusExitGestures(controls, enabled))
+}
+
+/** The panel owns the blank-area gestures. The button consumes its own
+ * taps and uses the same visibility state for its double-tap action. */
+@Composable internal fun NativeFocusExitControl(controls:FocusExitControls,enabled:Boolean,onEnd:()->Unit,modifier:Modifier=Modifier){
+    val ui=LocalNativeUi.current
+    val revealed = controls.visibility == FocusExitVisibility.ACTION
     val drawReceipt=if(BuildConfig.BUILD_TYPE=="benchmark"&&enabled){
         val reported=remember{booleanArrayOf(false)}
         Modifier.drawWithContent{
@@ -54,15 +91,13 @@ data class PlanEditorModel(val token:String=UUID.randomUUID().toString(),val pro
     }else Modifier
     Box(modifier.fillMaxWidth().heightIn(min=48.dp)
         .then(drawReceipt)
-        .pointerInput(enabled){detectTapGestures(onDoubleTap={if(enabled)toggleEndControl()},onTap={if(enabled&&!revealed)localRequest++})}
-        .onFocusChanged{if(it.hasFocus&&enabled)revealed=true}
-        .onKeyEvent{event->if(enabled&&event.type==KeyEventType.KeyDown&&event.key in listOf(Key.Enter,Key.Spacebar)){toggleEndControl();true}else false}
+        .onKeyEvent{event->if(enabled&&event.type==KeyEventType.KeyDown&&event.key in listOf(Key.Enter,Key.Spacebar)){controls.toggleAction();true}else false}
         .semantics{
             contentDescription=ui.text("专注操作区")
-            customActions=listOf(CustomAccessibilityAction(ui.text(if(revealed)"隐藏结束操作"else"显示结束操作")){if(enabled){toggleEndControl();true}else false})
+            customActions=listOf(CustomAccessibilityAction(ui.text(if(revealed)"隐藏结束操作"else"显示结束操作")){if(enabled){controls.toggleAction();true}else false})
         }.focusable(enabled),contentAlignment=Alignment.Center){
-        if(revealed)FormalGlassAction(ui.text("结束本次专注"),onEnd,enabled=enabled,danger=true,onDoubleClick=::toggleEndControl)
-        else if(hint){
+        if(revealed)FormalGlassAction(ui.text("结束本次专注"),{controls.hide();onEnd()},enabled=enabled,danger=true,onDoubleClick=controls::toggleAction)
+        else if(controls.visibility == FocusExitVisibility.HINT){
             val colors=MaterialTheme.colorScheme
             NativeText(ui.text("双击下方空白处唤出结束按钮"),NativeTextRole.CAPTION,
                 Modifier.padding(horizontal=8.dp).background(colors.inverseSurface).padding(horizontal=8.dp,vertical=4.dp),

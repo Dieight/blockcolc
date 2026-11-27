@@ -73,6 +73,8 @@ import java.util.UUID
             NativeSeparator()
             NativeSettingAnchor("返回专注提醒"){NativeToggle(ui.text("返回专注提醒"),value=prefs.returnToFocusReminders,enabled=!s.preferencesReadFailed){v->update{it.copy(returnToFocusReminders=v)}}}
             NativeSeparator()
+            NativeSettingGroup("计时闹钟"){NativePhaseAlarmSettings()}
+            NativeSeparator()
             NativeSettingGroup("通知与后台"){notificationSettings()}
             NativeRequestError(domain)
         }

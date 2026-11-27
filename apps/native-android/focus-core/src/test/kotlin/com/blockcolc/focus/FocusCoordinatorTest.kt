@@ -25,6 +25,32 @@ class FocusCoordinatorTest {
     private fun run(block: (JdbcStateDatabase, NativeStateStore, FocusCoordinator) -> Unit) {
         JdbcStateDatabase(temp.newFolder().toPath().resolve("state.db")).use { db -> val s = NativeStateStore(db); s.initialize(doc()); block(db, s, FocusCoordinator(s, "test-db")) }
     }
+    @Test fun timerAlarmsFollowCommittedNaturalRoundsAndBreaksOnce() = run { _, store, c ->
+        val initial = c.begin("begin", spec(), true, at)
+        assertNull(initial.reachedDeadline)
+        val ticket = c.deadline(initial.state)!!
+        assertNull(c.reconcile("round", at + 999, ticket).reachedDeadline)
+        val resting = c.reconcile("round", at + 1000, ticket)
+        assertEquals(ReachedDeadline(TimedPhase.FOCUS, at + 1000), resting.reachedDeadline)
+        assertEquals(PlanPhase.REST, resting.state.recovery.plan!!.phase)
+        val reopened = FocusCoordinator(store, "test-db")
+        assertNull(reopened.reconcile("round", at + 1010, ticket).reachedDeadline)
+        val next = reopened.reconcile("break", at + 1300, reopened.deadline(resting.state))
+        assertEquals(ReachedDeadline(TimedPhase.REST, at + 1300), next.reachedDeadline)
+        assertEquals(PlanPhase.FOCUS, next.state.recovery.plan!!.phase)
+        assertNull(reopened.manual("stop", false, true, "other", null, at + 1450).reachedDeadline)
+    }
+
+    @Test fun aSkippedBreakDoesNotRingAndRecoveryEmitsOnlyItsLatestDeadline() = run { _, _, c ->
+        c.begin("begin", spec(), true, at)
+        c.reconcile("first", at + 1000)
+        val skipped = c.manual("skip", false, false, null, null, at + 1100)
+        assertNull(skipped.reachedDeadline)
+        c.start("again", true, at + 1300)
+        val caughtUp = c.resume(at + 5000) { "late" }
+        assertEquals(ReachedDeadline(TimedPhase.FOCUS, at + 3600), caughtUp.reachedDeadline)
+        assertEquals(PlanPhase.REPORT, caughtUp.state.recovery.plan!!.phase)
+    }
     @Test fun extendedOrdinaryRoundRecoversAndSettlesTheHalfRoundExactlyOnce()=run{_,store,c->
         c.begin("ordinary",spec(PlanMode.ROUNDS,count=1).copy(extendAfterPlan=true),false,at)
         val first=c.reconcile("due",at+1000).state

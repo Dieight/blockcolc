@@ -12,7 +12,11 @@ data class DeadlineTicket(val database: String, val generation: Long, val plan: 
     companion object { fun parse(x: JSONObject) = DeadlineTicket(x.getString("database"), x.getLong("generation"), if (x.isNull("plan")) null else x.getString("plan"), if (x.isNull("session")) null else x.getString("session"), x.getString("phase"), x.getString("end")) }
 }
 data class ExecutedCommand(val command: String, val now: Long)
-data class Operation(val state: StoredState, val events: List<String> = emptyList(), val replayed: Boolean = false, val journal: List<ExecutedCommand> = emptyList(),val signals:List<String> = emptyList())
+enum class TimedPhase { FOCUS, REST }
+data class ReachedDeadline(val phase: TimedPhase, val atMillis: Long)
+data class Operation(val state: StoredState, val events: List<String> = emptyList(), val replayed: Boolean = false,
+    val journal: List<ExecutedCommand> = emptyList(), val signals: List<String> = emptyList(),
+    val reachedDeadline: ReachedDeadline? = null)
 class FocusFailure(val reason: String): IllegalStateException(reason)
 /** COMMIT returned successfully, but a subsequent read could not produce the
  * display state. This must never be reported as an uncommitted user action. */
@@ -94,8 +98,9 @@ class FocusCoordinator(private val store: NativeStateStore, val databaseIdentity
     @Synchronized fun manual(requestId: String, early: Boolean, cancelPlan: Boolean, category: String?, note: String?, now: Long): Operation =
         change(requestId, DomainEngine.command("manual", "early" to early, "cancelPlan" to cancelPlan, "category" to category, "note" to note)) { m ->
             val active = m.active()
-            if (active != null && DomainTime.millis(active.getString("endsAt")) <= now) { m.advance(now); return@change }
             val p = m.context.plan
+            val end = active?.getString("endsAt") ?: p?.takeIf { it.phase == PlanPhase.REST }?.phaseEndsAt
+            if (end != null && DomainTime.millis(end) <= now) { m.advance(now); return@change }
             if(p?.extensionStartedAt!=null)throw FocusFailure("EXTENSION_REQUIRES_FINISH")
             if(cancelPlan&&p!=null){
                 require(p.mode!=PlanMode.ROUNDS||p.totalRounds>1&&p.hasStarted){"Only started multi-round ordinary plans can be cancelled"}
@@ -236,7 +241,7 @@ class FocusCoordinator(private val store: NativeStateStore, val databaseIdentity
         // cannot later acquire a different meaning after another phase change.
         val receipt=PipelineCost.section("storage.commit"){store.commit(before.token, requestId, m.doc, m.context, sha, m.rollback)}
         val saved=PipelineCost.section("storage.commit-readback"){readCommitted(receipt)}
-        return Operation(saved, m.events, journal=m.journal,signals=m.signals)
+        return Operation(saved, m.events, journal=m.journal,signals=m.signals,reachedDeadline=m.reachedDeadline)
     }
     private fun readCommitted(receipt:CommitReceipt):StoredState=try{load()}catch(error:Exception){throw CommittedStateUnavailable(receipt,error)}
     private fun PlanRequest.json(type: String) = DomainEngine.command(type, "id" to id, "projectId" to projectId, "subtaskId" to subtaskId, "mode" to mode.name, "rounds" to rounds, "focusMs" to focusMs, "restMs" to restMs, "exactEndAt" to exactEndAt).also{
@@ -248,6 +253,7 @@ class FocusCoordinator(private val store: NativeStateStore, val databaseIdentity
         var doc = base.domain
             set(value) { field = value; parsedControls=null }
         var context = base.recovery; var rollback: RollbackRequest? = null; val events = arrayListOf<String>(); val journal=arrayListOf<ExecutedCommand>();val signals=arrayListOf<String>()
+        var reachedDeadline: ReachedDeadline? = null
         fun command(cmd: JSONObject, now: Long) {
             val result = DomainEngine.execute(doc, cmd, now); if (!result.ok) throw FocusFailure(result.error!!)
             doc = result.state; events += result.events
@@ -414,6 +420,7 @@ class FocusCoordinator(private val store: NativeStateStore, val databaseIdentity
                 if (active != null) {
                     val end = DomainTime.millis(active.getString("endsAt")); if (end > now) return
                     command(DomainEngine.command("CompleteFocus"), now)
+                    reachedDeadline = ReachedDeadline(TimedPhase.FOCUS, end)
                     if (p != null) afterCompletion(p, history(active.getString("id"))!!, false)
                     else {
                         // Reconstruct a manual report entrance from the imported
@@ -422,6 +429,7 @@ class FocusCoordinator(private val store: NativeStateStore, val databaseIdentity
                     }
                 } else if (p?.phase == PlanPhase.REST && DomainTime.millis(p.phaseEndsAt!!) <= now) {
                     val at = DomainTime.millis(p.phaseEndsAt!!)
+                    reachedDeadline = ReachedDeadline(TimedPhase.REST, at)
                     if (p.terminalRest) {
                         if(p.extendAfterPlan){startExtension(p,at);return@repeat}
                         context = finish(p);return

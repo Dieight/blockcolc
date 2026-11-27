@@ -69,6 +69,10 @@ internal class NativeCloudController private constructor(private val context:Con
     private var persistedClockAt=-1L
     private val localChanges=AtomicLong()
     private var acknowledgedChanges=-1L
+    private val focusUploadGate = Any()
+    private var focusUpload = 0L
+    private var attemptedFocusUpload = 0L
+    private var acknowledgedFocusUpload = 0L
     private var remoteHead:JSONObject?=null
     private var focusEditable=false
     private var delayed:ScheduledFuture<*>?=null
@@ -106,7 +110,7 @@ internal class NativeCloudController private constructor(private val context:Con
         prefs.edit().putString("friends-order/$account",JSONArray(ordered).toString()).apply()
         publish{if(it.account?.optString("id")==account)it.copy(friendOrder=ordered)else it}
     }
-    @Synchronized fun start() {
+    @Synchronized fun start(syncOnOpen: Boolean = true) {
         if (started || !runtime.cloudIoAllowed(isolatedTransport)) return
         started = true
         worker.execute {
@@ -119,7 +123,7 @@ internal class NativeCloudController private constructor(private val context:Con
                         JSONObject().put("id", login.account).put("username", login.username)
                     })
                 }
-                if (session != null) perform(synchronizing = true) { sync() }
+                if (session != null && syncOnOpen) perform(synchronizing = true) { sync() }
             } catch (error: Exception) {
                 failure(error, synchronizing = true)
             }
@@ -131,9 +135,32 @@ internal class NativeCloudController private constructor(private val context:Con
         localChanges.incrementAndGet()
         delayed?.cancel(false)
         delayed = worker.schedule({
-            if (localChanges.get() != acknowledgedChanges && value.syncRetry.failures == 0)
+            val newFocusTransition = synchronized(focusUploadGate) { focusUpload != attemptedFocusUpload }
+            if (localChanges.get() != acknowledgedChanges && (value.syncRetry.failures == 0 || newFocusTransition))
                 perform(false, synchronizing = true) { sync(header = remoteHead, profile = false) }
         }, 150, TimeUnit.MILLISECONDS)
+    }
+
+    internal fun focusChanged() {
+        synchronized(focusUploadGate) {
+            focusUpload++
+            CloudFocusSyncJob.enqueue(context)
+        }
+        start()
+        changed()
+    }
+
+    internal fun flushPendingFocus(done: (Boolean) -> Unit) {
+        start(syncOnOpen = false)
+        worker.execute {
+            var complete = session == null
+            if (!complete) perform(false, synchronizing = true) {
+                sync(profile = false)
+                complete = synchronized(focusUploadGate) { focusUpload == acknowledgedFocusUpload }
+            }
+            val retry = !complete && value.error != "UNAUTHORIZED"
+            main.post { done(retry) }
+        }
     }
 
     fun foreground(active: Boolean) {
@@ -318,7 +345,13 @@ internal class NativeCloudController private constructor(private val context:Con
         runtime.cloudPermission(owned=true,bound=false).get();publish{CloudView(ready=true)}
     }}
     private fun resetSyncState(){execution=0;remoteHead=null;serverClock=null;acknowledgedChanges=-1L;remotePlanHint=null;focusEditable=false
-        scheduledPoll?.cancel(false);scheduledPoll=null}
+        scheduledPoll?.cancel(false);scheduledPoll=null
+        synchronized(focusUploadGate) {
+            attemptedFocusUpload = focusUpload
+            acknowledgedFocusUpload = focusUpload
+            if (!isolatedTransport) CloudFocusSyncJob.cancel(context)
+        }
+    }
     fun refresh(){
         publish{it.copy(syncRetry=it.syncRetry.copy(ignored=false))}
         runAction(CloudAction.SYNC){sync()}
@@ -398,6 +431,8 @@ internal class NativeCloudController private constructor(private val context:Con
     ): CloudResult {
         val login = session ?: throw CloudFailure("UNAUTHORIZED")
         val dirtyAtStart = localChanges.get()
+        val focusAtStart = synchronized(focusUploadGate) { focusUpload }
+        attemptedFocusUpload = focusAtStart
         val account = if (profile || value.account?.has("friendsEnabled") != true) refreshAccount() else value.account
         if (profile) {
             val devices = api("devices", timeoutMillis = 8000).getJSONArray("devices")
@@ -487,6 +522,10 @@ internal class NativeCloudController private constructor(private val context:Con
         remote.remove("delta")
         remoteHead = remote
         acknowledgedChanges = dirtyAtStart
+        synchronized(focusUploadGate) {
+            acknowledgedFocusUpload = focusAtStart
+            if (!isolatedTransport && focusUpload == focusAtStart) CloudFocusSyncJob.cancel(context)
+        }
         publish { current ->
             current.copy(choiceRequired = false, conflicts = emptyList(), error = null,
                 lastSync = System.currentTimeMillis(), syncRetry = CloudSyncRetry(),

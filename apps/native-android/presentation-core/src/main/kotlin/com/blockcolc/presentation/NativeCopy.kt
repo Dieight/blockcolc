@@ -46,7 +46,7 @@ internal object NativeCopy {
         "计时与计划" to "Timing & plans","保护与提醒" to "Protection & reminders","外观与阅读" to "Appearance & reading",
         "聚落与画面" to "Settlement & graphics","蓝图与材质" to "Blueprints & textures","高级与数据" to "Advanced & data",
         "搜索设置" to "Search settings","设置目录" to "Settings contents","没有找到设置" to "No matching settings",
-        "休息时长" to "Break duration","通知与后台" to "Notifications & background",
+        "休息时长" to "Break duration","通知与后台" to "Notifications & background","计时闹钟" to "Timer alarms",
         "正在准备视图" to "Preparing view",
         "混合字体" to "Mixed fonts",
         "专注操作区" to "Focus controls","显示结束操作" to "Show end controls","隐藏结束操作" to "Hide end controls",

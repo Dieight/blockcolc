@@ -179,10 +179,13 @@ class PreviewRuntime private constructor(private val context: Context):Workspace
             active?.getString("endsAt")?:plan?.phaseEndsAt)
         if(moment==lastCloudFocus)return
         lastCloudFocus=moment
-        if(!recordingTest)NativeCloudController.get(context,this).apply { start(); changed() }
+        if(!recordingTest)NativeCloudController.get(context,this).focusChanged()
     }
     private fun committedEvents(result:Operation){
-        if(!result.replayed)observeCloudFocus(result.state)
+        if(!result.replayed){
+            result.reachedDeadline?.takeIf { !recordingTest && cloudGate.canExecute() }?.let(platform::phaseEnded)
+            observeCloudFocus(result.state)
+        }
         val target=celebrations
         if(!result.replayed&&result.events.isNotEmpty()){
             val completion=ProjectCompletion.from(result.state.domain,result.events)
@@ -636,7 +639,7 @@ class PreviewRuntime private constructor(private val context: Context):Workspace
         }
     }
     override fun decideFocus(decision:FocusDecision,uiRequest:String)=enqueue("focus-decision",uiRequest){
-        WorkspaceCommands.decide(it,uiRequest,decision,System.currentTimeMillis())
+        WorkspaceCommands.decide(it,uiRequest,decision,focusNow())
     }
     override fun updatePreferences(change:(ClientPreferences)->ClientPreferences){
         savePreferences(change)

@@ -3,6 +3,7 @@ import { canonical, fail, sha } from './wire.mjs';
 const packages = ['building', 'focus'];
 const retainedRevisions = 512;
 const emptyHash = sha('');
+const presenceGraceMs = 90_000;
 const focusEffects = new Set(['projects', 'habitBuildings', 'dailyGoals', 'projectConditions',
   'decorationRewards', 'holidayRewards', 'retiredSubtaskIds']);
 
@@ -63,16 +64,27 @@ export class SyncV2 {
       );
       CREATE TABLE IF NOT EXISTS sync_v2_migrations (version INTEGER PRIMARY KEY);
     `);
-    if (db.prepare('SELECT 1 FROM sync_v2_migrations WHERE version=2').get()) return;
+    const migrated = version => db.prepare('SELECT 1 FROM sync_v2_migrations WHERE version=?').get(version) !== undefined;
+    if (migrated(3)) return;
     cloud.transaction(() => {
-      if (db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='entries'").get()) {
-        db.exec('INSERT INTO sync_entries(user,key,canonical,sha) SELECT user,key,canonical,sha FROM entries');
+      if (!migrated(2)) {
+        if (db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='entries'").get()) {
+          db.exec('INSERT INTO sync_entries(user,key,canonical,sha) SELECT user,key,canonical,sha FROM entries');
+        }
+        for (const account of db.prepare('SELECT id FROM accounts').iterate()) {
+          const keys = db.prepare('SELECT key FROM sync_entries WHERE user=?').all(account.id).map(row => row.key);
+          if (keys.length) this.record(account.id, keys, { migrate: true });
+        }
+        db.prepare('INSERT INTO sync_v2_migrations VALUES(2)').run();
+      } else {
+        const projected = db.prepare('SELECT user,value FROM sync_v2_focus').all();
+        for (const { user, value } of projected) {
+          // Backfilling the expiry does not turn a stored observation into a
+          // new observation or override a later legacy idle report.
+          this.projectFocus(user, true, JSON.parse(value).updatedAt);
+        }
       }
-      for (const account of db.prepare('SELECT id FROM accounts').iterate()) {
-        const keys = db.prepare('SELECT key FROM sync_entries WHERE user=?').all(account.id).map(row => row.key);
-        if (keys.length) this.record(account.id, keys, { migrate: true });
-      }
-      db.prepare('INSERT INTO sync_v2_migrations VALUES(2)').run();
+      db.prepare('INSERT INTO sync_v2_migrations VALUES(3)').run();
     });
   }
 
@@ -138,11 +150,14 @@ export class SyncV2 {
       db.prepare('DELETE FROM sync_v2_changes WHERE user=? AND package=? AND revision<=?')
         .run(user, name, revision - retainedRevisions);
     }
-    if (reset || keys.includes('$/activeFocusSession') || keys.includes('@plan')) this.projectFocus(user, migrate || reset);
+    if (reset || keys.includes('$/activeFocusSession') || keys.includes('@plan')) {
+      const observed = migrate ? new Date(this.cloud.head(user).changed).toISOString() : undefined;
+      this.projectFocus(user, reset, observed);
+    }
     if (keys.some(key => key.startsWith('focusHistory/'))) this.refreshDayTotals(user, this.cloud.account(user).timeZone);
   }
 
-  projectFocus(user, preserveTime) {
+  projectFocus(user, refresh, observedAt) {
     const db = this.db, now = this.cloud.clock();
     const entry = db.prepare('SELECT canonical FROM sync_entries WHERE user=? AND key=?');
     const active = JSON.parse(entry.get(user, '$/activeFocusSession')?.canonical ?? 'null');
@@ -151,11 +166,16 @@ export class SyncV2 {
       plan?.hasStarted ? (plan.phase === 'REPORT' ? 'report' : 'waiting') : 'idle';
     const session = active?.id ?? (phase === 'rest' ? plan.id + ':' + plan.completedSessionIds.length : plan?.hasStarted ? plan.id : null);
     const previous = db.prepare('SELECT phase,session,value FROM sync_v2_focus WHERE user=?').get(user);
-    if (previous?.phase === phase && previous.session === session && !preserveTime) return;
     const seenStart = Date.parse(phase === 'rest' ? plan.restStartedAt : plan?.extensionStartedAt ?? active?.startedAt);
     const seenEnd = Date.parse(phase === 'rest' ? plan.phaseEndsAt : active?.marathon ? plan?.exactEndAt ?? active.endsAt : active?.endsAt);
+    const phaseEnd = Date.parse(phase === 'rest' ? plan.phaseEndsAt : active?.endsAt);
+    const statusExpiresAt = Number.isFinite(phaseEnd) ? new Date(phaseEnd + presenceGraceMs).toISOString() : null;
+    const prior = JSON.parse(previous?.value ?? '{}');
+    if (previous?.phase === phase && previous.session === session && prior.statusExpiresAt === statusExpiresAt && !refresh) return;
     const begin = active || phase === 'rest' ? (Number.isFinite(seenStart) ? Math.min(now, seenStart) : now) : null;
     const until = begin != null && phase !== 'extension' && seenEnd > begin ? seenEnd : null;
+    const closedStart = ['focus', 'extension'].includes(previous?.phase) && previous.session !== session ? prior.startedAt : null;
+    const closedThrough = [closedStart, prior.closedThrough].filter(Boolean).sort().at(-1) ?? null;
     let currentName = null;
     if (phase === 'focus' || phase === 'extension') {
       const project = JSON.parse(entry.get(user, 'projects/' + active.projectId)?.canonical ?? 'null')?.value;
@@ -165,7 +185,8 @@ export class SyncV2 {
     const snapshot = {
       currentName, startedAt: begin == null ? null : new Date(begin).toISOString(),
       estimatedEndsAt: until == null ? null : new Date(until).toISOString(),
-      updatedAt: new Date(now).toISOString(),
+      updatedAt: observedAt ?? new Date(now).toISOString(),
+      statusExpiresAt, closedThrough,
       ...(phase === 'rest' ? { externalState: 'rest' } : {}),
       ...(begin != null ? { estimated: true } : {}),
     };
@@ -174,8 +195,10 @@ export class SyncV2 {
   }
 
   live(user) {
-    const row = this.db.prepare('SELECT value FROM sync_v2_focus WHERE user=?').get(user);
-    return row ? { value: JSON.parse(row.value), persistent: true } : null;
+    const row = this.db.prepare('SELECT phase,value FROM sync_v2_focus WHERE user=?').get(user);
+    if (!row) return null;
+    const value = JSON.parse(row.value);
+    return { value, phase: row.phase, persistent: true, stale: Date.parse(value.statusExpiresAt) <= this.cloud.clock() };
   }
 
   locked(user) {

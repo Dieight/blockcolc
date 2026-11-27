@@ -4,7 +4,30 @@ import androidx.compose.runtime.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalContext
+import com.blockcolc.focus.TimedPhase
 import com.blockcolc.preview.FocusPlatform
+import com.blockcolc.preview.FocusPhaseAlarmSettings
+import com.blockcolc.preview.PhaseAlarmMode
+
+@Composable internal fun NativePhaseAlarmSettings() {
+    val context = LocalContext.current
+    val settings = remember(context) { FocusPhaseAlarmSettings(context) }
+    val choices = listOf(
+        PhaseAlarmMode.OFF to cloudText("关闭","Off"),
+        PhaseAlarmMode.VIBRATION to cloudText("振动","Vibrate"),
+        PhaseAlarmMode.SOUND to cloudText("铃声","Sound"),
+        PhaseAlarmMode.BOTH to cloudText("铃声和振动","Both"),
+    )
+    for (phase in TimedPhase.entries) key(phase) {
+        var mode by remember(settings) { mutableStateOf(settings.mode(phase)) }
+        if (phase == TimedPhase.REST) NativeSeparator()
+        NativeSettingsOptionTitle(if (phase == TimedPhase.FOCUS) cloudText("本轮结束","Round ends") else cloudText("休息结束","Break ends"))
+        NativeSegments(choices, mode, { selected ->
+            settings.setMode(phase, selected)
+            mode = selected
+        })
+    }
+}
 
 /** These buttons open system UI only. No vendor whitelist or power policy writes. */
 @Composable fun NativeNotificationSettings(language:String,onOpen:(android.content.Intent)->Unit){

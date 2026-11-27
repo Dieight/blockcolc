@@ -10,6 +10,7 @@ import android.os.Bundle
 import android.os.IBinder
 import com.blockcolc.domain.DomainTime
 import com.blockcolc.focus.DeadlineTicket
+import com.blockcolc.focus.ReachedDeadline
 
 /** Projection only. It never changes sessions or maintains a second timer. */
 class FocusPlatform(private val context: Context,private val focusClock:()->Long=System::currentTimeMillis) {
@@ -17,6 +18,10 @@ class FocusPlatform(private val context: Context,private val focusClock:()->Long
     private val notifications = context.getSystemService(NotificationManager::class.java)
     private var previous: PendingIntent? = null
     private var shownTicket: DeadlineTicket? = null
+    private val phaseAlarms by lazy { FocusPhaseAlarms(context) }
+    internal fun phaseEnded(deadline: ReachedDeadline) {
+        if (focusClock() - deadline.atMillis in 0..60_000L) phaseAlarms.deliver(deadline.phase)
+    }
     private val colorOsDevice=listOf(Build.MANUFACTURER,Build.BRAND).any{it.lowercase() in setOf("oppo","oneplus","realme")}
     private fun english(state:PreviewSnapshot)=state.preferences.language=="en"
     private fun text(state:PreviewSnapshot,zh:String,en:String)=if(english(state))en else zh

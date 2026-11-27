@@ -135,7 +135,7 @@ export class FocusViewerStore {
     const capturedAt = new Date(Math.min(now, Math.max(head.changed, Date.parse(observed?.updatedAt) || 0))).toISOString();
     const start = Date.parse(observed?.startedAt), end = Date.parse(observed?.estimatedEndsAt);
     const openEnded = observed?.estimatedEndsAt === null;
-    const active = observed?.currentName && observed.externalState !== 'rest' && start <= now &&
+    const active = !presence?.stale && observed?.currentName && observed.externalState !== 'rest' && start <= now &&
       (presence.persistent || presence.expires > now && (openEnded || end > now));
     const snapshot = {
       currentName: active ? observed.currentName : null,
@@ -143,6 +143,7 @@ export class FocusViewerStore {
       estimatedEndsAt: active ? observed.estimatedEndsAt : null,
       estimatedElapsedMs: active ? Math.max(0, Date.parse(capturedAt) - start) : 0,
       todayActualFocusMs: Math.min(DAY, days.totals[days.date] ?? 0),
+      ...(presence?.stale ? { stale: true } : {}),
       ...(active && openEnded ? { waitingForEnd: true } : {}),
       ...(active && observed.estimated ? { estimated: true } : {}),
     };

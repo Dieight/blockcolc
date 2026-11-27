@@ -66,11 +66,15 @@ import java.util.*
     val planSummary=ui.text("{0} · 预计 {1} 结束",ui.rounds(roundCount),planEnds)
     val startLabel=if(timer.mode==PlanMode.MARATHON)ui.text("开始专注")else if(roundCount==1)ui.text("开始 1 轮")else ui.text("开始 {0} 轮",roundCount)
     var revealed by rememberSaveable(timer.surface,minimal){mutableStateOf(false)}
-    // A single tap on the focus panel repeats the end-control hint; the
-    // double-tap itself is unchanged.
-    var hintRequest by remember(timer.planId){mutableIntStateOf(0)}
-    val reveal=Modifier.pointerInput(timer.surface){detectTapGestures(onDoubleTap={revealed=true},onTap={hintRequest++})}
-        .onFocusChanged{if(it.hasFocus)revealed=true}.semantics{customActions=listOf(CustomAccessibilityAction(ui.text("显示结束操作")){revealed=true;true})}
+    val focusExit = if (timer.surface == TimerSurface.FOCUS) {
+        key(timer.planId, timer.extensionStartedAt ?: timer.deadline) { rememberFocusExitControls() }
+    } else null
+    val reveal = if (focusExit != null) {
+        Modifier.focusExitGestures(focusExit, !s.busy)
+    } else {
+        Modifier.pointerInput(timer.surface){detectTapGestures(onDoubleTap={revealed=true})}
+            .onFocusChanged{if(it.hasFocus)revealed=true}.semantics{customActions=listOf(CustomAccessibilityAction(ui.text("显示结束操作")){revealed=true;true})}
+    }
     BoxWithConstraints(Modifier.fillMaxSize()){
       val reportMax=maxHeight*.76f
       val focusPanelHeight=minimalPanelHeight(maxHeight)
@@ -262,7 +266,7 @@ import java.util.*
                     NativeText(clock,NativeTextRole.IMMERSIVE_CLOCK,Modifier.testTag("formal-focus-time").then(if(timer.surface in setOf(TimerSurface.PREPARED,TimerSurface.WAITING))Modifier.pointerInput(timer.planId,s.busy,start.busy){detectTapGestures(onDoubleTap={if(!s.busy&&!start.busy)begin()})}else Modifier),accent=true)
                 },controls={
                     when(timer.surface){
-                        TimerSurface.FOCUS->key(timer.planId,if(extensionElapsed==null)timer.deadline else timer.extensionStartedAt){NativeFocusExitControl(!s.busy,onManual,hintRequest=hintRequest)}
+                        TimerSurface.FOCUS->NativeFocusExitControl(checkNotNull(focusExit),!s.busy,onManual)
                         TimerSurface.REST->if(timer.mode==PlanMode.MARATHON&&revealed)FormalTextAction(ui.text("调整计划"),"edit",::adjust,enabled=!s.busy)
                         else->NativeRequestError(start)
                     }

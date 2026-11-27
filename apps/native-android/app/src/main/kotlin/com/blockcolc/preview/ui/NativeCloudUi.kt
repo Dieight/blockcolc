@@ -23,6 +23,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
@@ -365,9 +366,11 @@ private fun NativeIntegrations(controller: NativeCloudController, account: Strin
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var settings by remember(account) { mutableStateOf<JSONObject?>(null) }
-    var busy by remember(account) { mutableStateOf(false) }
+    var pending by remember(account) { mutableStateOf<String?>(null) }
+    val busy = pending != null
     var problem by remember(account) { mutableStateOf<String?>(null) }
-    var name by rememberSaveable(account) { mutableStateOf("") }
+    var name by rememberSaveable(account, stateSaver=TextFieldValue.Saver) { mutableStateOf(TextFieldValue()) }
+    var attempted by remember(account) { mutableStateOf(false) }
     var upload by rememberSaveable(account) { mutableStateOf(false) }
     var read by rememberSaveable(account) { mutableStateOf(false) }
     var days by rememberSaveable(account) { mutableStateOf("90") }
@@ -375,8 +378,8 @@ private fun NativeIntegrations(controller: NativeCloudController, account: Strin
     var copied by remember(account) { mutableStateOf(false) }
     var revoking by remember(account) { mutableStateOf<JSONObject?>(null) }
     fun send(method: String = "GET", body: JSONObject? = null, id: String? = null) {
-        if (busy) return
-        busy = true
+        if (pending != null) return
+        pending = method
         problem = null
         scope.launch {
             try {
@@ -385,7 +388,8 @@ private fun NativeIntegrations(controller: NativeCloudController, account: Strin
                     generated = response.getString("token")
                     response.remove("token")
                     copied = false
-                    name = ""
+                    name = TextFieldValue()
+                    attempted = false
                 }
                 settings = response
                 if (method == "DELETE") revoking = null
@@ -394,24 +398,20 @@ private fun NativeIntegrations(controller: NativeCloudController, account: Strin
             } catch (error: Exception) {
                 problem = (error as? CloudFailure)?.code ?: "NETWORK_UNAVAILABLE"
             } finally {
-                busy = false
+                pending = null
             }
         }
     }
     LaunchedEffect(account) { send() }
     val current = settings
-    if (current == null) {
-        NativeInlineAction(tr("读取接入设置","Load integration settings"), { send() }, "reset", enabled=!busy, pending=busy)
-        CloudError(problem)
-        return
-    }
+    val canEdit = current != null && !busy
     NativeToggle(tr("允许好友通过第三方查看我的分享","Allow friends to view my shares in other apps"),
-        value=friendsEnabled && current.optBoolean("shareWithIntegrations"), enabled=friendsEnabled && !busy) {
+        value=friendsEnabled && current?.optBoolean("shareWithIntegrations") == true, enabled=friendsEnabled && canEdit) {
         send("PATCH", JSONObject().put("shareWithIntegrations", it))
     }
-    val tokens = current.getJSONArray("tokens")
-    for (index in 0 until tokens.length()) {
-        val token = tokens.getJSONObject(index)
+    val tokens = current?.getJSONArray("tokens")
+    for (index in 0 until (tokens?.length() ?: 0)) {
+        val token = checkNotNull(tokens).getJSONObject(index)
         val permissions = listOfNotNull(
             tr("上报专注","Report focus").takeIf { token.getBoolean("uploadFocus") },
             tr("读取好友","Read friends").takeIf { token.getBoolean("readFriends") },
@@ -424,17 +424,34 @@ private fun NativeIntegrations(controller: NativeCloudController, account: Strin
     NativeSeparator()
     val secret = generated
     if (secret == null) {
-        CloudField(tr("接入软件名称","App name"), name, { name=it.take(64) }, enabled=!busy)
-        NativeToggle(tr("上报专注并结算","Report and settle focus"), value=upload, enabled=!busy) { upload=it }
+        val missingName = attempted && name.text.isBlank()
+        val missingAccess = attempted && !missingName && !upload && !read
+        NativeTextEntry(tr("接入软件名称","App name"), name, { if (it.text.length <= 64) name=it }, enabled=canEdit)
+        if (missingName) IntegrationFormError(tr("请输入接入软件名称。","Enter the app name."))
+        NativeToggle(tr("上报专注并结算","Report and settle focus"), value=upload, enabled=canEdit) { upload=it }
         NativeSeparator()
-        NativeToggle(tr("读取好友","Read friends"), value=read, enabled=!busy) { read=it }
+        NativeToggle(tr("读取好友","Read friends"), value=read, enabled=canEdit) { read=it }
+        if (missingAccess) IntegrationFormError(tr("请至少选择一项权限。","Select at least one permission."))
         NativeSeparator()
         NativeSettingsOptionTitle(tr("令牌有效期","Token expiry"))
-        NativeSegments(listOf("30","90","365").map { it to tr("$it 天","$it days") }, days, { days=it }, !busy)
+        NativeSegments(listOf("30","90","365").map { it to tr("$it 天","$it days") }, days, { days=it }, canEdit)
         NativeSeparator()
-        NativeInlineAction(tr("生成令牌","Generate token"), {
-            send("POST", JSONObject().put("name",name).put("uploadFocus",upload).put("readFriends",read).put("days",days.toInt()))
-        }, "plus", enabled=name.isNotBlank() && (upload || read) && !busy, pending=busy)
+        val canRetryLoad = current == null && problem != null
+        NativeInlineAction(
+            if (canRetryLoad) tr("重试加载","Retry loading") else tr("生成令牌","Generate token"),
+            {
+                if (current == null) send()
+                else {
+                    attempted = true
+                    if (name.text.isNotBlank() && (upload || read)) {
+                        send("POST", JSONObject().put("name",name.text.trim()).put("uploadFocus",upload)
+                            .put("readFriends",read).put("days",days.toInt()))
+                    }
+                }
+            },
+            if (canRetryLoad) "reset" else "plus",
+            enabled = canEdit || canRetryLoad, pending = pending == "GET" || pending == "POST",
+        )
     } else {
         NativeInlineAction(tr("接入令牌仅显示一次","Copy your token before closing"), {
             val data = android.content.ClipData.newPlainText("blockcolc token", secret)
@@ -455,6 +472,11 @@ private fun NativeIntegrations(controller: NativeCloudController, account: Strin
         confirmButton={ TextButton({ send("DELETE", id=selected.getString("id")) },enabled=!busy){Text(tr("撤销","Revoke"))} },
         dismissButton={ TextButton({ revoking=null },enabled=!busy){Text(tr("取消","Cancel"))} },
     )
+}
+
+@Composable private fun IntegrationFormError(message: String) {
+    Text(message, Modifier.semantics { liveRegion = LiveRegionMode.Polite }, color = MaterialTheme.colorScheme.error,
+        style = MaterialTheme.typography.bodySmall)
 }
 
 @Composable internal fun CloudSharing(value:JSONObject,enabled:Boolean,includeStatus:Boolean=true,onChange:(JSONObject)->Unit){

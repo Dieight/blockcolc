@@ -317,8 +317,15 @@ export class CloudStore {
     const row=this.db.prepare('SELECT value,expires FROM presence WHERE user=?').get(user);
     const observed=row?{value:JSON.parse(row.value),persistent:false,expires:row.expires}:null;
     const saved=this.sync.live(user);
-    if(observed?.value.externalState&&observed.expires>this.clock())return observed;
-    if(observed&&(saved?.value.updatedAt??'')<=observed.value.updatedAt)return observed;
+    if(!observed)return saved;
+    if(observed.value.externalState)return observed.expires>this.clock()?observed:saved??observed;
+    // A legacy phone could report idle before it finished uploading the
+    // workspace. Rebuilding the projection must not undo that report.
+    if(observed.value.currentName==null&&['focus','extension'].includes(saved?.phase)&&
+      Date.parse(observed.value.updatedAt)>Date.parse(saved.value.startedAt))return {...observed,persistent:true};
+    // A queued legacy heartbeat may arrive after its round was settled.
+    if(observed.value.currentName!=null&&Date.parse(observed.value.startedAt)<=Date.parse(saved?.value.closedThrough))return saved;
+    if((saved?.value.updatedAt??'')<=observed.value.updatedAt)return observed;
     return saved??observed;
   }
   dayTotals(user,zone){
@@ -375,7 +382,7 @@ export class CloudStore {
     const policy=this.visibleFriendPolicy(account,s.user);
     const live=this.liveStatus(id),snapshot=live?.value;
     base.visible=policy;if(policy.time)base.updatedAt=snapshot?.updatedAt??null;
-    if(live&&(live.persistent||live.expires>this.clock())){
+    if(live&&!live.stale&&(live.persistent||live.expires>this.clock())){
       if(policy.status){
         base.focusing=snapshot.currentName!=null&&snapshot.externalState!=='rest';
         if(snapshot.sourceName)base.source={kind:'integration',name:snapshot.sourceName};
@@ -384,6 +391,7 @@ export class CloudStore {
       if(policy.name)base.currentName=snapshot.externalState?snapshot.taskName:snapshot.currentName;
       if(policy.time){base.startedAt=snapshot.startedAt;base.endsAt=snapshot.estimatedEndsAt;
         if(snapshot.estimated)base.estimated=true;
+        if(snapshot.statusExpiresAt)base.statusExpiresAt=snapshot.statusExpiresAt;
         if(snapshot.currentName!=null&&snapshot.estimatedEndsAt===null)base.waitingForEnd=true;
       }
     }else if(policy.status||policy.name||policy.time)base.stale=true;
