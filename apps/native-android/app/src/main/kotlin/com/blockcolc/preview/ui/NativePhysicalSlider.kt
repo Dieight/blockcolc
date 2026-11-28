@@ -81,13 +81,23 @@ import kotlin.math.*
             }
         }){
         val left=12*density;val top=size.height/2;val railWidth=width.toFloat()*density
-        drawRect(colors.outlineVariant,Offset(left,top-3*density),Size(railWidth,6*density))
+        drawRect(colors.outlineVariant,Offset(left,top-0.75f*density),Size(railWidth,1.5f*density))
         val forecast=target?.let{if(bouncing)pose?.x?:it.landing else it.landing}?:((displayed-min).toDouble()/(max-min)*width)
-        val fill=(forecast/width).toFloat()*railWidth;val segment=6*density
-        var x=0f;while(x<fill){drawRect(colors.primary,Offset(left+x,top-3*density),Size(minOf(segment-1*density,fill-x),6*density));x+=segment}
-        fun ball(x:Double,y:Double,alpha:Float){val cx=left+x.toFloat()*density;val cy=top+y.toFloat()*density;val cell=3*density
-            drawRect(colors.primary.copy(alpha=alpha),Offset(cx-cell*2,cy-cell),Size(cell*4,cell*2));drawRect(colors.primary.copy(alpha=alpha),Offset(cx-cell,cy-cell*2),Size(cell*2,cell*4))}
-        aiming?.let{f->var old=SliderPhysics.position(f,0.0);for(i in 1..24){val next=SliderPhysics.position(f,f.duration*i/24);drawLine(colors.onSurface.copy(alpha=.55f),Offset(left+old.x.toFloat()*density,top+old.y.toFloat()*density),Offset(left+next.x.toFloat()*density,top+next.y.toFloat()*density),density);old=next};ball(f.landing,0.0,.35f)}
+        val fill=(forecast/width).toFloat()*railWidth
+        if(fill>0f)drawRect(colors.primary,Offset(left,top-1.25f*density),Size(fill,2.5f*density))
+        fun ball(x:Double,y:Double,alpha:Float){
+            val cx=left+x.toFloat()*density;val cy=top+y.toFloat()*density;val half=5f*density
+            drawRect(colors.primary.copy(alpha=alpha),Offset(cx-half,cy-half),Size(half*2,half*2))
+            drawRect(colors.background.copy(alpha=alpha),Offset(cx-1.5f*density,cy-1.5f*density),Size(3f*density,3f*density))
+        }
+        aiming?.let{f->
+            for(i in 1..20){
+                val pt=SliderPhysics.position(f,f.duration*i/20)
+                val dot=1.25f*density
+                drawRect(colors.onSurface.copy(alpha=.42f),Offset(left+pt.x.toFloat()*density-dot,top+pt.y.toFloat()*density-dot),Size(dot*2,dot*2))
+            }
+            ball(f.landing,0.0,.32f)
+        }
         val point=pose?:SliderPoint((displayed-min).toDouble()/(max-min)*width,0.0);ball(point.x,point.y,1f)
     }
 }

@@ -8,9 +8,21 @@ import java.util.TimeZone
 import java.util.concurrent.CancellationException
 import kotlin.math.*
 
+enum class WorldDisplayNarrative(val wire:String) {
+    SETTLEMENT("settlement"),SINGLE("single");
+    companion object { fun fromWire(value:String)=if(value=="single")SINGLE else SETTLEMENT }
+}
+
+enum class SingleBuildingBackdrop(val wire:String) {
+    MAQUETTE("maquette"),SKY("sky");
+    companion object { fun fromWire(value:String)=if(value=="sky")SKY else MAQUETTE }
+}
+
 data class WorldRenderOptions(val time:Long,val zone:String=TimeZone.getDefault().id,val quality:NativeLightingQuality=NativeLightingQuality.HIGH,
     val aspect:Double=.75,val weather:NativeWeatherOverride?=null,val coordinates:NativeCoordinates?=null,val worldColor:SourceWorldColor=SourceWorldColor(),val atmosphere:NativeAtmosphereFacts?=null,
-    val outlines:NativeOutlineVisibility=NativeOutlineVisibility.CURRENT,val resources:NativeResourceWorldAssets?=null) {
+    val outlines:NativeOutlineVisibility=NativeOutlineVisibility.CURRENT,val resources:NativeResourceWorldAssets?=null,
+    val narrative:WorldDisplayNarrative=WorldDisplayNarrative.SETTLEMENT,val singleBackdrop:SingleBuildingBackdrop=SingleBuildingBackdrop.MAQUETTE,
+    val singleOwnerId:String?=null,val darkSurface:Boolean=false) {
     init {require(aspect.isFinite()&&aspect in .1..10.0&&zone in TimeZone.getAvailableIDs())}
 }
 class NativeWorldFrame(val identity:WorldRequestIdentity,val scene:NativeGeneratedScene,val environment:NativeEnvironmentSample,val spatialKey:String,
@@ -74,6 +86,9 @@ class NativeWorldPacketCompiler internal constructor(signRasterizer:NativeSignRa
             resourceCompiler=options.resources?.let{NativeResourceStructureCompiler(it.stack,it.textures,it.palette,specials=it.specials)}
             resourcePackets=options.resources?.let{NativeResourcePackets(it.textures)}
             root=null;owners.clear()
+        }
+        if(options.narrative==WorldDisplayNarrative.SINGLE&&world.input.buildings.isNotEmpty()){
+            return prepareSingleBuilding(request,world,options,cancelled)
         }
         val camera=camera(world,options.aspect,paper);val t=world.terrain;val b=t.bounds
         val half=maxOf(abs(b.minX),abs(b.maxX),abs(b.minZ),abs(b.maxZ));val core=camera.volume.framingRadius
@@ -177,6 +192,169 @@ class NativeWorldPacketCompiler internal constructor(signRasterizer:NativeSignRa
         check(cancelled);root=key to rootSource;owners.clear();owners.putAll(adopted);this.ground=world.cacheKey to ground;preparedResources.clear()
         if(storeRoot&&diskKey!=null)cache?.write(diskKey,rootSource)
         return NativeWorldFrame(request,scene,sample,world.input.spatial.key,world.cacheKey,world.sceneryKey,pendingEntities,environmentContext,cloudContext,cloud,precipitationContext,rain)
+    }
+
+    /** Single-building narrative scene: renders only the active project's
+     * structure at its real construction progress and condition on either a
+     * museum architectural plinth (maquette) or a compact floating island under
+     * the live atmosphere (sky). */
+    private fun prepareSingleBuilding(request:WorldRequestIdentity,world:WorldTerrainPlan,options:WorldRenderOptions,cancelled:()->Boolean):NativeWorldFrame {
+        check(cancelled)
+        val paper=options.quality==NativeLightingQuality.PAPER
+        val maquette=options.singleBackdrop==SingleBuildingBackdrop.MAQUETTE
+        val building=world.input.buildings.find{it.fact.id==options.singleOwnerId}
+            ?:world.input.buildings.find{it.fact.active}
+            ?:world.input.buildings.first()
+        val bounds=building.blueprint.bounds
+        val width=(bounds.maxX-bounds.minX+1).toDouble()
+        val depth=(bounds.maxZ-bounds.minZ+1).toDouble()
+        val height=(bounds.maxY-bounds.minY+1).toDouble()
+        val hx=(ceil(width/2.0).toInt()+2).coerceIn(4,26)
+        val hz=(ceil(depth/2.0).toInt()+2).coerceIn(4,26)
+        val cx=(bounds.minX+bounds.maxX)/2.0
+        val cz=(bounds.minZ+bounds.maxZ)/2.0
+        val pose=NativeStructurePlacement(BlockPoint(0.0,-bounds.minY.toDouble(),0.0),0.0,Position2(-cx,-cz))
+
+        val padWidth=(hx*2+1).toDouble()
+        val padDepth=(hz*2+1).toDouble()
+        val framing=max(5.5,sqrt(padWidth*padWidth+padDepth*padDepth+(height+3.0).pow(2))/2.0*0.92)
+        val fov=36.0
+        val vertical=fov*PI/180
+        val horizontal=2*atan(tan(vertical/2)*options.aspect)
+        val fitted=framing/sin(max(.1,min(vertical,horizontal))/2)*1.02
+        val target=BlockPoint(0.0,max(1.2,height*0.42),0.0)
+        val pitch=34*PI/180;val azimuth=PI/4
+        val eye=BlockPoint(fitted*cos(pitch)*sin(azimuth),target.y+fitted*sin(pitch),fitted*cos(pitch)*cos(azimuth))
+        val extent=max(padWidth,padDepth)*1.4
+        val visibility=listOf(listOf(-extent,-6.0,-extent),listOf(extent,height+10.0,extent))
+        val camera=NativeSceneCamera(target,eye,fitted,fov,
+            SourceCamera(framing,visibility,NativeSky.RADIUS,.82,.91,1.5,NativeSky.RADIUS),options.aspect,preview=true,paper=paper)
+
+        val environmentContext=NativeEnvironmentContext(options.zone,options.quality,framing,max(padWidth,padDepth),fitted,
+            ocean=false,options.coordinates,options.weather,NativeSkyOptions(floating=true,coldRegion=false),options.atmosphere?.inputs?.timeMinutes)
+        val baseSample=options.atmosphere?.takeIf{!it.inputs.ocean}?.let(environmentContext::project)?:environmentContext.sample(options.time)
+        val sample=if(maquette) maquetteEnvironment(baseSample,options.quality,options.darkSurface) else baseSample
+        val materialState=NativeSurfaceState(ambientOcclusion=options.quality.ambientOcclusion)
+
+        val plinthVoxels=buildSinglePlinth(hx,hz,maquette,options.darkSurface)
+        val plinthOrigin=BlockPoint(0.0,0.0,0.0)
+        val plinthPose=NativeStructurePlacement(BlockPoint(0.0,0.0,0.0))
+        val plinthKey="single-plinth:${options.singleBackdrop.wire}:${hx}x${hz}:${options.darkSurface}:${materialState.ambientOcclusion}:$paper"
+        val plinthSource=NativePacketBuilder("world").also{plinth->
+            if(paper)PaperWorldMesh.appendOwner(plinth,plinthVoxels,emptyList(),plinthOrigin,plinthPose,0.0,allocator,cancelled)
+            else {
+                val recipe=BuildingPreparation.staticStructure(plinthVoxels,plinthKey,cancelled=cancelled)
+                val mesh=if(resourceCompiler==null)compiler.compile(recipe,plinthOrigin,cancelled)else null
+                appendStructure(plinth,"world",recipe,mesh,plinthPose,materialState,origin=plinthOrigin,cancelled=cancelled)
+            }
+        }.build(cancelled)
+
+        val owner="building:${building.fact.id}"
+        val showOutline=options.outlines.shows(true,building.fact.completion)
+        val entityPlans=if(paper)emptyMap() else entities.prepare(listOf(entityRequest(owner,building.recipe,building.originalGeometry,cancelled)),cancelled)
+        val entityPlan=entityPlans[owner]
+        val buildingSource=NativePacketBuilder(owner).also{builder->
+            if(paper)PaperWorldMesh.appendOwner(builder,building.recipe.intact,emptyList(),building.origin,pose,building.recipe.weathering,allocator,cancelled)
+            else {
+                val plan=checkNotNull(entityPlan)
+                appendStructure(builder,owner,building.recipe,building.originalGeometry,pose,materialState,building.recipe.weathering,plan.replacedIndices,cancelled=cancelled)
+                entities.append(builder,plan,building.origin,pose,cancelled)
+                construction.appendVines(builder,building.recipe.vines,building.origin,pose,materialState,cancelled)
+            }
+            construction.appendOutline(builder,building.blueprint,building.fact.completion,showOutline,building.origin,pose,cancelled,paper=paper)
+        }.build(cancelled)
+
+        val inputs=ArrayList<NativePacketSource>()
+        inputs+=plinthSource
+        inputs+=buildingSource
+
+        val cloudContext=NativeCloudContext(
+            NativeCloudView(padWidth*2.2,padDepth*2.2,padWidth*3.5,padDepth*3.5,padWidth*2.2,padDepth*2.2,preview=true),
+            0.0,0.0,max(14.0,height+8.0))
+        val clearWeather=NativeWeather(sample.weather.localDate,NativeWeatherKind.CLEAR,false,sample.weather.seed,0,0.0,0,0,0.0,0.0)
+        val cloud=clouds.prepare(cloudContext,if(maquette)clearWeather else sample.weather,if(maquette)0.0 else options.quality.cloudDensity,cancelled,paper)
+        if(!maquette)inputs+=cloud.source
+
+        val precipitationContext=NativePrecipitationContext(listOf(-extent,extent,-extent,extent),listOf(padWidth*2.0,padDepth*2.0),NativePrecipitationGround.prepare(world.surfaces,cancelled))
+        val rain=precipitation.prepare(precipitationContext,if(maquette)clearWeather else sample.weather,if(maquette)0.0 else options.quality.cloudDensity,cloud.randomTail,cancelled,paper)
+        if(!maquette)inputs+=rain.source
+
+        if(!maquette&&!paper)inputs+=sky.prepare(true,cancelled)
+        val stormContext=if(maquette)null else NativeStormContext(target,padWidth*2.0,padDepth*2.0,cloudContext.baseY)
+        if(!maquette)inputs+=lightning.prepare(checkNotNull(stormContext),cancelled)
+        inputs+=NativeInteriorCompiler.empty()
+
+        val targets=listOf(NativeOrbitTarget(building.fact.id,BlockPoint(0.0,0.0,0.0),width,depth,height))
+        val pickIndex=picking.prepare(inputs.filter{it.owner!="world"},false,cancelled)
+        val post=if(maquette)SourcePost.NONE.copy(direct=true,samples=if(paper)0 else 4,worldColor=options.worldColor)
+            else sample.post.copy(worldColor=options.worldColor)
+        check(cancelled)
+        val scene=NativeGeneratedScene(inputs,sample.lighting,post,camera,request.replacementGeneration,request.revision,
+            sample.surface,sample.cloudColor,if(maquette)null else sample.sky,if(maquette)null else sample.fogProjection,
+            if(maquette)null else NativeStormWeather(sample.weather.thunderstorm,sample.weather.seed),stormContext,targets,pickIndex,null)
+        preparedResources.clear()
+        val spatialKey="single:${options.singleBackdrop.wire}:${building.fact.id}:${options.darkSurface}"
+        return NativeWorldFrame(request,scene,sample,spatialKey,plinthKey,"single",entityPlan?.pendingBlocks?:0,environmentContext,cloudContext,cloud,precipitationContext,rain)
+    }
+
+    private fun maquetteEnvironment(base:NativeEnvironmentSample,quality:NativeLightingQuality,dark:Boolean):NativeEnvironmentSample {
+        fun rgb(hex:Int)=LinearRgb.fromSrgb(hex).let{listOf(it.red,it.green,it.blue)}
+        val clearHex=if(dark)0x0B0D0C else 0xF6F5F1
+        val rawDir=listOf(-0.52,-0.74,-0.42);val dirLen=sqrt(rawDir.sumOf{it*it})
+        val keyDir=rawDir.map{(it/dirLen).toFloat()}
+        val keyColor=if(dark)0xE8EEF2 else 0xFFF7EA
+        val keyIntensity=if(dark)1.62f else 1.88f
+        val hemiSky=if(dark)0xA4B8CC else 0xFAF8F2
+        val hemiGround=if(dark)0x2B332F else 0xCFCBC1
+        val hemiIntensity=if(dark)1.32f else 1.24f
+        val lights=listOf(
+            SourceLight("DirectionalLight",rgb(keyColor),keyIntensity,keyDir,listOf(0f,0f,0f),true,listOf(0f,0f,0f),0f,0.012f),
+            SourceLight("HemisphereLight",rgb(hemiSky),hemiIntensity,listOf(0f,1f,0f),listOf(0f,0f,0f),false,rgb(hemiGround),0f,0f),
+        )
+        val lighting=SourceLighting(exposure=if(dark)1.28f else 1.18f,clearColor=rgb(clearHex),lights=lights,
+            shadowsEnabled=quality!=NativeLightingQuality.PAPER,pending=emptyList(),fog=null)
+        val effects=SurfaceEffects(keyDir.map{-it},rgb(keyColor),rgb(quality.coolColor),quality.faceContrast,0f)
+        val surface=NativeSurfaceState(effects,NightField.NONE,if(dark)0.22f else 0f,quality.ambientOcclusion,1f,1f)
+        return base.copy(lighting=lighting,surface=surface,post=SourcePost.NONE.copy(direct=true,samples=if(quality==NativeLightingQuality.PAPER)0 else 4),
+            sky=null,fogProjection=null)
+    }
+
+    private fun buildSinglePlinth(hx:Int,hz:Int,maquette:Boolean,dark:Boolean):List<RenderVoxel> {
+        val out=ArrayList<RenderVoxel>()
+        var order=0
+        if(maquette){
+            val topBlock=if(dark)"minecraft:deepslate_tiles" else "minecraft:quartz_block"
+            val rimBlock=if(dark)"minecraft:polished_deepslate" else "minecraft:smooth_quartz"
+            val baseBlock=if(dark)"minecraft:blackstone" else "minecraft:polished_andesite"
+            for(x in -hx..hx)for(z in -hz..hz){
+                val edge=abs(x)==hx||abs(z)==hz
+                out+=RenderVoxel(x.toDouble(),-1.0,z.toDouble(),"stone",order++,if(edge)rimBlock else topBlock)
+            }
+            val bx=(hx-1).coerceAtLeast(2);val bz=(hz-1).coerceAtLeast(2)
+            for(x in -bx..bx)for(z in -bz..bz){
+                out+=RenderVoxel(x.toDouble(),-2.0,z.toDouble(),"stone",order++,baseBlock)
+            }
+        }else{
+            for(x in -hx..hx)for(z in -hz..hz){
+                if(abs(x)==hx&&abs(z)==hz)continue
+                out+=RenderVoxel(x.toDouble(),-1.0,z.toDouble(),"stone",order++,"minecraft:grass_block",mapOf("snowy" to "false"))
+            }
+            val d1x=(hx-1).coerceAtLeast(2);val d1z=(hz-1).coerceAtLeast(2)
+            for(x in -d1x..d1x)for(z in -d1z..d1z){
+                if(abs(x)==d1x&&abs(z)==d1z)continue
+                out+=RenderVoxel(x.toDouble(),-2.0,z.toDouble(),"wood",order++,"minecraft:dirt")
+            }
+            val d2x=(hx-2).coerceAtLeast(1);val d2z=(hz-2).coerceAtLeast(1)
+            for(x in -d2x..d2x)for(z in -d2z..d2z){
+                if(abs(x)==d2x&&abs(z)==d2z)continue
+                out+=RenderVoxel(x.toDouble(),-3.0,z.toDouble(),"stone",order++,"minecraft:stone")
+            }
+            val d3x=(hx-3).coerceAtLeast(0);val d3z=(hz-3).coerceAtLeast(0)
+            for(x in -d3x..d3x)for(z in -d3z..d3z){
+                out+=RenderVoxel(x.toDouble(),-4.0,z.toDouble(),"stone",order++,"minecraft:cobblestone")
+            }
+        }
+        return out
     }
     private fun cloudContext(world:WorldTerrainPlan):NativeCloudContext {
         val t=world.terrain;val f=t.framingBounds;val near=t.nearDetailBounds;val bounds=t.bounds

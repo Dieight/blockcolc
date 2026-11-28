@@ -38,8 +38,8 @@ internal val LocalNativeSettingsActions=staticCompositionLocalOf{false}
 
 @Composable fun NativeAction(label:String,onClick:()->Unit,modifier:Modifier=Modifier,pending:Boolean=false,enabled:Boolean=true,icon:String="check",primary:Boolean=true,danger:Boolean=false,leading:(@Composable ()->Unit)?=null){
     val colors=MaterialTheme.colorScheme
-    val ink=if(primary)if(danger)colors.onError else colors.onPrimary else if(danger)colors.error else colors.onSurface
-    val background=if(primary)if(danger)colors.error else colors.primary else colors.surface
+    val ink=if(primary)if(danger)colors.onError else colors.inverseOnSurface else if(danger)colors.error else colors.onSurface
+    val background=if(primary)if(danger)colors.error else colors.inverseSurface else androidx.compose.ui.graphics.Color.Transparent
     val interaction=remember{MutableInteractionSource()}
     val settings=LocalNativeSettingsActions.current
     var motion by remember{mutableIntStateOf(0)}
@@ -50,7 +50,7 @@ internal val LocalNativeSettingsActions=staticCompositionLocalOf{false}
         .padding(horizontal=if(settings)12.dp else 16.dp,vertical=if(settings)8.dp else 12.dp),
         horizontalArrangement=Arrangement.spacedBy(8.dp,Alignment.CenterHorizontally),verticalAlignment=Alignment.CenterVertically){
         CompositionLocalProvider(LocalContentColor provides if(enabled)ink else colors.onSurfaceVariant){
-            if(pending&&icon=="reset")NativeRefreshingGlyph()else if(pending)NativeBusy(Modifier.size(20.dp))else if(leading!=null)leading()else if(icon.isNotEmpty())NativeMotionGlyph(icon,motion,Modifier.size(20.dp))
+            if(pending&&icon=="reset")NativeRefreshingGlyph()else if(pending)NativeBusy(Modifier.size(20.dp))else if(leading!=null)leading()else if(icon.isNotEmpty())NativeMotionGlyph(icon,motion,Modifier.size(18.dp))
             Text(label,Modifier.weight(1f,fill=false),style=if(settings)MaterialTheme.typography.bodyMedium else MaterialTheme.typography.labelLarge)
         }
     }

@@ -298,4 +298,36 @@ class NativeWorldPacketCompilerTest {
             assertThrows(IllegalArgumentException::class.java){builder.prepare(facts,buildingCondition=-1)}
         }finally{builder.clear();compiler.clear()}
     }
+    @Test fun singleBuildingNarrativeSupportsMaquetteAndLiveSkyBackdrops(){
+        val builder=WorldPlanBuilder();val compiler=NativeWorldPacketCompiler()
+        try{
+            val world=builder.terrain(builder.prepare(WorldFacts.from(initial())))
+            val identity=WorldRequestIdentity("single.db",0,1)
+            val maquetteLight=compiler.prepare(identity,world,options.copy(
+                narrative=WorldDisplayNarrative.SINGLE,singleBackdrop=SingleBuildingBackdrop.MAQUETTE,singleOwnerId="a",darkSurface=false))
+            assertEquals(listOf("world","building:a",PacketOwners.INTERIOR),maquetteLight.scene.sources.map{it.owner})
+            assertTrue(maquetteLight.scene.camera.preview)
+            assertTrue(maquetteLight.scene.post.direct)
+            assertNull(maquetteLight.scene.lighting.fog)
+            assertNull(maquetteLight.scene.environment.sky)
+            assertEquals(listOf("a"),maquetteLight.scene.orbitTargets.map{it.id})
+            val expectedLightClear=LinearRgb.fromSrgb(0xF6F5F1)
+            assertEquals(expectedLightClear.red,maquetteLight.scene.lighting.clearColor[0],1e-4f)
+
+            val maquetteDark=compiler.prepare(identity,world,options.copy(
+                narrative=WorldDisplayNarrative.SINGLE,singleBackdrop=SingleBuildingBackdrop.MAQUETTE,singleOwnerId="b",darkSurface=true))
+            assertEquals(listOf("world","building:b",PacketOwners.INTERIOR),maquetteDark.scene.sources.map{it.owner})
+            assertNotEquals(maquetteLight.spatialKey,maquetteDark.spatialKey)
+            val expectedDarkClear=LinearRgb.fromSrgb(0x0B0D0C)
+            assertEquals(expectedDarkClear.red,maquetteDark.scene.lighting.clearColor[0],1e-4f)
+
+            val sky=compiler.prepare(identity,world,options.copy(
+                narrative=WorldDisplayNarrative.SINGLE,singleBackdrop=SingleBuildingBackdrop.SKY,singleOwnerId="a"))
+            assertEquals(listOf("world","building:a",PacketOwners.CLOUDS,PacketOwners.PRECIPITATION,PacketOwners.SKY,PacketOwners.LIGHTNING,PacketOwners.INTERIOR),
+                sky.scene.sources.map{it.owner})
+            assertNotNull(sky.scene.environment.sky)
+            assertTrue(sky.scene.camera.preview)
+            assertEquals(listOf("a"),sky.scene.orbitTargets.map{it.id})
+        }finally{builder.clear();compiler.clear()}
+    }
 }

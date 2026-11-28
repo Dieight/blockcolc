@@ -15,9 +15,23 @@ import androidx.compose.ui.unit.dp
 import com.blockcolc.presentation.*
 import com.blockcolc.preview.*
 import com.blockcolc.preview.world.automaticQuality
-import java.util.UUID
 
-@Composable fun NativeSettingsPage(s:WorkspaceUiState,runtime:WorkspaceActions,onTutorial:()->Unit,onAbout:()->Unit,onImport:()->Unit,onExport:()->Unit,audioSettings:@Composable ()->Unit={},weatherSettings:@Composable ()->Unit={},debugSettings:@Composable ()->Unit={},resourceSettings:@Composable ()->Unit={},notificationSettings:@Composable ()->Unit={},blueprintSettings:@Composable ()->Unit={},cloudSettings:@Composable ()->Unit={},updateSettings:@Composable ()->Unit={}){
+@Composable fun NativeSettingsPage(
+    s:WorkspaceUiState,
+    runtime:WorkspaceActions,
+    onTutorial:()->Unit,
+    onAbout:()->Unit,
+    onImport:()->Unit,
+    onExport:()->Unit,
+    audioSettings:@Composable ()->Unit={},
+    weatherSettings:@Composable ()->Unit={},
+    debugSettings:@Composable ()->Unit={},
+    resourceSettings:@Composable ()->Unit={},
+    notificationSettings:@Composable ()->Unit={},
+    blueprintSettings:@Composable ()->Unit={},
+    cloudSettings:@Composable ()->Unit={},
+    updateSettings:@Composable ()->Unit={},
+){
     val ui=LocalNativeUi.current;val prefs=s.preferences;val workspace=s.workspace?:return
     val domain=rememberNativeRequest(s)
     val settlement=rememberNativeRequest(s)
@@ -29,76 +43,68 @@ import java.util.UUID
     NativePageScroll{
         NativePageTitle(ui.text("设置"))
         NativeSettingsNavigation(jump)
-        NativeSection(ui.text(SettingsCatalog.group("account").title)){NativeSettingAnchor("账户与云同步"){cloudSettings()}}
         if(s.preferencesReadFailed)Text(ui.text("本地设置读取失败，原文件已保留。"),color=MaterialTheme.colorScheme.error)
-        NativeSection(ui.text(SettingsCatalog.group("timing").title)){
-            NativeSettingGroup("普通任务",ui.text("{0} 分钟",prefs.focusMinutes)){
-                NativeNumber(ui.text("专注时长（分钟）"),prefs.focusMinutes,1..180,!s.preferencesReadFailed){n->update{it.copy(focusMinutes=n)}}
-            }
-            NativeSeparator()
-            NativeSettingGroup("习惯任务",ui.text("{0} 分钟 · {1} 轮",prefs.habitFocusMinutes,prefs.habitTargetRounds)){
-                NativeNumber(ui.text("专注时长（分钟）"),prefs.habitFocusMinutes,1..180,!s.preferencesReadFailed){n->update{it.copy(habitFocusMinutes=n)}}
-                NativeNumber(ui.text("建筑轮次"),prefs.habitTargetRounds,10..30,!s.preferencesReadFailed){n->update{it.copy(habitTargetRounds=n)}}
-            }
-            NativeSeparator()
-            NativeSettingAnchor("休息时长"){NativeNumber(ui.text("休息时长（分钟）"),prefs.breakMinutes,0..60,!s.preferencesReadFailed){n->update{it.copy(breakMinutes=n)}}}
-            NativeSeparator()
-            NativeSettingAnchor("自动连续专注"){NativeToggle(ui.text("自动连续专注"),value=prefs.autoContinueFocus,enabled=!s.preferencesReadFailed){v->update{it.copy(autoContinueFocus=v)}}}
-            NativeSeparator()
-            NativeSettingAnchor("自动续专注时间"){NativeToggle(ui.text("自动续专注时间"),value=prefs.autoExtendFocus,enabled=!s.preferencesReadFailed){v->update{it.copy(autoExtendFocus=v)}}}
-        }
-        NativeSection(ui.text(SettingsCatalog.group("protection").title)){
-            NativeSettingGroup("专注完整性"){
-                val integrity=workspace.settings.integrity
-                val available=!domain.busy&&!s.busy
-                NativeToggle(ui.text("启用专注完整性"),value=integrity.enabled,enabled=available){v->command(WorkspaceMutation.Integrity(v,integrity.excursions,integrity.thresholdSeconds))}
-                NativeSeparator()
-                NativeNumber(ui.text("有效离开次数"),integrity.excursions,1..5,available&&integrity.enabled){n->command(WorkspaceMutation.Integrity(true,n,integrity.thresholdSeconds))}
-                NativeNumber(ui.text("离开阈值（秒）"),integrity.thresholdSeconds,1..60,available&&integrity.enabled){n->command(WorkspaceMutation.Integrity(true,integrity.excursions,n))}
-            }
-            NativeSeparator()
-            NativeSettingAnchor("计划专注日"){
-                Text(ui.text("计划专注日"),Modifier.padding(top=8.dp,bottom=12.dp),style=MaterialTheme.typography.bodyLarge)
-                Row(Modifier.fillMaxWidth()){
-                    for(day in 0..6){val planned=day !in workspace.settings.restWeekdays
-                        val label=ui.text(listOf("周日","周一","周二","周三","周四","周五","周六")[day])
-                        val interaction=remember{androidx.compose.foundation.interaction.MutableInteractionSource()}
-                        Column(Modifier.weight(1f).heightIn(min=48.dp).clickable(enabled=!domain.busy&&!s.busy,interactionSource=interaction,indication=null){
-                            val rests=workspace.settings.restWeekdays.toMutableSet();if(planned)rests.add(day)else rests.remove(day)
-                            if(rests.size<7)command(WorkspaceMutation.Calendar(workspace.settings.timeZone,rests.sorted()))
-                        }.nativePressMotion(interaction,!domain.busy&&!s.busy),horizontalAlignment=Alignment.CenterHorizontally){Text(label,style=MaterialTheme.typography.bodySmall);if(planned)Text("▪",color=MaterialTheme.colorScheme.primary)}
-                    }
-                }
-            }
-            NativeSeparator()
-            NativeSettingAnchor("返回专注提醒"){NativeToggle(ui.text("返回专注提醒"),value=prefs.returnToFocusReminders,enabled=!s.preferencesReadFailed){v->update{it.copy(returnToFocusReminders=v)}}}
-            NativeSeparator()
-            NativeSettingGroup("计时闹钟"){NativePhaseAlarmSettings()}
-            NativeSeparator()
-            NativeSettingGroup("通知与后台"){notificationSettings()}
-            NativeRequestError(domain)
-        }
+
+        // Group 1: Presentation & Reading
         NativeSection(ui.text(SettingsCatalog.group("appearance").title)){
+            NativeSettingSlider("液态玻璃",prefs.focusGlassTransparency,0,100,!s.preferencesReadFailed,saving=s.preferencesSaving,error=s.message){n->update{it.copy(focusGlassTransparency=n)}}
+            NativeSeparator()
             NativeSettingAnchor("主题"){
-            NativeSettingsOptionTitle(ui.text("主题"))
-            NativeSegments(listOf("system" to ui.text("跟随系统"),"light" to ui.text("浅色"),"dark" to ui.text("深色")),prefs.themeMode,{v->update{it.copy(themeMode=v)}},!s.preferencesReadFailed)
+                NativeSettingsOptionTitle(ui.text("主题"))
+                NativeSegments(listOf("system" to ui.text("跟随系统"),"light" to ui.text("浅色"),"dark" to ui.text("深色")),prefs.themeMode,{v->update{it.copy(themeMode=v)}},!s.preferencesReadFailed)
             }
             NativeSeparator()
             NativeSettingAnchor("界面语言"){
-            NativeSettingsOptionTitle(ui.text("界面语言"))
-            NativeSegments(listOf("zh-CN" to "简体中文","en" to "English"),prefs.language,{v->update{it.copy(language=v)}},!s.preferencesReadFailed)
+                NativeSettingsOptionTitle(ui.text("界面语言"))
+                NativeSegments(listOf("zh-CN" to "简体中文","en" to "English"),prefs.language,{v->update{it.copy(language=v)}},!s.preferencesReadFailed)
             }
             NativeSeparator()
             NativeSettingAnchor("字体"){
-            NativeSettingsOptionTitle(ui.text("字体"))
-            NativeSegments(listOf("pixel" to ui.text("像素字体"),"system" to ui.text("系统字体"),"mixed" to ui.text("混合字体")),prefs.fontStyle,{v->update{it.copy(fontStyle=v)}},!s.preferencesReadFailed)
+                NativeSettingsOptionTitle(ui.text("字体"))
+                NativeSegments(listOf("pixel" to ui.text("像素字体"),"system" to ui.text("系统字体"),"mixed" to ui.text("混合字体")),prefs.fontStyle,{v->update{it.copy(fontStyle=v)}},!s.preferencesReadFailed)
             }
             NativeSeparator()
             NativeSettingAnchor("极简模式"){NativeToggle(ui.text("极简模式"),value=prefs.minimalMode,enabled=!s.preferencesReadFailed){v->update{it.copy(minimalMode=v)}}}
-            NativeSeparator()
-            NativeSettingSlider("液态玻璃",prefs.focusGlassTransparency,0,100,!s.preferencesReadFailed,saving=s.preferencesSaving,error=s.message){n->update{it.copy(focusGlassTransparency=n)}}
         }
+
+        // Group 2: World & Buildings (includes Single-Building Narrative & Maquette/Sky backdrop)
         NativeSection(ui.text(SettingsCatalog.group("world").title)){
+            NativeSettingAnchor("世界叙事模式"){
+                NativeSettingsOptionTitle(ui.text("世界叙事模式")){
+                    if(backdrop?.requestedNarrative!=null&&!backdrop.worldSettingFailed)WorldSettingProgress()
+                }
+                NativeSegments(
+                    listOf("settlement" to ui.text("大世界"),"single" to ui.text("单体")),
+                    prefs.worldDisplayMode,
+                    {v->
+                        if(v!=prefs.worldDisplayMode){
+                            backdrop?.requestedNarrative=v
+                            update{it.copy(worldDisplayMode=v)}
+                        }
+                    },
+                    !s.preferencesReadFailed,
+                    icons=mapOf("settlement" to "map","single" to "cube"),
+                )
+            }
+            NativeSeparator()
+            NativeSettingAnchor("单体画面背景"){
+                NativeSettingsOptionTitle(ui.text("单体画面背景")){
+                    if(backdrop?.requestedBackdrop!=null&&!backdrop.worldSettingFailed)WorldSettingProgress()
+                    NativeInfoAction(ui.text("单体画面背景"),ui.text("建筑展台或真实天光，可随时切换。"))
+                }
+                NativeSegments(
+                    listOf("maquette" to ui.text("展台"),"sky" to ui.text("天光")),
+                    prefs.singleBuildingBackdrop,
+                    {v->
+                        if(v!=prefs.singleBuildingBackdrop){
+                            if(prefs.worldDisplayMode=="single")backdrop?.requestedBackdrop=v
+                            update{it.copy(singleBuildingBackdrop=v)}
+                        }
+                    },
+                    !s.preferencesReadFailed,
+                )
+            }
+            NativeSeparator()
             NativeSettingAnchor("聚落环境"){
                 val pending=settlement.busy||backdrop?.preparingSettlement==true||
                     backdrop?.let{it.requestedSettlement!=null&&!it.worldSettingFailed}==true
@@ -114,7 +120,7 @@ import java.util.UUID
                 },!settlement.busy&&!s.busy)
                 NativeRequestError(settlement)
             }
-                NativeSeparator()
+            NativeSeparator()
             NativeSettingAnchor("光影质量"){
                 val context=LocalContext.current
                 val automatic=remember(context){automaticQuality(context)}
@@ -167,27 +173,75 @@ import java.util.UUID
                     NativeIconAction(ui.text("重试"),"reset",backdrop.retryWorld)
                 }
             }
-                NativeSeparator()
+            NativeSeparator()
             NativeSettingAnchor("施工轮廓"){
                 NativeSettingsOptionTitle(ui.text("施工轮廓"))
                 NativeSegments(listOf("off" to ui.text("关闭"),"current" to ui.text("当前"),"all" to ui.text("全部")),prefs.constructionOutlineVisibility,{v->update{it.copy(constructionOutlineVisibility=v)}},!s.preferencesReadFailed)
             }
-                NativeSeparator()
-                NativeSettingGroup("世界色彩",trailing={NativeIconAction(ui.text("恢复默认"),"reset",{update{it.copy(worldColorAdjustment=WorldColor())}},enabled=!s.preferencesReadFailed)}){
-                    NativeSettingSlider("饱和度",prefs.worldColorAdjustment.saturation,50,150,!s.preferencesReadFailed,saving=s.preferencesSaving,error=s.message,collapsible=false){n->update{it.copy(worldColorAdjustment=it.worldColorAdjustment.copy(saturation=n))}}
-                    NativeSettingSlider("亮度",prefs.worldColorAdjustment.brightness,80,120,!s.preferencesReadFailed,saving=s.preferencesSaving,error=s.message,collapsible=false){n->update{it.copy(worldColorAdjustment=it.worldColorAdjustment.copy(brightness=n))}}
-                    NativeSettingSlider("对比度",prefs.worldColorAdjustment.contrast,80,120,!s.preferencesReadFailed,saving=s.preferencesSaving,error=s.message,collapsible=false){n->update{it.copy(worldColorAdjustment=it.worldColorAdjustment.copy(contrast=n))}}
-                }
-                NativeSeparator()
-                NativeSettingAnchor("同步现实天气"){weatherSettings()}
-                NativeRequestError(domain)
-        }
-        NativeSection(ui.text(SettingsCatalog.group("library").title)){
-            resourceSettings()
+            NativeSeparator()
+            NativeSettingGroup("世界色彩",trailing={NativeIconAction(ui.text("恢复默认"),"reset",{update{it.copy(worldColorAdjustment=WorldColor())}},enabled=!s.preferencesReadFailed)}){
+                NativeSettingSlider("饱和度",prefs.worldColorAdjustment.saturation,50,150,!s.preferencesReadFailed,saving=s.preferencesSaving,error=s.message,collapsible=false){n->update{it.copy(worldColorAdjustment=it.worldColorAdjustment.copy(saturation=n))}}
+                NativeSettingSlider("亮度",prefs.worldColorAdjustment.brightness,80,120,!s.preferencesReadFailed,saving=s.preferencesSaving,error=s.message,collapsible=false){n->update{it.copy(worldColorAdjustment=it.worldColorAdjustment.copy(brightness=n))}}
+                NativeSettingSlider("对比度",prefs.worldColorAdjustment.contrast,80,120,!s.preferencesReadFailed,saving=s.preferencesSaving,error=s.message,collapsible=false){n->update{it.copy(worldColorAdjustment=it.worldColorAdjustment.copy(contrast=n))}}
+            }
+            NativeSeparator()
+            NativeSettingAnchor("同步现实天气"){weatherSettings()}
             NativeSeparator()
             blueprintSettings()
+            NativeSeparator()
+            resourceSettings()
         }
-        NativeSection(ui.text("附加功能")){
+
+        // Group 3: Focus Rhythm & Protection
+        NativeSection(ui.text(SettingsCatalog.group("timing").title)){
+            NativeSettingGroup("普通任务",ui.text("{0} 分钟",prefs.focusMinutes)){
+                NativeNumber(ui.text("专注时长（分钟）"),prefs.focusMinutes,1..180,!s.preferencesReadFailed){n->update{it.copy(focusMinutes=n)}}
+            }
+            NativeSeparator()
+            NativeSettingGroup("习惯任务",ui.text("{0} 分钟 · {1} 轮",prefs.habitFocusMinutes,prefs.habitTargetRounds)){
+                NativeNumber(ui.text("专注时长（分钟）"),prefs.habitFocusMinutes,1..180,!s.preferencesReadFailed){n->update{it.copy(habitFocusMinutes=n)}}
+                NativeNumber(ui.text("建筑轮次"),prefs.habitTargetRounds,10..30,!s.preferencesReadFailed){n->update{it.copy(habitTargetRounds=n)}}
+            }
+            NativeSeparator()
+            NativeSettingAnchor("休息时长"){NativeNumber(ui.text("休息时长（分钟）"),prefs.breakMinutes,0..60,!s.preferencesReadFailed){n->update{it.copy(breakMinutes=n)}}}
+            NativeSeparator()
+            NativeSettingAnchor("自动连续专注"){NativeToggle(ui.text("自动连续专注"),value=prefs.autoContinueFocus,enabled=!s.preferencesReadFailed){v->update{it.copy(autoContinueFocus=v)}}}
+            NativeSeparator()
+            NativeSettingAnchor("自动续专注时间"){NativeToggle(ui.text("自动续专注时间"),value=prefs.autoExtendFocus,enabled=!s.preferencesReadFailed){v->update{it.copy(autoExtendFocus=v)}}}
+            NativeSeparator()
+            NativeSettingGroup("计时闹钟"){NativePhaseAlarmSettings()}
+            NativeSeparator()
+            NativeSettingGroup("专注完整性"){
+                val integrity=workspace.settings.integrity
+                val available=!domain.busy&&!s.busy
+                NativeToggle(ui.text("启用专注完整性"),value=integrity.enabled,enabled=available){v->command(WorkspaceMutation.Integrity(v,integrity.excursions,integrity.thresholdSeconds))}
+                NativeSeparator()
+                NativeNumber(ui.text("有效离开次数"),integrity.excursions,1..5,available&&integrity.enabled){n->command(WorkspaceMutation.Integrity(true,n,integrity.thresholdSeconds))}
+                NativeNumber(ui.text("离开阈值（秒）"),integrity.thresholdSeconds,1..60,available&&integrity.enabled){n->command(WorkspaceMutation.Integrity(true,integrity.excursions,n))}
+            }
+            NativeSeparator()
+            NativeSettingAnchor("计划专注日"){
+                Text(ui.text("计划专注日"),Modifier.padding(top=8.dp,bottom=12.dp),style=MaterialTheme.typography.bodyLarge)
+                Row(Modifier.fillMaxWidth()){
+                    for(day in 0..6){val planned=day !in workspace.settings.restWeekdays
+                        val label=ui.text(listOf("周日","周一","周二","周三","周四","周五","周六")[day])
+                        val interaction=remember{androidx.compose.foundation.interaction.MutableInteractionSource()}
+                        Column(Modifier.weight(1f).heightIn(min=48.dp).clickable(enabled=!domain.busy&&!s.busy,interactionSource=interaction,indication=null){
+                            val rests=workspace.settings.restWeekdays.toMutableSet();if(planned)rests.add(day)else rests.remove(day)
+                            if(rests.size<7)command(WorkspaceMutation.Calendar(workspace.settings.timeZone,rests.sorted()))
+                        }.nativePressMotion(interaction,!domain.busy&&!s.busy),horizontalAlignment=Alignment.CenterHorizontally){Text(label,style=MaterialTheme.typography.bodySmall);if(planned)Text("▪",color=MaterialTheme.colorScheme.primary)}
+                    }
+                }
+            }
+            NativeSeparator()
+            NativeSettingAnchor("返回专注提醒"){NativeToggle(ui.text("返回专注提醒"),value=prefs.returnToFocusReminders,enabled=!s.preferencesReadFailed){v->update{it.copy(returnToFocusReminders=v)}}}
+            NativeSeparator()
+            NativeSettingGroup("通知与后台"){notificationSettings()}
+            NativeRequestError(domain)
+        }
+
+        // Group 4: Audio & Daily Touches
+        NativeSection(ui.text(SettingsCatalog.group("extras").title)){
             NativeSettingAnchor("简易便签"){NativeToggle(ui.text("简易便签"),value=prefs.quickNotesEnabled,enabled=!s.preferencesReadFailed){v->update{it.copy(quickNotesEnabled=v)}}}
             NativeSeparator()
             LocalDateCountdownPreference.current?.let{
@@ -197,8 +251,6 @@ import java.util.UUID
             audioSettings()
             NativeSeparator()
             NativeSettingGroup("生日祝福"){
-                // Same date row and sheet as the countdown: the date is saved
-                // in the sheet, and the switch saves at once when a date exists.
                 val birthday=workspace.settings.birthday
                 var sheet by remember{mutableStateOf<NativeDateDraft?>(null)}
                 val birthdaySave=rememberNativeRequest(s){sheet=null}
@@ -223,12 +275,19 @@ import java.util.UUID
                 }
             }
         }
+
+        // Group 5: Account & Connections
+        NativeSection(ui.text(SettingsCatalog.group("account").title)){
+            NativeSettingAnchor("账户与云同步"){cloudSettings()}
+        }
+
+        // Group 6: Data, Debug & Version
         NativeSection(ui.text(SettingsCatalog.group("advanced").title)){
-            NativeSettingAnchor("新手教程"){NativeSettingLink(ui.text("新手教程"),onTutorial)}
+            NativeBackups(s,runtime,onImport,onExport)
             NativeSeparator()
             NativeSettingAnchor("画面调试"){debugSettings()}
             NativeSeparator()
-            NativeBackups(s,runtime,onImport,onExport)
+            NativeSettingAnchor("新手教程"){NativeSettingLink(ui.text("新手教程"),onTutorial)}
             NativeSeparator()
             NativeSettingAnchor("自动检查并下载更新"){NativeToggle(ui.text("自动检查并下载更新"),value=prefs.autoCheckUpdates,enabled=!s.preferencesReadFailed){v->update{it.copy(autoCheckUpdates=v)}}}
             NativeSeparator()
@@ -267,6 +326,7 @@ import java.util.UUID
             contentBottomSpacing=NativeOptionSpacing,content=content)
     }
 }
+
 @Composable internal fun NativeSettingSlider(key:String,value:Int,min:Int,max:Int,enabled:Boolean,saving:Boolean=false,error:String?=null,collapsible:Boolean=true,onCommit:(Int)->Unit){
     val ui=LocalNativeUi.current;var open by rememberNativePageState("settings/slider/$key"){false};var preview by remember{mutableStateOf<Int?>(null)}
     var held by remember(key){mutableStateOf<Int?>(null)};var flight by remember(key){mutableStateOf<Int?>(null)};var savingSeen by remember(key){mutableStateOf(false)}
@@ -293,6 +353,7 @@ import java.util.UUID
         }
     }
 }
+
 @Composable private fun NativeBackups(s:WorkspaceUiState,runtime:WorkspaceActions,onImport:()->Unit,onExport:()->Unit){
     val ui=LocalNativeUi.current;var selected by rememberNativePageState<String?>("settings/backup/selected"){null}
     val restore=rememberNativeRequest(s){selected=null}

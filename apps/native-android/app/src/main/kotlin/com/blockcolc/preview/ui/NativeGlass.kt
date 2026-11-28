@@ -45,6 +45,8 @@ class NativeBackdrop:AutoCloseable {
     var preparingQuality by mutableStateOf(false)
     var requestedSettlement by mutableStateOf<String?>(null)
     var requestedQuality by mutableStateOf<String?>(null)
+    var requestedNarrative by mutableStateOf<String?>(null)
+    var requestedBackdrop by mutableStateOf<String?>(null)
     var worldSettingFailed by mutableStateOf(false)
     var retryWorld:()->Unit={}
     fun configure(view:NativeWorldView?,active:Boolean,rect:Rect){
@@ -120,8 +122,8 @@ val LocalNativeAtmosphere=compositionLocalOf<NativeAtmosphereFacts?>{null}
     val ink=if(dark||sampling&&backdrop?.ready==true&&com.blockcolc.world.NativeGlassMaterial.usesLightInk(transparency,dark,night))Color.White else Color.Black
     Box(modifier.onGloballyPositioned{localBounds=it.nativeScreenBounds(nativeView)}){
         Canvas(Modifier.matchParentSize()){
-            if(fixedBlur)drawRect(Brush.verticalGradient(if(dark)listOf(Color(0xff1f3329).copy(alpha=.86f),Color(0xff131c17).copy(alpha=.81f))
-                else listOf(Color.White.copy(alpha=.928f),Color(0xfff3f5f2).copy(alpha=.888f))))
+            if(fixedBlur)drawRect(Brush.verticalGradient(if(dark)listOf(Color(0xff141816).copy(alpha=.90f),Color(0xff0b0d0c).copy(alpha=.86f))
+                else listOf(Color(0xfffaf9f6).copy(alpha=.94f),Color(0xfff6f5f1).copy(alpha=.90f))))
             else drawRect(colors.surface.copy(alpha=if(sampling&&backdrop?.ready==true)material.tintAlpha else 1f))
             if(sampling){
                 drawLine(Color.White.copy(alpha=material.highlightAlpha),Offset.Zero,Offset(size.width,0f),1.dp.toPx())

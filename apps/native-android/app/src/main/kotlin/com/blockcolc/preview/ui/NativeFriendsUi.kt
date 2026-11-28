@@ -366,13 +366,12 @@ internal fun groupedFriendCode(code:String)=code.chunked(6).joinToString(" ")
     val summary=friendStatus(friend,live)
     val time=friendPeriod(friend,live)
     val description=listOfNotNull(summary,time).joinToString("\n").ifEmpty{null}
-    Column(modifier.fillMaxWidth().border(1.dp,if(dragging)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant)
-        .background(MaterialTheme.colorScheme.surface).padding(horizontal=14.dp)){
+    Column(modifier.fillMaxWidth().then(if(dragging)Modifier.border(1.dp,MaterialTheme.colorScheme.primary).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha=.6f)).padding(horizontal=10.dp)else Modifier)){
         NativeDisclosure(name,description,expanded,{expanded=it},
-            titleStyle=MaterialTheme.typography.titleMedium,descriptionStyle=MaterialTheme.typography.bodyMedium,
+            titleStyle=MaterialTheme.typography.titleMedium,descriptionStyle=MaterialTheme.typography.bodySmall,
             leading={
                 val color=if(live.focusing)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
-                Box(Modifier.size(8.dp).background(color))
+                Box(Modifier.size(7.dp).background(color))
             }){
             Column(Modifier.fillMaxWidth().padding(bottom=12.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){
                 if(revision!=null){
@@ -399,6 +398,7 @@ internal fun groupedFriendCode(code:String)=code.chunked(6).joinToString(" ")
                 }
             }
         }
+        if(!dragging)NativeSeparator()
     }
 }
 

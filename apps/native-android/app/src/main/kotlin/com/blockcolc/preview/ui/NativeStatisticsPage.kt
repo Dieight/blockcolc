@@ -4,21 +4,21 @@ import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.text.drawText
 import com.blockcolc.presentation.*
 import com.blockcolc.preview.WorkspaceUiState
@@ -26,43 +26,52 @@ import java.time.LocalDate
 
 @Composable fun NativeStatisticsPage(s:WorkspaceUiState,runtime:WorkspaceActions){
     val ui=LocalNativeUi.current;val workspace=s.workspace?:return
+    val colors=MaterialTheme.colorScheme
     var first by rememberNativePageState("statistics/first"){workspace.today};var last by rememberNativePageState("statistics/last"){workspace.today}
     val summary=remember(workspace,first,last){workspace.range(first,last)}
     val label=if(summary.start==summary.end)if(summary.end==workspace.today)ui.text("今天")else summary.end.replace('-','.')else "${summary.start.replace('-','.')} — ${summary.end.replace('-','.')}"
+    var achievementsOpen by rememberSaveable{mutableStateOf(false)}
+    var monumentsOpen by rememberSaveable{mutableStateOf(false)}
+
     NativePageScroll{
+        // Pure clean title, zero duplicate header actions
         NativePageTitle(ui.text("统计"))
-        FormalCard(padding=16.dp){
-            Row(Modifier.fillMaxWidth().heightIn(min=44.dp),verticalAlignment=androidx.compose.ui.Alignment.CenterVertically){
-                NativeText(ui.text("专注热力图"),NativeTextRole.SECTION,Modifier.weight(1f))
-            }
-            Row(Modifier.fillMaxWidth().heightIn(min=44.dp),verticalAlignment=androidx.compose.ui.Alignment.CenterVertically){
-                PixelGlyph("clock",Modifier.size(16.dp),MaterialTheme.colorScheme.primary);Spacer(Modifier.width(8.dp))
-                NativeText(ui.text("{0}的投入",label),NativeTextRole.CAPTION,Modifier.weight(1f),MaterialTheme.colorScheme.onSurfaceVariant)
+
+        // Naked hero stats + frameless 26-week heatmap directly on canvas
+        Column(Modifier.fillMaxWidth(),verticalArrangement=Arrangement.spacedBy(12.dp)){
+            Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(8.dp)){
+                PixelGlyph("clock",Modifier.size(15.dp),colors.primary)
+                NativeText(ui.text("{0}的投入",label),NativeTextRole.CAPTION,Modifier.weight(1f),colors.onSurfaceVariant)
                 NativeOccasionEmblems(workspace.today,2,workspace.settings.birthday)
             }
-            FormalStatisticDuration(summary.durationMs,Modifier.padding(bottom=16.dp))
-            Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(12.dp)){
-                Column(Modifier.weight(2.5f),verticalArrangement=Arrangement.spacedBy(8.dp)){
-                    Row(verticalAlignment=androidx.compose.ui.Alignment.CenterVertically){PixelGlyph("flag",Modifier.size(16.dp),MaterialTheme.colorScheme.primary);Spacer(Modifier.width(8.dp));NativeText("${summary.completed} / ${summary.goal}",NativeTextRole.SECTION)}
-                    NativeText(ui.text("有效完成轮次 / 目标完成轮次"),NativeTextRole.CAPTION,color=MaterialTheme.colorScheme.onSurfaceVariant)
+            FormalStatisticDuration(summary.durationMs)
+            Row(Modifier.fillMaxWidth().padding(bottom=6.dp),horizontalArrangement=Arrangement.spacedBy(20.dp)){
+                Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(6.dp)){
+                    PixelGlyph("flag",Modifier.size(14.dp),colors.primary)
+                    NativeText("${summary.completed} / ${summary.goal}",NativeTextRole.BODY,accent=true)
+                    NativeText(ui.text("轮"),NativeTextRole.CAPTION,color=colors.onSurfaceVariant)
                 }
-                Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(8.dp)){
-                    NativeText("${summary.activeDays}",NativeTextRole.SECTION);NativeText(ui.text("活跃日"),NativeTextRole.CAPTION,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(6.dp)){
+                    NativeText("${summary.activeDays}",NativeTextRole.BODY,accent=true)
+                    NativeText(ui.text("活跃日"),NativeTextRole.CAPTION,color=colors.onSurfaceVariant)
                 }
             }
-            Spacer(Modifier.height(18.dp));NativeHeatmap(workspace,first,last){a,b->first=a;last=b}
+            NativeHeatmap(workspace,first,last){a,b->first=a;last=b}
         }
+
         if(workspace.details!=WorkspaceDetails.READY){
             FormalCard{NativeHistoryDetailsStatus(s,runtime)}
             return@NativePageScroll
         }
-        FormalCard{
-            Row(Modifier.fillMaxWidth(),verticalAlignment=androidx.compose.ui.Alignment.CenterVertically){
-                NativeText(ui.text("时间花在了哪里"),NativeTextRole.SECTION,Modifier.weight(1f))
+
+        // Frameless L14 Golden-Angle Constellation
+        FormalCard(padding=16.dp){
+            Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
+                NativeText(ui.text("时间花在了哪里"),NativeTextRole.CAPTION,Modifier.weight(1f),color=colors.onSurfaceVariant)
                 NativeInfoAction(ui.text("时间花在了哪里"),ui.text("每个像素约占 1%；文字为实际投入。"))
             }
             val groups=summary.targets.groupBy{it.projectId}.values.map{items->items.first() to items.sumOf{it.durationMs}}.sortedWith(compareBy<Pair<TimeTarget,Long>>{it.first.unknown}.thenByDescending{it.second})
-            if(groups.isEmpty())NativeText(ui.text("开始一次专注，投入会在这里留下记录。"),NativeTextRole.CAPTION,Modifier.padding(vertical=12.dp),MaterialTheme.colorScheme.onSurfaceVariant)
+            if(groups.isEmpty())NativeText(ui.text("开始一次专注，投入会在这里留下记录。"),NativeTextRole.CAPTION,Modifier.padding(vertical=12.dp),colors.onSurfaceVariant)
             else {
                 val visible=if(groups.size<=6)groups else {
                     val unknown=groups.filter{it.first.unknown};val known=groups.filterNot{it.first.unknown};val limit=if(unknown.isEmpty())5 else 4
@@ -72,71 +81,145 @@ import java.time.LocalDate
                 NativeAllocationField(visible)
             }
         }
-        FormalCard{
-            Row(Modifier.fillMaxWidth().heightIn(min=44.dp),verticalAlignment=androidx.compose.ui.Alignment.CenterVertically){NativeText(ui.text("建造留下的记录"),NativeTextRole.SECTION,Modifier.weight(1f));NativeText(ui.text("累计"),NativeTextRole.CAPTION,color=MaterialTheme.colorScheme.onSurfaceVariant)}
-            var monumentsOpen by rememberNativePageState("statistics/monumentsOpen"){false}
-            NativeDisclosure(ui.text("纪念建筑"),null,monumentsOpen,{monumentsOpen=it},valueLabel=ui.text("{0} 座已完成",workspace.memories.archives.size),leading={PixelGlyph("cube",Modifier.size(20.dp))}){
-                if(workspace.memories.archives.isEmpty())NativeText(ui.text("完成一项大型任务或习惯建筑后，这里会保留它的投入记忆。"),NativeTextRole.CAPTION,Modifier.padding(vertical=16.dp))
-                for(archive in workspace.memories.archives){key(archive.id){
-                    var expanded by rememberNativePageState("statistics/archive/${archive.id}"){false}
-                    val title=if(archive.cycleNumber==null)archive.title else ui.text("{0} · 第 {1} 座",archive.title,archive.cycleNumber)
-                    val caption=ui.text(if(archive.cycleNumber==null)"已完成大型任务"else"已完成习惯建筑")+" · "+(if(archive.expectedRounds!=null)ui.text("{0} / {1} 轮可追溯",archive.rounds,archive.expectedRounds)else ui.text("{0} 轮可追溯",archive.rounds))
-                    NativeDisclosure(title,caption,expanded,{expanded=it},valueLabel=formatDuration(archive.durationMs),titleStyle=MaterialTheme.typography.bodyLarge,valueStyle=MaterialTheme.typography.bodyLarge){
-                        Column(Modifier.fillMaxWidth(),verticalArrangement=Arrangement.spacedBy(12.dp)){
-                        NativeText(ui.text("实际投入"),NativeTextRole.CAPTION,color=MaterialTheme.colorScheme.onSurfaceVariant)
-                        FormalStatisticDuration(archive.durationMs)
-                        NativeSeparator()
-                        Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){
-                            Column{NativeText(ui.text("完成轮次"),NativeTextRole.CAPTION);NativeText(ui.rounds(archive.rounds),NativeTextRole.BODY)}
-                            Column{NativeText(ui.text("中断投入"),NativeTextRole.CAPTION);NativeText(if(archive.interrupted>0)ui.text("{0} 条 · {1}",archive.interrupted,formatDuration(archive.interruptedMs))else ui.text("无"),NativeTextRole.CAPTION)}
+
+        // Two Frameless Bottom Exhibition Plates (Achievements & Monuments)
+        FormalCard(padding=16.dp){
+            val unlockedCount=workspace.achievements.count{it.unlocked}
+            val totalCount=workspace.achievements.size
+            val achInteraction=remember{MutableInteractionSource()}
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .clickable(role=Role.Button,interactionSource=achInteraction,indication=null){achievementsOpen=true}
+                    .nativePressMotion(achInteraction)
+                    .padding(vertical=6.dp),
+                verticalArrangement=Arrangement.spacedBy(10.dp),
+            ){
+                Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(10.dp)){
+                    PixelGlyph("trophy",Modifier.size(20.dp),colors.primary)
+                    NativeText(ui.text("成就与书房陈设"),NativeTextRole.SECTION,Modifier.weight(1f))
+                    NativeText("$unlockedCount / $totalCount",NativeTextRole.BODY,color=colors.primary,accent=true)
+                    PixelGlyph("chevron",Modifier.size(16.dp).graphicsLayer{rotationZ=-90f},colors.onSurfaceVariant)
+                }
+                // 20-cell micro architectural pixel seal strip
+                if(totalCount>0){
+                    Canvas(Modifier.fillMaxWidth().height(5.dp).clearAndSetSemantics{}){
+                        val gap=3.dp.toPx()
+                        val cell=((size.width-gap*(totalCount-1))/totalCount).coerceAtLeast(1f)
+                        workspace.achievements.forEachIndexed{i,entry->
+                            drawRect(if(entry.unlocked)colors.primary else colors.outlineVariant,Offset(i*(cell+gap),0f),Size(cell,size.height))
                         }
-                        Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){NativeText(ui.text("完成时间"),NativeTextRole.CAPTION);NativeText(archive.completedAt?.let{sourceDisplayDate(it,workspace.settings.timeZone,ui.language)}?:ui.text("未知"),NativeTextRole.CAPTION)}
-                        NativeSeparator()
-                        if(archive.unknownRounds>0)NativeText(ui.text("另有 {0} 条无法追溯，未分摊。",archive.unknownRounds),NativeTextRole.CAPTION)
-                        NativeText(ui.text("旗下小任务投入"),NativeTextRole.BODY,Modifier.padding(top=12.dp))
-                        val maximum=archive.tasks.maxOfOrNull{it.durationMs}?:0
-                        if(maximum<=0)NativeText(ui.text("暂时没有可追溯的小任务投入。"),NativeTextRole.CAPTION)
-                        for(task in archive.tasks){
-                            Row(Modifier.fillMaxWidth(),verticalAlignment=androidx.compose.ui.Alignment.CenterVertically){NativeText(task.title,NativeTextRole.CAPTION,Modifier.weight(1f));NativeText(formatDuration(task.durationMs)+(task.share?.let{" · $it%"}?:""),NativeTextRole.CAPTION)}
-                            FormalProgress(if(maximum>0)(task.durationMs.toDouble()/maximum*10000).toInt()else 0,segments=20)
-                        }
-                        }
-                    }
-                    NativeSeparator()
-                }}
-                val unknown=workspace.memories.unallocated
-                if(unknown.rounds>0){
-                    NativeSeparator()
-                    Row(Modifier.fillMaxWidth().padding(vertical=12.dp),verticalAlignment=androidx.compose.ui.Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(10.dp)){
-                        PixelGlyph("clock",Modifier.size(20.dp),MaterialTheme.colorScheme.onSurfaceVariant)
-                        Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(4.dp)){NativeText(ui.text("未分配的投入"),NativeTextRole.BODY);NativeText(listOfNotNull(if(unknown.completed>0)ui.text("{0} 个完成轮次",unknown.completed)else null,if(unknown.interrupted>0)ui.text("{0} 条中断记录",unknown.interrupted)else null).joinToString(" · "),NativeTextRole.CAPTION,color=MaterialTheme.colorScheme.onSurfaceVariant);NativeText(formatDuration(unknown.durationMs),NativeTextRole.BODY)}
-                        NativeInfoAction(ui.text("未分配的投入"),ui.text("展示可追溯投入；旧记录单列，不估算分配。"))
                     }
                 }
             }
+            Spacer(Modifier.height(10.dp))
             NativeSeparator()
-            var achievementsOpen by rememberNativePageState("statistics/achievementsOpen"){false}
-            NativeDisclosure(ui.text("成就"),null,achievementsOpen,{achievementsOpen=it},valueLabel="${workspace.achievements.count{it.unlocked}} / ${workspace.achievements.size}",leading={PixelGlyph("trophy",Modifier.size(20.dp))}){
-                for(achievement in workspace.achievements){key(achievement.definition.id){
-                    NativeSeparator()
-                    Row(Modifier.fillMaxWidth().heightIn(min=64.dp).padding(vertical=12.dp),verticalAlignment=androidx.compose.ui.Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(8.dp)){
-                        PixelGlyph("trophy",Modifier.size(20.dp),if(achievement.unlocked)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
-                        Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(4.dp)){
-                            NativeText(ui.text(achievement.definition.title),NativeTextRole.BODY)
-                            NativeText(ui.text(achievement.definition.description),NativeTextRole.CAPTION,color=MaterialTheme.colorScheme.onSurfaceVariant)
-                            RoomPresentationProjection.items.firstOrNull{it.achievementId==achievement.definition.id}?.let{item->
-                                NativeText(ui.text("解锁摆设：{0}",if(ui.language=="en")item.englishTitle else item.title),NativeTextRole.CAPTION)
-                            }
-                        if(achievement.unlocked)Row(verticalAlignment=androidx.compose.ui.Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(8.dp)){
-                            PixelGlyph("check",Modifier.size(16.dp),MaterialTheme.colorScheme.primary)
-                            NativeText(achievement.unlockedAt?.let{sourceDisplayDate(it,workspace.settings.timeZone,ui.language)}?:ui.text("已解锁"),NativeTextRole.CAPTION,color=MaterialTheme.colorScheme.primary)
-                        }else Column(Modifier.widthIn(max=200.dp).fillMaxWidth(),verticalArrangement=Arrangement.spacedBy(4.dp)){
-                            FormalProgress(achievement.progress,max=achievement.definition.target)
-                            NativeText("${achievement.progress} / ${achievement.definition.target} "+ui.text(achievement.definition.unit),NativeTextRole.CAPTION,color=MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(10.dp))
+            val monInteraction=remember{MutableInteractionSource()}
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .heightIn(min=48.dp)
+                    .clickable(role=Role.Button,interactionSource=monInteraction,indication=null){monumentsOpen=true}
+                    .nativePressMotion(monInteraction)
+                    .padding(vertical=6.dp),
+                verticalAlignment=Alignment.CenterVertically,
+                horizontalArrangement=Arrangement.spacedBy(10.dp),
+            ){
+                PixelGlyph("chest",Modifier.size(20.dp),colors.primary)
+                NativeText(ui.text("纪念建筑"),NativeTextRole.SECTION,Modifier.weight(1f))
+                NativeText(ui.text("{0} 座已完成",workspace.memories.archives.size),NativeTextRole.CAPTION,color=colors.onSurfaceVariant)
+                PixelGlyph("chevron",Modifier.size(16.dp).graphicsLayer{rotationZ=-90f},colors.onSurfaceVariant)
+            }
+        }
+    }
+
+    // Redesigned Gallery Achievements Sheet
+    NativeSheet(Unit.takeIf{achievementsOpen},{ui.text("成就与书房陈设")},{achievementsOpen=false},initiallyExpanded=true,contentSpacing=0.dp){
+        var filter by rememberSaveable{mutableStateOf("all")}
+        val unlockedCount=workspace.achievements.count{it.unlocked}
+        val totalCount=workspace.achievements.size
+        Row(Modifier.fillMaxWidth().padding(bottom=12.dp),verticalAlignment=Alignment.Bottom,horizontalArrangement=Arrangement.spacedBy(6.dp)){
+            Text("$unlockedCount",style=MaterialTheme.typography.displayMedium,color=colors.primary,maxLines=1)
+            NativeText("/ $totalCount",NativeTextRole.TITLE,Modifier.padding(bottom=6.dp),color=colors.onSurfaceVariant,accent=true)
+        }
+        NativeSegments(
+            listOf("all" to ui.text("全部"),"unlocked" to ui.text("已解锁"),"locked" to ui.text("未解锁")),
+            filter,
+            {filter=it},
+        )
+        Spacer(Modifier.height(8.dp))
+        val filtered=workspace.achievements.filter{
+            when(filter){"unlocked"->it.unlocked;"locked"->!it.unlocked;else->true}
+        }
+        for((idx,achievement) in filtered.withIndex())key(achievement.definition.id){
+            if(idx>0)NativeSeparator()
+            Row(Modifier.fillMaxWidth().heightIn(min=64.dp).padding(vertical=12.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)){
+                PixelGlyph("trophy",Modifier.size(20.dp),if(achievement.unlocked)colors.primary else colors.onSurfaceVariant)
+                Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(4.dp)){
+                    NativeText(ui.text(achievement.definition.title),NativeTextRole.BODY)
+                    NativeText(ui.text(achievement.definition.description),NativeTextRole.CAPTION,color=colors.onSurfaceVariant)
+                    RoomPresentationProjection.items.firstOrNull{it.achievementId==achievement.definition.id}?.let{item->
+                        NativeText(ui.text("解锁摆设：{0}",if(ui.language=="en")item.englishTitle else item.title),NativeTextRole.CAPTION,color=colors.primary)
+                    }
+                    if(achievement.unlocked){
+                        Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(6.dp)){
+                            PixelGlyph("check",Modifier.size(14.dp),colors.primary)
+                            NativeText(achievement.unlockedAt?.let{sourceDisplayDate(it,workspace.settings.timeZone,ui.language)}?:ui.text("已解锁"),NativeTextRole.CAPTION,color=colors.primary)
                         }
+                    }else{
+                        Column(Modifier.widthIn(max=220.dp).fillMaxWidth().padding(top=2.dp),verticalArrangement=Arrangement.spacedBy(4.dp)){
+                            FormalProgress(achievement.progress,max=achievement.definition.target,height=3.dp)
+                            NativeText("${achievement.progress} / ${achievement.definition.target} "+ui.text(achievement.definition.unit),NativeTextRole.CAPTION,color=colors.onSurfaceVariant)
                         }
                     }
-                }}
+                }
+            }
+        }
+    }
+
+    // Redesigned Gallery Monuments Sheet
+    NativeSheet(Unit.takeIf{monumentsOpen},{ui.text("纪念建筑")},{monumentsOpen=false},initiallyExpanded=true,contentSpacing=0.dp){
+        if(workspace.memories.archives.isEmpty()){
+            NativeText(ui.text("完成一项大型任务或习惯建筑后，这里会保留它的投入记忆。"),NativeTextRole.CAPTION,Modifier.padding(vertical=16.dp),color=colors.onSurfaceVariant)
+        }
+        for((idx,archive) in workspace.memories.archives.withIndex())key(archive.id){
+            if(idx>0)NativeSeparator()
+            var expanded by rememberNativePageState("statistics/archive/${archive.id}"){false}
+            val title=if(archive.cycleNumber==null)archive.title else ui.text("{0} · 第 {1} 座",archive.title,archive.cycleNumber)
+            val caption=ui.text(if(archive.cycleNumber==null)"已完成大型任务"else"已完成习惯建筑")+" · "+(if(archive.expectedRounds!=null)ui.text("{0} / {1} 轮可追溯",archive.rounds,archive.expectedRounds)else ui.text("{0} 轮可追溯",archive.rounds))
+            NativeDisclosure(title,caption,expanded,{expanded=it},valueLabel=formatDuration(archive.durationMs),titleStyle=MaterialTheme.typography.bodyLarge,valueStyle=MaterialTheme.typography.bodyLarge){
+                Column(Modifier.fillMaxWidth().padding(bottom=12.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){
+                    FormalStatisticDuration(archive.durationMs)
+                    NativeSeparator()
+                    Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){
+                        Column{NativeText(ui.text("完成轮次"),NativeTextRole.CAPTION,color=colors.onSurfaceVariant);NativeText(ui.rounds(archive.rounds),NativeTextRole.BODY)}
+                        Column{NativeText(ui.text("中断投入"),NativeTextRole.CAPTION,color=colors.onSurfaceVariant);NativeText(if(archive.interrupted>0)ui.text("{0} 条 · {1}",archive.interrupted,formatDuration(archive.interruptedMs))else ui.text("无"),NativeTextRole.CAPTION)}
+                    }
+                    Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){NativeText(ui.text("完成时间"),NativeTextRole.CAPTION,color=colors.onSurfaceVariant);NativeText(archive.completedAt?.let{sourceDisplayDate(it,workspace.settings.timeZone,ui.language)}?:ui.text("未知"),NativeTextRole.CAPTION)}
+                    NativeSeparator()
+                    if(archive.unknownRounds>0)NativeText(ui.text("另有 {0} 条无法追溯，未分摊。",archive.unknownRounds),NativeTextRole.CAPTION,color=colors.onSurfaceVariant)
+                    NativeText(ui.text("旗下小任务投入"),NativeTextRole.CAPTION,Modifier.padding(top=6.dp),color=colors.onSurfaceVariant)
+                    val maximum=archive.tasks.maxOfOrNull{it.durationMs}?:0
+                    if(maximum<=0)NativeText(ui.text("暂时没有可追溯的小任务投入。"),NativeTextRole.CAPTION,color=colors.onSurfaceVariant)
+                    for(task in archive.tasks){
+                        Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){NativeText(task.title,NativeTextRole.CAPTION,Modifier.weight(1f));NativeText(formatDuration(task.durationMs)+(task.share?.let{" · $it%"}?:""),NativeTextRole.CAPTION,color=colors.onSurfaceVariant)}
+                        FormalProgress(if(maximum>0)(task.durationMs.toDouble()/maximum*10000).toInt()else 0,segments=20,height=3.dp)
+                    }
+                }
+            }
+        }
+        val unknown=workspace.memories.unallocated
+        if(unknown.rounds>0){
+            NativeSeparator()
+            Row(Modifier.fillMaxWidth().padding(vertical=12.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(10.dp)){
+                PixelGlyph("clock",Modifier.size(20.dp),colors.onSurfaceVariant)
+                Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(4.dp)){
+                    NativeText(ui.text("未分配的投入"),NativeTextRole.BODY)
+                    NativeText(listOfNotNull(if(unknown.completed>0)ui.text("{0} 个完成轮次",unknown.completed)else null,if(unknown.interrupted>0)ui.text("{0} 条中断记录",unknown.interrupted)else null).joinToString(" · "),NativeTextRole.CAPTION,color=colors.onSurfaceVariant)
+                    NativeText(formatDuration(unknown.durationMs),NativeTextRole.BODY)
+                }
+                NativeInfoAction(ui.text("未分配的投入"),ui.text("展示可追溯投入；旧记录单列，不估算分配。"))
             }
         }
     }
@@ -152,16 +235,11 @@ import java.time.LocalDate
     }else NativeText(ui.text("正在整理统计明细"),NativeTextRole.CAPTION)
 }
 
-/** Precomposed statistics must not read display receipts or create a separate
- * Dialog window. Entering again reads the durable ledger, never an invented
- * acknowledgement for a hidden or unfinished batch. Date/filter drafts stay
- * in the retained page above. */
 @Composable internal fun NativeStatisticsAchievements(entries:List<AchievementProgress>,runtime:AchievementReceiptActions){
     if(LocalNativePageActive.current)NativeAchievementUnlock(entries,runtime)
 }
 
-/** Same 26-week calendar as the formal page. The whole field is a continuous
- * date selector, with equivalent keyboard and accessibility range actions. */
+/** Same 26-week calendar as the formal page, rendered framelessly on canvas. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable private fun NativeHeatmap(workspace:WorkspaceProjection,first:String,last:String,onSelection:(String,String)->Unit){
     val ui=LocalNativeUi.current;val today=LocalDate.parse(workspace.today)
@@ -183,8 +261,6 @@ import java.time.LocalDate
     val text=androidx.compose.ui.text.rememberTextMeasurer();val textStyle=MaterialTheme.typography.bodySmall
     val density=androidx.compose.ui.platform.LocalDensity.current
     val weekdays=listOf("一","二","三","四","五","六","日").map{ui.text(it)}
-    // Text uses the normal 12sp role (including system font scale); only cells
-    // scale with available width. Labels reserve their own measured space.
     val labels=weekdays.map{text.measure(it,textStyle)}
     val left=labels.maxOf{it.size.width}.toFloat()+with(density){8.dp.toPx()}
     val top=labels.maxOf{it.size.height}.toFloat()+with(density){8.dp.toPx()}
@@ -197,14 +273,13 @@ import java.time.LocalDate
         if(!outside&&(column !in 0..25||row !in 0..6))return null
         return dates[column.coerceIn(0,25)*7+row.coerceIn(0,6)].coerceAtMost(workspace.today)
     }
-    // Day cells are about 7 dp wide: touch gets the keyboard's day steps.
     val dayFormat=remember(ui.language){java.time.format.DateTimeFormatter.ofPattern(ui.text("M月d日"),if(ui.language=="en")java.util.Locale.ENGLISH else java.util.Locale.SIMPLIFIED_CHINESE)}
     val from=LocalDate.parse(selectedFrom);val to=LocalDate.parse(selectedTo)
     val selection=if(from==to)from.format(dayFormat)+(if(selectedTo==workspace.today)" · "+ui.text("今天")else "")
         else ui.text("{0} – {1} · 共 {2} 天",from.format(dayFormat),to.format(dayFormat),java.time.temporal.ChronoUnit.DAYS.between(from,to)+1)
-    Row(Modifier.fillMaxWidth().heightIn(min=44.dp),verticalAlignment=androidx.compose.ui.Alignment.CenterVertically){
+    Row(Modifier.fillMaxWidth().heightIn(min=44.dp),verticalAlignment=Alignment.CenterVertically){
         NativeIconAction(ui.text("前一天"),"chevron",{move(-1,false)},Modifier.graphicsLayer{rotationZ=90f},enabled=cursor>start.toString())
-        Box(Modifier.weight(1f),contentAlignment=androidx.compose.ui.Alignment.Center){NativeText(selection,NativeTextRole.BODY,maxLines=2)}
+        Box(Modifier.weight(1f),contentAlignment=Alignment.Center){NativeText(selection,NativeTextRole.BODY,maxLines=2)}
         NativeIconAction(ui.text("后一天"),"chevron",{move(1,false)},Modifier.graphicsLayer{rotationZ=-90f},enabled=cursor<workspace.today)
         if(selectedFrom!=workspace.today||selectedTo!=workspace.today)FormalTextAction(ui.text("今天"),"",{keyboardAnchor=null;cursor=workspace.today;onSelection(workspace.today,workspace.today)})
     }

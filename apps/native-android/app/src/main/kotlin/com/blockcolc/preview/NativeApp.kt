@@ -11,6 +11,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.drawscope.clipRect
@@ -223,6 +224,7 @@ private val NATIVE_UI_PROCESS=java.util.UUID.randomUUID().toString()
                 onRefresh=resourcePacks::refresh,onRetry=resourcePacks::retry,onOriginal=resourcePacks::original,onSelect=resourcePacks::select,onDelete=resourcePacks::remove)},
             blueprintSettings={NativeBlueprintSettings(snapshot,runtime,blueprintImport){blueprintImporter.launch(arrayOf("application/octet-stream","application/gzip","application/x-gzip","*/*"))}},
             worldHost={visible,retainSurface,coverVisible,quality,modifier->val c=snapshot.preferences.worldColorAdjustment
+                 val darkTheme=androidx.compose.material3.MaterialTheme.colorScheme.background.luminance()<.5f
                  val details=snapshot.workspace?.takeIf{it.details==WorkspaceDetails.READY}
                  val memories=details?.memories
                 val labels=remember(memories,snapshot.preferences.language){memories?.buildings?.associate{it.id to if(it.cycleNumber==null)it.title else resources.text(snapshot.preferences.language,"{0} · 第 {1} 座",it.title,it.cycleNumber)}.orEmpty()+memories?.rewards?.associate{
@@ -230,7 +232,18 @@ private val NATIVE_UI_PROCESS=java.util.UUID.randomUUID().toString()
                  val room=remember(details?.achievements){details?.achievements?.let{RoomPresentationProjection.from(it)}}
                  NativeWorldHost(runtime,visible&&initialAtmosphereReady,quality,modifier,com.blockcolc.world.SourceWorldColor(c.saturation,c.brightness,c.contrast),atmosphere,worldDebug.buildingCondition,snapshot.preferences.constructionOutlineVisibility,worldInteraction,
                      if(memories==null)snapshot.projects.associate{it.id to it.title}else labels,resourceLibrary.selection,
-                     room=room,retainSurface=retainSurface,coverVisible=coverVisible)})
+                     room=room,retainSurface=retainSurface,coverVisible=coverVisible,
+                     worldDisplayMode=snapshot.preferences.worldDisplayMode,
+                     singleBuildingBackdrop=snapshot.preferences.singleBuildingBackdrop,
+                     activeProjectId=snapshot.activeProject,
+                     darkTheme=darkTheme,
+                     onHorizontalFling={delta->
+                         if(!snapshot.busy&&snapshot.planId==null&&snapshot.choices.size>=2&&snapshot.activeProject!=null){
+                             val idx=snapshot.choices.indexOfFirst{it.id==snapshot.activeProject}.coerceAtLeast(0)
+                             val next=snapshot.choices[(idx+delta+snapshot.choices.size)%snapshot.choices.size]
+                             if(next.id!=snapshot.activeProject)runtime.dispatch(WorkspaceMutation.SwitchProject(next.id),java.util.UUID.randomUUID().toString())
+                         }
+                     })})
     }
 }
 
@@ -553,11 +566,13 @@ private val NATIVE_UI_PROCESS=java.util.UUID.randomUUID().toString()
                 }else if(s.ready){
                     val timerVisible=projectEditor==null&&(immersive||page=="timer"||swipeTarget=="timer"||pageMoving&&settledPage=="timer")
                     val timerActive=timerVisible&&(page=="timer"||immersive)&&startupOpen&&foreground&&!pageMoving
+                    val hasRoom=s.workspace?.takeIf{it.details==WorkspaceDetails.READY}?.achievements!=null
+                    val friendsFocusing=remember(cloudView.friends){cloudView.friends.any{it.optString("status")=="accepted"&&friendLiveStatus(it,runtime.focusNow()).focusing}}
                     Box(Modifier.fillMaxSize().graphicsLayer{alpha=if(timerVisible)1f else 0f;translationX=routeX("timer")}.then(if(timerActive)Modifier else Modifier.clearAndSetSemantics{}).layout{measurable,constraints->val measured=measurable.measure(constraints);layout(measured.width,measured.height){if(timerVisible)measured.place(0,0)}}){key("$pageIdentity/timer"){NativePageActivation(timerActive){NativePageState("$pageIdentity/timer",timerScroll,timerMemory){NativeTimerPage(s,runtime,displayedMinimal,displayedImmersive,pool,submit.busy,delivered,submit.error,selectedTask,
                         onMinimal={minimalSelection.value=it},onAdjust={editor=it},onManual={manual=true},onCreate={projectEditor=ProjectEditor()},
                         onSubmit={draft->if(!submit.busy&&!delivered){heldReport=pool;submit.submit{runtime.submitReport(draft,it)}}},onWorldHeight={if(!displayedImmersive)worldHeight=it},memory=worldInteraction.memory,onCloseMemory=worldInteraction::closeMemory,panelVisibility=panelAlpha.asState(),active=timerActive,onPanelTop={timerPanelTop=it},wide=wideTimer,wideWorld=wideWorld,
                         minimalFriends=if(cloudView.account?.optBoolean("friendsEnabled")==true)({shown->NativeMinimalFriends(cloudView,shown&&foreground&&!friendsOpen,cloud::refreshFriends)}) else null,
-                        clockNow=runtime::focusNow)}}}}
+                        clockNow=runtime::focusNow,worldInteraction=worldInteraction,hasRoom=hasRoom,onSelectTask={selectedTask=it})}}}}
                     for(preparedPage in pagesPrepared.filter{it!="timer"})key(preparedPage){
                         val activePage=projectEditor==null&&!immersive&&page==preparedPage&&startupOpen&&foreground&&!pageMoving
                         var held by remember{mutableStateOf(s)}
@@ -567,7 +582,7 @@ private val NATIVE_UI_PROCESS=java.util.UUID.randomUUID().toString()
                             .background(MaterialTheme.colorScheme.background).windowInsetsPadding(safeSides).statusBarsPadding()
                             .then(if(activePage)Modifier else Modifier.clearAndSetSemantics{}).layout{measurable,constraints->val measured=measurable.measure(constraints);layout(measured.width,measured.height){if(placedPage)measured.place(0,0)}}){
                             key("$pageIdentity/$preparedPage"){NativePageActivation(activePage){NativePageState("$pageIdentity/$preparedPage",when(preparedPage){"tasks"->tasksScroll;"statistics"->statisticsScroll;else->settingsScroll},when(preparedPage){"tasks"->tasksMemory;"statistics"->statisticsMemory;else->settingsMemory}){when(preparedPage){
-                                "tasks"->NativeTasksPage(held,runtime,{projectEditor=ProjectEditor()},{goal=true},{titleEditor=it},{_,task->selectedTask=task;page="timer"},{projectEditor=ProjectEditor(nextHabit=true)},onView={worldInteraction.pick(it);page="timer"},onFriends={friendsOpen=true},friendsEnabled=cloudView.account?.optBoolean("friendsEnabled")==true)
+                                "tasks"->NativeTasksPage(held,runtime,{projectEditor=ProjectEditor()},{goal=true},{titleEditor=it},{_,task->selectedTask=task;page="timer"},{projectEditor=ProjectEditor(nextHabit=true)},onView={worldInteraction.pick(it);page="timer"},onFriends={friendsOpen=true},friendsEnabled=cloudView.account?.optBoolean("friendsEnabled")==true,friendsFocusing=friendsFocusing)
                                 "statistics"->NativeStatisticsPage(held,runtime)
                                 "settings"->NativeSettingsPage(held,runtime,{tutorial=true},{about=true},onImport,onExport,audioSettings,weatherSettings,debugSettings,resourceSettings,notificationSettings,blueprintSettings,cloudSettings={NativeCloudSettings(cloudView){accountOpen=true}},updateSettings={
                                     var beta by remember(updates){mutableStateOf(updates.betaEnabled())}
@@ -585,7 +600,10 @@ private val NATIVE_UI_PROCESS=java.util.UUID.randomUUID().toString()
             }
             if(showSyncIssue&&!displayedImmersive)Spacer(Modifier.fillMaxWidth().onSizeChanged{navigationHeight=it.height}
                 .navigationBarsPadding().height(68.dp))
-            else if(!displayedImmersive)Row(Modifier.fillMaxWidth().onSizeChanged{navigationHeight=it.height}.background(MaterialTheme.colorScheme.surface)
+            else if(!displayedImmersive){
+                val navBorder=MaterialTheme.colorScheme.outlineVariant
+                Row(Modifier.fillMaxWidth().onSizeChanged{navigationHeight=it.height}.background(MaterialTheme.colorScheme.surface)
+                .drawWithContent{drawContent();drawLine(navBorder,androidx.compose.ui.geometry.Offset.Zero,androidx.compose.ui.geometry.Offset(size.width,0f),1.dp.toPx())}
                 .windowInsetsPadding(safeSides).navigationBarsPadding(),horizontalArrangement=Arrangement.SpaceEvenly){
                 for((key,label,icon)in listOf(Triple("timer","计时","clock"),Triple("tasks","任务","tasks"),Triple("statistics","统计","chart"),Triple("settings","设置","gear"))){
                     var motion by remember{mutableIntStateOf(0)}
@@ -600,7 +618,7 @@ private val NATIVE_UI_PROCESS=java.util.UUID.randomUUID().toString()
                             maxLines=1,overflow=androidx.compose.ui.text.style.TextOverflow.Ellipsis,textAlign=androidx.compose.ui.text.style.TextAlign.Center)
                     }
                 }
-            }
+            }}
         }
         if(showSyncIssue)NativeSyncIssueBanner(cloud,cloudView,Modifier.align(Alignment.BottomCenter))
         if(modeMotion)Box(Modifier.fillMaxSize().testTag("mode-transition").pointerInput(Unit){
@@ -700,7 +718,8 @@ private data class TutorialStep(val page:String,val title:String,val description
     val lesson=remember(replay){
         val intro=if(replay)listOf(TutorialStep("settings","首次使用","首次使用可以创建任务。有旧记录时，选本地备份或登录原有账户。"))else emptyList()
         intro+listOf(
-            TutorialStep("timer","从一轮专注开始","选择小任务，确认计划后开始。计时按实际结束时间恢复。"),
+            TutorialStep("timer","直接滑动计时与切换任务","上下滑动时间直接累加轮次，达今日剩余目标时磁吸提醒；左右滑动时间或轻点上方双线切换固定轮次与结束时间。"),
+            TutorialStep("timer","单体建筑与双背景","在顶部项目标题左右滑动或轻点即可切换大任务，在下方小任务栏轻点或左右滑动切换小任务；开启单体建筑后，还可直接轻扫建筑切换并任选展台或真实天光。"),
             TutorialStep("tasks","把任务建成世界","大任务对应建筑，小任务的推进决定施工；习惯任务按轮次积累。"),
             TutorialStep("timer","专注、休息与汇报","专注时双击面板下方空白显示结束按钮，再双击可收起。休息后双击时间继续。提前完成或中止后，由你确认再开始。"),
             TutorialStep("timer","极简与便签","开启极简后左右滑动面板，查看便签、统计和好友；在时钟上上下滑动设定结束时间，再双击时间开始专注。"),

@@ -62,9 +62,10 @@ internal fun nativePixelOrigin(extent:Float,used:Float):Float=kotlin.math.round(
 }
 
 @Composable fun NativeSection(title:String,modifier:Modifier=Modifier,content:@Composable ColumnScope.()->Unit){
-    Column(modifier.fillMaxWidth(),verticalArrangement=Arrangement.spacedBy(10.dp)){
-        NativeText(title,NativeTextRole.SECTION,Modifier.padding(horizontal=4.dp))
-        Box(Modifier.fillMaxWidth().border(1.dp,MaterialTheme.colorScheme.outlineVariant).background(MaterialTheme.colorScheme.surface).padding(1.dp)){Column(Modifier.fillMaxWidth().padding(horizontal=16.dp,vertical=8.dp),content=content)}
+    Column(modifier.fillMaxWidth(),verticalArrangement=Arrangement.spacedBy(8.dp)){
+        NativeText(title,NativeTextRole.CAPTION,color=MaterialTheme.colorScheme.onSurfaceVariant)
+        HorizontalDivider(color=MaterialTheme.colorScheme.outlineVariant)
+        Column(Modifier.fillMaxWidth(),content=content)
     }
 }
 

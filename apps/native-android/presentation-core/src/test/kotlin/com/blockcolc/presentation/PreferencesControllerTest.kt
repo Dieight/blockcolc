@@ -60,4 +60,19 @@ class PreferencesControllerTest {
         assertEquals(30,controller.load().value.focusMinutes);assertTrue(controller.load().value.ambience.rainEnabled)
         assertTrue(runCatching{controller.update{it.copy(focusMinutes=0)}}.isFailure);assertEquals(2,memory.writes)
     }
+    @Test fun singleBuildingNarrativePreferencesRoundTripAndStayBackwardCompatible(){
+        val memory=Memory();val controller=PreferencesController(memory)
+        assertEquals("settlement",controller.load().value.worldDisplayMode)
+        assertEquals("maquette",controller.load().value.singleBuildingBackdrop)
+        val defaultsJson=org.json.JSONObject(ClientPreferences().canonical())
+        assertFalse(defaultsJson.has("worldDisplayMode"))
+        assertFalse(defaultsJson.has("singleBuildingBackdrop"))
+        controller.update{it.copy(worldDisplayMode="single",singleBuildingBackdrop="sky")}
+        val reloaded=PreferencesController(memory).load().value
+        assertEquals("single",reloaded.worldDisplayMode)
+        assertEquals("sky",reloaded.singleBuildingBackdrop)
+        assertTrue(runCatching{controller.update{it.copy(worldDisplayMode="invalid")}}.isFailure)
+        assertTrue(runCatching{controller.update{it.copy(singleBuildingBackdrop="void")}}.isFailure)
+        assertEquals("single",PreferencesController(memory).load().value.worldDisplayMode)
+    }
 }

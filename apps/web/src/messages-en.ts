@@ -1389,4 +1389,41 @@ zdrcgubjo4的小喷泉：围绕中央水景展开的小型喷泉，池边构件�
 未找到可用的方块材质或模型。|No usable block textures or models were found.
 无法读取或保存本机资源包，原件已保留。|Could not read or save local packs. Originals were kept.
 材质准备失败，可重试或选择原创。|Could not prepare textures. Retry or select originals.
+世界叙事模式|World display mode
+大世界|Settlement
+单体|Single building
+单体画面背景|Single-building backdrop
+展台|Maquette
+天光|Live sky
+建筑展台|Architectural plinth
+真实天光|Live sky
+单体建筑|Single building
+聚落大世界|Full settlement
+达成今日目标|Daily goal reached
+切换任务|Switch project
+切换小任务|Switch subtask
+结束后统一分配|Assign after focus
+上下滑动设定结束时间|Swipe vertically to set end time
+开始专注至 {0}|Focus until {0}
+切换计时模式|Switch timer mode
+固定轮次，上下滑动增减轮次，左右滑动切换结束时间|Fixed rounds; drag vertically for rounds, horizontally for end time
+结束时间，上下滑动设定结束时间，左右滑动切换固定轮次|End time; drag vertically to set time, horizontally for fixed rounds
+成就与书房陈设|Achievements & study
+建筑展台或真实天光，可随时切换。|Choose an architectural plinth or live sky.
+滑动切换大任务|Swipe to switch project
+上一个任务|Previous project
+下一个任务|Next project
+全部任务|All projects
+呈现与阅读|Presentation & reading
+世界与建筑|World & buildings
+专注节律与护航|Focus rhythm & protection
+声音与生活点缀|Audio & daily touches
+账户与互联|Account & connections
+数据、调试与版本|Data, debug & version
+共 {0} 轮 · {1}|Total {0} rounds · {1}
+直接滑动计时与切换任务|Direct gestures for timing & tasks
+上下滑动时间直接累加轮次，达今日剩余目标时磁吸提醒；左右滑动时间或轻点上方双线切换固定轮次与结束时间。|Drag the clock vertically to add rounds with a magnetic detent at your remaining daily goal; swipe horizontally or tap the two lines above to switch between fixed rounds and end time.
+单体建筑与双背景|Single building & dual backdrop
+在顶部项目标题左右滑动或轻点即可切换大任务，在下方小任务栏轻点或左右滑动切换小任务；开启单体建筑后，还可直接轻扫建筑切换并任选展台或真实天光。|Swipe or tap the project title at the top to switch projects, and tap or swipe the subtask bar below to switch subtasks. In Single Building mode, flick the building directly and choose between Maquette plinth or Live Sky.
+未解锁|Locked
 `.trim().split('\n').map(line=>{const at=line.indexOf('|');return [decode(line.slice(0,at)),decode(line.slice(at+1))];}));

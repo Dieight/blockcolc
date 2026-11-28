@@ -39,15 +39,20 @@ internal val LocalNativeSystemBarPolicy=staticCompositionLocalOf<NativeSystemBar
     val dark=when(preferences.themeMode){"dark"->true;"light"->false;else->isSystemInDarkTheme()}
     val pixel=remember{FontFamily(Font(R.font.fusion_pixel_12px_zh_hans,FontWeight.Normal))}
     val typography=remember(pixel,preferences.fontStyle){
-        fun style(size:Int,line:Int,weight:FontWeight=FontWeight.Normal,accent:Boolean=false):TextStyle {
+        fun style(size:Int,line:Int,weight:FontWeight=FontWeight.Normal,accent:Boolean=false,editorial:Boolean=false):TextStyle {
             val usePixel=preferences.fontStyle=="pixel"||preferences.fontStyle=="mixed"&&accent
-            return TextStyle(fontFamily=if(usePixel)pixel else FontFamily.Default,fontSize=size.sp,lineHeight=line.sp,letterSpacing=0.sp,platformStyle=androidx.compose.ui.text.PlatformTextStyle(includeFontPadding=false),
+            val family=when{
+                usePixel->pixel
+                editorial->FontFamily.Serif
+                else->FontFamily.Default
+            }
+            return TextStyle(fontFamily=family,fontSize=size.sp,lineHeight=line.sp,letterSpacing=if(!usePixel&&editorial)(-0.4).sp else 0.sp,platformStyle=androidx.compose.ui.text.PlatformTextStyle(includeFontPadding=false),
                 fontWeight=if(usePixel)FontWeight.Normal else weight,fontSynthesis=if(usePixel)FontSynthesis.None else FontSynthesis.All)
         }
-        Typography(displayLarge=style(64,68,accent=true),displayMedium=style(48,52,accent=true),displaySmall=style(32,40,accent=true),
-            headlineLarge=style(24,32,FontWeight.Medium),headlineMedium=style(24,32,FontWeight.Medium),headlineSmall=style(24,32,FontWeight.Medium),
-            titleLarge=style(24,32,FontWeight.Medium),titleMedium=style(18,24,FontWeight.Medium),titleSmall=style(18,24,FontWeight.Medium),
-            bodyLarge=style(16,24),bodyMedium=style(16,24),bodySmall=style(12,18),labelLarge=style(16,24,accent=true),labelMedium=style(12,18,accent=true),labelSmall=style(12,18,accent=true))
+        Typography(displayLarge=style(64,68,accent=true),displayMedium=style(52,56,accent=true),displaySmall=style(36,42,accent=true),
+            headlineLarge=style(28,34,FontWeight.Normal,editorial=true),headlineMedium=style(26,32,FontWeight.Normal,editorial=true),headlineSmall=style(22,28,FontWeight.Medium),
+            titleLarge=style(24,30,FontWeight.Normal,editorial=true),titleMedium=style(17,24,FontWeight.Medium),titleSmall=style(16,22,FontWeight.Medium),
+            bodyLarge=style(15,22),bodyMedium=style(15,22),bodySmall=style(12,17),labelLarge=style(15,22,accent=true),labelMedium=style(12,17,accent=true),labelSmall=style(11,16,accent=true))
     }
     val colors=if(dark)NativePalette.dark else NativePalette.light
     val rectangle=RoundedCornerShape(0.dp)

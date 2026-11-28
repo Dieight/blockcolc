@@ -40,8 +40,11 @@ internal enum class NativeTextRole { CAPTION, BODY, SECTION, TITLE, NUMBER, CLOC
         }
     }else Text(text,modifier,color=color,style=style,maxLines=maxLines,overflow=TextOverflow.Ellipsis)
 }
-@Composable internal fun FormalCard(modifier:Modifier=Modifier,padding:Dp=16.dp,content:@Composable ColumnScope.()->Unit){
-    Column(modifier.fillMaxWidth().border(1.dp,MaterialTheme.colorScheme.outlineVariant).background(MaterialTheme.colorScheme.surface).padding(1.dp).padding(padding),content=content)
+@Composable internal fun FormalCard(modifier:Modifier=Modifier,padding:Dp=16.dp,divider:Boolean=true,content:@Composable ColumnScope.()->Unit){
+    Column(modifier.fillMaxWidth()){
+        if(divider)HorizontalDivider(color=MaterialTheme.colorScheme.outlineVariant)
+        Column(Modifier.fillMaxWidth().padding(vertical=padding),content=content)
+    }
 }
 @Composable internal fun FormalTextAction(label:String,icon:String,onClick:()->Unit,modifier:Modifier=Modifier,enabled:Boolean=true,
     maxLines:Int=Int.MAX_VALUE,pending:Boolean=false,disabledColor:Color=MaterialTheme.colorScheme.onSurfaceVariant){
@@ -74,10 +77,10 @@ internal enum class NativeTextRole { CAPTION, BODY, SECTION, TITLE, NUMBER, CLOC
         CompositionLocalProvider(LocalContentColor provides ink){if(pending)NativeBusy();NativeText(label,NativeTextRole.BODY,color=ink)}
     }
 }
-@Composable internal fun FormalProgress(value:Int,max:Int=10000,segments:Int=16,modifier:Modifier=Modifier){
+@Composable internal fun FormalProgress(value:Int,max:Int=10000,segments:Int=16,modifier:Modifier=Modifier,height:Dp=4.dp){
     val colors=MaterialTheme.colorScheme
-    Canvas(modifier.fillMaxWidth().height(8.dp).semantics{progressBarRangeInfo=ProgressBarRangeInfo(value.toFloat(),0f..max.coerceAtLeast(1).toFloat())}){
-        val gap=3.dp.toPx();val width=((size.width-gap*(segments-1))/segments).coerceAtLeast(1f)
+    Canvas(modifier.fillMaxWidth().height(height).semantics{progressBarRangeInfo=ProgressBarRangeInfo(value.toFloat(),0f..max.coerceAtLeast(1).toFloat())}){
+        val gap=2.dp.toPx();val width=((size.width-gap*(segments-1))/segments).coerceAtLeast(1f)
         val filled=if(max<=0)0f else (value.toFloat()/max*segments).coerceIn(0f,segments.toFloat())
         repeat(segments){
             val origin=Offset(it*(width+gap),0f);drawRect(colors.outlineVariant,origin,Size(width,size.height))

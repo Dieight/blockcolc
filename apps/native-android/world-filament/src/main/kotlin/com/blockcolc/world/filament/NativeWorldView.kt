@@ -54,6 +54,8 @@ class NativeWorldView(context: Context, private val fixture: String, private val
                       private val generatedSelection:((Long,Long,Long,String)->Unit)?=null,
                       private val fixedGeneratedCamera:Boolean=false,
                       private val optimizeRendering:Boolean=false,
+                      private val onCameraMoved:(()->Unit)?=null,
+                      private val onHorizontalFling:((Int)->Unit)?=null,
                       private val status: (String)->Unit): FrameLayout(context), Choreographer.FrameCallback {
     companion object {
         fun preview(context:Context,input:NativeGeneratedScene,reducedMotion:Boolean,onFrame:(Long,Long,Long)->Unit,status:(String)->Unit)=NativeWorldView(
@@ -63,10 +65,10 @@ class NativeWorldView(context: Context, private val fixture: String, private val
                 else android.provider.Settings.Global.getFloat(context.contentResolver,android.provider.Settings.Global.ANIMATOR_DURATION_SCALE,1f)>0f
             }.getOrDefault(false),weatherOnly=false,animalOnly=false,animalProbe=null,benchmarkRun=null,
             skyProbe=false,moonProbe=false,generatedInput=input,generatedFrame=onFrame,status=status)
-        fun generated(context:Context,input:NativeGeneratedScene,onFrame:(Long,Long,Long)->Unit,status:(String)->Unit,onSelection:((Long,Long,Long,String)->Unit)?=null,fixedCamera:Boolean=false,optimizeRendering:Boolean=true)=NativeWorldView(
+        fun generated(context:Context,input:NativeGeneratedScene,onFrame:(Long,Long,Long)->Unit,status:(String)->Unit,onSelection:((Long,Long,Long,String)->Unit)?=null,fixedCamera:Boolean=false,optimizeRendering:Boolean=true,onCameraMoved:(()->Unit)?=null,onHorizontalFling:((Int)->Unit)?=null)=NativeWorldView(
             context=context,fixture="native-generated",projectionOnly=false,cullingEnabled=true,surfaceEffects=true,shadowsEnabled=true,colorProbe=false,
             surfaceOptics=true,nightReflections=true,fogEnabled=true,runtimeEnabled=true,weatherOnly=false,animalOnly=false,animalProbe=null,benchmarkRun=null,
-            skyProbe=false,moonProbe=false,generatedInput=input,generatedFrame=onFrame,generatedSelection=onSelection,fixedGeneratedCamera=fixedCamera,optimizeRendering=optimizeRendering,status=status)
+            skyProbe=false,moonProbe=false,generatedInput=input,generatedFrame=onFrame,generatedSelection=onSelection,fixedGeneratedCamera=fixedCamera,optimizeRendering=optimizeRendering,onCameraMoved=onCameraMoved,onHorizontalFling=onHorizontalFling,status=status)
     }
     private val generatedMode=!BuildConfig.NATIVE_DIAGNOSTICS||generatedInput!=null
     private var pendingGenerated=generatedInput
@@ -884,7 +886,7 @@ class NativeWorldView(context: Context, private val fixture: String, private val
             failed=true;report("ERROR: "+error.javaClass.simpleName+": "+error.message)
         }
     }
-    private var downX=0f;private var downY=0f;private var touchMoved=false;private var multiTouch=false
+    private var downX=0f;private var downY=0f;private var downTimeMs=0L;private var touchMoved=false;private var multiTouch=false;private var cameraMovedNotified=false
     private var pinchDistance=0.0;private var pinchCenter=0.0
     private val touchSlop=android.view.ViewConfiguration.get(context).scaledTouchSlop
     private fun pinchReference(event:MotionEvent){pinchDistance=hypot((event.getX(1)-event.getX(0)).toDouble(),(event.getY(1)-event.getY(0)).toDouble());pinchCenter=(event.getY(0)+event.getY(1))/2.0}
@@ -903,23 +905,32 @@ class NativeWorldView(context: Context, private val fixture: String, private val
         if(BuildConfig.NATIVE_DIAGNOSTICS&&event.actionMasked!=MotionEvent.ACTION_MOVE)android.util.Log.i("BlockcolcTouch","action=${event.actionMasked} pointers=${event.pointerCount} x=${event.x} y=${event.y} bottom=$visibleBottom")
         if(event.actionMasked==MotionEvent.ACTION_DOWN&&(visibleBottom?.let{event.y>=it}==true||event.y<0f))return false
         when(event.actionMasked){
-            MotionEvent.ACTION_DOWN->{downX=event.x;downY=event.y;lastX=event.x;lastY=event.y;touchMoved=false;multiTouch=false;pinchDistance=0.0;parent?.requestDisallowInterceptTouchEvent(true)
+            MotionEvent.ACTION_DOWN->{downX=event.x;downY=event.y;downTimeMs=event.eventTime;lastX=event.x;lastY=event.y;touchMoved=false;multiTouch=false;cameraMovedNotified=false;pinchDistance=0.0;parent?.requestDisallowInterceptTouchEvent(true)
                 if(optimizeRendering)render.post{gestureChangedCamera=false}}
             MotionEvent.ACTION_POINTER_DOWN->{multiTouch=true;if(event.pointerCount==2)pinchReference(event)}
             MotionEvent.ACTION_MOVE->{
                 if(event.pointerCount==2){val before=pinchDistance;val beforeCenter=pinchCenter;pinchReference(event);val current=pinchDistance;val delta=(pinchCenter-beforeCenter)/density
-                    if(before>0&&current>0)render.post{moveCamera{pinch(before,current,delta)}}}
+                    if(before>0&&current>0){
+                        if(!cameraMovedNotified){cameraMovedNotified=true;onCameraMoved?.invoke()}
+                        render.post{moveCamera{pinch(before,current,delta)}}
+                    }}
                 else if(event.pointerCount==1&&!multiTouch){val dx=(event.x-lastX)/density;val dy=(event.y-lastY)/density;lastX=event.x;lastY=event.y
                     if(hypot(event.x-downX,event.y-downY)>touchSlop)touchMoved=true
-                    if(touchMoved)render.post{moveCamera{drag(dx,dy)}}}
+                    if(touchMoved){
+                        if(!cameraMovedNotified){cameraMovedNotified=true;onCameraMoved?.invoke()}
+                        render.post{moveCamera{drag(dx,dy)}}
+                    }}
             }
             MotionEvent.ACTION_UP->{parent?.requestDisallowInterceptTouchEvent(false)
                 if(optimizeRendering)render.post{gestureChangedCamera=false}
-                if(!touchMoved&&!multiTouch&&hypot(event.x-downX,event.y-downY)<=touchSlop){performClick();val x=event.x.toDouble();val y=event.y.toDouble()
+                val totalDx=event.x-downX;val totalDy=event.y-downY;val dt=event.eventTime-downTimeMs
+                if(onHorizontalFling!=null&&!multiTouch&&dt in 20L..260L&&abs(totalDx)>=64.0*density&&abs(totalDx)>abs(totalDy)*2.2){
+                    onHorizontalFling.invoke(if(totalDx<0f)1 else -1)
+                }else if(!touchMoved&&!multiTouch&&hypot(totalDx,totalDy)<=touchSlop){performClick();val x=event.x.toDouble();val y=event.y.toDouble()
                     render.post{if(!closed&&active&&!failed)queryPick(x,y)}
                 }
             }
-            MotionEvent.ACTION_CANCEL->{parent?.requestDisallowInterceptTouchEvent(false);multiTouch=false;touchMoved=false;pinchDistance=0.0
+            MotionEvent.ACTION_CANCEL->{parent?.requestDisallowInterceptTouchEvent(false);multiTouch=false;touchMoved=false;cameraMovedNotified=false;pinchDistance=0.0
                 if(optimizeRendering)render.post{gestureChangedCamera=false}}
         }
         return true

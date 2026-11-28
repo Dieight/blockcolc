@@ -43,13 +43,14 @@ import java.util.concurrent.atomic.AtomicReference
     val color=MaterialTheme.colorScheme
     val retry=view.syncRetry
     val updating=view.working(CloudAction.SYNC)||retry.inFlight
-    val seconds by produceState(retry.secondsUntilRetry(SystemClock.elapsedRealtime()),retry.nextAt){
-        value=null
-        val deadline=retry.nextAt?:return@produceState
+    var seconds by remember(retry.nextAt){mutableStateOf(retry.secondsUntilRetry(SystemClock.elapsedRealtime()))}
+    LaunchedEffect(retry.nextAt){
+        seconds=null
+        val deadline=retry.nextAt?:return@LaunchedEffect
         while(true){
             val now=SystemClock.elapsedRealtime()
             val remaining=retry.secondsUntilRetry(now)?:break
-            value=remaining
+            seconds=remaining
             if(remaining==0L)break
             delay((deadline-now-(remaining-1)*1000).coerceAtLeast(1L))
         }

@@ -6,6 +6,13 @@ data class RoundDetent(val round:Int,val endMs:Long)
 object ClockSelection {
     const val DWELL_MS=250L
     fun steps(deltaDp:Double)=sign(deltaDp).toInt()*floor(abs(deltaDp)/12+.5).toInt()
+    fun roundSteps(deltaDp:Double)=sign(deltaDp).toInt()*floor(abs(deltaDp)/26+.5).toInt()
+    fun remainingGoalRounds(enabled:Boolean,target:Int,completed:Int):Int? =
+        if(!enabled)null else (target-completed).takeIf{it in 1..24}
+    fun crossesGoalRound(from:Int,to:Int,goalRemaining:Int?):Boolean {
+        val target=goalRemaining?:return false
+        return (from<target&&to>=target)||(from>target&&to<=target)
+    }
     fun shift(current:Long?,steps:Int,now:Long):Long? {
         val base=current?:Math.floorDiv(now,60000)*60000
         val candidate=base+steps*300000L

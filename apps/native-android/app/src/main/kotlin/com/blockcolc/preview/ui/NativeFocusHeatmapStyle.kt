@@ -38,7 +38,7 @@ internal fun heatmapBand(durationMs:Long)=when{
  * 2.60:1 light, 2.78:1 dark). The darkest bands keep the brand greens. */
 internal fun focusHeatmapColors(dark:Boolean,empty:Color):List<Color> =
     if(dark)listOf(empty,Color(0xff3a6e52),Color(0xff4a8a62),Color(0xff5ba671),Color(0xff87d59c))
-    else listOf(empty,Color(0xff7aab92),Color(0xff5a977a),Color(0xff3f8063),Color(0xff276749))
+    else listOf(empty,Color(0xff77a88e),Color(0xff569476),Color(0xff3c7c5e),Color(0xff256244))
 
 internal fun DrawScope.drawFocusHeatmapCell(palette:List<Color>,band:Int,origin:Offset,edge:Float,alpha:Float=1f){
     if(band>0)drawRect(palette[band].copy(alpha=alpha),origin,Size(edge,edge))
