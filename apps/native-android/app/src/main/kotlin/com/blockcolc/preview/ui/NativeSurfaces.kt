@@ -36,22 +36,80 @@ internal val LocalNativeSettingsActions=staticCompositionLocalOf{false}
     }
 }
 
-@Composable fun NativeAction(label:String,onClick:()->Unit,modifier:Modifier=Modifier,pending:Boolean=false,enabled:Boolean=true,icon:String="check",primary:Boolean=true,danger:Boolean=false,leading:(@Composable ()->Unit)?=null){
+@Composable fun NativeAction(label:String,onClick:()->Unit,modifier:Modifier=Modifier,pending:Boolean=false,enabled:Boolean=true,icon:String="check",primary:Boolean=true,danger:Boolean=false,tag:String?=null,leading:(@Composable ()->Unit)?=null){
     val colors=MaterialTheme.colorScheme
-    val ink=if(primary)if(danger)colors.onError else colors.inverseOnSurface else if(danger)colors.error else colors.onSurface
-    val background=if(primary)if(danger)colors.error else colors.inverseSurface else androidx.compose.ui.graphics.Color.Transparent
+    val reduce=LocalNativeUi.current.reduceMotion
     val interaction=remember{MutableInteractionSource()}
+    val pressed by interaction.collectIsPressedAsState()
     val settings=LocalNativeSettingsActions.current
     var motion by remember{mutableIntStateOf(0)}
-    Row(modifier.heightIn(min=48.dp).clickable(interactionSource=interaction,indication=null,
-        enabled=enabled&&!pending,role=Role.Button,onClick={motion++;onClick()}).nativePressMotion(interaction,enabled&&!pending)
-        .then(if(!primary)Modifier.border(1.dp,if(danger)colors.error else colors.outline)else Modifier)
-        .background(if(enabled)background else colors.surfaceVariant).semantics{if(pending)stateDescription=label}
-        .padding(horizontal=if(settings)12.dp else 16.dp,vertical=if(settings)8.dp else 12.dp),
-        horizontalArrangement=Arrangement.spacedBy(8.dp,Alignment.CenterHorizontally),verticalAlignment=Alignment.CenterVertically){
-        CompositionLocalProvider(LocalContentColor provides if(enabled)ink else colors.onSurfaceVariant){
-            if(pending&&icon=="reset")NativeRefreshingGlyph()else if(pending)NativeBusy(Modifier.size(20.dp))else if(leading!=null)leading()else if(icon.isNotEmpty())NativeMotionGlyph(icon,motion,Modifier.size(18.dp))
-            Text(label,Modifier.weight(1f,fill=false),style=if(settings)MaterialTheme.typography.bodyMedium else MaterialTheme.typography.labelLarge)
+    val sweep=remember{Animatable(0f)}
+    val scope=rememberCoroutineScope()
+    val showSweep=primary&&!danger&&enabled
+    LaunchedEffect(pressed,showSweep,reduce){
+        if(!showSweep)sweep.snapTo(0f)
+        else if(pressed){
+            if(reduce)sweep.snapTo(1f)
+            else sweep.animateTo(1f,tween(280,easing=CubicBezierEasing(0.16f,1f,0.3f,1f)))
+        }else if(sweep.value>0f&&motion==0){
+            if(reduce)sweep.snapTo(0f)
+            else sweep.animateTo(0f,tween(260,easing=FastOutSlowInEasing))
+        }
+    }
+    LaunchedEffect(motion){
+        if(motion>0&&showSweep&&!reduce){
+            sweep.animateTo(1f,tween(240,easing=CubicBezierEasing(0.16f,1f,0.3f,1f)))
+            kotlinx.coroutines.delay(140)
+            if(!pressed)sweep.animateTo(0f,tween(300,easing=FastOutSlowInEasing))
+        }
+    }
+    val baseInk=if(primary)if(danger)colors.onError else colors.inverseOnSurface else if(danger)colors.error else colors.onSurface
+    val ink=if(showSweep&&sweep.value>0.42f)colors.onPrimary else baseInk
+    val background=if(primary)if(danger)colors.error else colors.inverseSurface else androidx.compose.ui.graphics.Color.Transparent
+    val sweepColor=colors.primary
+    Box(
+        modifier
+            .heightIn(min=if(tag!=null)50.dp else 48.dp)
+            .clickable(interactionSource=interaction,indication=null,enabled=enabled&&!pending,role=Role.Button,onClick={
+                motion++
+                onClick()
+            })
+            .graphicsLayer{
+                if(pressed&&enabled&&!pending&&!reduce){scaleX=0.988f;scaleY=0.988f}
+            }
+            .then(if(!primary)Modifier.border(1.dp,if(danger)colors.error else colors.outline)else Modifier)
+            .background(if(enabled)background else colors.surfaceVariant)
+            .semantics{if(pending)stateDescription=label},
+    ){
+        if(showSweep&&sweep.value>0.001f){
+            Canvas(Modifier.matchParentSize()){
+                drawRect(sweepColor,Offset.Zero,Size(size.width*sweep.value,size.height))
+            }
+        }
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .heightIn(min=if(tag!=null)50.dp else 48.dp)
+                .padding(horizontal=if(settings)12.dp else 18.dp,vertical=if(settings)8.dp else 12.dp),
+            horizontalArrangement=if(tag!=null)Arrangement.SpaceBetween else Arrangement.spacedBy(8.dp,Alignment.CenterHorizontally),
+            verticalAlignment=Alignment.CenterVertically,
+        ){
+            CompositionLocalProvider(LocalContentColor provides if(enabled)ink else colors.onSurfaceVariant){
+                Row(
+                    Modifier.weight(1f,fill=tag!=null),
+                    horizontalArrangement=if(tag!=null)Arrangement.spacedBy(8.dp,Alignment.Start)else Arrangement.spacedBy(8.dp,Alignment.CenterHorizontally),
+                    verticalAlignment=Alignment.CenterVertically,
+                ){
+                    if(pending&&icon=="reset")NativeRefreshingGlyph()
+                    else if(pending)NativeBusy(Modifier.size(20.dp))
+                    else if(leading!=null)leading()
+                    else if(icon.isNotEmpty())NativeMotionGlyph(icon,motion,Modifier.size(18.dp))
+                    Text(label,Modifier.weight(1f,fill=false),style=if(settings)MaterialTheme.typography.bodyMedium else MaterialTheme.typography.labelLarge)
+                }
+                if(tag!=null){
+                    Text(tag,style=MaterialTheme.typography.labelSmall,color=(if(enabled)ink else colors.onSurfaceVariant).copy(alpha=0.74f),maxLines=1)
+                }
+            }
         }
     }
 }

@@ -26,7 +26,10 @@ val LocalNativeUi=compositionLocalOf<NativeUi>{error("Native UI theme is missing
 
 /** Same semantic roles and font source as the formal UI, not a redesign. The
  * host supplies accessibility/capability fallbacks independently of theme. */
-internal class NativeSystemBarPolicy {var immersive by mutableStateOf(false)}
+internal class NativeSystemBarPolicy {
+    var immersive by mutableStateOf(false)
+    var darkStatusScrim by mutableStateOf(false)
+}
 internal val LocalNativeSystemBarPolicy=staticCompositionLocalOf<NativeSystemBarPolicy?>{null}
 
 @Composable fun NativeTheme(preferences:ClientPreferences,resources:UiResources,reduceMotion:Boolean=false,reduceTransparency:Boolean=false,content:@Composable ()->Unit){
@@ -73,10 +76,12 @@ internal val LocalNativeSystemBarPolicy=staticCompositionLocalOf<NativeSystemBar
         ?:generateSequence(view.parent){it.parent}.filterIsInstance<DialogWindowProvider>().firstOrNull()?.window
     val window=dialogWindow?:generateSequence(view.context){(it as? android.content.ContextWrapper)?.baseContext}.filterIsInstance<android.app.Activity>().firstOrNull()?.window
         ?:return
-    val immersive=LocalNativeSystemBarPolicy.current?.immersive
+    val policy=LocalNativeSystemBarPolicy.current
+    val immersive=policy?.immersive
+    val darkScrim=policy?.darkStatusScrim==true&&dialogWindow==null
     val darkInk=MaterialTheme.colorScheme.onBackground.luminance()<.5f
     SideEffect{WindowCompat.getInsetsController(window,window.decorView).apply{
-        isAppearanceLightStatusBars=darkInk;isAppearanceLightNavigationBars=darkInk
+        isAppearanceLightStatusBars=darkInk&&!darkScrim;isAppearanceLightNavigationBars=darkInk
         if(dialogWindow!=null&&immersive!=null){
             applyNativeCutoutPolicy(window)
             systemBarsBehavior=androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
@@ -87,10 +92,10 @@ internal val LocalNativeSystemBarPolicy=staticCompositionLocalOf<NativeSystemBar
 
 /** The timer world may extend behind the status bar; ordinary navigation still
  * keeps its system affordances. Only an immersive session hides both bars. */
-@Composable internal fun NativeSystemBars(immersive:Boolean){
+@Composable internal fun NativeSystemBars(immersive:Boolean,darkStatusScrim:Boolean=false){
     val view=LocalView.current
     val policy=LocalNativeSystemBarPolicy.current
-    SideEffect{policy?.immersive=immersive}
+    SideEffect{policy?.immersive=immersive;policy?.darkStatusScrim=darkStatusScrim}
     val activity=remember(view){generateSequence(view.context){(it as? android.content.ContextWrapper)?.baseContext}.filterIsInstance<android.app.Activity>().firstOrNull()}
     DisposableEffect(activity){
         val window=activity?.window

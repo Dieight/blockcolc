@@ -41,7 +41,8 @@ internal fun focusHeatmapColors(dark:Boolean,empty:Color):List<Color> =
     else listOf(empty,Color(0xff77a88e),Color(0xff569476),Color(0xff3c7c5e),Color(0xff256244))
 
 internal fun DrawScope.drawFocusHeatmapCell(palette:List<Color>,band:Int,origin:Offset,edge:Float,alpha:Float=1f){
-    if(band>0)drawRect(palette[band].copy(alpha=alpha),origin,Size(edge,edge))
+    val cellColor=if(band>0)palette[band].copy(alpha=alpha)else palette[0].copy(alpha=0.45f*alpha)
+    drawRect(cellColor,origin,Size(edge,edge))
 }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -58,7 +59,7 @@ internal fun DrawScope.drawFocusHeatmapCell(palette:List<Color>,band:Int,origin:
                 .semantics{contentDescription=ui.text("高亮 {0}",label);selected=band==selectedBand}
             Row(action.nativePressMotion(interaction,onBand!=null).padding(horizontal=2.dp,vertical=4.dp),verticalAlignment=Alignment.CenterVertically,
                 horizontalArrangement=Arrangement.spacedBy(3.dp)){
-                Box(Modifier.size(8.dp).then(if(band==0)Modifier else Modifier.background(palette[band])))
+                Box(Modifier.size(8.dp).background(if(band==0)palette[0].copy(alpha=0.55f)else palette[band]))
                 NativeText(label,NativeTextRole.CAPTION)
             }
         }

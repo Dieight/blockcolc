@@ -2,7 +2,8 @@ package com.blockcolc.preview.ui
 
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
@@ -11,15 +12,16 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.*
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.blockcolc.presentation.WorkspaceActions
 import com.blockcolc.presentation.WorkspaceMutation
@@ -43,17 +45,19 @@ import kotlin.math.*
     val ui=LocalNativeUi.current
     val colors=MaterialTheme.colorScheme
     val view=LocalView.current
+    val context=LocalContext.current
     val current=s.projects.find{it.id==s.activeProject}
     val workspace=s.workspace
     val switch=rememberNativeRequest(s)
-    var directoryOpen by rememberSaveable{mutableStateOf(false)}
 
-    val switchable=s.choices
+    // Stable domain document order (NEVER re-sorts active project to index 0, so < and > traverse ALL 3+ projects cleanly!)
+    val switchable=remember(s.projects){s.projects.filter{it.status in setOf("active","paused")}}
     val activeChoiceIndex=switchable.indexOfFirst{it.id==current?.id}.coerceAtLeast(0)
 
     fun switchTo(id:String){
         if(s.busy||switch.busy||s.planId!=null||id==current?.id)return
         view.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
+        NativeTactileAudio.tick(context,1160f)
         switch.submit{runtime.dispatch(WorkspaceMutation.SwitchProject(id),it)}
     }
     fun stepProject(delta:Int){
@@ -63,8 +67,8 @@ import kotlin.math.*
     }
 
     NativePageScroll{
-        // Monograph Folio Top Eyebrow (No generic "任务" heading; pure pixel utility rail)
-        Row(Modifier.fillMaxWidth().heightIn(min=40.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(4.dp)){
+        // Monograph Folio Top Eyebrow (Stable counter on left; pure pixel utility icons on right)
+        Row(Modifier.fillMaxWidth().heightIn(min=40.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(2.dp)){
             val counterText=if(switchable.size>1&&current!=null)String.format(java.util.Locale.ROOT,"%02d / %02d",activeChoiceIndex+1,switchable.size) else ui.text("当前大任务")
             NativeText(counterText,NativeTextRole.CAPTION,Modifier.weight(1f),color=colors.onSurfaceVariant,accent=true)
             if(friendsEnabled){
@@ -88,30 +92,32 @@ import kotlin.math.*
             val edit=rememberNativeRequest(s)
             val details=workspace?.projects?.find{it.id==current.id}
 
-            // Monograph Project Title Switcher + Architectural Index Bars
-            Column(Modifier.fillMaxWidth(),verticalArrangement=Arrangement.spacedBy(12.dp)){
-                Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(6.dp)){
-                    if(switchable.size>1){
-                        NativeIconAction(ui.text("上一个任务"),"chevron",{stepProject(-1)},Modifier.graphicsLayer{rotationZ=90f},enabled=!s.busy&&s.planId==null&&!switch.busy)
-                    }
-                    Row(
-                        Modifier
+            // Clean DEMO-style Monograph Folio Title Row: Flush-left editorial serif title (NO caret/directory popup) + right hairline steppers [ < ] [ > ]
+            Column(Modifier.fillMaxWidth(),verticalArrangement=Arrangement.spacedBy(10.dp)){
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment=Alignment.CenterVertically,
+                    horizontalArrangement=Arrangement.spacedBy(12.dp),
+                ){
+                    Text(
+                        current.title,
+                        modifier=Modifier
                             .weight(1f)
-                            .clickable(role=Role.Button,interactionSource=remember{MutableInteractionSource()},indication=null){directoryOpen=true}
-                            .pointerInput(current.id){detectTapGestures(onDoubleTap={onEdit(TitleEditor(projectId=current.id,taskId=null,initial=current.title))})}
-                            .semantics{contentDescription=ui.text("全部任务")}
-                            .padding(vertical=4.dp),
-                        verticalAlignment=Alignment.CenterVertically,
-                        horizontalArrangement=if(switchable.size>1)Arrangement.Center else Arrangement.Start,
-                    ){
-                        Text(current.title,style=MaterialTheme.typography.headlineLarge,color=colors.onBackground,maxLines=2,modifier=Modifier.weight(1f,fill=false))
-                        Spacer(Modifier.width(6.dp))
-                        PixelGlyph("chevron",Modifier.size(16.dp),colors.onSurfaceVariant)
-                    }
+                            .pointerInput(current.id){detectTapGestures(onDoubleTap={onEdit(TitleEditor(projectId=current.id,taskId=null,initial=current.title))})},
+                        style=MaterialTheme.typography.headlineLarge,
+                        color=colors.onBackground,
+                        maxLines=2,
+                        overflow=TextOverflow.Ellipsis,
+                    )
                     if(switchable.size>1){
-                        NativeIconAction(ui.text("下一个任务"),"chevron",{stepProject(1)},Modifier.graphicsLayer{rotationZ=-90f},enabled=!s.busy&&s.planId==null&&!switch.busy)
+                        val canStep=!s.busy&&s.planId==null&&!switch.busy
+                        Row(horizontalArrangement=Arrangement.spacedBy(6.dp),verticalAlignment=Alignment.CenterVertically){
+                            FolioStepperButton(ui.text("上一个任务"),rotateDeg=90f,enabled=canStep){stepProject(-1)}
+                            FolioStepperButton(ui.text("下一个任务"),rotateDeg=-90f,enabled=canStep){stepProject(1)}
+                        }
                     }
                 }
+                // Architectural Hairline Index Segments (tap any segment to jump directly to that project)
                 if(switchable.size>1){
                     Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(5.dp)){
                         for(choice in switchable){
@@ -119,7 +125,7 @@ import kotlin.math.*
                             Box(
                                 Modifier
                                     .weight(1f)
-                                    .height(2.5.dp)
+                                    .height(if(active)2.5.dp else 2.dp)
                                     .background(if(active)colors.primary else colors.outlineVariant)
                                     .clickable(enabled=!s.busy&&s.planId==null&&!switch.busy,interactionSource=remember{MutableInteractionSource()},indication=null){
                                         switchTo(choice.id)
@@ -131,7 +137,7 @@ import kotlin.math.*
                 NativeRequestError(switch)
             }
 
-            // Magnetic Radial Dot-Matrix Progress Sculpture (interactive swipe flips projects)
+            // Interactive Magnetic Circular Radial Dot-Matrix Sculpture (touch/drag bends dots + tap emits pine ripple wave; NO page-swipe conflict!)
             val progressFraction=if(current.kind=="habit"){
                 val target=(details?.habitTarget?:10).coerceAtLeast(1)
                 val applied=if(details?.awaitingBuilding==true)target else details?.habitApplied?:0
@@ -140,12 +146,12 @@ import kotlin.math.*
                 (current.progress/10000f).coerceIn(0f,1f)
             }
             GalleryRadialDotSculpture(
+                projectId=current.id,
                 fraction=progressFraction,
-                canSwipe=switchable.size>1&&s.planId==null&&!s.busy,
-                onSwipeStep=::stepProject,
+                onTapRipple={NativeTactileAudio.tick(context,1220f)},
             )
 
-            // Naked Hero Percentage + Compact Architectural Spec Line
+            // Naked Flush-Left Hero Percentage + Architectural Spec Line
             Column(Modifier.fillMaxWidth(),verticalArrangement=Arrangement.spacedBy(4.dp)){
                 Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.Bottom){
                     if(current.kind=="habit"){
@@ -299,99 +305,181 @@ import kotlin.math.*
         // Cardless Quick Notes directly on canvas
         if(s.preferences.quickNotesEnabled)FormalCard(padding=16.dp){NativeQuickNotes(s,runtime)}
     }
+}
 
-    // Frameless All-Projects Directory Sheet (replaces old stacked "任务总览与管理" box)
-    NativeSheet(Unit.takeIf{directoryOpen},{ui.text("全部任务")},{directoryOpen=false},contentSpacing=0.dp){
-        val all=s.projects.filter{it.status!="deleted"}
-        val groups=listOf(
-            "当前大任务" to all.filter{it.id==s.activeProject},
-            "习惯" to all.filter{it.id!=s.activeProject&&it.kind=="habit"},
-            "暂停" to all.filter{it.id!=s.activeProject&&it.kind!="habit"&&it.status=="paused"},
-            "已完成" to all.filter{it.id!=s.activeProject&&it.kind!="habit"&&it.status=="monument"},
-        )
-        for((label,projects) in groups){
-            if(projects.isEmpty())continue
-            NativeText(ui.text(label),NativeTextRole.CAPTION,Modifier.padding(top=12.dp,bottom=4.dp),color=colors.onSurfaceVariant)
-            for((idx,project) in projects.withIndex()){
-                if(idx>0)NativeSeparator()
-                val info=workspace?.projects?.find{it.id==project.id}
-                val status=when{
-                    project.kind=="habit"&&info?.awaitingBuilding==true->ui.text("等待下一座建筑")
-                    project.kind=="habit"->ui.text("第 {0} 座 · {1} / {2} 轮",info?.habitCycle?:1,info?.habitApplied?:0,info?.habitTarget?:0)
-                    project.status=="monument"->null
-                    else->"${(project.progress+50)/100}%"
-                }
-                Row(Modifier.fillMaxWidth().heightIn(min=56.dp).padding(vertical=6.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(8.dp)){
-                    PixelGlyph(if(project.kind=="habit")"repeat"else"cube",Modifier.size(18.dp),if(project.id==s.activeProject)colors.primary else colors.onSurfaceVariant)
-                    Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(2.dp)){
-                        NativeText(project.title,NativeTextRole.BODY,color=if(project.id==s.activeProject)colors.primary else colors.onBackground,maxLines=2)
-                        if(status!=null)NativeText(status,NativeTextRole.CAPTION,color=colors.onSurfaceVariant)
-                    }
-                    NativeIconAction(ui.text("查看建筑"),"cube",{directoryOpen=false;onView(project.id)})
-                    if(project.status!="monument"&&project.id!=s.activeProject){
-                        NativeIconAction(ui.text("切换"),"play",{directoryOpen=false;switchTo(project.id)},enabled=s.planId==null&&!s.busy&&!switch.busy)
-                    }
-                }
-            }
-        }
-        NativeRequestError(switch)
+@Composable private fun FolioStepperButton(title:String,rotateDeg:Float,enabled:Boolean,onClick:()->Unit){
+    val colors=MaterialTheme.colorScheme
+    val interaction=remember{MutableInteractionSource()}
+    Box(
+        Modifier
+            .size(34.dp)
+            .border(1.dp,if(enabled)colors.outline else colors.outlineVariant)
+            .clickable(enabled=enabled,role=Role.Button,interactionSource=interaction,indication=null,onClick=onClick)
+            .nativePressMotion(interaction,enabled)
+            .semantics{contentDescription=title},
+        contentAlignment=Alignment.Center,
+    ){
+        PixelGlyph("chevron",Modifier.size(14.dp).graphicsLayer{rotationZ=rotateDeg},if(enabled)colors.onBackground else colors.onSurfaceVariant.copy(alpha=0.4f))
     }
 }
 
-/** Architectural concentric dot-matrix sculpture reflecting project completion.
- * Responds to horizontal drag to flip active projects cleanly. */
-@Composable private fun GalleryRadialDotSculpture(fraction:Float,canSwipe:Boolean,onSwipeStep:(Int)->Unit){
+/** Interactive magnetic 6-ring × 26 circular dot-matrix sculpture (matches the
+ * Gallery DEMO's RadialDotSculpture & editorial reference): touching or dragging
+ * inside the circular disc bends & expands nearby dots with spring physics, and
+ * tapping or switching projects emits a concentric pine-green wave ripple. */
+@Composable private fun GalleryRadialDotSculpture(projectId:String,fraction:Float,onTapRipple:()->Unit){
     val ui=LocalNativeUi.current
     val colors=MaterialTheme.colorScheme
-    val animated by animateFloatAsState(fraction.coerceIn(0f,1f),tween(if(ui.reduceMotion)0 else 420,easing=FastOutSlowInEasing),label="radial-sculpture")
-    var dragAccum by remember{mutableFloatStateOf(0f)}
-    Canvas(
-        Modifier
-            .fillMaxWidth()
-            .height(176.dp)
-            .then(if(canSwipe)Modifier.pointerInput(canSwipe){
-                val threshold=44.dp.toPx()
-                detectHorizontalDragGestures(
-                    onDragStart={dragAccum=0f},
-                    onDragEnd={
-                        if(abs(dragAccum)>=threshold)onSwipeStep(if(dragAccum<0f)1 else -1)
-                        dragAccum=0f
-                    },
-                    onDragCancel={dragAccum=0f},
-                    onHorizontalDrag={change,amount->change.consume();dragAccum+=amount},
-                )
-            }.semantics{contentDescription=ui.text("滑动切换大任务")} else Modifier),
-    ){
-        val center=Offset(size.width/2f,size.height/2f)
-        val maxRadius=minOf(size.width,size.height)*0.45f
-        val ringCounts=intArrayOf(12,18,24,30,36,42)
-        val totalDots=ringCounts.sum()
-        val filledDots=(animated*totalDots).roundToInt().coerceIn(0,totalDots)
-        var index=0
-        val unit=max(1.5.dp.toPx(),minOf(size.width,size.height)/110f)
-        for(ring in ringCounts.indices){
-            val count=ringCounts[ring]
-            val r=maxRadius*(0.24f+0.76f*(ring.toFloat()/(ringCounts.size-1).toFloat()))
-            val ringProgress=ring.toFloat()/(ringCounts.size-1).toFloat()
-            for(i in 0 until count){
-                val angle=-PI/2.0+2.0*PI*i/count
-                val px=center.x+(r*cos(angle)).toFloat()
-                val py=center.y+(r*sin(angle)).toFloat()
-                val active=index<filledDots
-                val isLeading=index==filledDots-1&&filledDots>0
-                val dotSize=when{
-                    isLeading->unit*2.7f
-                    active->unit*(1.55f+0.55f*(1f-ringProgress))
-                    else->unit*1.15f
+    val activePage=LocalNativePageActive.current
+    val rings=6
+    val perRing=26
+    val totalDots=rings*perRing
+    val targetFraction by rememberUpdatedState(fraction.coerceIn(0f,1f))
+
+    val ox=remember{FloatArray(totalDots)}
+    val oy=remember{FloatArray(totalDots)}
+    var displayProgress by remember{mutableFloatStateOf(fraction.coerceIn(0f,1f))}
+    var ripple by remember{mutableFloatStateOf(0f)}
+    var pointerPos by remember{mutableStateOf<Offset?>(null)}
+    var canvasPx by remember{mutableFloatStateOf(0f)}
+    var frameTick by remember{mutableLongStateOf(0L)}
+
+    // Emit gentle ripple when switching project or when progress advances!
+    LaunchedEffect(projectId,fraction){
+        if(!ui.reduceMotion)ripple=1f else displayProgress=fraction.coerceIn(0f,1f)
+    }
+
+    // Only animate frames while pointer is active, ripple is running, progress is settling, or dots are springing back!
+    LaunchedEffect(activePage,ui.reduceMotion,pointerPos,ripple,fraction){
+        if(!activePage||ui.reduceMotion){
+            displayProgress=targetFraction
+            ripple=0f
+            ox.fill(0f);oy.fill(0f)
+            return@LaunchedEffect
+        }
+        var lastNs=withFrameNanos{it}
+        while(true){
+            val nowNs=withFrameNanos{it}
+            val dt=((nowNs-lastNs)/1_000_000_000f).coerceIn(0.001f,0.05f)
+            lastNs=nowNs
+            displayProgress+=(targetFraction-displayProgress)*minOf(1f,dt*7.5f)
+            if(ripple>0f)ripple=(ripple-dt*1.15f).coerceAtLeast(0f)
+            val sizePx=canvasPx
+            val ptr=pointerPos
+            var maxOffset=0f
+            if(sizePx>0f){
+                val cx=sizePx/2f;val cy=sizePx/2f
+                val innerR=sizePx*0.15f;val ringStep=sizePx*0.064f
+                val influence=sizePx*0.24f
+                val pushMax=sizePx*0.032f
+                var idx=0
+                for(r in 0 until rings){
+                    val rad=innerR+r*ringStep
+                    for(i in 0 until perRing){
+                        val a=-PI/2.0+2.0*PI*i/perRing
+                        val bx=cx+(rad*cos(a)).toFloat()
+                        val by=cy+(rad*sin(a)).toFloat()
+                        var tx=0f;var ty=0f
+                        if(ptr!=null){
+                            val dx=bx-ptr.x;val dy=by-ptr.y
+                            val dist=hypot(dx,dy)
+                            if(dist<influence&&dist>0.5f){
+                                val f=1f-dist/influence
+                                tx=(dx/dist)*f*pushMax
+                                ty=(dy/dist)*f*pushMax
+                            }
+                        }
+                        val nextX=ox[idx]+(tx-ox[idx])*minOf(1f,dt*14f)
+                        val nextY=oy[idx]+(ty-oy[idx])*minOf(1f,dt*14f)
+                        ox[idx]=nextX;oy[idx]=nextY
+                        val mag=abs(nextX)+abs(nextY)
+                        if(mag>maxOffset)maxOffset=mag
+                        idx++
+                    }
                 }
-                val inactiveTint=colors.onSurfaceVariant.copy(alpha=if(colors.background.luminance()<0.5f)0.34f else 0.28f)
-                val tint=when{
-                    isLeading->colors.primary
-                    active->if(ring<2)colors.primary else colors.onBackground.copy(alpha=0.86f-ringProgress*0.24f)
-                    else->inactiveTint
+            }
+            frameTick=nowNs
+            val settling=abs(targetFraction-displayProgress)>0.002f
+            val needsBreathing=displayProgress>0f&&displayProgress<1f
+            if(ptr==null&&ripple<=0f&&!settling&&maxOffset<0.08f&&!needsBreathing)break
+        }
+    }
+
+    Box(Modifier.fillMaxWidth().padding(vertical=2.dp),contentAlignment=Alignment.Center){
+        Canvas(
+            Modifier
+                .size(214.dp)
+                .pointerInput(ui.reduceMotion){
+                    awaitEachGesture{
+                        val down=awaitFirstDown(requireUnconsumed=false)
+                        val center=Offset(size.width/2f,size.height/2f)
+                        val maxR=minOf(size.width,size.height)*0.5f
+                        if(hypot(down.position.x-center.x,down.position.y-center.y)>maxR)return@awaitEachGesture
+                        down.consume()
+                        pointerPos=down.position
+                        if(!ui.reduceMotion){
+                            ripple=1f
+                            onTapRipple()
+                        }
+                        try{
+                            while(true){
+                                val ev=awaitPointerEvent()
+                                val ch=ev.changes.firstOrNull{it.id==down.id}?:break
+                                if(!ch.pressed)break
+                                ch.consume()
+                                pointerPos=ch.position
+                            }
+                        }finally{
+                            pointerPos=null
+                        }
+                    }
+                },
+        ){
+            // Read frameTick so Canvas invalidates at 60fps during spring / ripple / breathing motion.
+            val nowMs=(frameTick/1_000_000L)
+            val sPx=minOf(size.width,size.height)
+            if(canvasPx!=sPx)canvasPx=sPx
+            val cx=size.width/2f;val cy=size.height/2f
+            val innerR=sPx*0.15f;val ringStep=sPx*0.064f
+            val influence=sPx*0.24f
+            val activeCount=(displayProgress*totalDots).roundToInt().coerceIn(0,totalDots)
+            val activeRing=if(activeCount>0)(activeCount-1)/perRing else -1
+            val waveR=(1f-ripple)*(sPx*0.54f)
+            val waveBand=sPx*0.11f
+            val ptr=pointerPos
+            val baseLit=2.15.dp.toPx()
+            val baseDim=1.0.dp.toPx()
+            val dark=colors.background.luminance()<0.5f
+            val dimAlphaBase=if(dark)0.24f else 0.20f
+
+            var idx=0
+            for(r in 0 until rings){
+                val rad=innerR+r*ringStep
+                for(i in 0 until perRing){
+                    val a=-PI/2.0+2.0*PI*i/perRing
+                    val bx=cx+(rad*cos(a)).toFloat()
+                    val by=cy+(rad*sin(a)).toFloat()
+                    val lit=idx<activeCount
+                    val lead=idx==activeCount-1&&activeCount>0
+                    val hb=if(ptr!=null){
+                        val dist=hypot(bx-ptr.x,by-ptr.y)
+                        if(dist<influence)1f-dist/influence else 0f
+                    }else 0f
+                    val pb=if(ripple>0f){
+                        (1f-abs(rad-waveR)/waveBand).coerceIn(0f,1f)*ripple
+                    }else 0f
+                    val breathe=if(lead&&!ui.reduceMotion)(0.5f+0.5f*sin(nowMs*0.005f))*1.15.dp.toPx() else 0f
+                    val dotR=(if(lit)baseLit else baseDim)+hb*1.35.dp.toPx()+pb*1.45.dp.toPx()+breathe
+                    val usePine=lead||pb>0.32f||(lit&&r==activeRing)
+                    val dotColor=if(usePine)colors.primary else colors.onBackground
+                    val dotAlpha=if(lit)0.92f else (dimAlphaBase+hb*0.42f+pb*0.46f).coerceIn(0f,1f)
+                    drawCircle(
+                        color=dotColor.copy(alpha=dotAlpha),
+                        radius=dotR,
+                        center=Offset(bx+ox[idx],by+oy[idx]),
+                    )
+                    idx++
                 }
-                drawRect(tint,Offset(px-dotSize/2f,py-dotSize/2f),Size(dotSize,dotSize))
-                index++
             }
         }
     }
@@ -408,7 +496,7 @@ import kotlin.math.*
 @Composable fun NativePageScroll(modifier:Modifier=Modifier,content:@Composable ColumnScope.()->Unit){
     val shared=LocalNativePageScroll.current
     val scroll=shared?:rememberScrollState()
-    Column(modifier.fillMaxSize().verticalScroll(scroll).padding(start=20.dp,end=20.dp,top=18.dp,bottom=36.dp),verticalArrangement=Arrangement.spacedBy(20.dp),content=content)
+    Column(modifier.fillMaxSize().verticalScroll(scroll).padding(start=24.dp,end=24.dp,top=18.dp,bottom=40.dp),verticalArrangement=Arrangement.spacedBy(20.dp),content=content)
 }
 
 @OptIn(ExperimentalLayoutApi::class)

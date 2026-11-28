@@ -57,14 +57,13 @@ import java.util.concurrent.TimeUnit
  * presenting a newly requested settlement or lighting quality. */
 internal val LocalColdWorldCacheTag=staticCompositionLocalOf<String?>{null}
 
-@Composable fun NativeWorldHost(runtime:PreviewRuntime,visible:Boolean,quality:String,modifier:Modifier=Modifier,worldColor:SourceWorldColor=SourceWorldColor(),atmosphere:NativeAtmosphereFacts?,buildingCondition:Int?=null,outlineVisibility:String="current",interaction:NativeWorldInteractionState=remember{NativeWorldInteractionState()},labels:Map<String,String> = emptyMap(),resourceSelection:ResourceWorldSelection?=ResourceWorldSelection(),onReady:(Boolean)->Unit={},room:com.blockcolc.presentation.RoomPresentation?=null,retainSurface:Boolean=false,coverVisible:Boolean=visible,worldDisplayMode:String="settlement",singleBuildingBackdrop:String="maquette",activeProjectId:String?=null,darkTheme:Boolean=false,onHorizontalFling:((Int)->Unit)?=null,showBuiltinHud:Boolean=false) {
+@Composable fun NativeWorldHost(runtime:PreviewRuntime,visible:Boolean,quality:String,modifier:Modifier=Modifier,worldColor:SourceWorldColor=SourceWorldColor(),atmosphere:NativeAtmosphereFacts?,buildingCondition:Int?=null,outlineVisibility:String="current",interaction:NativeWorldInteractionState=remember{NativeWorldInteractionState()},labels:Map<String,String> = emptyMap(),resourceSelection:ResourceWorldSelection?=ResourceWorldSelection(),onReady:(Boolean)->Unit={},room:com.blockcolc.presentation.RoomPresentation?=null,retainSurface:Boolean=false,coverVisible:Boolean=visible,worldDisplayMode:String="settlement",singleBuildingBackdrop:String="maquette",activeProjectId:String?=null,darkTheme:Boolean=false,showBuiltinHud:Boolean=false) {
     val context=LocalContext.current;val ui=LocalNativeUi.current
     val cacheTag=LocalColdWorldCacheTag.current
-    val flingCallback by rememberUpdatedState(onHorizontalFling)
     val narrative=WorldDisplayNarrative.fromWire(worldDisplayMode)
     val singleBackdrop=SingleBuildingBackdrop.fromWire(singleBuildingBackdrop)
     val singleOwnerId=if(narrative==WorldDisplayNarrative.SINGLE)activeProjectId else null
-    val owner=remember(context,interaction,cacheTag){NativeWorldHostOwner(context,interaction,cacheTag,{flingCallback?.invoke(it)})}
+    val owner=remember(context,interaction,cacheTag){NativeWorldHostOwner(context,interaction,cacheTag)}
     val effectiveQuality=if(quality=="auto")remember(context){automaticQuality(context)}else quality
     val backdrop=LocalNativeBackdrop.current
     val nativeView=androidx.compose.ui.platform.LocalView.current
@@ -217,7 +216,7 @@ internal val LocalColdWorldCacheTag=staticCompositionLocalOf<String?>{null}
 
 /** UI-thread controller; immutable facts cross to the worker, GPU ownership
  * stays in NativeWorldView. A failed build keeps the prior rendered world. */
-internal class NativeWorldHostOwner(context:Context,private val interaction:NativeWorldInteractionState=NativeWorldInteractionState(),coldCacheTag:String?=null,private val onHorizontalFling:((Int)->Unit)?=null):AutoCloseable {
+internal class NativeWorldHostOwner(context:Context,private val interaction:NativeWorldInteractionState=NativeWorldInteractionState(),coldCacheTag:String?=null):AutoCloseable {
     private val main=Handler(Looper.getMainLooper())
     private val compactGeometry = BuildConfig.BUILD_TYPE != "benchmark" ||
         (context as? android.app.Activity)?.intent?.getBooleanExtra("p4UncompactedGeometry", false) != true
@@ -378,8 +377,7 @@ internal class NativeWorldHostOwner(context:Context,private val interaction:Nati
         },{generation,revision,presentation,id->
             val resident=residentKey?.request
             if(!closed&&key==viewKey&&active&&hasScene&&!loading&&!error&&!interaction.indoors&&interaction.resetVersion==resetVersion&&interaction.selected==selected&&presentation==pendingPresentation&&resident==target?.sceneIdentity&&resident?.replacementGeneration==generation&&resident.revision==revision&&id in targetIds)interaction.pick(id)
-        }, optimizeRendering = !stockShadows, onCameraMoved = { main.post { if(!closed)interaction.markCameraMoved() } },
-            onHorizontalFling = { delta -> main.post { if(!closed&&narrative==WorldDisplayNarrative.SINGLE){interaction.clearCameraMoved();onHorizontalFling?.invoke(delta)} } })
+        }, optimizeRendering = !stockShadows, onCameraMoved = { main.post { if(!closed)interaction.markCameraMoved() } })
         view=next;roomScene?.let{candidate->val ticket=roomEpoch;next.interior(candidate,onPresented={if(!closed&&roomEpoch==ticket&&view===next)roomLoading=false})}
         presentProjection();next.visibleRegion(clipBottom);pendingView=null;next.navigate(selected);if(!openingConsumed)next.prepareOpening(openingTarget);next.worldColor(worldColor);if(active)next.resume();return next
     }

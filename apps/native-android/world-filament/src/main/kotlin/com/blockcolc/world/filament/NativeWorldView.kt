@@ -55,7 +55,6 @@ class NativeWorldView(context: Context, private val fixture: String, private val
                       private val fixedGeneratedCamera:Boolean=false,
                       private val optimizeRendering:Boolean=false,
                       private val onCameraMoved:(()->Unit)?=null,
-                      private val onHorizontalFling:((Int)->Unit)?=null,
                       private val status: (String)->Unit): FrameLayout(context), Choreographer.FrameCallback {
     companion object {
         fun preview(context:Context,input:NativeGeneratedScene,reducedMotion:Boolean,onFrame:(Long,Long,Long)->Unit,status:(String)->Unit)=NativeWorldView(
@@ -65,10 +64,10 @@ class NativeWorldView(context: Context, private val fixture: String, private val
                 else android.provider.Settings.Global.getFloat(context.contentResolver,android.provider.Settings.Global.ANIMATOR_DURATION_SCALE,1f)>0f
             }.getOrDefault(false),weatherOnly=false,animalOnly=false,animalProbe=null,benchmarkRun=null,
             skyProbe=false,moonProbe=false,generatedInput=input,generatedFrame=onFrame,status=status)
-        fun generated(context:Context,input:NativeGeneratedScene,onFrame:(Long,Long,Long)->Unit,status:(String)->Unit,onSelection:((Long,Long,Long,String)->Unit)?=null,fixedCamera:Boolean=false,optimizeRendering:Boolean=true,onCameraMoved:(()->Unit)?=null,onHorizontalFling:((Int)->Unit)?=null)=NativeWorldView(
+        fun generated(context:Context,input:NativeGeneratedScene,onFrame:(Long,Long,Long)->Unit,status:(String)->Unit,onSelection:((Long,Long,Long,String)->Unit)?=null,fixedCamera:Boolean=false,optimizeRendering:Boolean=true,onCameraMoved:(()->Unit)?=null)=NativeWorldView(
             context=context,fixture="native-generated",projectionOnly=false,cullingEnabled=true,surfaceEffects=true,shadowsEnabled=true,colorProbe=false,
             surfaceOptics=true,nightReflections=true,fogEnabled=true,runtimeEnabled=true,weatherOnly=false,animalOnly=false,animalProbe=null,benchmarkRun=null,
-            skyProbe=false,moonProbe=false,generatedInput=input,generatedFrame=onFrame,generatedSelection=onSelection,fixedGeneratedCamera=fixedCamera,optimizeRendering=optimizeRendering,onCameraMoved=onCameraMoved,onHorizontalFling=onHorizontalFling,status=status)
+            skyProbe=false,moonProbe=false,generatedInput=input,generatedFrame=onFrame,generatedSelection=onSelection,fixedGeneratedCamera=fixedCamera,optimizeRendering=optimizeRendering,onCameraMoved=onCameraMoved,status=status)
     }
     private val generatedMode=!BuildConfig.NATIVE_DIAGNOSTICS||generatedInput!=null
     private var pendingGenerated=generatedInput
@@ -923,10 +922,7 @@ class NativeWorldView(context: Context, private val fixture: String, private val
             }
             MotionEvent.ACTION_UP->{parent?.requestDisallowInterceptTouchEvent(false)
                 if(optimizeRendering)render.post{gestureChangedCamera=false}
-                val totalDx=event.x-downX;val totalDy=event.y-downY;val dt=event.eventTime-downTimeMs
-                if(onHorizontalFling!=null&&!multiTouch&&dt in 20L..260L&&abs(totalDx)>=64.0*density&&abs(totalDx)>abs(totalDy)*2.2){
-                    onHorizontalFling.invoke(if(totalDx<0f)1 else -1)
-                }else if(!touchMoved&&!multiTouch&&hypot(totalDx,totalDy)<=touchSlop){performClick();val x=event.x.toDouble();val y=event.y.toDouble()
+                if(!touchMoved&&!multiTouch&&hypot(event.x-downX,event.y-downY)<=touchSlop){performClick();val x=event.x.toDouble();val y=event.y.toDouble()
                     render.post{if(!closed&&active&&!failed)queryPick(x,y)}
                 }
             }

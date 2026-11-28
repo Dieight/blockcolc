@@ -1421,9 +1421,38 @@ zdrcgubjo4的小喷泉：围绕中央水景展开的小型喷泉，池边构件�
 账户与互联|Account & connections
 数据、调试与版本|Data, debug & version
 共 {0} 轮 · {1}|Total {0} rounds · {1}
-直接滑动计时与切换任务|Direct gestures for timing & tasks
+滑动调整计时时长|Slide to adjust timer
 上下滑动时间直接累加轮次，达今日剩余目标时磁吸提醒；左右滑动时间或轻点上方双线切换固定轮次与结束时间。|Drag the clock vertically to add rounds with a magnetic detent at your remaining daily goal; swipe horizontally or tap the two lines above to switch between fixed rounds and end time.
 单体建筑与双背景|Single building & dual backdrop
 在顶部项目标题左右滑动或轻点即可切换大任务，在下方小任务栏轻点或左右滑动切换小任务；开启单体建筑后，还可直接轻扫建筑切换并任选展台或真实天光。|Swipe or tap the project title at the top to switch projects, and tap or swipe the subtask bar below to switch subtasks. In Single Building mode, flick the building directly and choose between Maquette plinth or Live Sky.
 未解锁|Locked
+上下滑动时间直接累加轮次，达今日剩余目标时磁吸提醒；轻点上方双线切换固定轮次与结束时间。|Drag the clock vertically to stack rounds with a magnetic pause at today's remaining goal; tap the dual bar above to toggle Fixed Rounds and End Time.
+轻点顶部项目标题切换大任务，轻点下方当前推进栏切换小任务；在设置中开启单体建筑后，还可任选建筑展台或真实天光。|Tap the project title above to switch projects and tap the active task strip below to pick a subtask; enable Single Building in Settings to choose Maquette or Live Sky.
+固定轮次，上下滑动增减轮次|Fixed rounds; swipe vertically to adjust rounds
+结束时间，上下滑动设定结束时间|End time; swipe vertically to pick an end time
+当前推进 · {0}/{1}|Active · {0}/{1}
+习惯建筑|Habit building
+完成后按轮次分配|Assign rounds after finishing
+已落成纪念建筑|Completed monument
+一份温暖的小蛋糕已送达|A birthday cake has arrived in your settlement
+已在聚落留下完整建筑记录|Recorded permanently in your settlement archive
+今日专注节律圆满达成|Daily focus rhythm achieved
+新陈设已自动摆放入书房|New furniture placed automatically in your study
+体素庆祝效果预览|Voxel celebration preview
+一寸光阴一寸金|Lost time is never found again.
+古谚|Franklin
+逝者如斯夫，不舍昼夜|Begin at once to live.
+论语|Seneca
+盛年不重来，一日难再晨|Time is the wisest counselor.
+陶渊明|Pericles
+不饱食以终日，不弃功于寸阴|Time stays long enough for use.
+葛洪|Da Vinci
+少壮不努力，老大徒伤悲|Well-arranged time marks the mind.
+长歌行|Pitman
+明日复明日，明日何其多|Make use of time; let not advantage slip.
+文嘉|Shakespeare
+光景不待人，须臾发成丝|The key is not spending, but investing time.
+李白|Covey
+寸阴尺璧，当惜分秒|Focus turns minutes into monuments.
+淮南子|Blockcolc
 `.trim().split('\n').map(line=>{const at=line.indexOf('|');return [decode(line.slice(0,at)),decode(line.slice(at+1))];}));

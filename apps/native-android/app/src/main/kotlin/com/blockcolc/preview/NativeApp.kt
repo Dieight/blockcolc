@@ -236,14 +236,7 @@ private val NATIVE_UI_PROCESS=java.util.UUID.randomUUID().toString()
                      worldDisplayMode=snapshot.preferences.worldDisplayMode,
                      singleBuildingBackdrop=snapshot.preferences.singleBuildingBackdrop,
                      activeProjectId=snapshot.activeProject,
-                     darkTheme=darkTheme,
-                     onHorizontalFling={delta->
-                         if(!snapshot.busy&&snapshot.planId==null&&snapshot.choices.size>=2&&snapshot.activeProject!=null){
-                             val idx=snapshot.choices.indexOfFirst{it.id==snapshot.activeProject}.coerceAtLeast(0)
-                             val next=snapshot.choices[(idx+delta+snapshot.choices.size)%snapshot.choices.size]
-                             if(next.id!=snapshot.activeProject)runtime.dispatch(WorkspaceMutation.SwitchProject(next.id),java.util.UUID.randomUUID().toString())
-                         }
-                     })})
+                     darkTheme=darkTheme)})
     }
 }
 
@@ -369,7 +362,8 @@ private val NATIVE_UI_PROCESS=java.util.UUID.randomUUID().toString()
     val density=LocalDensity.current
     var displayedMinimal by remember{mutableStateOf(minimal)}
     var displayedImmersive by remember{mutableStateOf(immersive)}
-    NativeSystemBars(displayedImmersive)
+    val timerOverSky=page=="timer"&&!displayedImmersive&&!pageMoving&&!(s.preferences.worldDisplayMode=="single"&&s.preferences.singleBuildingBackdrop=="maquette")
+    NativeSystemBars(displayedImmersive,darkStatusScrim=timerOverSky)
     var modeMotion by remember{mutableStateOf(false)}
     var lastPageInteraction by remember{mutableLongStateOf(0L)}
     var pageTouchActive by remember{mutableStateOf(false)}
@@ -609,7 +603,10 @@ private val NATIVE_UI_PROCESS=java.util.UUID.randomUUID().toString()
                     var motion by remember{mutableIntStateOf(0)}
                     val tint=if(page==key)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                     val interaction=remember{androidx.compose.foundation.interaction.MutableInteractionSource()}
-                    Column(Modifier.weight(1f).height(68.dp).semantics{contentDescription=ui.text(label);selected=page==key;role=Role.Tab}.clickable(enabled=!s.busy,interactionSource=interaction,indication=null){motion++;clearSwipe();projectEditor=null;pagesPrepared=pagesPrepared+key;page=key}.nativePressMotion(interaction,!s.busy).drawWithContent{
+                    Column(Modifier.weight(1f).height(68.dp).semantics{contentDescription=ui.text(label);selected=page==key;role=Role.Tab}.clickable(enabled=!s.busy,interactionSource=interaction,indication=null){
+                        if(page!=key)NativeTactileAudio.tick(cloudContext,1120f)
+                        motion++;clearSwipe();projectEditor=null;pagesPrepared=pagesPrepared+key;page=key
+                    }.nativePressMotion(interaction,!s.busy).drawWithContent{
                         drawContent();if(page==key)drawRect(tint,androidx.compose.ui.geometry.Offset(size.width/2-1.5.dp.toPx(),size.height-9.dp.toPx()),androidx.compose.ui.geometry.Size(3.dp.toPx(),3.dp.toPx()))
                     }.padding(vertical=8.dp),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.spacedBy(5.dp,Alignment.CenterVertically)){
                         NativeMotionGlyph(icon,motion,color=tint)
@@ -627,8 +624,8 @@ private val NATIVE_UI_PROCESS=java.util.UUID.randomUUID().toString()
         if(!startupOpen)NativeLoadingScene(ui.text("正在建造世界"),Modifier.fillMaxSize().pointerInput(Unit){
             awaitPointerEventScope{while(true)awaitPointerEvent().changes.forEach{it.consume()}}
         })
-        if(!displayedImmersive)Box(Modifier.fillMaxWidth().windowInsetsTopHeight(WindowInsets.statusBars)
-            .background(if(page=="timer"&&!pageMoving)MaterialTheme.colorScheme.surface.copy(alpha=.88f)else MaterialTheme.colorScheme.background))
+        if(!displayedImmersive&&!(page=="timer"&&!pageMoving))Box(Modifier.fillMaxWidth().windowInsetsTopHeight(WindowInsets.statusBars)
+            .background(MaterialTheme.colorScheme.background))
       }
     }
     NativeCelebrationOverlay(runtime.celebrations,foreground,worldReady&&(immersive||page=="timer")&&startupOpen)
@@ -651,11 +648,22 @@ private val NATIVE_UI_PROCESS=java.util.UUID.randomUUID().toString()
     val completion=runtime.celebrations.completion()
     var completionClosing by remember{mutableStateOf(false)}
     fun closeCompletion(){if(!completionClosing){completionClosing=true;runtime.celebrations.closeCompletion()}}
-    NativeSheet(completion?.takeIf{achievementSafe&&worldReady&&page=="timer"},{ui.text("主体建筑完成")},::closeCompletion,onHidden={completionClosing=false}){notice->
-        PixelGlyph("cube",Modifier.size(40.dp))
-        Text(notice.title,style=MaterialTheme.typography.headlineMedium)
-        Text(ui.text("这项长期工作已经在聚落中留下完整建筑。"))
-        NativeAction(ui.text(if(minimal)"留在此刻"else"回到聚落"),::closeCompletion,Modifier.fillMaxWidth())
+    val completionShown=completion?.takeIf{achievementSafe&&worldReady&&page=="timer"}
+    LaunchedEffect(completionShown){if(completionShown!=null)NativeTactileAudio.chime(cloudContext)}
+    NativeSheet(completionShown,{ui.text("主体建筑完成")},::closeCompletion,onHidden={completionClosing=false}){notice->
+        val colors=MaterialTheme.colorScheme
+        Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(10.dp)){
+            Box(Modifier.size(36.dp).border(1.dp,colors.primary).background(colors.surfaceVariant),contentAlignment=Alignment.Center){
+                PixelGlyph("cube",Modifier.size(20.dp),colors.primary)
+            }
+            Column(verticalArrangement=Arrangement.spacedBy(2.dp)){
+                NativeText(ui.text("已落成纪念建筑"),NativeTextRole.CAPTION,color=colors.primary)
+                Text(notice.title,style=MaterialTheme.typography.headlineMedium,color=colors.onBackground)
+            }
+        }
+        NativeSeparator()
+        Text(ui.text("这项长期工作已经在聚落中留下完整建筑。"),style=MaterialTheme.typography.bodyLarge,color=colors.onSurfaceVariant)
+        NativeAction(ui.text(if(minimal)"留在此刻"else"回到聚落"),::closeCompletion,Modifier.fillMaxWidth(),tag="BUILD")
     }
     key(s.generation,runtime.committedWorld?.identity?.database){
         NativeAchievementUnlock(s.workspace?.achievements.orEmpty(),runtime,achievementSafe&&completion==null&&!completionClosing,page=="statistics",s.achievementAttention)
@@ -718,8 +726,8 @@ private data class TutorialStep(val page:String,val title:String,val description
     val lesson=remember(replay){
         val intro=if(replay)listOf(TutorialStep("settings","首次使用","首次使用可以创建任务。有旧记录时，选本地备份或登录原有账户。"))else emptyList()
         intro+listOf(
-            TutorialStep("timer","直接滑动计时与切换任务","上下滑动时间直接累加轮次，达今日剩余目标时磁吸提醒；左右滑动时间或轻点上方双线切换固定轮次与结束时间。"),
-            TutorialStep("timer","单体建筑与双背景","在顶部项目标题左右滑动或轻点即可切换大任务，在下方小任务栏轻点或左右滑动切换小任务；开启单体建筑后，还可直接轻扫建筑切换并任选展台或真实天光。"),
+            TutorialStep("timer","滑动调整计时时长","上下滑动时间直接累加轮次，达今日剩余目标时磁吸提醒；轻点上方双线切换固定轮次与结束时间。"),
+            TutorialStep("timer","单体建筑与双背景","轻点顶部项目标题切换大任务，轻点下方当前推进栏切换小任务；在设置中开启单体建筑后，还可任选建筑展台或真实天光。"),
             TutorialStep("tasks","把任务建成世界","大任务对应建筑，小任务的推进决定施工；习惯任务按轮次积累。"),
             TutorialStep("timer","专注、休息与汇报","专注时双击面板下方空白显示结束按钮，再双击可收起。休息后双击时间继续。提前完成或中止后，由你确认再开始。"),
             TutorialStep("timer","极简与便签","开启极简后左右滑动面板，查看便签、统计和好友；在时钟上上下滑动设定结束时间，再双击时间开始专注。"),

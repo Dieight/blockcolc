@@ -9,7 +9,6 @@ import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
@@ -23,7 +22,9 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.input.pointer.pointerInput
@@ -33,12 +34,14 @@ import androidx.compose.ui.layout.positionInRoot
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlin.math.sign
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.*
 import com.blockcolc.domain.DomainTime
 import com.blockcolc.presentation.*
@@ -47,13 +50,27 @@ import com.blockcolc.preview.world.NativeWorldInteractionState
 import com.blockcolc.storage.PlanMode
 import kotlinx.coroutines.*
 import java.time.Instant
+import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.time.temporal.ChronoUnit
 import java.util.*
 
-/** Direct-gesture Gallery workbench paired with the preserved minimal/immersive
- * focus faces. Application state owns planning and recovery; this page edits
- * lightweight local drafts and dispatches committed workspace mutations. */
+private data class TimeQuote(val zh: String, val zhBy: String, val en: String, val enBy: String)
+
+private val TIME_QUOTES = listOf(
+    TimeQuote("一寸光阴一寸金", "古谚", "Lost time is never found again.", "Franklin"),
+    TimeQuote("逝者如斯夫，不舍昼夜", "论语", "Begin at once to live.", "Seneca"),
+    TimeQuote("盛年不重来，一日难再晨", "陶渊明", "Time is the wisest counselor.", "Pericles"),
+    TimeQuote("不饱食以终日，不弃功于寸阴", "葛洪", "Time stays long enough for use.", "Da Vinci"),
+    TimeQuote("少壮不努力，老大徒伤悲", "长歌行", "Well-arranged time marks the mind.", "Pitman"),
+    TimeQuote("明日复明日，明日何其多", "文嘉", "Make use of time; let not advantage slip.", "Shakespeare"),
+    TimeQuote("光景不待人，须臾发成丝", "李白", "The key is not spending, but investing time.", "Covey"),
+    TimeQuote("寸阴尺璧，当惜分秒", "淮南子", "Focus turns minutes into monuments.", "Blockcolc"),
+)
+
+/** Gallery architectural workbench paired with the preserved minimal/immersive
+ * focus faces. Horizontal drags stay unclaimed so page swipes never conflict. */
 @Composable internal fun NativeTimerPage(
     s:WorkspaceUiState,
     runtime:WorkspaceActions,
@@ -85,17 +102,25 @@ import java.util.*
 ){
     val ui=LocalNativeUi.current;val timer=s.timer?:return
     val view=LocalView.current
+    val context=LocalContext.current
     var now by remember(timer.planId,timer.surface,timer.deadline){mutableLongStateOf(clockNow())}
     val currentClock by rememberUpdatedState(clockNow)
     LaunchedEffect(active,timer.planId,timer.surface,timer.deadline){while(active&&isActive){now=currentClock();delay(250)}}
     val countdown=LocalDateCountdownPreference.current?.value
     val project=s.choices.find{it.id==timer.projectId}?:s.choices.find{it.id==s.activeProject}
+    // Stable creation/document order for project switcher (never re-shuffles active item to top)
+    val orderedChoices=remember(s.projects,s.choices){
+        val byId=s.choices.associateBy{it.id}
+        s.projects.mapNotNull{byId[it.id]}.ifEmpty{s.choices}
+    }
     val unfinishedTasks=project?.tasks.orEmpty()
+    val projectRow=s.projects.find{it.id==project?.id}
     val task=unfinishedTasks.find{it.id==timer.subtaskId}?:unfinishedTasks.find{it.id==selectedTask}?:unfinishedTasks.firstOrNull{it.progress<10000}
     val details=s.workspace?.projects?.find{it.id==project?.id}
     val start=rememberNativeRequest(s)
     val projectSwitch=rememberNativeRequest(s)
     val singleMode=s.preferences.worldDisplayMode=="single"
+    val maquetteMode=singleMode&&s.preferences.singleBuildingBackdrop=="maquette"
 
     // Local direct-gesture draft state for the normal workbench.
     var draftModeName by rememberSaveable(timer.planId,project?.id){
@@ -119,25 +144,9 @@ import java.util.*
 
     var projectSheetOpen by rememberSaveable{mutableStateOf(false)}
     var subtaskSheetOpen by rememberSaveable{mutableStateOf(false)}
-
-    fun stepProject(delta:Int){
-        if(s.busy||projectSwitch.busy||s.planId!=null||s.choices.size<2||project==null)return
-        val index=s.choices.indexOfFirst{it.id==project.id}.coerceAtLeast(0)
-        val next=s.choices[(index+delta+s.choices.size)%s.choices.size]
-        if(next.id!=project.id){
-            view.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
-            projectSwitch.submit{runtime.dispatch(WorkspaceMutation.SwitchProject(next.id),it)}
-        }
-    }
-    fun stepSubtask(delta:Int){
-        if(s.busy||project==null||project.habit||unfinishedTasks.size<2)return
-        val index=unfinishedTasks.indexOfFirst{it.id==task?.id}.coerceAtLeast(0)
-        val next=unfinishedTasks[(index+delta+unfinishedTasks.size)%unfinishedTasks.size]
-        if(next.id!=task?.id){
-            view.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
-            onSelectTask(next.id)
-        }
-    }
+    val daySeed=remember(now/3_600_000L){((now/3_600_000L)%TIME_QUOTES.size).toInt().coerceIn(0,TIME_QUOTES.lastIndex)}
+    var quoteOffset by rememberSaveable{mutableIntStateOf(0)}
+    val activeQuote=TIME_QUOTES[(daySeed+quoteOffset)%TIME_QUOTES.size]
 
     val focusMinutes=if(project?.habit==true&&draftMode==PlanMode.ROUNDS)s.preferences.habitFocusMinutes else s.preferences.focusMinutes
     val roundMs=s.plannedFocusMs?.takeIf{timer.surface !in setOf(TimerSurface.IDLE,TimerSurface.PREPARED)}?:(focusMinutes*60000L)
@@ -193,6 +202,11 @@ import java.util.*
         draftRounds==1->ui.text("开始 1 轮")
         else->ui.text("开始 {0} 轮",draftRounds)
     }
+    val startTag=if(draftMode==PlanMode.MARATHON){
+        "${((effectiveEndAt?.minus(now)?:roundMs)/60_000L).coerceAtLeast(1L)} MIN"
+    }else{
+        "${(roundsSpanMs/60_000L).coerceAtLeast(1L)} MIN"
+    }
 
     var revealed by rememberSaveable(timer.surface,minimal){mutableStateOf(false)}
     val focusExit = if (timer.surface == TimerSurface.FOCUS) {
@@ -211,7 +225,7 @@ import java.util.*
     LaunchedEffect(sparkSerial,ui.reduceMotion){
         if(sparkSerial>0&&!ui.reduceMotion){
             clockScale.snapTo(1f)
-            clockScale.animateTo(1.06f,tween(110,easing=FastOutSlowInEasing))
+            clockScale.animateTo(1.055f,tween(110,easing=FastOutSlowInEasing))
             clockScale.animateTo(1f,spring(dampingRatio=0.55f,stiffness=520f))
         }
     }
@@ -219,6 +233,7 @@ import java.util.*
     fun toggleDraftMode(){
         if(!canEditDraft)return
         view.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
+        NativeTactileAudio.tick(context,1260f)
         draftModeName=if(draftMode==PlanMode.ROUNDS)PlanMode.MARATHON.name else PlanMode.ROUNDS.name
     }
 
@@ -242,14 +257,33 @@ import java.util.*
       val rightInset=insets.calculateRightPadding(direction)
       val safeWidth=(maxWidth-leftInset-rightInset).coerceAtLeast(0.dp)
       val panelWidth=if(immersive)minimalPanelWidth(safeWidth)+rightInset else maxWidth-wideWorld
-      NativeTimerFrame(wide,immersive,panelWidth,onWorldHeight){panel->
+      val colors=MaterialTheme.colorScheme
+
+      NativeTimerFrame(wide,immersive,panelWidth,onWorldHeight,worldVeil={
+          // Seamless atmospheric bottom veil blending the 3D world organically into the Gallery canvas (ZERO hard cut!)
+          if(!immersive&&!wide&&!maquetteMode){
+              Box(
+                  Modifier
+                      .fillMaxWidth()
+                      .height(84.dp)
+                      .align(Alignment.BottomCenter)
+                      .background(
+                          Brush.verticalGradient(
+                              0f to Color.Transparent,
+                              0.58f to colors.background.copy(alpha=0.72f),
+                              1f to colors.background,
+                          ),
+                      ),
+              )
+          }
+      }){panel->
         if(!immersive&&memory!=null&&reward==null){NativeBuildingMemory(s,runtime,memory,onCloseMemory,panel.windowInsetsPadding(panelInsets).then(panelMotion));return@NativeTimerFrame}
         if(!immersive){
-          BoxWithConstraints(panel.background(MaterialTheme.colorScheme.background).windowInsetsPadding(panelInsets)
+          BoxWithConstraints(panel.background(colors.background).windowInsetsPadding(panelInsets)
               .testTag("formal-normal-workbench").onGloballyPositioned{onPanelTop(it.positionInRoot().y.roundToInt())}){
             val panelHeight=maxHeight
             if(project==null){
-                Column(Modifier.fillMaxWidth().then(panelMotion).verticalScroll(LocalNativePageScroll.current?:rememberScrollState()).heightIn(min=panelHeight).padding(horizontal=20.dp,vertical=16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
+                Column(Modifier.fillMaxWidth().then(panelMotion).verticalScroll(LocalNativePageScroll.current?:rememberScrollState()).heightIn(min=panelHeight).padding(horizontal=24.dp,vertical=16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
                     NativeText(ui.text("其他任务"),NativeTextRole.SECTION)
                     if(s.choices.isEmpty())NativeText(ui.text("暂无其他任务"),NativeTextRole.BODY)
                     for(choice in s.choices){NativeText(choice.title,NativeTextRole.BODY)
@@ -261,167 +295,182 @@ import java.util.*
                 }
                 return@BoxWithConstraints
             }
-            val compact=panelHeight<320.dp
-            val colors=MaterialTheme.colorScheme
-            val maquetteMode=singleMode&&s.preferences.singleBuildingBackdrop=="maquette"
+            val compact=panelHeight<310.dp
             val canStartNow=project.canStart&&!s.busy&&(draftMode==PlanMode.MARATHON||project.habit||task!=null)
-            Column(Modifier.fillMaxSize().then(panelMotion).drawBehind{
-                if(!maquetteMode&&!wide)drawLine(colors.outlineVariant,Offset.Zero,Offset(size.width,0f),1.dp.toPx())
-            }){
-                // Center direct-gesture hero clock area
-                val currentRounds by rememberUpdatedState(draftRounds)
-                val currentEnd by rememberUpdatedState(draftEndAt)
-                val currentMode by rememberUpdatedState(draftMode)
-                val currentGoalRem by rememberUpdatedState(remainingGoal)
-                val currentFocusMin by rememberUpdatedState(s.preferences.focusMinutes)
-                val currentBreakMin by rememberUpdatedState(s.preferences.breakMinutes)
-                val clockGesture=Modifier
-                    .pointerInput(canEditDraft,project.id){
-                        if(!canEditDraft)return@pointerInput
-                        val pxPerDp=density
-                        awaitEachGesture{
-                            val down=awaitFirstDown(requireUnconsumed=false)
-                            val startX=down.position.x
-                            var anchorY=down.position.y
-                            var lastY=anchorY
-                            var axis=0 // 1=horizontal mode switch, 2=vertical time adjust
-                            var modeFlipped=false
-                            var baseRounds=currentRounds
-                            var selectedRounds=currentRounds
-                            var baseEnd=currentEnd
-                            var selectedEnd=currentEnd
-                            var direction=0
-                            var dwellUntil=0L
-                            val nowAnchor=Math.floorDiv(System.currentTimeMillis(),60000L)*60000L
-                            while(true){
-                                val change=awaitPointerEvent().changes.find{it.id==down.id}?:break
-                                if(!change.pressed)break
-                                val dxDp=(change.position.x-startX)/pxPerDp
-                                var dyDp=(anchorY-change.position.y)/pxPerDp
-                                if(axis==0&&maxOf(abs(dxDp),abs(dyDp))>=12f){
-                                    axis=if(abs(dxDp)>abs(dyDp)*1.3f)1 else 2
-                                }
-                                if(axis==1){
-                                    change.consume()
-                                    if(!modeFlipped&&abs(dxDp)>=36f){
-                                        modeFlipped=true
-                                        toggleDraftMode()
-                                    }
-                                    continue
-                                }
-                                if(axis!=2)continue
-                                change.consume()
-                                val prevY=lastY
-                                val nextDir=sign(prevY-change.position.y).toInt()
-                                lastY=change.position.y
-                                if(nextDir==0)continue
-                                val stamp=android.os.SystemClock.uptimeMillis()
-                                if(direction!=0&&nextDir!=direction){
-                                    dwellUntil=0L
-                                    baseRounds=selectedRounds
-                                    baseEnd=selectedEnd
-                                    anchorY=prevY
-                                    dyDp=(anchorY-change.position.y)/pxPerDp
-                                }
-                                direction=nextDir
-                                if(stamp<dwellUntil){
-                                    anchorY=change.position.y
-                                    baseRounds=selectedRounds
-                                    baseEnd=selectedEnd
-                                    continue
-                                }
-                                if(currentMode==PlanMode.ROUNDS){
-                                    val candidate=(baseRounds+ClockSelection.roundSteps(dyDp.toDouble())).coerceIn(1,24)
-                                    if(candidate!=selectedRounds){
-                                        val goalRem=currentGoalRem
-                                        val next=if(ClockSelection.crossesGoalRound(selectedRounds,candidate,goalRem)&&goalRem!=null){
-                                            dwellUntil=stamp+ClockSelection.DWELL_MS
-                                            anchorY=change.position.y
-                                            baseRounds=goalRem
-                                            sparkSerial++
-                                            view.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
-                                            goalRem
-                                        }else{
-                                            view.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
-                                            candidate
-                                        }
-                                        selectedRounds=next
-                                        draftRounds=next
-                                    }
-                                }else{
-                                    var next=ClockSelection.shift(baseEnd,ClockSelection.steps(dyDp.toDouble()),System.currentTimeMillis())
-                                    val detent=ClockSelection.detent(selectedEnd?:nowAnchor,next?:nowAnchor,nowAnchor,currentFocusMin,currentBreakMin)
-                                    if(detent!=null){
-                                        next=detent.endMs
+
+            // Vertical-only clock drag (NEVER claims horizontal gestures -> zero page-swipe conflict!)
+            val currentRounds by rememberUpdatedState(draftRounds)
+            val currentEnd by rememberUpdatedState(draftEndAt)
+            val currentMode by rememberUpdatedState(draftMode)
+            val currentGoalRem by rememberUpdatedState(remainingGoal)
+            val currentFocusMin by rememberUpdatedState(s.preferences.focusMinutes)
+            val currentBreakMin by rememberUpdatedState(s.preferences.breakMinutes)
+            val clockGesture=Modifier
+                .pointerInput(canEditDraft,project.id){
+                    if(!canEditDraft)return@pointerInput
+                    val pxPerDp=density
+                    awaitEachGesture{
+                        val down=awaitFirstDown(requireUnconsumed=false)
+                        val startX=down.position.x
+                        var anchorY=down.position.y
+                        var lastY=anchorY
+                        var axis=0 // 1=horizontal (yield to page swipe), 2=vertical time adjust
+                        var baseRounds=currentRounds
+                        var selectedRounds=currentRounds
+                        var baseEnd=currentEnd
+                        var selectedEnd=currentEnd
+                        var direction=0
+                        var dwellUntil=0L
+                        val nowAnchor=Math.floorDiv(System.currentTimeMillis(),60000L)*60000L
+                        while(true){
+                            val change=awaitPointerEvent().changes.find{it.id==down.id}?:break
+                            if(!change.pressed)break
+                            val dxDp=(change.position.x-startX)/pxPerDp
+                            var dyDp=(anchorY-change.position.y)/pxPerDp
+                            if(axis==0&&maxOf(abs(dxDp),abs(dyDp))>=12f){
+                                axis=if(abs(dxDp)>abs(dyDp)*1.2f)1 else 2
+                            }
+                            if(axis!=2)continue
+                            change.consume()
+                            val prevY=lastY
+                            val nextDir=sign(prevY-change.position.y).toInt()
+                            lastY=change.position.y
+                            if(nextDir==0)continue
+                            val stamp=android.os.SystemClock.uptimeMillis()
+                            if(direction!=0&&nextDir!=direction){
+                                dwellUntil=0L
+                                baseRounds=selectedRounds
+                                baseEnd=selectedEnd
+                                anchorY=prevY
+                                dyDp=(anchorY-change.position.y)/pxPerDp
+                            }
+                            direction=nextDir
+                            if(stamp<dwellUntil){
+                                anchorY=change.position.y
+                                baseRounds=selectedRounds
+                                baseEnd=selectedEnd
+                                continue
+                            }
+                            if(currentMode==PlanMode.ROUNDS){
+                                val candidate=(baseRounds+ClockSelection.roundSteps(dyDp.toDouble())).coerceIn(1,24)
+                                if(candidate!=selectedRounds){
+                                    val goalRem=currentGoalRem
+                                    val next=if(ClockSelection.crossesGoalRound(selectedRounds,candidate,goalRem)&&goalRem!=null){
                                         dwellUntil=stamp+ClockSelection.DWELL_MS
                                         anchorY=change.position.y
-                                        baseEnd=next
+                                        baseRounds=goalRem
                                         sparkSerial++
                                         view.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
+                                        NativeTactileAudio.tick(context,1380f)
+                                        goalRem
+                                    }else{
+                                        view.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
+                                        NativeTactileAudio.tick(context,1060f+candidate*18f)
+                                        candidate
                                     }
-                                    if(next!=selectedEnd){
-                                        selectedEnd=next
-                                        draftEndAt=next
-                                    }
+                                    selectedRounds=next
+                                    draftRounds=next
+                                }
+                            }else{
+                                var next=ClockSelection.shift(baseEnd,ClockSelection.steps(dyDp.toDouble()),System.currentTimeMillis())
+                                val detent=ClockSelection.detent(selectedEnd?:nowAnchor,next?:nowAnchor,nowAnchor,currentFocusMin,currentBreakMin)
+                                if(detent!=null){
+                                    next=detent.endMs
+                                    dwellUntil=stamp+ClockSelection.DWELL_MS
+                                    anchorY=change.position.y
+                                    baseEnd=next
+                                    sparkSerial++
+                                    view.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
+                                    NativeTactileAudio.tick(context,1360f)
+                                }else if(next!=selectedEnd){
+                                    NativeTactileAudio.tick(context,1040f)
+                                }
+                                if(next!=selectedEnd){
+                                    selectedEnd=next
+                                    draftEndAt=next
                                 }
                             }
                         }
                     }
-                    .onKeyEvent{event->
-                        if(!canEditDraft||event.type!=KeyEventType.KeyDown)false else when(event.key){
-                            Key.DirectionUp->{
-                                if(draftMode==PlanMode.ROUNDS)draftRounds=(draftRounds+1).coerceAtMost(24)
-                                else draftEndAt=ClockSelection.shift(draftEndAt,1,System.currentTimeMillis())
-                                true
-                            }
-                            Key.DirectionDown->{
-                                if(draftMode==PlanMode.ROUNDS)draftRounds=(draftRounds-1).coerceAtLeast(1)
-                                else draftEndAt=ClockSelection.shift(draftEndAt,-1,System.currentTimeMillis())
-                                true
-                            }
-                            Key.DirectionLeft,Key.DirectionRight->{toggleDraftMode();true}
-                            else->false
+                }
+                .onKeyEvent{event->
+                    if(!canEditDraft||event.type!=KeyEventType.KeyDown)false else when(event.key){
+                        Key.DirectionUp->{
+                            if(draftMode==PlanMode.ROUNDS)draftRounds=(draftRounds+1).coerceAtMost(24)
+                            else draftEndAt=ClockSelection.shift(draftEndAt,1,System.currentTimeMillis())
+                            true
                         }
+                        Key.DirectionDown->{
+                            if(draftMode==PlanMode.ROUNDS)draftRounds=(draftRounds-1).coerceAtLeast(1)
+                            else draftEndAt=ClockSelection.shift(draftEndAt,-1,System.currentTimeMillis())
+                            true
+                        }
+                        else->false
                     }
-                    .semantics{
-                        contentDescription=ui.text(if(draftMode==PlanMode.ROUNDS)"固定轮次，上下滑动增减轮次，左右滑动切换结束时间" else "结束时间，上下滑动设定结束时间，左右滑动切换固定轮次")
-                    }
+                }
+                .semantics{
+                    contentDescription=ui.text(if(draftMode==PlanMode.ROUNDS)"固定轮次，上下滑动增减轮次" else "结束时间，上下滑动设定结束时间")
+                }
 
+            // DEMO-faithful left-aligned Gallery architectural workbench!
+            Column(
+                Modifier
+                    .fillMaxSize()
+                    .then(panelMotion)
+                    .padding(start=24.dp,end=24.dp,top=if(compact)4.dp else 8.dp,bottom=14.dp),
+                verticalArrangement=Arrangement.SpaceBetween,
+            ){
+                // 1. Hero Naked Left-Aligned Clock + Wordless Dual Mode Hairline Bars
                 Column(
-                    Modifier.weight(1f).fillMaxWidth().padding(horizontal=20.dp).then(clockGesture),
-                    horizontalAlignment=Alignment.CenterHorizontally,
+                    Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .then(clockGesture),
                     verticalArrangement=Arrangement.Center,
                 ){
-                    // Dual wordless hairline mode indicator bars
+                    // Pure wordless dual hairline mode bars (tap to toggle Fixed Rounds <-> End-Time)
+                    val roundsBarW by animateDpAsState(if(draftMode==PlanMode.ROUNDS)30.dp else 18.dp,tween(if(ui.reduceMotion)0 else 220,easing=FastOutSlowInEasing),label="rounds-bar")
+                    val endBarW by animateDpAsState(if(draftMode==PlanMode.MARATHON)30.dp else 18.dp,tween(if(ui.reduceMotion)0 else 220,easing=FastOutSlowInEasing),label="end-bar")
                     Row(
                         Modifier
                             .clickable(enabled=canEditDraft,role=Role.Button,interactionSource=remember{MutableInteractionSource()},indication=null,onClick=::toggleDraftMode)
                             .semantics{contentDescription=ui.text("切换计时模式")}
-                            .padding(horizontal=12.dp,vertical=8.dp),
+                            .padding(top=4.dp,bottom=10.dp,end=20.dp),
                         verticalAlignment=Alignment.CenterVertically,
-                        horizontalArrangement=Arrangement.spacedBy(8.dp),
+                        horizontalArrangement=Arrangement.spacedBy(6.dp),
                     ){
-                        PixelGlyph(if(draftMode==PlanMode.MARATHON)"clock" else "flag",Modifier.size(13.dp),colors.primary)
-                        Row(horizontalArrangement=Arrangement.spacedBy(5.dp),verticalAlignment=Alignment.CenterVertically){
-                            Box(Modifier.size(width=24.dp,height=2.5.dp).background(if(draftMode==PlanMode.ROUNDS)colors.primary else colors.outlineVariant))
-                            Box(Modifier.size(width=24.dp,height=2.5.dp).background(if(draftMode==PlanMode.MARATHON)colors.primary else colors.outlineVariant))
-                        }
+                        Box(Modifier.size(width=roundsBarW,height=if(draftMode==PlanMode.ROUNDS)2.5.dp else 2.dp).background(if(draftMode==PlanMode.ROUNDS)colors.primary else colors.outlineVariant))
+                        Box(Modifier.size(width=endBarW,height=if(draftMode==PlanMode.MARATHON)2.5.dp else 2.dp).background(if(draftMode==PlanMode.MARATHON)colors.primary else colors.outlineVariant))
                     }
-                    Spacer(Modifier.height(if(compact)2.dp else 6.dp))
-                    // Giant naked clock numeral
-                    NativeText(
-                        workbenchClock,
-                        if(compact)NativeTextRole.NUMBER else NativeTextRole.CLOCK,
-                        Modifier.graphicsLayer{scaleX=clockScale.value;scaleY=clockScale.value},
-                        color=if(goalReachedByDraft)colors.primary else colors.onBackground,
-                        accent=true,
-                    )
-                    Spacer(Modifier.height(if(compact)4.dp else 8.dp))
-                    // Single compact info line beneath clock
+
+                    // Giant flush-left naked numeral + subtle right micro badge
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        verticalAlignment=Alignment.Bottom,
+                        horizontalArrangement=Arrangement.SpaceBetween,
+                    ){
+                        val heroStyle=if(compact)MaterialTheme.typography.displaySmall else MaterialTheme.typography.displayMedium
+                        Text(
+                            workbenchClock,
+                            modifier=Modifier.graphicsLayer{
+                                transformOrigin=androidx.compose.ui.graphics.TransformOrigin(0f,0.6f)
+                                scaleX=clockScale.value
+                                scaleY=clockScale.value
+                            },
+                            style=heroStyle,
+                            color=if(goalReachedByDraft)colors.primary else colors.onBackground,
+                            maxLines=1,
+                        )
+                        s.workspace?.let{NativeOccasionEmblems(it.today,0,it.settings.birthday)}
+                    }
+
+                    Spacer(Modifier.height(if(compact)4.dp else 7.dp))
+
+                    // Single compact editorial caption flush-left underneath clock
                     if(draftMode==PlanMode.ROUNDS){
                         Row(
                             verticalAlignment=Alignment.CenterVertically,
-                            horizontalArrangement=Arrangement.spacedBy(6.dp,Alignment.CenterHorizontally),
+                            horizontalArrangement=Arrangement.spacedBy(6.dp),
                         ){
                             if(goalReachedByDraft){
                                 PixelGlyph("target",Modifier.size(14.dp),colors.primary)
@@ -436,79 +485,151 @@ import java.util.*
                         }else ui.text("上下滑动设定结束时间")
                         NativeText(info,NativeTextRole.CAPTION,color=if(draftEndAt!=null)colors.primary else colors.onSurfaceVariant,maxLines=1)
                     }
-                    if(!compact){
-                        NativeDateCountdown(countdown,now,Modifier.padding(top=4.dp))
-                        s.workspace?.let{NativeOccasionEmblems(it.today,0,it.settings.birthday)}
-                    }
                     if(timer.mayCancelUnstarted){
                         FormalTextAction(ui.text("取消本次计划"),"close",{start.submit{runtime.decideFocus(FocusDecision.Cancel(),it)}},Modifier.padding(top=4.dp),!start.busy&&!s.busy)
                     }
                 }
 
-                // Single full-width frameless active subtask strip (above primary CTA)
+                // 2. DEMO-Faithful Cardless 2-Column Hairline Spec Strip (Left: Current Subtask | Right: Date Countdown or Time Quote!)
                 val canSwitchSubtask=draftMode==PlanMode.ROUNDS&&!project.habit&&unfinishedTasks.isNotEmpty()&&!s.busy
-                var subtaskDragAccum by remember{mutableFloatStateOf(0f)}
-                Column(
+                Row(
                     Modifier
                         .fillMaxWidth()
-                        .padding(horizontal=20.dp)
-                        .drawBehind{drawLine(colors.outlineVariant,Offset.Zero,Offset(size.width,0f),1.dp.toPx())}
-                        .then(if(canSwitchSubtask)Modifier
-                            .clickable(role=Role.Button,interactionSource=remember{MutableInteractionSource()},indication=null){subtaskSheetOpen=true}
-                            .pointerInput(project.id,unfinishedTasks.size){
-                                val threshold=36.dp.toPx()
-                                detectHorizontalDragGestures(
-                                    onDragStart={subtaskDragAccum=0f},
-                                    onDragEnd={
-                                        if(abs(subtaskDragAccum)>=threshold)stepSubtask(if(subtaskDragAccum<0f)1 else -1)
-                                        subtaskDragAccum=0f
-                                    },
-                                    onDragCancel={subtaskDragAccum=0f},
-                                    onHorizontalDrag={_,dragAmount->subtaskDragAccum+=dragAmount},
-                                )
-                            }
-                            .semantics{contentDescription=ui.text("切换小任务")}
-                        else Modifier)
-                        .padding(top=12.dp,bottom=12.dp),
-                    verticalArrangement=Arrangement.spacedBy(8.dp),
-                ){
-                    Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(10.dp)){
-                        val stripIcon=when{
-                            draftMode==PlanMode.MARATHON->"clock"
-                            project.habit->"repeat"
-                            else->"flag"
+                        .height(IntrinsicSize.Min)
+                        .drawBehind{
+                            val stroke=1.dp.toPx()
+                            drawLine(colors.outlineVariant,Offset.Zero,Offset(size.width,0f),stroke)
+                            drawLine(colors.outlineVariant,Offset(0f,size.height),Offset(size.width,size.height),stroke)
                         }
-                        val stripTitle=when{
+                        .padding(vertical=if(compact)8.dp else 11.dp),
+                    verticalAlignment=Alignment.CenterVertically,
+                ){
+                    // Left column: Current Subtask (tap to open Subtask Picker Sheet)
+                    Column(
+                        Modifier
+                            .weight(1.08f)
+                            .fillMaxHeight()
+                            .then(if(canSwitchSubtask)Modifier
+                                .clickable(role=Role.Button,interactionSource=remember{MutableInteractionSource()},indication=null){
+                                    NativeTactileAudio.tick(context,1160f)
+                                    subtaskSheetOpen=true
+                                }
+                                .semantics{contentDescription=ui.text("切换小任务")}
+                            else Modifier),
+                        verticalArrangement=Arrangement.SpaceBetween,
+                    ){
+                        val leftEyebrow=when{
+                            draftMode==PlanMode.MARATHON->ui.text("按结束时间")
+                            project.habit->ui.text("习惯建筑")
+                            else->{
+                                val totalSubs=projectRow?.tasks?.size?:unfinishedTasks.size
+                                val doneSubs=projectRow?.tasks?.count{it.progress>=10000}?:0
+                                val stepIdx=(doneSubs+1).coerceAtMost(totalSubs.coerceAtLeast(1))
+                                ui.text("当前推进 · {0}/{1}",stepIdx,totalSubs.coerceAtLeast(1))
+                            }
+                        }
+                        val leftVal=when{
                             draftMode==PlanMode.MARATHON->ui.text("结束后统一分配")
-                            project.habit->s.blueprintNames[s.projects.find{it.id==project.id}?.blueprint]?:project.title
+                            project.habit->s.blueprintNames[projectRow?.blueprint]?:project.title
                             else->task?.title?:project.title
                         }
-                        PixelGlyph(stripIcon,Modifier.size(16.dp),if(draftMode==PlanMode.MARATHON)colors.onSurfaceVariant else colors.primary)
-                        NativeText(stripTitle,NativeTextRole.BODY,Modifier.weight(1f),color=if(draftMode==PlanMode.MARATHON)colors.onSurfaceVariant else colors.onBackground,maxLines=1)
-                        when{
-                            draftMode==PlanMode.MARATHON->Unit
-                            project.habit->NativeText(ui.text("{0} / {1} 轮",details?.habitApplied?:0,(details?.habitTarget?:10).coerceAtLeast(1)),NativeTextRole.CAPTION,color=colors.onSurfaceVariant)
-                            else->{
-                                NativeText("${((task?.progress?:0)+50)/100}%",NativeTextRole.CAPTION,color=colors.onSurfaceVariant)
-                                if(unfinishedTasks.size>1)PixelGlyph("chevron",Modifier.size(14.dp).graphicsLayer{rotationZ=-90f},colors.onSurfaceVariant)
+                        Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(5.dp)){
+                            NativeText(leftEyebrow,NativeTextRole.CAPTION,Modifier.weight(1f,fill=false),color=colors.onSurfaceVariant,maxLines=1)
+                            if(canSwitchSubtask&&unfinishedTasks.size>1){
+                                PixelGlyph("chevron",Modifier.size(11.dp),colors.onSurfaceVariant)
                             }
                         }
-                    }
-                    if(draftMode==PlanMode.ROUNDS){
-                        if(project.habit){
-                            val target=(details?.habitTarget?:10).coerceAtLeast(1)
-                            FormalProgress(details?.habitApplied?:0,max=target,segments=target.coerceIn(1,16),height=3.dp)
+                        Spacer(Modifier.height(3.dp))
+                        Text(leftVal,style=MaterialTheme.typography.bodyMedium,color=colors.onBackground,maxLines=1,overflow=TextOverflow.Ellipsis)
+                        Spacer(Modifier.height(6.dp))
+                        if(draftMode==PlanMode.ROUNDS){
+                            if(project.habit){
+                                val target=(details?.habitTarget?:10).coerceAtLeast(1)
+                                FormalProgress(details?.habitApplied?:0,max=target,segments=target.coerceIn(1,16),height=2.5.dp)
+                            }else{
+                                FormalProgress(task?.progress?:0,segments=16,height=2.5.dp)
+                            }
                         }else{
-                            FormalProgress(task?.progress?:0,segments=16,height=3.dp)
+                            NativeText(ui.text("完成后按轮次分配"),NativeTextRole.CAPTION,color=colors.onSurfaceVariant,maxLines=1)
+                        }
+                    }
+
+                    // Hairline vertical editorial divider
+                    Box(Modifier.padding(horizontal=14.dp,vertical=2.dp).width(1.dp).fillMaxHeight().background(colors.outlineVariant))
+
+                    // Right column: Date Countdown (when enabled) OR concise rotating time-treasuring quote!
+                    if(countdown!=null){
+                        val today=remember(now/60_000L){Instant.ofEpochMilli(now).atZone(ZoneId.systemDefault()).toLocalDate()}
+                        val daysLeft=ChronoUnit.DAYS.between(today,countdown.date)
+                        val daysText=when{
+                            daysLeft>0->ui.text("还有 {0} 天",daysLeft)
+                            daysLeft==0L->ui.text("就是今天")
+                            else->ui.text("已过 {0} 天",-daysLeft)
+                        }
+                        var cdMotion by remember{mutableIntStateOf(0)}
+                        Column(
+                            Modifier
+                                .weight(0.92f)
+                                .fillMaxHeight()
+                                .clickable(role=Role.Button,interactionSource=remember{MutableInteractionSource()},indication=null){
+                                    cdMotion++
+                                    NativeTactileAudio.tick(context,1200f)
+                                },
+                            verticalArrangement=Arrangement.SpaceBetween,
+                        ){
+                            Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(5.dp)){
+                                NativeMotionGlyph("countdown",cdMotion,Modifier.size(12.dp),colors.primary)
+                                NativeText(ui.text("日期倒计时"),NativeTextRole.CAPTION,color=colors.onSurfaceVariant,maxLines=1)
+                            }
+                            Spacer(Modifier.height(3.dp))
+                            Text(countdown.title.ifBlank{ui.text("目标日期")},style=MaterialTheme.typography.bodyMedium,color=colors.onBackground,maxLines=1,overflow=TextOverflow.Ellipsis)
+                            Spacer(Modifier.height(3.dp))
+                            NativeText(daysText,NativeTextRole.CAPTION,color=colors.primary,maxLines=1,accent=true)
+                        }
+                    }else{
+                        val quoteText=if(ui.language=="en")activeQuote.en else activeQuote.zh
+                        val quoteAuthor=if(ui.language=="en")activeQuote.enBy else activeQuote.zhBy
+                        Column(
+                            Modifier
+                                .weight(0.92f)
+                                .fillMaxHeight()
+                                .clickable(interactionSource=remember{MutableInteractionSource()},indication=null){
+                                    quoteOffset=(quoteOffset+1)%TIME_QUOTES.size
+                                    NativeTactileAudio.tick(context,1140f)
+                                },
+                            verticalArrangement=Arrangement.SpaceBetween,
+                        ){
+                            Text(
+                                quoteText,
+                                style=MaterialTheme.typography.bodySmall,
+                                color=colors.onBackground.copy(alpha=0.84f),
+                                maxLines=2,
+                                overflow=TextOverflow.Ellipsis,
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            NativeText("— $quoteAuthor",NativeTextRole.CAPTION,color=colors.onSurfaceVariant,maxLines=1)
                         }
                     }
                 }
 
-                // Bottom razor Gallery Ink primary action
-                Column(Modifier.fillMaxWidth().padding(start=20.dp,end=20.dp,top=2.dp,bottom=16.dp),verticalArrangement=Arrangement.spacedBy(6.dp)){
+                Spacer(Modifier.height(if(compact)10.dp else 14.dp))
+
+                // 3. Razor-Sharp Gallery Ink CTA Bar with Black-to-Pine Curtain Sweep Animation!
+                Column(Modifier.fillMaxWidth(),verticalArrangement=Arrangement.spacedBy(6.dp)){
                     NativeRequestError(start)
                     NativeRequestError(projectSwitch)
-                    NativeAction(startLabel,::begin,Modifier.fillMaxWidth().heightIn(min=50.dp),pending=start.busy,enabled=canStartNow,icon="play")
+                    NativeAction(
+                        label=startLabel,
+                        onClick={
+                            NativeTactileAudio.tick(context,1240f)
+                            begin()
+                        },
+                        modifier=Modifier.fillMaxWidth(),
+                        pending=start.busy,
+                        enabled=canStartNow,
+                        icon="play",
+                        tag=startTag,
+                    )
                 }
             }
           }
@@ -523,7 +644,7 @@ import java.util.*
           NativeGlass(s.preferences.focusGlassTransparency,panel.then(if(wide)Modifier else Modifier.height(focusPanelHeight)).testTag("formal-minimal-panel").onGloballyPositioned{onPanelTop(it.positionInRoot().y.roundToInt())}.then(reveal)){
             Box(Modifier.fillMaxSize().windowInsetsPadding(focusInsets).then(panelMotion).padding(horizontal=20.dp,vertical=16.dp)){
               if(minimal&&timer.surface in setOf(TimerSurface.IDLE,TimerSurface.PREPARED)){
-                // Preserved pure immersive idle: ZERO top buttons, ZERO start button.
+                // Preserved pure immersive idle: ZERO top buttons, ZERO start button, ZERO length bar.
                 val pages=remember(s.preferences.quickNotesEnabled,minimalFriends!=null){
                     buildList{
                         if(s.preferences.quickNotesEnabled)add("notes")
@@ -571,14 +692,14 @@ import java.util.*
               }else{
                 // Preserved exact 3-slot running focus layout + subtle 2dp progress bar beneath countdown.
                 FormalFocusFace(context={
-                    val context=when(timer.surface){
+                    val contextLabel=when(timer.surface){
                         TimerSurface.FOCUS->if(extensionElapsed!=null)ui.text("加时专注")
                         else if(timer.mode in setOf(PlanMode.MINIMAL,PlanMode.MARATHON))ui.text("专注中 第{0}/{1}轮",timer.completedRounds+1,timer.totalRounds)else timer.taskTitle?:task?.title?:project?.title.orEmpty()
                         TimerSurface.REST->ui.text("休息中")
                         TimerSurface.WAITING->ui.text("剩余专注总时间")
                         else->""
                     }
-                    Text(context,style=MaterialTheme.typography.bodyLarge,textAlign=TextAlign.Center,maxLines=2)
+                    Text(contextLabel,style=MaterialTheme.typography.bodyLarge,textAlign=TextAlign.Center,maxLines=2)
                 },timer={
                     Column(Modifier.fillMaxWidth(),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.spacedBy(12.dp)){
                         NativeText(runningClock,NativeTextRole.IMMERSIVE_CLOCK,Modifier.testTag("formal-focus-time").then(if(timer.surface in setOf(TimerSurface.PREPARED,TimerSurface.WAITING))Modifier.pointerInput(timer.planId,s.busy,start.busy){detectTapGestures(onDoubleTap={if(!s.busy&&!start.busy)begin()})}else Modifier),accent=true)
@@ -604,67 +725,98 @@ import java.util.*
         }
       }
 
-      // Floating Gallery Top World HUD (Normal mode only; ZERO top buttons in immersive mode!)
+      // Frameless Gallery Editorial Top World HUD (Normal mode only; ZERO top buttons in immersive mode!)
       if(!immersive&&memory==null&&project!=null){
-          val colors=MaterialTheme.colorScheme
-          val topInset=WindowInsets.statusBars.asPaddingValues().calculateTopPadding()+10.dp
+          val overSky=!maquetteMode
+          val topInset=WindowInsets.statusBars.asPaddingValues().calculateTopPadding()+8.dp
           val hudWidthMod=if(wide)Modifier.width(wideWorld)else Modifier.fillMaxWidth()
           val sides=WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal)
-          var titleDragAccum by remember{mutableFloatStateOf(0f)}
-          Row(
-              hudWidthMod
-                  .align(Alignment.TopStart)
-                  .windowInsetsPadding(sides)
-                  .padding(start=16.dp,end=16.dp,top=topInset)
-                  .then(panelMotion),
-              verticalAlignment=Alignment.CenterVertically,
-              horizontalArrangement=Arrangement.SpaceBetween,
-          ){
-              // Left: Project Title Switcher (tap opens slim picker, horizontal swipe switches project)
+          val titleInk=if(overSky)Color(0xFFF8F8F5)else colors.onBackground
+          val pctInk=if(overSky)Color(0xFF9CF0BE)else colors.primary
+          val textShadow=if(overSky)Shadow(Color(0x70000000),Offset(0f,2f),10f)else Shadow.None
+          val progressPct=if(project.habit){
+              val t=(details?.habitTarget?:10).coerceAtLeast(1)
+              val a=if(details?.awaitingBuilding==true)t else details?.habitApplied?:0
+              "${(a*100/t).coerceIn(0,100)}%"
+          }else "${((projectRow?.progress?:0)+50)/100}%"
+
+          Box(hudWidthMod.align(Alignment.TopStart).then(panelMotion)){
+              // Soft top atmospheric scrim when over real sky/settlement (ZERO boxy bar!)
+              if(overSky){
+                  Box(
+                      Modifier
+                          .fillMaxWidth()
+                          .height(topInset+64.dp)
+                          .background(Brush.verticalGradient(0f to Color(0x660A0E0C),0.65f to Color(0x280A0E0C),1f to Color.Transparent)),
+                  )
+              }
               Row(
                   Modifier
-                      .weight(1f,fill=false)
-                      .padding(end=10.dp)
-                      .heightIn(min=38.dp)
-                      .background(colors.background.copy(alpha=.86f))
-                      .border(1.dp,colors.outlineVariant)
-                      .clickable(enabled=!s.busy&&s.planId==null&&s.choices.isNotEmpty(),role=Role.Button,interactionSource=remember{MutableInteractionSource()},indication=null){
-                          projectSheetOpen=true
-                      }
-                      .pointerInput(project.id,s.choices.size,s.planId){
-                          if(s.planId!=null||s.choices.size<2)return@pointerInput
-                          val threshold=36.dp.toPx()
-                          detectHorizontalDragGestures(
-                              onDragStart={titleDragAccum=0f},
-                              onDragEnd={
-                                  if(abs(titleDragAccum)>=threshold)stepProject(if(titleDragAccum<0f)1 else -1)
-                                  titleDragAccum=0f
-                              },
-                              onDragCancel={titleDragAccum=0f},
-                              onHorizontalDrag={_,dragAmount->titleDragAccum+=dragAmount},
-                          )
-                      }
-                      .semantics{contentDescription=ui.text("切换任务")}
-                      .padding(horizontal=12.dp,vertical=8.dp),
+                      .fillMaxWidth()
+                      .windowInsetsPadding(sides)
+                      .padding(start=22.dp,end=18.dp,top=topInset),
                   verticalAlignment=Alignment.CenterVertically,
-                  horizontalArrangement=Arrangement.spacedBy(6.dp),
+                  horizontalArrangement=Arrangement.SpaceBetween,
               ){
-                  NativeText(project.title,NativeTextRole.BODY,Modifier.weight(1f,fill=false),color=colors.onBackground,maxLines=1)
-                  if(s.choices.size>1&&s.planId==null)PixelGlyph("chevron",Modifier.size(14.dp),colors.onSurfaceVariant)
-              }
-              // Right: Pure pixel icon rail (no text labels; reset hidden until camera moved)
-              Row(horizontalArrangement=Arrangement.spacedBy(6.dp),verticalAlignment=Alignment.CenterVertically){
-                  if(worldInteraction!=null&&worldInteraction.cameraMoved){
-                      GalleryWorldIcon(ui.text("重置视角"),"reset"){worldInteraction.resetView()}
+                  // Left: Frameless Editorial Serif Project Title (tap opens slim picker; ZERO swipe conflict!)
+                  Row(
+                      Modifier
+                          .weight(1f,fill=false)
+                          .padding(end=12.dp)
+                          .heightIn(min=40.dp)
+                          .clickable(enabled=!s.busy&&s.planId==null&&orderedChoices.isNotEmpty(),role=Role.Button,interactionSource=remember{MutableInteractionSource()},indication=null){
+                              NativeTactileAudio.tick(context,1160f)
+                              projectSheetOpen=true
+                          }
+                          .semantics{contentDescription=ui.text("切换任务")}
+                          .padding(vertical=4.dp),
+                      verticalAlignment=Alignment.CenterVertically,
+                      horizontalArrangement=Arrangement.spacedBy(7.dp),
+                  ){
+                      Text(
+                          project.title,
+                          modifier=Modifier.weight(1f,fill=false),
+                          style=MaterialTheme.typography.titleLarge.copy(shadow=textShadow),
+                          color=titleInk,
+                          maxLines=1,
+                          overflow=TextOverflow.Ellipsis,
+                      )
+                      Text(
+                          progressPct,
+                          style=MaterialTheme.typography.labelMedium.copy(shadow=textShadow),
+                          color=pctInk,
+                          maxLines=1,
+                      )
+                      if(orderedChoices.size>1&&s.planId==null){
+                          PixelGlyph("chevron",Modifier.size(13.dp),titleInk.copy(alpha=0.72f))
+                      }
                   }
-                  if(worldInteraction!=null&&!singleMode&&!worldInteraction.indoors&&worldInteraction.selected!=null){
-                      GalleryWorldIcon(ui.text("重置地图"),"map"){worldInteraction.resetMap()}
-                  }
-                  if(worldInteraction!=null&&!singleMode&&hasRoom){
-                      GalleryWorldIcon(ui.text(if(worldInteraction.indoors)"返回聚落"else"室内视角"),if(worldInteraction.indoors)"map"else"study"){worldInteraction.toggleInterior()}
-                  }
-                  if(s.preferences.minimalMode){
-                      GalleryWorldIcon(ui.text("极简"),"expand"){onMinimal(true)}
+                  // Right: Pure pixel icon rail (translucent glass over sky, hairline paper over maquette; reset hidden until camera moved)
+                  Row(horizontalArrangement=Arrangement.spacedBy(6.dp),verticalAlignment=Alignment.CenterVertically){
+                      if(worldInteraction!=null&&worldInteraction.cameraMoved){
+                          GalleryWorldIcon(ui.text("重置视角"),"reset",overSky){
+                              NativeTactileAudio.tick(context,1080f)
+                              worldInteraction.resetView()
+                          }
+                      }
+                      if(worldInteraction!=null&&!singleMode&&!worldInteraction.indoors&&worldInteraction.selected!=null){
+                          GalleryWorldIcon(ui.text("重置地图"),"map",overSky){
+                              NativeTactileAudio.tick(context,1080f)
+                              worldInteraction.resetMap()
+                          }
+                      }
+                      if(worldInteraction!=null&&!singleMode&&hasRoom){
+                          GalleryWorldIcon(ui.text(if(worldInteraction.indoors)"返回聚落"else"室内视角"),if(worldInteraction.indoors)"map"else"study",overSky){
+                              NativeTactileAudio.tick(context,1120f)
+                              worldInteraction.toggleInterior()
+                          }
+                      }
+                      if(s.preferences.minimalMode){
+                          GalleryWorldIcon(ui.text("极简"),"expand",overSky){
+                              NativeTactileAudio.tick(context,1180f)
+                              onMinimal(true)
+                          }
+                      }
                   }
               }
           }
@@ -673,9 +825,9 @@ import java.util.*
       if(!immersive&&reward!=null)NativeRewardMemoryPlate(reward,onCloseMemory,if(wide)Modifier.width(wideWorld).align(Alignment.BottomStart).padding(12.dp)else Modifier.align(Alignment.TopCenter).padding(start=12.dp,end=12.dp,top=(memoryHeight*NORMAL_WORLD_FRACTION-76.dp).coerceAtLeast(0.dp)))
     }
 
-    // Slim frameless Project Quick-Switch Sheet
+    // Slim frameless Project Quick-Switch Sheet (stable project order!)
     NativeSheet(Unit.takeIf{projectSheetOpen&&!immersive&&s.planId==null},{ui.text("切换任务")},{projectSheetOpen=false},contentSpacing=0.dp){
-        for((index,choice) in s.choices.withIndex()){
+        for((index,choice) in orderedChoices.withIndex()){
             if(index>0)NativeSeparator()
             val selected=choice.id==project?.id
             val info=s.workspace?.projects?.find{it.id==choice.id}
@@ -686,7 +838,10 @@ import java.util.*
             }
             NativeChoice(choice.title,selected=selected,enabled=!s.busy&&!projectSwitch.busy,icon=if(choice.habit)"repeat"else"cube",description=detail){
                 projectSheetOpen=false
-                if(!selected)projectSwitch.submit{runtime.dispatch(WorkspaceMutation.SwitchProject(choice.id),it)}
+                if(!selected){
+                    NativeTactileAudio.tick(context,1200f)
+                    projectSwitch.submit{runtime.dispatch(WorkspaceMutation.SwitchProject(choice.id),it)}
+                }
             }
         }
     }
@@ -698,27 +853,31 @@ import java.util.*
             val selected=candidate.id==task?.id
             NativeChoice(candidate.title,selected=selected,enabled=!s.busy,icon="flag",description="${(candidate.progress+50)/100}%"){
                 subtaskSheetOpen=false
+                NativeTactileAudio.tick(context,1180f)
                 onSelectTask(candidate.id)
             }
         }
     }
 }
 
-@Composable private fun GalleryWorldIcon(title:String,icon:String,onClick:()->Unit){
+@Composable private fun GalleryWorldIcon(title:String,icon:String,overSky:Boolean,onClick:()->Unit){
     var motion by remember{mutableIntStateOf(0)}
     val colors=MaterialTheme.colorScheme
     val interaction=remember{MutableInteractionSource()}
+    val bg=if(overSky)Color(0x5A0E1412)else colors.background.copy(alpha=0.82f)
+    val border=if(overSky)Color(0x48FFFFFF)else colors.outlineVariant
+    val tint=if(overSky)Color(0xFFF8F8F5)else colors.onBackground
     Box(
         Modifier
-            .size(38.dp)
-            .background(colors.background.copy(alpha=.86f))
-            .border(1.dp,colors.outlineVariant)
+            .size(36.dp)
+            .background(bg)
+            .border(1.dp,border)
             .clickable(role=Role.Button,interactionSource=interaction,indication=null){motion++;onClick()}
             .nativePressMotion(interaction)
             .semantics{contentDescription=title},
         contentAlignment=Alignment.Center,
     ){
-        NativeMotionGlyph(icon,motion,Modifier.size(18.dp),colors.onBackground)
+        NativeMotionGlyph(icon,motion,Modifier.size(17.dp),tint)
     }
 }
 
@@ -733,12 +892,12 @@ import java.util.*
     }
 }
 
-@Composable private fun NativeTimerFrame(wide:Boolean,immersive:Boolean,panelWidth:Dp,onWorldHeight:(Int)->Unit,panel:@Composable (Modifier)->Unit){
+@Composable private fun NativeTimerFrame(wide:Boolean,immersive:Boolean,panelWidth:Dp,onWorldHeight:(Int)->Unit,worldVeil:@Composable BoxScope.()->Unit={},panel:@Composable (Modifier)->Unit){
     if(wide)Row(Modifier.fillMaxSize()){
-        Spacer(Modifier.weight(1f).fillMaxHeight().onSizeChanged{onWorldHeight(it.height)})
+        Box(Modifier.weight(1f).fillMaxHeight().onSizeChanged{onWorldHeight(it.height)},content=worldVeil)
         panel(Modifier.width(panelWidth).fillMaxHeight())
     }else Column(Modifier.fillMaxSize()){
-        Spacer(Modifier.fillMaxWidth().weight(if(immersive)1f else NORMAL_WORLD_FRACTION).onSizeChanged{onWorldHeight(it.height)})
+        Box(Modifier.fillMaxWidth().weight(if(immersive)1f else NORMAL_WORLD_FRACTION).onSizeChanged{onWorldHeight(it.height)},content=worldVeil)
         panel(if(immersive)Modifier.fillMaxWidth()else Modifier.fillMaxWidth().weight(1f-NORMAL_WORLD_FRACTION))
     }
 }

@@ -7,12 +7,12 @@ export function iconPartMotion(name: string, part = ''): IconPartMotion | null {
   const motion = (keyframes: Keyframe[], origin = '6px 6px', stagger = false): IconPartMotion =>
     ({ keyframes, delay: stagger ? delay : 0, duration: ICON_MOTION_MS - (stagger ? delay : 0), origin });
   if (name === 'tasks') {
-    if (part.startsWith('task-box')) return motion([{ opacity: .15 }, { opacity: 1 }], '6px 6px', true);
-    if (part.startsWith('task-line')) return motion([{ transform: 'scaleX(.05)', opacity: .15 }, { transform: 'scaleX(1)', opacity: 1 }], '5px 0', true);
+    if (part.startsWith('task-box')) return motion([{ transform: 'scale(.55)', opacity: .15 }, { transform: 'scale(1.08)', opacity: 1, offset: .65 }, { transform: 'scale(1)', opacity: 1 }], `2px ${3 + row * 3}px`, true);
+    if (part.startsWith('task-line')) return motion([{ transform: 'scaleX(.05)', opacity: .15 }, { transform: 'scaleX(1)', opacity: 1 }], '4.5px 0', true);
   }
   if (name === 'clock' && ['hour','minute'].includes(part))
     return motion([{ transform: 'rotate(0deg)' }, { transform: `rotate(${part === 'hour' ? 360 : 4320}deg)` }], '5.5px 5.5px');
-  if (name === 'gear' && part === 'outer') return motion([{ transform: 'rotate(0deg)' }, { transform: 'rotate(360deg)' }]);
+  if (name === 'gear' && (part === 'outer' || part === 'center')) return motion([{ transform: 'rotate(0deg)' }, { transform: 'rotate(360deg)' }], '6px 6px');
   if (name === 'chart' && part.startsWith('bar-')) return motion([{ transform: 'scaleY(.06)' }, { transform: 'scaleY(1)' }], '0 9px', true);
   if(name==='calendar'&&part==='turning-page')return motion([
     {transform:'perspective(32px) rotateX(0deg)',opacity:1},
