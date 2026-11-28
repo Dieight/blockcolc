@@ -186,7 +186,16 @@ internal val NativeOptionSpacing = 8.dp
     }
 }
 
-@Composable fun <T> NativeSegments(options:List<Pair<T,String>>,value:T,onChange:(T)->Unit,enabled:Boolean=true,icons:Map<T,String> = emptyMap(),textStyle:androidx.compose.ui.text.TextStyle=MaterialTheme.typography.labelLarge){
+@Composable fun <T> NativeSegments(
+    options:List<Pair<T,String>>,
+    value:T,
+    onChange:(T)->Unit,
+    enabled:Boolean=true,
+    icons:Map<T,String> = emptyMap(),
+    textStyle:androidx.compose.ui.text.TextStyle=MaterialTheme.typography.labelLarge,
+    optionTextStyles:Map<T,androidx.compose.ui.text.TextStyle> = emptyMap(),
+    optionAnnotatedLabels:Map<T,androidx.compose.ui.text.AnnotatedString> = emptyMap(),
+){
     require(options.isNotEmpty());val reduce=LocalNativeUi.current.reduceMotion
     val index=options.indexOfFirst{it.first==value}.coerceAtLeast(0)
     val colors=MaterialTheme.colorScheme
@@ -195,14 +204,25 @@ internal val NativeOptionSpacing = 8.dp
         val available=with(density){maxWidth.roundToPx()}
         val padding=with(density){16.dp.roundToPx()}
         val iconSpace=with(density){24.dp.roundToPx()}
-        val widths=options.map{measure.measure(it.second,style,softWrap=false,maxLines=1).size.width+padding+(if(it.first in icons)iconSpace else 0)}
+        val widths=options.map{
+            val s=optionTextStyles[it.first]?:style
+            val annotated=optionAnnotatedLabels[it.first]
+            val textW=if(annotated!=null)measure.measure(annotated,s,softWrap=false,maxLines=1).size.width
+                else measure.measure(it.second,s,softWrap=false,maxLines=1).size.width
+            textW+padding+(if(it.first in icons)iconSpace else 0)
+        }
         // Labels that cannot share one row wrap into the fewest balanced rows
         // that keep every label whole (five options become 3 + 2); very
         // large text still ends with one complete option per row.
         val rows=nativeSegmentRows(options.size){perRow->widths.all{it<=available/perRow}}
         val starts=rows.runningFold(0){start,count->start+count}
         val textWidth=(available/rows.max()).minus(padding).minus(if(icons.isEmpty())0 else iconSpace).coerceAtLeast(1)
-        val lineHeight=options.maxOf{measure.measure(it.second,style,constraints=Constraints(maxWidth=textWidth)).size.height}
+        val lineHeight=options.maxOf{
+            val s=optionTextStyles[it.first]?:style
+            val annotated=optionAnnotatedLabels[it.first]
+            if(annotated!=null)measure.measure(annotated,s,constraints=Constraints(maxWidth=textWidth)).size.height
+            else measure.measure(it.second,s,constraints=Constraints(maxWidth=textWidth)).size.height
+        }
         val rowHeight=maxOf(48.dp,with(density){lineHeight.toDp()}+24.dp)
         val row=starts.indexOfLast{it<=index}.coerceIn(0,rows.lastIndex)
         val selectionX by animateFloatAsState((index-starts[row]).toFloat()/rows[row],tween(if(reduce)0 else 200),label="segmented-x")
@@ -210,12 +230,16 @@ internal val NativeOptionSpacing = 8.dp
         val selectionRow by animateFloatAsState(row.toFloat(),tween(if(reduce)0 else 200),label="segmented-row")
         @Composable fun item(id:T,label:String,modifier:Modifier){
             val interaction=remember{MutableInteractionSource()}
+            val itemStyle=optionTextStyles[id]?:style
+            val annotated=optionAnnotatedLabels[id]
+            val itemColor=if(id==value)colors.primary else colors.onSurfaceVariant
             Box(modifier.heightIn(min=rowHeight).selectable(id==value,enabled=enabled,role=Role.Tab,
                 interactionSource=interaction,indication=null,onClick={onChange(id)})
                 .nativePressMotion(interaction,enabled).padding(horizontal=8.dp,vertical=12.dp),contentAlignment=Alignment.Center){
                 Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(7.dp)){
-                    icons[id]?.let{PixelGlyph(it,Modifier.size(16.dp),if(id==value)colors.primary else colors.onSurfaceVariant)}
-                    Text(label,style=style,color=if(id==value)colors.primary else colors.onSurfaceVariant)
+                    icons[id]?.let{PixelGlyph(it,Modifier.size(16.dp),itemColor)}
+                    if(annotated!=null)Text(annotated,style=itemStyle,color=itemColor)
+                    else Text(label,style=itemStyle,color=itemColor)
                 }
             }
         }

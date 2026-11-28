@@ -42,7 +42,9 @@ class NativeWorldSession(context:Context,deliver:(Runnable)->Unit,directory:File
             NativeWorldPacketCompiler(signRasterizer,packetAllocator,true,caches?.staticWorld,caches?.paperWorld,compactGeometry)
         }})
     fun request(identity:WorldRequestIdentity,document:DomainDocument,options:WorldTerrainOptions=WorldTerrainOptions(),
-        onReady:(PreparedWorldRequest)->Unit,onFailure:(Exception)->Unit)=worker.request(identity,document,options,onReady,onFailure)
+        onReady:(PreparedWorldRequest)->Unit,onFailure:(Exception)->Unit)=worker.request(identity,document,options,onReady,onFailure,null)
+    fun request(identity:WorldRequestIdentity,document:DomainDocument,options:WorldTerrainOptions=WorldTerrainOptions(),
+        onReady:(PreparedWorldRequest)->Unit,onFailure:(Exception)->Unit,onProgress:((Float)->Unit)?)=worker.request(identity,document,options,onReady,onFailure,onProgress)
     fun cancelPending()=worker.cancelPending()
     internal fun paperCacheStatsForTest()=synchronized(gate){caches?.paperWorld?.stats}
     override fun close(){

@@ -399,7 +399,7 @@ class NativeWorldView(context: Context, private val fixture: String, private val
         shadowLightEntity = nextShadowEntity
         useStockDirectionalShadows = shadowLight != null
     }
-    fun updateGenerated(input:NativeGeneratedScene,resetCamera:Boolean=false){render.post{
+    fun updateGenerated(input:NativeGeneratedScene,resetCamera:Boolean=false,animateSingleArrival:Boolean=false){render.post{
         if(closed||failed||!generatedMode||input.generation<generatedGeneration||input.generation==generatedGeneration&&input.revision<generatedRevision)return@post
         val old=packets?:return@post;val changed=input.sources.filter{generatedOwners[it.owner]!=it.ownerIdentity}
         if(BuildConfig.NATIVE_DIAGNOSTICS)generatedAdoptionStartedNs=System.nanoTime()
@@ -442,6 +442,7 @@ class NativeWorldView(context: Context, private val fixture: String, private val
                 colorPipeline?.exposure(input.lighting.exposure)
             }
             navigation?.adopt(input.camera,input.orbitTargets,resetCamera)
+            if(animateSingleArrival&&!fixedGeneratedCamera){navigation?.playSingleArrival(!platformMotionAllowed())}
             if(BuildConfig.NATIVE_DIAGNOSTICS&&fixedGeneratedCamera){
                 val camera=input.camera
                 for(i in 0..2)target[i]=camera.target[i]
@@ -473,9 +474,13 @@ class NativeWorldView(context: Context, private val fixture: String, private val
     }}
     /** Render-thread only camera commands, independent of scene generation. */
     private fun syncRasterSize(){colorPipeline?.let{packets?.resize(it.sceneWidth,it.sceneHeight)}}
-    fun navigate(id:String?,reset:Boolean=false){render.post{
+    fun navigate(id:String?,reset:Boolean=false,animate:Boolean=false){render.post{
         if(closed||failed||!generatedMode)return@post
-        val orbit=navigation?:return@post;invalidatePicks();if(!orbit.indoors&&!orbit.focus(id))return@post
+        val orbit=navigation?:return@post;invalidatePicks()
+        if(!orbit.indoors){
+            val ok=if(animate&&!reset)orbit.flyTo(id,!platformMotionAllowed()) else orbit.focus(id)
+            if(!ok)return@post
+        }
         if(reset)orbit.resetView()
         project();cameraDirty=true;requestFrame()
     }}
@@ -823,7 +828,7 @@ class NativeWorldView(context: Context, private val fixture: String, private val
         val surfaceTicket=surfaceLease.frameTicket()?:return
         val c=camera?:return;val r=renderer?:return;val chain=swap?:return;val v=view?:return
         try {
-            if(openingPlaying&&navigation?.advanceOpening(timestamp)==true)cameraDirty=true
+            if((openingPlaying||navigation?.transitionActive==true)&&navigation?.advanceOpening(timestamp)==true)cameraDirty=true
             if(openingPlaying&&navigation?.openingActive!=true){
                 openingPlaying=false;openingFinished?.let{main.post(it)};openingFinished=null
             }
@@ -877,7 +882,7 @@ class NativeWorldView(context: Context, private val fixture: String, private val
                     File(context.filesDir,"p2-construction-$fixture.json").writeText(result.toString());pendingBusinessReport=null
                 }
             }else requestFrame()
-            if(animated||openingPlaying&&navigation?.openingActive==true)requestFrame()
+            if(animated||(openingPlaying||navigation?.transitionActive==true)&&navigation?.transitionActive==true)requestFrame()
             if(measure!=null&&!measure.completed)requestFrame()
         } catch(error:Throwable){
             android.util.Log.e("BlockcolcWorld","World frame failed",error)

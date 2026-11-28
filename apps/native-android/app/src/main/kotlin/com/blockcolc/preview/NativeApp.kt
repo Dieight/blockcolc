@@ -93,7 +93,7 @@ private val NATIVE_UI_PROCESS=java.util.UUID.randomUUID().toString()
     NativeTheme(snapshot.preferences,resources){
         CompositionLocalProvider(LocalNativeLoading provides loadingChoice,com.blockcolc.preview.world.LocalColdWorldCacheTag provides coldCacheTag){
             if(!snapshot.ready&&snapshot.error==null&&!snapshot.refreshRequired){
-                NativeLoadingScene(LocalNativeUi.current.text("正在读取本机记录"),Modifier.fillMaxSize(),stageKind="storage")
+                NativeLoadingScene(LocalNativeUi.current.text("正在读取本机记录"),Modifier.fillMaxSize(),stageKind="storage",progress=0.22f)
             }else if(snapshot.ready&&snapshot.setupRequired&&snapshot.error==null&&!snapshot.refreshRequired){
                 NativeFirstUse(snapshot,runtime,onImport){interactive=true}
             }else NativeReadyApp(snapshot,runtime,backdrop,worldInteraction,pageSelection,minimalSelection,onImport,initialWorldDebug){interactive=it}
@@ -236,7 +236,8 @@ private val NATIVE_UI_PROCESS=java.util.UUID.randomUUID().toString()
                      worldDisplayMode=snapshot.preferences.worldDisplayMode,
                      singleBuildingBackdrop=snapshot.preferences.singleBuildingBackdrop,
                      activeProjectId=snapshot.activeProject,
-                     darkTheme=darkTheme)})
+                     darkTheme=darkTheme,
+                     holdConstructionUpdates=snapshot.timer?.extensionStartedAt!=null)})
     }
 }
 
@@ -264,7 +265,7 @@ private val NATIVE_UI_PROCESS=java.util.UUID.randomUUID().toString()
     val interruption=protectionNotice?.takeIf{it.stopped}
     var handledInterruption by rememberSaveable{mutableStateOf<String?>(null)}
     val returning=interruption?.takeUnless{it.sessionId==handledInterruption}
-    val minimal=returning?.returnsToMinimal?:minimalSelection.value?:s.preferences.minimalMode
+    val minimal=returning?.returnsToMinimal?.takeIf{s.preferences.minimalMode}?:minimalSelection.value?:s.preferences.minimalMode
     SideEffect{
         if(returning!=null){
             minimalSelection.value=minimal
@@ -526,7 +527,7 @@ private val NATIVE_UI_PROCESS=java.util.UUID.randomUUID().toString()
                      val loading=ui.text("正在建造世界")
                      NativeLoadingScene(loading,Modifier.width(if(wideTimer&&!immersive)wideWorld else maxWidth).then(worldSize).semantics{
                          contentDescription=ui.text("聚落世界");stateDescription=loading
-                     },embedded=true)
+                     },embedded=true,progress=0.34f)
                  }
         if(modeMotion)NativeModeWorldCover(modeFrame,modeFrameAlpha.asState(),MaterialTheme.colorScheme.background,Modifier.fillMaxSize())
         // The transition cover consumes touch. Hide covered controls from
@@ -628,7 +629,8 @@ private val NATIVE_UI_PROCESS=java.util.UUID.randomUUID().toString()
             .background(MaterialTheme.colorScheme.background))
       }
     }
-    NativeCelebrationOverlay(runtime.celebrations,foreground,worldReady&&(immersive||page=="timer")&&startupOpen)
+    val celebrationReady=worldReady&&(immersive||page=="timer")&&startupOpen&&s.timer?.surface!=TimerSurface.FOCUS
+    NativeCelebrationOverlay(runtime.celebrations,foreground,celebrationReady)
     val bannerGap=with(density){12.dp.roundToPx()}
     val bannerInset=WindowInsets.safeDrawing.getTop(density)+bannerGap
     val bannerAnchor=if(timerPanelTop>0&&!wideTimer)timerPanelTop else viewportHeight-navigationHeight

@@ -305,7 +305,7 @@ class NativeWorldPacketCompilerTest {
             val identity=WorldRequestIdentity("single.db",0,1)
             val maquetteLight=compiler.prepare(identity,world,options.copy(
                 narrative=WorldDisplayNarrative.SINGLE,singleBackdrop=SingleBuildingBackdrop.MAQUETTE,singleOwnerId="a",darkSurface=false))
-            assertEquals(listOf("world","building:a",PacketOwners.INTERIOR),maquetteLight.scene.sources.map{it.owner})
+            assertEquals(listOf("world","building:a",PacketOwners.PRECIPITATION,PacketOwners.LIGHTNING,PacketOwners.INTERIOR),maquetteLight.scene.sources.map{it.owner})
             assertTrue(maquetteLight.scene.camera.preview)
             assertTrue(maquetteLight.scene.post.direct)
             assertNull(maquetteLight.scene.lighting.fog)
@@ -316,7 +316,7 @@ class NativeWorldPacketCompilerTest {
 
             val maquetteDark=compiler.prepare(identity,world,options.copy(
                 narrative=WorldDisplayNarrative.SINGLE,singleBackdrop=SingleBuildingBackdrop.MAQUETTE,singleOwnerId="b",darkSurface=true))
-            assertEquals(listOf("world","building:b",PacketOwners.INTERIOR),maquetteDark.scene.sources.map{it.owner})
+            assertEquals(listOf("world","building:b",PacketOwners.PRECIPITATION,PacketOwners.LIGHTNING,PacketOwners.INTERIOR),maquetteDark.scene.sources.map{it.owner})
             assertNotEquals(maquetteLight.spatialKey,maquetteDark.spatialKey)
             val expectedDarkClear=LinearRgb.fromSrgb(0x0B0D0C)
             assertEquals(expectedDarkClear.red,maquetteDark.scene.lighting.clearColor[0],1e-4f)

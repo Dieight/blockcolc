@@ -100,8 +100,8 @@ internal fun Modifier.focusExitGestures(controls: FocusExitControls, enabled: Bo
         else if(controls.visibility == FocusExitVisibility.HINT){
             val colors=MaterialTheme.colorScheme
             NativeText(ui.text("双击下方空白处唤出结束按钮"),NativeTextRole.CAPTION,
-                Modifier.padding(horizontal=8.dp).background(colors.inverseSurface).padding(horizontal=8.dp,vertical=4.dp),
-                color=colors.inverseOnSurface)
+                Modifier.padding(horizontal=8.dp).background(colors.surface.copy(alpha=0.80f)).border(1.dp,colors.outlineVariant).padding(horizontal=10.dp,vertical=5.dp),
+                color=colors.onSurfaceVariant)
         }
     }
 }

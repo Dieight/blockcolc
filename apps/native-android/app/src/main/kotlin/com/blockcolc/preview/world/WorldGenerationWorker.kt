@@ -40,25 +40,35 @@ class WorldGenerationWorker(
     private var packetCompiler:NativeWorldPacketCompiler?=null
 
     fun request(identity:WorldRequestIdentity,document:DomainDocument,onReady:(PreparedWorldRequest)->Unit,onFailure:(Exception)->Unit)=
-        request(identity,document,WorldTerrainOptions(),onReady,onFailure)
+        request(identity,document,WorldTerrainOptions(),onReady,onFailure,null)
 
-    fun request(identity:WorldRequestIdentity,document:DomainDocument,options:WorldTerrainOptions,onReady:(PreparedWorldRequest)->Unit,onFailure:(Exception)->Unit) {
+    fun request(identity:WorldRequestIdentity,document:DomainDocument,options:WorldTerrainOptions,onReady:(PreparedWorldRequest)->Unit,onFailure:(Exception)->Unit)=
+        request(identity,document,options,onReady,onFailure,null)
+
+    fun request(identity:WorldRequestIdentity,document:DomainDocument,options:WorldTerrainOptions,onReady:(PreparedWorldRequest)->Unit,onFailure:(Exception)->Unit,onProgress:((Float)->Unit)?) {
         synchronized(gate) {
             check(!closed){"World generation worker is closed"}
             val ticket=++sequence
             pending?.cancel(false)
+            fun reportProgress(fraction:Float){
+                val cb=onProgress?:return
+                deliver(Runnable{synchronized(gate){if(!closed&&sequence==ticket)cb(fraction)}})
+            }
             pending=executor.schedule({
                 fun cancelled()=closed||sequence!=ticket
                 if(cancelled())return@schedule
                 val result=try { com.blockcolc.world.NativePacketBuffers.using(packetAllocator){
+                    reportProgress(0.22f)
                     val planner=builder?:builderFactory().also{builder=it}
                     val facts=com.blockcolc.preview.NativeStartupTrace.measure("world-facts",benchmark=true){WorldFacts.from(document)}
                     val paper=options.rendering?.quality==com.blockcolc.world.NativeLightingQuality.PAPER
                     val plan=com.blockcolc.preview.NativeStartupTrace.measure("world-layout",benchmark=true){
                         planner.prepare(facts,options.buildingCondition,!paper,::cancelled)
                     }
+                    reportProgress(0.46f)
                     val terrain=com.blockcolc.preview.NativeStartupTrace.measure("world-terrain",benchmark=true){planner.terrain(plan,options,::cancelled)}
                     com.blockcolc.preview.NativeStartupTrace.point("cache-${terrain.reuse.name}-${terrain.sceneryReuse.name}")
+                    reportProgress(0.68f)
                     val frame=options.rendering?.let{renderOptions->
                         val compiler=packetCompiler?:(packetCompilerFactory?.invoke()
                             ?:NativeWorldPacketCompiler(signRasterizer,packetAllocator,parallel=true)).also{packetCompiler=it}
@@ -66,6 +76,7 @@ class WorldGenerationWorker(
                             resourcePreparation?.let{prepare->renderOptions.copy(resources=prepare(options.resourceSelection,::cancelled))}?:renderOptions
                         com.blockcolc.preview.NativeStartupTrace.measure("world-packets",benchmark=true){compiler.prepare(identity,terrain,actual,::cancelled)}
                     }
+                    reportProgress(0.90f)
                     PreparedWorldRequest(identity,document.sha256,plan,terrain,frame)
                 }} catch(_:CancellationException) { return@schedule }
                 catch(error:OutOfMemoryError) {

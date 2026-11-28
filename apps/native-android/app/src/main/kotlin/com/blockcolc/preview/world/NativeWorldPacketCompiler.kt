@@ -54,6 +54,8 @@ class NativeWorldPacketCompiler internal constructor(signRasterizer:NativeSignRa
     private var ground:Pair<String,NativePrecipitationGround>?=null
     private data class RootKey(val spatial:String,val terrain:String,val scenery:String,val state:NativeSurfaceState,val paper:Boolean)
     private var root:Pair<RootKey,NativePacketSource>?=null
+    private var singlePlinth:Pair<String,NativePacketSource>?=null
+    private var singleGround:Pair<String,NativePrecipitationGround>?=null
     // Preparation caches may evict/recreate an identical structure after a
     // cancelled or failed candidate. Reuse by its complete immutable input and
     // rebase origin, not the temporary geometry container's object identity.
@@ -230,24 +232,28 @@ class NativeWorldPacketCompiler internal constructor(signRasterizer:NativeSignRa
         val camera=NativeSceneCamera(target,eye,fitted,fov,
             SourceCamera(framing,visibility,NativeSky.RADIUS,.82,.91,1.5,NativeSky.RADIUS),options.aspect,preview=true,paper=paper)
 
-        val environmentContext=NativeEnvironmentContext(options.zone,options.quality,framing,max(padWidth,padDepth),fitted,
-            ocean=false,options.coordinates,options.weather,NativeSkyOptions(floating=true,coldRegion=false),options.atmosphere?.inputs?.timeMinutes)
-        val baseSample=options.atmosphere?.takeIf{!it.inputs.ocean}?.let(environmentContext::project)?:environmentContext.sample(options.time)
+        val atmo=options.atmosphere?.inputs
+        val ocean=atmo?.ocean?:(world.input.spatial.environment==WorldEnvironment.OCEAN)
+        val environmentContext=NativeEnvironmentContext(atmo?.zone?:options.zone,options.quality,framing,max(padWidth,padDepth),fitted,
+            ocean=ocean,atmo?.coordinates?:options.coordinates,atmo?.weather?:options.weather,NativeSkyOptions(floating=true,coldRegion=false),atmo?.timeMinutes)
+        val baseSample=options.atmosphere?.let(environmentContext::project)?:environmentContext.sample(options.time)
         val sample=if(maquette) maquetteEnvironment(baseSample,options.quality,options.darkSurface) else baseSample
         val materialState=NativeSurfaceState(ambientOcclusion=options.quality.ambientOcclusion)
 
-        val plinthVoxels=buildSinglePlinth(hx,hz,maquette,options.darkSurface)
-        val plinthOrigin=BlockPoint(0.0,0.0,0.0)
-        val plinthPose=NativeStructurePlacement(BlockPoint(0.0,0.0,0.0))
         val plinthKey="single-plinth:${options.singleBackdrop.wire}:${hx}x${hz}:${options.darkSurface}:${materialState.ambientOcclusion}:$paper"
-        val plinthSource=NativePacketBuilder("world").also{plinth->
-            if(paper)PaperWorldMesh.appendOwner(plinth,plinthVoxels,emptyList(),plinthOrigin,plinthPose,0.0,allocator,cancelled)
-            else {
-                val recipe=BuildingPreparation.staticStructure(plinthVoxels,plinthKey,cancelled=cancelled)
-                val mesh=if(resourceCompiler==null)compiler.compile(recipe,plinthOrigin,cancelled)else null
-                appendStructure(plinth,"world",recipe,mesh,plinthPose,materialState,origin=plinthOrigin,cancelled=cancelled)
-            }
-        }.build(cancelled)
+        val plinthSource=singlePlinth?.takeIf{it.first==plinthKey}?.second?:run{
+            val plinthVoxels=buildSinglePlinth(hx,hz,maquette,options.darkSurface)
+            val plinthOrigin=BlockPoint(0.0,0.0,0.0)
+            val plinthPose=NativeStructurePlacement(BlockPoint(0.0,0.0,0.0))
+            NativePacketBuilder("world").also{plinth->
+                if(paper)PaperWorldMesh.appendOwner(plinth,plinthVoxels,emptyList(),plinthOrigin,plinthPose,0.0,allocator,cancelled)
+                else {
+                    val recipe=BuildingPreparation.staticStructure(plinthVoxels,plinthKey,cancelled=cancelled)
+                    val mesh=if(resourceCompiler==null)compiler.compile(recipe,plinthOrigin,cancelled)else null
+                    appendStructure(plinth,"world",recipe,mesh,plinthPose,materialState,origin=plinthOrigin,cancelled=cancelled)
+                }
+            }.build(cancelled).also{singlePlinth=plinthKey to it}
+        }
 
         val owner="building:${building.fact.id}"
         val showOutline=options.outlines.shows(true,building.fact.completion)
@@ -275,13 +281,21 @@ class NativeWorldPacketCompiler internal constructor(signRasterizer:NativeSignRa
         val cloud=clouds.prepare(cloudContext,if(maquette)clearWeather else sample.weather,if(maquette)0.0 else options.quality.cloudDensity,cancelled,paper)
         if(!maquette)inputs+=cloud.source
 
-        val precipitationContext=NativePrecipitationContext(listOf(-extent,extent,-extent,extent),listOf(padWidth*2.0,padDepth*2.0),NativePrecipitationGround.prepare(world.surfaces,cancelled))
-        val rain=precipitation.prepare(precipitationContext,if(maquette)clearWeather else sample.weather,if(maquette)0.0 else options.quality.cloudDensity,cloud.randomTail,cancelled,paper)
-        if(!maquette)inputs+=rain.source
+        val groundKey="single-ground:${hx}x${hz}:${extent.roundToInt()}"
+        val plinthGround=singleGround?.takeIf{it.first==groundKey}?.second?:NativePrecipitationGround.prepare(
+            listOf(
+                TerrainSurface(-extent,extent,-extent,extent,-6.0,TerrainMaterial.STONE),
+                TerrainSurface(-hx.toDouble()-0.5,hx.toDouble()+0.5,-hz.toDouble()-0.5,hz.toDouble()+0.5,0.0,TerrainMaterial.STONE),
+            ),
+            cancelled,
+        ).also{singleGround=groundKey to it}
+        val precipitationContext=NativePrecipitationContext(listOf(-extent,extent,-extent,extent),listOf(padWidth*2.0,padDepth*2.0),plinthGround)
+        val rain=precipitation.prepare(precipitationContext,sample.weather,options.quality.cloudDensity,cloud.randomTail,cancelled,paper)
+        inputs+=rain.source
 
         if(!maquette&&!paper)inputs+=sky.prepare(true,cancelled)
-        val stormContext=if(maquette)null else NativeStormContext(target,padWidth*2.0,padDepth*2.0,cloudContext.baseY)
-        if(!maquette)inputs+=lightning.prepare(checkNotNull(stormContext),cancelled)
+        val stormContext=NativeStormContext(target,padWidth*2.0,padDepth*2.0,cloudContext.baseY)
+        inputs+=lightning.prepare(stormContext,cancelled)
         inputs+=NativeInteriorCompiler.empty()
 
         val targets=listOf(NativeOrbitTarget(building.fact.id,BlockPoint(0.0,0.0,0.0),width,depth,height))
@@ -291,32 +305,62 @@ class NativeWorldPacketCompiler internal constructor(signRasterizer:NativeSignRa
         check(cancelled)
         val scene=NativeGeneratedScene(inputs,sample.lighting,post,camera,request.replacementGeneration,request.revision,
             sample.surface,sample.cloudColor,if(maquette)null else sample.sky,if(maquette)null else sample.fogProjection,
-            if(maquette)null else NativeStormWeather(sample.weather.thunderstorm,sample.weather.seed),stormContext,targets,pickIndex,null)
+            NativeStormWeather(sample.weather.thunderstorm,sample.weather.seed),stormContext,targets,pickIndex,null)
         preparedResources.clear()
         val spatialKey="single:${options.singleBackdrop.wire}:${building.fact.id}:${options.darkSurface}"
         return NativeWorldFrame(request,scene,sample,spatialKey,plinthKey,"single",entityPlan?.pendingBlocks?:0,environmentContext,cloudContext,cloud,precipitationContext,rain)
     }
 
-    private fun maquetteEnvironment(base:NativeEnvironmentSample,quality:NativeLightingQuality,dark:Boolean):NativeEnvironmentSample {
-        fun rgb(hex:Int)=LinearRgb.fromSrgb(hex).let{listOf(it.red,it.green,it.blue)}
-        val clearHex=if(dark)0x0B0D0C else 0xF6F5F1
-        val rawDir=listOf(-0.52,-0.74,-0.42);val dirLen=sqrt(rawDir.sumOf{it*it})
-        val keyDir=rawDir.map{(it/dirLen).toFloat()}
-        val keyColor=if(dark)0xE8EEF2 else 0xFFF7EA
-        val keyIntensity=if(dark)1.62f else 1.88f
-        val hemiSky=if(dark)0xA4B8CC else 0xFAF8F2
-        val hemiGround=if(dark)0x2B332F else 0xCFCBC1
-        val hemiIntensity=if(dark)1.32f else 1.24f
-        val lights=listOf(
-            SourceLight("DirectionalLight",rgb(keyColor),keyIntensity,keyDir,listOf(0f,0f,0f),true,listOf(0f,0f,0f),0f,0.012f),
-            SourceLight("HemisphereLight",rgb(hemiSky),hemiIntensity,listOf(0f,1f,0f),listOf(0f,0f,0f),false,rgb(hemiGround),0f,0f),
-        )
-        val lighting=SourceLighting(exposure=if(dark)1.28f else 1.18f,clearColor=rgb(clearHex),lights=lights,
-            shadowsEnabled=quality!=NativeLightingQuality.PAPER,pending=emptyList(),fog=null)
-        val effects=SurfaceEffects(keyDir.map{-it},rgb(keyColor),rgb(quality.coolColor),quality.faceContrast,0f)
-        val surface=NativeSurfaceState(effects,NightField.NONE,if(dark)0.22f else 0f,quality.ambientOcclusion,1f,1f)
-        return base.copy(lighting=lighting,surface=surface,post=SourcePost.NONE.copy(direct=true,samples=if(quality==NativeLightingQuality.PAPER)0 else 4),
-            sky=null,fogProjection=null)
+    companion object {
+        internal fun maquetteEnvironment(base:NativeEnvironmentSample,quality:NativeLightingQuality,dark:Boolean):NativeEnvironmentSample {
+            fun rgb(hex:Int)=LinearRgb.fromSrgb(hex).let{listOf(it.red,it.green,it.blue)}
+            fun blend(a:List<Float>,b:List<Float>,t:Float):List<Float>{
+                val f=t.coerceIn(0f,1f)
+                return List(3){i->(a[i]+(b[i]-a[i])*f).coerceIn(0f,1f)}
+            }
+            val clearHex=if(dark)0x0B0D0C else 0xF6F5F1
+            val rawDir=listOf(-0.52,-0.74,-0.42);val dirLen=sqrt(rawDir.sumOf{it*it})
+            val keyDir=rawDir.map{(it/dirLen).toFloat()}
+            val night=base.surface.nightFactor.coerceIn(0f,1f)
+            val weather=base.weather
+            val weatherKeyHex=when{
+                weather.thunderstorm->if(dark)0x92B0CE else 0xB8CFE6
+                weather.kind==NativeWeatherKind.RAIN->if(dark)0xA4C0DA else 0xC6DBEE
+                weather.kind==NativeWeatherKind.SNOW->if(dark)0xCCE0F2 else 0xEEF6FF
+                weather.kind in setOf(NativeWeatherKind.CLOUDY,NativeWeatherKind.MIST)->if(dark)0xC4CED4 else 0xECEEE9
+                else->if(dark)0xE8EEF2 else 0xFFF7EA
+            }
+            val weatherScale=when{
+                weather.thunderstorm->0.70f
+                weather.kind==NativeWeatherKind.RAIN->0.78f
+                weather.kind==NativeWeatherKind.SNOW->0.90f
+                weather.kind in setOf(NativeWeatherKind.CLOUDY,NativeWeatherKind.MIST)->0.86f
+                else->1.0f
+            }
+            val moonHex=if(dark)0x8AA6CC else 0xB8CCE6
+            val keyRgb=blend(rgb(weatherKeyHex),rgb(moonHex),night*0.65f)
+            val keyIntensity=(if(dark)1.62f else 1.88f)*weatherScale*(1f-night*0.34f)
+            val hemiSkyBase=when{
+                weather.kind==NativeWeatherKind.RAIN->if(dark)0x7E96AE else 0xD8E2EC
+                weather.kind==NativeWeatherKind.SNOW->if(dark)0x9CB4CC else 0xEFF4FA
+                weather.kind in setOf(NativeWeatherKind.CLOUDY,NativeWeatherKind.MIST)->if(dark)0x8EA0AE else 0xE8EAE6
+                else->if(dark)0xA4B8CC else 0xFAF8F2
+            }
+            val hemiSkyRgb=blend(rgb(hemiSkyBase),rgb(if(dark)0x5C7292 else 0xA8BAD0),night*0.55f)
+            val hemiGround=rgb(if(dark)0x2B332F else 0xCFCBC1)
+            val hemiIntensity=(if(dark)1.32f else 1.24f)*(1f-night*0.24f)
+            val lights=listOf(
+                SourceLight("DirectionalLight",keyRgb,keyIntensity,keyDir,listOf(0f,0f,0f),true,listOf(0f,0f,0f),0f,0.012f),
+                SourceLight("HemisphereLight",hemiSkyRgb,hemiIntensity,listOf(0f,1f,0f),listOf(0f,0f,0f),false,hemiGround,0f,0f),
+            )
+            val exposure=(if(dark)1.28f else 1.18f)*(1f-night*0.12f)*(if(weather.thunderstorm)0.92f else 1f)
+            val lighting=SourceLighting(exposure=exposure,clearColor=rgb(clearHex),lights=lights,
+                shadowsEnabled=quality!=NativeLightingQuality.PAPER,pending=emptyList(),fog=null)
+            val effects=SurfaceEffects(keyDir.map{-it},keyRgb,rgb(quality.coolColor),quality.faceContrast,0f)
+            val surface=NativeSurfaceState(effects,NightField.NONE,max(if(dark)0.22f else 0f,night),quality.ambientOcclusion,1f,1f)
+            return base.copy(lighting=lighting,surface=surface,post=SourcePost.NONE.copy(direct=true,samples=if(quality==NativeLightingQuality.PAPER)0 else 4),
+                sky=null,fogProjection=null)
+        }
     }
 
     private fun buildSinglePlinth(hx:Int,hz:Int,maquette:Boolean,dark:Boolean):List<RenderVoxel> {
@@ -397,6 +441,6 @@ class NativeWorldPacketCompiler internal constructor(signRasterizer:NativeSignRa
         val fallback=compiler.compile(recipe,origin,cancelled,NativeSourceIndices.unionView(resource.acceptedMembers,excluded),resource.fluids?.plan?.acceptedFree.orEmpty(),resource.fluids?.plan?.acceptedWaterlogged.orEmpty())
         originals.append(target,fallback,placement,state,weathering,lod,cancelled=cancelled,cubeContacts=cubeContacts)
     }
-    fun clear(){rootCompiler?.clear();rootCompiler=null;root=null;owners.clear();compiler.clear();preparedResources.clear();resourceCompiler?.clear();resourceCompiler=null;resourcePackets=null;resourceAssets=null;materials.clear();clouds.clear();precipitation.clear();sky.clear();lightning.clear();picking.clear();entities.clear();animals.clear();ground=null}
+    fun clear(){rootCompiler?.clear();rootCompiler=null;root=null;singlePlinth=null;singleGround=null;owners.clear();compiler.clear();preparedResources.clear();resourceCompiler?.clear();resourceCompiler=null;resourcePackets=null;resourceAssets=null;materials.clear();clouds.clear();precipitation.clear();sky.clear();lightning.clear();picking.clear();entities.clear();animals.clear();ground=null}
     override fun close(){try{clear()}finally{preparation.close()}}
 }

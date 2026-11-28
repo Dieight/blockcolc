@@ -32,10 +32,17 @@ class NativeWorldNavigation(camera:NativeSceneCamera,targets:List<NativeOrbitTar
     private var interiorAzimuth=PI/2
     private var interiorPitch=0.0
     private var interiorFov=55.0
-    private data class Opening(val from:BlockPoint,val to:BlockPoint,val fromDistance:Double,val toDistance:Double,
-        var previous:Long?=null,var elapsed:Long=0)
-    private var opening:Opening?=null
-    val openingActive:Boolean get()=opening!=null
+    private data class CameraTransition(
+        val from:BlockPoint,val to:BlockPoint,
+        val fromDistance:Double,val toDistance:Double,
+        val fromPitch:Double,val toPitch:Double,
+        val fromAzimuth:Double,val toAzimuth:Double,
+        val durationNs:Long,val arcLift:Double=0.0,val isOpening:Boolean=false,
+        var previous:Long?=null,var elapsed:Long=0,
+    )
+    private var opening:CameraTransition?=null
+    val openingActive:Boolean get()=opening?.isOpening==true
+    val transitionActive:Boolean get()=opening!=null
     val indoors:Boolean get()=interior!=null
     val orthographic:Boolean get()=camera.paper&&!indoors
     val orthographicEyeOffset:Double get()=if(orthographic)paperEyeOffset(target,distance)else 0.0
@@ -65,7 +72,7 @@ class NativeWorldNavigation(camera:NativeSceneCamera,targets:List<NativeOrbitTar
         require(aspect.isFinite()&&aspect>0);if(this.aspect==aspect)return
         this.aspect=aspect
         val running=opening
-        if(running!=null&&interior==null){
+        if(running!=null&&running.isOpening&&interior==null){
             // Window insets can change while the opening is already visible.
             // Refit both endpoints, retaining the visible animation time.
             prepareOpening(selected)
@@ -78,6 +85,34 @@ class NativeWorldNavigation(camera:NativeSceneCamera,targets:List<NativeOrbitTar
         if(id==selected)return true
         opening=null;selected=id;fit(true);return true
     }
+    /** Smooth aerial fly-over between buildings in Settlement mode. */
+    fun flyTo(id:String?,reduceMotion:Boolean=false):Boolean {
+        if(interior!=null)return false
+        if(id!=null&&targets.none{it.id==id})return false
+        if(id==selected&&opening==null)return true
+        val fromTarget=target;val fromDist=distance;val fromPitch=pitch;val fromAzimuth=azimuth
+        selected=id;fit(true)
+        val toTarget=target;val toDist=distance;val toPitch=pitch;val toAzimuth=azimuth
+        val travel=hypot(toTarget.x-fromTarget.x,toTarget.z-fromTarget.z)
+        if(reduceMotion||camera.preview||(travel<0.2&&abs(toDist-fromDist)<0.2)){
+            opening=null;return true
+        }
+        val lift=(travel*0.18).coerceIn(1.2,7.5)
+        opening=CameraTransition(fromTarget,toTarget,fromDist,toDist,fromPitch,toPitch,fromAzimuth,toAzimuth,720_000_000L,arcLift=lift,isOpening=false)
+        target=fromTarget;distance=fromDist
+        return true
+    }
+    /** Subtle museum-turntable arrival glide when switching models in Single-Building mode. */
+    fun playSingleArrival(reduceMotion:Boolean=false){
+        if(reduceMotion||interior!=null)return
+        val toTarget=target;val toDist=distance;val toPitch=pitch;val toAzimuth=azimuth
+        val fromTarget=BlockPoint(toTarget.x,toTarget.y-0.55,toTarget.z)
+        val fromDist=(toDist*1.12).coerceIn(minimum,maximum)
+        val fromPitch=(toPitch+0.07).coerceIn(24*PI/180,64*PI/180)
+        val fromAzimuth=toAzimuth-0.24
+        opening=CameraTransition(fromTarget,toTarget,fromDist,toDist,fromPitch,toPitch,fromAzimuth,toAzimuth,460_000_000L,arcLift=0.0,isOpening=false)
+        target=fromTarget;distance=fromDist;pitch=fromPitch;azimuth=fromAzimuth
+    }
     /** Prepare behind the world loader; the first visible frame starts the clock. */
     fun prepareOpening(id:String?,reduceMotion:Boolean=false){
         if(camera.preview||interior!=null)return
@@ -85,20 +120,28 @@ class NativeWorldNavigation(camera:NativeSceneCamera,targets:List<NativeOrbitTar
         selected=id?.takeIf{value->targets.any{it.id==value}};fit(true)
         val destination=target;val toDistance=if(selected==null)(fitted*.45).coerceIn(minimum,maximum)else distance
         if(reduceMotion){opening=null;distance=toDistance;return}
-        opening=Opening(from,destination,fromDistance,toDistance);target=from;distance=fromDistance
+        opening=CameraTransition(from,destination,fromDistance,toDistance,pitch,pitch,azimuth,azimuth,1_500_000_000L,arcLift=0.0,isOpening=true);target=from;distance=fromDistance
     }
     fun advanceOpening(timestamp:Long):Boolean {
         require(timestamp>=0)
         val value=opening?:return false
-        value.previous?.let{value.elapsed=(value.elapsed+(timestamp-it).coerceIn(0,1_500_000_000)).coerceAtMost(1_500_000_000)}
+        value.previous?.let{value.elapsed=(value.elapsed+(timestamp-it).coerceIn(0,value.durationNs)).coerceAtMost(value.durationNs)}
         value.previous=timestamp;applyOpening(value)
         return true
     }
     fun pauseOpening(){opening?.previous=null}
-    private fun applyOpening(value:Opening){
-        val p=(value.elapsed/1_500_000_000.0).coerceIn(0.0,1.0);val eased=p*p*(3-2*p)
-        target=BlockPoint(value.from.x+(value.to.x-value.from.x)*eased,value.from.y+(value.to.y-value.from.y)*eased,value.from.z+(value.to.z-value.from.z)*eased)
+    private fun applyOpening(value:CameraTransition){
+        val p=(value.elapsed/value.durationNs.toDouble()).coerceIn(0.0,1.0)
+        val eased=if(value.isOpening)p*p*(3-2*p) else 1.0-(1.0-p).pow(3)
+        val lift=if(value.arcLift>0.0)sin(PI*p)*value.arcLift else 0.0
+        target=BlockPoint(
+            value.from.x+(value.to.x-value.from.x)*eased,
+            value.from.y+(value.to.y-value.from.y)*eased+lift,
+            value.from.z+(value.to.z-value.from.z)*eased,
+        )
         distance=when{p<=0.0->value.fromDistance;p>=1.0->value.toDistance;else->exp(ln(value.fromDistance)+(ln(value.toDistance)-ln(value.fromDistance))*eased)}
+        pitch=value.fromPitch+(value.toPitch-value.fromPitch)*eased
+        azimuth=value.fromAzimuth+(value.toAzimuth-value.fromAzimuth)*eased
         if(p>=1.0)opening=null
     }
     fun resetView(){opening=null;interior?.let{interiorAzimuth=PI/2;interiorPitch=it.pitch;interiorFov=it.fov;return};pitch=38*PI/180;azimuth=PI/4;fit(true)}

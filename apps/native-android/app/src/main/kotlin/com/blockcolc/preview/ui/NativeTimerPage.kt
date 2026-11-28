@@ -124,19 +124,19 @@ private val TIME_QUOTES = listOf(
 
     // Local direct-gesture draft state for the normal workbench.
     var draftModeName by rememberSaveable(timer.planId,project?.id){
-        mutableStateOf(if(timer.mode==PlanMode.MARATHON)PlanMode.MARATHON.name else PlanMode.ROUNDS.name)
+        mutableStateOf(if(timer.mode in setOf(PlanMode.MARATHON,PlanMode.MINIMAL))PlanMode.MARATHON.name else PlanMode.ROUNDS.name)
     }
     var draftRounds by rememberSaveable(timer.planId,project?.id){
         mutableIntStateOf(timer.totalRounds.coerceIn(1,24))
     }
     var draftEndAt by rememberSaveable(timer.planId,project?.id){
-        mutableStateOf(if(timer.mode==PlanMode.MARATHON)timer.deadline?.let(DomainTime::millis)else null)
+        mutableStateOf(if(timer.mode in setOf(PlanMode.MARATHON,PlanMode.MINIMAL))timer.deadline?.let(DomainTime::millis)else null)
     }
     LaunchedEffect(timer.planId,timer.mode,timer.totalRounds,timer.deadline){
         if(timer.planId!=null&&timer.surface==TimerSurface.PREPARED){
-            draftModeName=if(timer.mode==PlanMode.MARATHON)PlanMode.MARATHON.name else PlanMode.ROUNDS.name
+            draftModeName=if(timer.mode in setOf(PlanMode.MARATHON,PlanMode.MINIMAL))PlanMode.MARATHON.name else PlanMode.ROUNDS.name
             draftRounds=timer.totalRounds.coerceIn(1,24)
-            draftEndAt=if(timer.mode==PlanMode.MARATHON)timer.deadline?.let(DomainTime::millis)else null
+            draftEndAt=if(timer.mode in setOf(PlanMode.MARATHON,PlanMode.MINIMAL))timer.deadline?.let(DomainTime::millis)else null
         }
     }
     val draftMode=if(draftModeName==PlanMode.MARATHON.name)PlanMode.MARATHON else PlanMode.ROUNDS
@@ -151,7 +151,14 @@ private val TIME_QUOTES = listOf(
     val focusMinutes=if(project?.habit==true&&draftMode==PlanMode.ROUNDS)s.preferences.habitFocusMinutes else s.preferences.focusMinutes
     val roundMs=s.plannedFocusMs?.takeIf{timer.surface !in setOf(TimerSurface.IDLE,TimerSurface.PREPARED)}?:(focusMinutes*60000L)
     val breakMs=s.preferences.breakMinutes*60000L
-    val effectiveEndAt=if(draftMode==PlanMode.MARATHON)(draftEndAt?.takeIf{it>now}?:(Math.floorDiv(now,60000L)*60000L+roundMs))else null
+    // End-Time mode starts at current time (null selection) so sliding up begins
+    // smoothly from now with ZERO jump, matching Minimal Mode!
+    val selectedEndAt=if(draftMode==PlanMode.MARATHON)draftEndAt?.takeIf{it>now} else null
+    var endDetentRound by rememberSaveable(timer.planId,project?.id){mutableStateOf<Int?>(null)}
+    LaunchedEffect(selectedEndAt,draftMode){if(draftMode!=PlanMode.MARATHON||selectedEndAt==null)endDetentRound=null}
+    val activeEndDetent=if(draftMode==PlanMode.MARATHON&&selectedEndAt!=null){
+        endDetentRound?:ClockSelection.matchingDetentRound(selectedEndAt,now,s.preferences.focusMinutes,s.preferences.breakMinutes)
+    }else null
 
     fun begin(){
         val owner=project?:return
@@ -160,17 +167,19 @@ private val TIME_QUOTES = listOf(
             return
         }
         val unchangedPrepared=s.planId!=null&&timer.surface==TimerSurface.PREPARED&&
-            timer.mode==draftMode&&
-            (draftMode==PlanMode.MARATHON&&timer.deadline?.let(DomainTime::millis)==draftEndAt||
-                draftMode==PlanMode.ROUNDS&&timer.totalRounds==draftRounds&&timer.subtaskId==task?.id)
+            (draftMode==PlanMode.MARATHON&&timer.mode in setOf(PlanMode.MARATHON,PlanMode.MINIMAL)&&timer.deadline?.let(DomainTime::millis)==selectedEndAt||
+                draftMode==PlanMode.ROUNDS&&timer.mode==PlanMode.ROUNDS&&timer.totalRounds==draftRounds&&timer.subtaskId==task?.id)
         if(unchangedPrepared){
             start.submit{runtime.startPlan(it)}
             return
         }
         val replacing=s.planId.takeIf{timer.surface==TimerSurface.PREPARED}
         val draft=if(draftMode==PlanMode.MARATHON){
-            val targetEnd=effectiveEndAt?:return
-            FocusDraft(owner.id,null,PlanMode.MARATHON,DraftSchedule.EndAt(targetEnd),replacing)
+            val targetEnd=selectedEndAt?:return
+            // End-time focus always defers settlement (PlanMode.MINIMAL) so BOTH
+            // large projects and habits finish into the unified report rather than
+            // auto-advancing the page's active subtask or habit.
+            FocusDraft(owner.id,null,PlanMode.MINIMAL,DraftSchedule.EndAt(targetEnd),replacing)
         }else{
             FocusDraft(owner.id,if(owner.habit)null else task?.id,PlanMode.ROUNDS,DraftSchedule.Rounds(draftRounds),replacing)
         }
@@ -188,22 +197,24 @@ private val TIME_QUOTES = listOf(
     val todayGoal=s.workspace?.todayGoal
     val remainingGoal=todayGoal?.let{ClockSelection.remainingGoalRounds(it.enabled,it.target,it.completed)}
     val goalReachedByDraft=draftMode==PlanMode.ROUNDS&&remainingGoal!=null&&draftRounds==remainingGoal
+    val clockPineHighlight=goalReachedByDraft||activeEndDetent!=null
 
     val roundsTotalFocusMs=roundMs*draftRounds
     val roundsSpanMs=roundsTotalFocusMs+breakMs*(draftRounds-1)
     val roundsEndLabel=formalEndLabel(now+roundsSpanMs,now)
-    val marathonSchedule=effectiveEndAt?.let{EndTimeSchedule.forDuration((it-now).coerceAtLeast(1L),s.preferences.focusMinutes,s.preferences.breakMinutes)}
+    val marathonSchedule=selectedEndAt?.let{EndTimeSchedule.forDuration((it-now).coerceAtLeast(1L),s.preferences.focusMinutes,s.preferences.breakMinutes)}
     val endClockFormat=remember{DateTimeFormatter.ofPattern("HH:mm")}
     val zone=remember{ZoneId.systemDefault()}
-    val marathonClockText=effectiveEndAt?.let{Instant.ofEpochMilli(it).atZone(zone).format(endClockFormat)}?:formalClock(roundMs)
+    val marathonClockText=Instant.ofEpochMilli(selectedEndAt?:now).atZone(zone).format(endClockFormat)
     val workbenchClock=if(draftMode==PlanMode.MARATHON)marathonClockText else formalClock(roundsTotalFocusMs)
     val startLabel=when{
+        draftMode==PlanMode.MARATHON&&selectedEndAt==null->ui.text("上下滑动设定结束时间")
         draftMode==PlanMode.MARATHON->ui.text("开始专注至 {0}",marathonClockText)
         draftRounds==1->ui.text("开始 1 轮")
         else->ui.text("开始 {0} 轮",draftRounds)
     }
     val startTag=if(draftMode==PlanMode.MARATHON){
-        "${((effectiveEndAt?.minus(now)?:roundMs)/60_000L).coerceAtLeast(1L)} MIN"
+        selectedEndAt?.let{"${((it-now)/60_000L).coerceAtLeast(1L)} MIN"}
     }else{
         "${(roundsSpanMs/60_000L).coerceAtLeast(1L)} MIN"
     }
@@ -296,7 +307,7 @@ private val TIME_QUOTES = listOf(
                 return@BoxWithConstraints
             }
             val compact=panelHeight<310.dp
-            val canStartNow=project.canStart&&!s.busy&&(draftMode==PlanMode.MARATHON||project.habit||task!=null)
+            val canStartNow=project.canStart&&!s.busy&&(if(draftMode==PlanMode.MARATHON)selectedEndAt!=null else project.habit||task!=null)
 
             // Vertical-only clock drag (NEVER claims horizontal gestures -> zero page-swipe conflict!)
             val currentRounds by rememberUpdatedState(draftRounds)
@@ -379,10 +390,12 @@ private val TIME_QUOTES = listOf(
                                     dwellUntil=stamp+ClockSelection.DWELL_MS
                                     anchorY=change.position.y
                                     baseEnd=next
+                                    endDetentRound=detent.round
                                     sparkSerial++
                                     view.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
                                     NativeTactileAudio.tick(context,1360f)
                                 }else if(next!=selectedEnd){
+                                    endDetentRound=next?.let{ClockSelection.matchingDetentRound(it,nowAnchor,currentFocusMin,currentBreakMin)}
                                     NativeTactileAudio.tick(context,1040f)
                                 }
                                 if(next!=selectedEnd){
@@ -458,7 +471,7 @@ private val TIME_QUOTES = listOf(
                                 scaleY=clockScale.value
                             },
                             style=heroStyle,
-                            color=if(goalReachedByDraft)colors.primary else colors.onBackground,
+                            color=if(clockPineHighlight)colors.primary else colors.onBackground,
                             maxLines=1,
                         )
                         s.workspace?.let{NativeOccasionEmblems(it.today,0,it.settings.birthday)}
@@ -480,10 +493,18 @@ private val TIME_QUOTES = listOf(
                             }
                         }
                     }else{
-                        val info=if(draftEndAt!=null&&marathonSchedule!=null){
-                            ui.text("共 {0} 轮 · {1}",marathonSchedule.rounds,formatDuration((draftEndAt!!-now).coerceAtLeast(60_000L)))
+                        val info=if(selectedEndAt!=null&&marathonSchedule!=null){
+                            ui.text("共 {0} 轮 · {1}",marathonSchedule.rounds,formatDuration((selectedEndAt-now).coerceAtLeast(60_000L)))
                         }else ui.text("上下滑动设定结束时间")
-                        NativeText(info,NativeTextRole.CAPTION,color=if(draftEndAt!=null)colors.primary else colors.onSurfaceVariant,maxLines=1)
+                        Row(
+                            verticalAlignment=Alignment.CenterVertically,
+                            horizontalArrangement=Arrangement.spacedBy(6.dp),
+                        ){
+                            if(activeEndDetent!=null){
+                                PixelGlyph("target",Modifier.size(14.dp),colors.primary)
+                            }
+                            NativeText(info,NativeTextRole.CAPTION,color=if(activeEndDetent!=null)colors.primary else colors.onSurfaceVariant,maxLines=1)
+                        }
                     }
                     if(timer.mayCancelUnstarted){
                         FormalTextAction(ui.text("取消本次计划"),"close",{start.submit{runtime.decideFocus(FocusDecision.Cancel(),it)}},Modifier.padding(top=4.dp),!start.busy&&!s.busy)

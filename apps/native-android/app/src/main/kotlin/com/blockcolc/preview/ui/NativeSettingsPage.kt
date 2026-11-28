@@ -61,7 +61,30 @@ import com.blockcolc.preview.world.automaticQuality
             NativeSeparator()
             NativeSettingAnchor("字体"){
                 NativeSettingsOptionTitle(ui.text("字体"))
-                NativeSegments(listOf("pixel" to ui.text("像素字体"),"system" to ui.text("系统字体"),"mixed" to ui.text("混合字体")),prefs.fontStyle,{v->update{it.copy(fontStyle=v)}},!s.preferencesReadFailed)
+                val pixelFont=remember{androidx.compose.ui.text.font.FontFamily(androidx.compose.ui.text.font.Font(com.blockcolc.preview.R.font.fusion_pixel_12px_zh_hans,androidx.compose.ui.text.font.FontWeight.Normal))}
+                val baseLabel=MaterialTheme.typography.labelLarge
+                val pixelStyle=remember(pixelFont,baseLabel){baseLabel.copy(fontFamily=pixelFont,fontWeight=androidx.compose.ui.text.font.FontWeight.Normal,fontSynthesis=androidx.compose.ui.text.font.FontSynthesis.None)}
+                val systemStyle=remember(baseLabel){baseLabel.copy(fontFamily=androidx.compose.ui.text.font.FontFamily.Default,fontWeight=androidx.compose.ui.text.font.FontWeight.Normal,fontSynthesis=androidx.compose.ui.text.font.FontSynthesis.All)}
+                val mixedLabel=ui.text("混合字体")
+                val mixedAnnotated=remember(mixedLabel,pixelFont,ui.language){
+                    val splitAt=(if(ui.language=="en")(mixedLabel.length+1)/2 else mixedLabel.length/2).coerceIn(1,mixedLabel.length)
+                    androidx.compose.ui.text.buildAnnotatedString{
+                        pushStyle(androidx.compose.ui.text.SpanStyle(fontFamily=pixelFont,fontWeight=androidx.compose.ui.text.font.FontWeight.Normal,fontSynthesis=androidx.compose.ui.text.font.FontSynthesis.None))
+                        append(mixedLabel.substring(0,splitAt))
+                        pop()
+                        pushStyle(androidx.compose.ui.text.SpanStyle(fontFamily=androidx.compose.ui.text.font.FontFamily.Default,fontWeight=androidx.compose.ui.text.font.FontWeight.Normal,fontSynthesis=androidx.compose.ui.text.font.FontSynthesis.All))
+                        append(mixedLabel.substring(splitAt))
+                        pop()
+                    }
+                }
+                NativeSegments(
+                    listOf("pixel" to ui.text("像素字体"),"system" to ui.text("系统字体"),"mixed" to mixedLabel),
+                    prefs.fontStyle,
+                    {v->update{it.copy(fontStyle=v)}},
+                    !s.preferencesReadFailed,
+                    optionTextStyles=mapOf("pixel" to pixelStyle,"system" to systemStyle,"mixed" to systemStyle),
+                    optionAnnotatedLabels=mapOf("mixed" to mixedAnnotated),
+                )
             }
             NativeSeparator()
             NativeSettingAnchor("极简模式"){NativeToggle(ui.text("极简模式"),value=prefs.minimalMode,enabled=!s.preferencesReadFailed){v->update{it.copy(minimalMode=v)}}}

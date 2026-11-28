@@ -57,7 +57,7 @@ import java.util.concurrent.TimeUnit
  * presenting a newly requested settlement or lighting quality. */
 internal val LocalColdWorldCacheTag=staticCompositionLocalOf<String?>{null}
 
-@Composable fun NativeWorldHost(runtime:PreviewRuntime,visible:Boolean,quality:String,modifier:Modifier=Modifier,worldColor:SourceWorldColor=SourceWorldColor(),atmosphere:NativeAtmosphereFacts?,buildingCondition:Int?=null,outlineVisibility:String="current",interaction:NativeWorldInteractionState=remember{NativeWorldInteractionState()},labels:Map<String,String> = emptyMap(),resourceSelection:ResourceWorldSelection?=ResourceWorldSelection(),onReady:(Boolean)->Unit={},room:com.blockcolc.presentation.RoomPresentation?=null,retainSurface:Boolean=false,coverVisible:Boolean=visible,worldDisplayMode:String="settlement",singleBuildingBackdrop:String="maquette",activeProjectId:String?=null,darkTheme:Boolean=false,showBuiltinHud:Boolean=false) {
+@Composable fun NativeWorldHost(runtime:PreviewRuntime,visible:Boolean,quality:String,modifier:Modifier=Modifier,worldColor:SourceWorldColor=SourceWorldColor(),atmosphere:NativeAtmosphereFacts?,buildingCondition:Int?=null,outlineVisibility:String="current",interaction:NativeWorldInteractionState=remember{NativeWorldInteractionState()},labels:Map<String,String> = emptyMap(),resourceSelection:ResourceWorldSelection?=ResourceWorldSelection(),onReady:(Boolean)->Unit={},room:com.blockcolc.presentation.RoomPresentation?=null,retainSurface:Boolean=false,coverVisible:Boolean=visible,worldDisplayMode:String="settlement",singleBuildingBackdrop:String="maquette",activeProjectId:String?=null,darkTheme:Boolean=false,showBuiltinHud:Boolean=false,holdConstructionUpdates:Boolean=false) {
     val context=LocalContext.current;val ui=LocalNativeUi.current
     val cacheTag=LocalColdWorldCacheTag.current
     val narrative=WorldDisplayNarrative.fromWire(worldDisplayMode)
@@ -69,7 +69,19 @@ internal val LocalColdWorldCacheTag=staticCompositionLocalOf<String?>{null}
     val nativeView=androidx.compose.ui.platform.LocalView.current
     var measuredBounds by remember{mutableStateOf(Rect.Zero)}
     val worldBounds=measuredBounds
-    var input by remember(runtime){mutableStateOf(runtime.committedWorld)}
+    var latestWorld by remember(runtime){mutableStateOf(runtime.committedWorld)}
+    var heldWorld by remember(runtime){mutableStateOf(runtime.committedWorld)}
+    val canHold=holdConstructionUpdates&&heldWorld!=null&&
+        latestWorld?.identity?.database==heldWorld?.identity?.database&&
+        latestWorld?.identity?.replacementGeneration==heldWorld?.identity?.replacementGeneration
+    LaunchedEffect(latestWorld,holdConstructionUpdates){
+        if(!holdConstructionUpdates||heldWorld==null||
+            latestWorld?.identity?.database!=heldWorld?.identity?.database||
+            latestWorld?.identity?.replacementGeneration!=heldWorld?.identity?.replacementGeneration){
+            heldWorld=latestWorld
+        }
+    }
+    val input=if(canHold)heldWorld else latestWorld
     val lifecycle=remember(context){generateSequence(context){(it as? android.content.ContextWrapper)?.baseContext}.filterIsInstance<androidx.lifecycle.LifecycleOwner>().firstOrNull()?.lifecycle}
     var foreground by remember{mutableStateOf(lifecycle?.currentState?.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)?:true)}
     val captureRequested=backdrop?.requested==true
@@ -86,6 +98,22 @@ internal val LocalColdWorldCacheTag=staticCompositionLocalOf<String?>{null}
     LaunchedEffect(narrative,singleBackdrop,singleOwnerId){
         if(narrative==WorldDisplayNarrative.SINGLE)interaction.exitInterior()
         interaction.clearCameraMoved()
+    }
+    var lastSettlementProject by remember(owner){mutableStateOf<String?>(null)}
+    LaunchedEffect(activeProjectId,narrative,owner.hasScene,owner.opening,interaction.indoors,owner.targetIds){
+        if(narrative!=WorldDisplayNarrative.SETTLEMENT){
+            lastSettlementProject=null
+            return@LaunchedEffect
+        }
+        if(activeProjectId==null)return@LaunchedEffect
+        if(lastSettlementProject==null){
+            if(owner.hasScene&&!owner.opening)lastSettlementProject=activeProjectId
+            return@LaunchedEffect
+        }
+        if(activeProjectId!=lastSettlementProject&&owner.hasScene&&!owner.opening&&!interaction.indoors&&activeProjectId in owner.targetIds){
+            lastSettlementProject=activeProjectId
+            interaction.focusWithoutMemory(activeProjectId)
+        }
     }
     SideEffect{
         backdrop?.ready=owner.hasScene&&!owner.loading&&!owner.error&&appearanceReady
@@ -109,7 +137,7 @@ internal val LocalColdWorldCacheTag=staticCompositionLocalOf<String?>{null}
         owner.clip(clipBottom)
         owner.backdrop(backdrop,visible&&foreground&&captureRequested,worldBounds)
     }
-    DisposableEffect(runtime,owner){val unsubscribe=runtime.subscribeWorld{input=it};onDispose{unsubscribe();backdrop?.retryWorld={};owner.close()}}
+    DisposableEffect(runtime,owner){val unsubscribe=runtime.subscribeWorld{latestWorld=it};onDispose{unsubscribe();backdrop?.retryWorld={};owner.close()}}
     DisposableEffect(lifecycle){val observer=androidx.lifecycle.LifecycleEventObserver{_,event->
         if(event==androidx.lifecycle.Lifecycle.Event.ON_START)foreground=true else if(event==androidx.lifecycle.Lifecycle.Event.ON_STOP)foreground=false
     };lifecycle?.addObserver(observer);onDispose{lifecycle?.removeObserver(observer)}}
@@ -143,7 +171,7 @@ internal val LocalColdWorldCacheTag=staticCompositionLocalOf<String?>{null}
         // Leave the room before focusing an outdoor owner. The render queue
         // otherwise rejects that focus while its indoor camera is still live.
         owner.interior(interaction.indoors&&narrative==WorldDisplayNarrative.SETTLEMENT,furniture)
-        owner.navigate(if(narrative==WorldDisplayNarrative.SINGLE)null else interaction.selected,interaction.resetVersion)
+        owner.navigate(if(narrative==WorldDisplayNarrative.SINGLE)null else interaction.selected,interaction.resetVersion,animate=narrative==WorldDisplayNarrative.SETTLEMENT)
     }
     var slowRoomTransition by remember(owner){mutableStateOf(false)}
     LaunchedEffect(owner.roomLoading){
@@ -173,11 +201,19 @@ internal val LocalColdWorldCacheTag=staticCompositionLocalOf<String?>{null}
                     it.importantForAccessibility=if(visible)View.IMPORTANT_FOR_ACCESSIBILITY_AUTO else View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
                 })
         }}
+        val singleVeilAlpha by androidx.compose.animation.core.animateFloatAsState(
+            targetValue=if(owner.singleSwitching&&narrative==WorldDisplayNarrative.SINGLE&&!ui.reduceMotion)0.76f else 0f,
+            animationSpec=androidx.compose.animation.core.tween(if(owner.singleSwitching)110 else 280,easing=androidx.compose.animation.core.FastOutSlowInEasing),
+            label="single-building-switch-veil",
+        )
+        if(visible&&singleVeilAlpha>0.005f&&owner.hasScene&&!owner.loading&&appearanceReady){
+            Box(Modifier.fillMaxWidth().padding(top=with(density){projectionTop.toDp()}).height(with(density){projectionHeight.coerceAtLeast(1).toDp()}).background(MaterialTheme.colorScheme.background.copy(alpha=singleVeilAlpha)))
+        }
         if(coverVisible&&(!appearanceReady||owner.loading||!owner.hasScene||owner.roomLoading&&slowRoomTransition||owner.roomError||owner.error))Box(Modifier.fillMaxWidth().padding(top=with(density){projectionTop.toDp()}).height(with(density){projectionHeight.coerceAtLeast(1).toDp()}).background(MaterialTheme.colorScheme.background.copy(alpha=if(owner.hasScene&&appearanceReady).88f else 1f)),contentAlignment=Alignment.Center){
             Column(horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.spacedBy(12.dp)){
                 if(owner.error){Text(ui.text("世界暂未准备好"));NativeAction(ui.text("重试"),owner::retry,primary=false,icon="reset")}
                 else if(owner.roomError){Text(ui.text("书房暂未准备好"));NativeAction(ui.text("重试"),owner::retryRoom,primary=false,icon="reset")}
-                else NativeLoadingScene(ui.text("正在建造世界"),Modifier.fillMaxSize(),embedded=true)
+                else NativeLoadingScene(ui.text("正在建造世界"),Modifier.fillMaxSize(),embedded=true,progress=owner.loadProgress)
             }
         }
         val hudReady=showBuiltinHud&&visible&&foreground&&owner.hasScene&&!owner.loading&&!owner.error&&appearanceReady
@@ -317,6 +353,8 @@ internal class NativeWorldHostOwner(context:Context,private val interaction:Nati
     var loading by mutableStateOf(false);private set
     var error by mutableStateOf(false);private set
     var hasScene by mutableStateOf(false);private set
+    var loadProgress by mutableFloatStateOf(0.18f);private set
+    var singleSwitching by mutableStateOf(false);private set
     private var projectionHeight=0;private var projectionTop=0;private var projectionEpoch=0L
     private var backdrop:NativeBackdrop?=null
     fun projectionWindow(height:Int,top:Int,target:NativeBackdrop?){
@@ -360,7 +398,7 @@ internal class NativeWorldHostOwner(context:Context,private val interaction:Nati
             (context as? android.app.Activity)?.intent?.getBooleanExtra("p4StockShadows", false) == true
         val next=NativeWorldView.generated(context,input,{generation,revision,presentation->
             if(!closed&&key==viewKey&&active&&presentation==pendingPresentation&&queued==pendingKey&&target?.sceneIdentity?.let{
-                    it.replacementGeneration==generation&&it.revision==revision}==true){residentKey=pendingKey;loading=false;hasScene=true
+                    it.replacementGeneration==generation&&it.revision==revision}==true){residentKey=pendingKey;loading=false;hasScene=true;loadProgress=1f;singleSwitching=false
                 settlementChanging=false;qualityChanging=false
                 pendingKey?.request?.let{interaction.scene(it.database,it.replacementGeneration,targetIds)}
                 if(visible)playOpening()
@@ -372,7 +410,7 @@ internal class NativeWorldHostOwner(context:Context,private val interaction:Nati
             // A callback from a retired engine must not mark its successor as
             // broken. A fatal renderer cannot be repaired by updateGenerated.
             if(!closed&&key==viewKey&&(status.startsWith("ERROR:")||status=="NATIVE_UPDATE_ERROR")){
-                stopEnvironment();opening=false;recreateNeeded=true;residentKey=null;pendingKey=null;queued=null;loading=false;error=true
+                stopEnvironment();opening=false;singleSwitching=false;recreateNeeded=true;residentKey=null;pendingKey=null;queued=null;loading=false;error=true
             }
         },{generation,revision,presentation,id->
             val resident=residentKey?.request
@@ -381,12 +419,18 @@ internal class NativeWorldHostOwner(context:Context,private val interaction:Nati
         view=next;roomScene?.let{candidate->val ticket=roomEpoch;next.interior(candidate,onPresented={if(!closed&&roomEpoch==ticket&&view===next)roomLoading=false})}
         presentProjection();next.visibleRegion(clipBottom);pendingView=null;next.navigate(selected);if(!openingConsumed)next.prepareOpening(openingTarget);next.worldColor(worldColor);if(active)next.resume();return next
     }
-    fun navigate(id:String?,version:Long){if(closed)return;val reset=version!=resetVersion;selected=id;resetVersion=version;view?.navigate(id,reset)}
+    fun navigate(id:String?,version:Long,animate:Boolean=false){
+        if(closed)return
+        val reset=version!=resetVersion
+        val changed=id!=selected
+        selected=id;resetVersion=version
+        view?.navigate(id,reset,animate=animate&&!reset&&changed)
+    }
     fun color(value:SourceWorldColor){if(closed||worldColor==value)return;worldColor=value;view?.worldColor(value)}
     fun atmosphere(value:NativeAtmosphereFacts?){
         if(closed||atmosphere==value)return
-        atmosphere=value;stopEnvironment()
-        if(active&&hasScene)startEnvironment(pendingPresentation)
+        atmosphere=value;appliedAtmosphere=null;stopEnvironment()
+        if(active&&hasScene&&residentKey==queued)startEnvironment(pendingPresentation)
     }
     private fun playOpening(){
         if(openingConsumed)return
@@ -403,9 +447,12 @@ internal class NativeWorldHostOwner(context:Context,private val interaction:Nati
         if(closed)return
         val changedSettlement=target!=null&&input!=null&&(target?.environmentStyle!=input.environmentStyle||this.narrative!=narrative||(narrative==WorldDisplayNarrative.SINGLE&&this.singleBackdrop!=singleBackdrop))
         val changedQuality=target!=null&&this.quality!=quality
+        val switchingSingle=narrative==WorldDisplayNarrative.SINGLE&&this.narrative==WorldDisplayNarrative.SINGLE&&hasScene&&!changedSettlement&&!changedQuality&&this.singleOwnerId!=null&&singleOwnerId!=null&&this.singleOwnerId!=singleOwnerId
+        if(this.buildingCondition!=buildingCondition)appliedAtmosphere=null
         if(changedSettlement)settlementChanging=true
         if(changedQuality)qualityChanging=true
         if(changedSettlement||changedQuality)error=false
+        if(switchingSingle)singleSwitching=true
         if(this.resourceSelection!=resourceSelection)preparedStudy=null
         this.target=input;this.quality=quality;this.buildingCondition=buildingCondition;this.outlineVisibility=outlineVisibility;this.resourceSelection=resourceSelection;preparationAllowed=allowPreparation
         this.narrative=narrative;this.singleBackdrop=singleBackdrop;this.singleOwnerId=singleOwnerId;this.darkTheme=darkSurface
@@ -414,13 +461,13 @@ internal class NativeWorldHostOwner(context:Context,private val interaction:Nati
         this.visible=visible;keepPreparingHidden=prepareHidden
         active=visible||prepareHidden&&(settlementChanging||qualityChanging)&&!error
         if(!active){
-            if(wasActive){session.cancelPending();stopEnvironment();queued=null;if(residentKey==null)pendingPresentation= -1;view?.pause()}
+            if(wasActive){session.cancelPending();stopEnvironment();singleSwitching=false;queued=null;if(residentKey==null)pendingPresentation= -1;view?.pause()}
             return
         }
         if(!wasActive||visible&&!wasVisible)view?.resume()
         if(input==null)return
         val changingAppearance=settlementChanging||qualityChanging
-        if(changingAppearance)loading=true
+        if(changingAppearance){loading=true;loadProgress=0.18f}
         if(!allowPreparation&&!hasScene){loading=true;return}
         val selectedResources=if(quality=="paper")paperResources else resourceSelection?:run{loading=!hasScene||changingAppearance;return}
         val facts=atmosphere?.takeIf{narrative==WorldDisplayNarrative.SINGLE||it.inputs.ocean==(input.environmentStyle=="ocean-island")}?:run{loading=!hasScene||changingAppearance;return}
@@ -430,18 +477,20 @@ internal class NativeWorldHostOwner(context:Context,private val interaction:Nati
         val effectiveDark=narrative==WorldDisplayNarrative.SINGLE&&singleBackdrop==SingleBuildingBackdrop.MAQUETTE&&darkSurface
         val key=PreparationKey(input.sceneIdentity,input.environmentStyle,quality,buildingCondition,outlineVisibility,selectedResources,narrative,singleBackdrop,singleOwnerId,effectiveDark);if(queued==key)return
         if(hasScene&&view!=null&&!recreateNeeded&&!error&&residentKey==key&&pendingKey==key){
-            queued=key;loading=false;settlementChanging=false;qualityChanging=false
+            queued=key;loading=false;loadProgress=1f;singleSwitching=false;settlementChanging=false;qualityChanging=false
             if(visible){playOpening();startEnvironment(pendingPresentation)}else view?.pause()
             return
         }
-        stopEnvironment();queued=key;loading=!hasScene||changingAppearance;error=false
+        stopEnvironment();queued=key;loading=!hasScene||changingAppearance;if(loading)loadProgress=0.18f;error=false
         val tier=when(quality){"paper"->NativeLightingQuality.PAPER;"performance"->NativeLightingQuality.LOW;"balanced"->NativeLightingQuality.BALANCED;else->NativeLightingQuality.HIGH}
         val aspect=width.toDouble()/projectionHeight
+        val priorSpatial=spatial
         session.request(input.sceneIdentity,input.document,WorldTerrainOptions(rendering=WorldRenderOptions(facts.time,zone=facts.inputs.zone,quality=tier,aspect=aspect,worldColor=worldColor,
             weather=facts.inputs.weather,coordinates=facts.inputs.coordinates,atmosphere=facts,outlines=outlines,
             narrative=narrative,singleBackdrop=singleBackdrop,singleOwnerId=singleOwnerId,darkSurface=effectiveDark),buildingCondition=buildingCondition,resourceSelection=selectedResources),onReady={prepared->
             if(!closed&&active&&queued==key&&target?.sceneIdentity==prepared.identity){
                 val frame=checkNotNull(prepared.frame);val changedDatabase=database!=prepared.identity.database;pendingKey=key;pendingPresentation=frame.scene.presentationIdentity
+                appliedAtmosphere=null
                 targetIds=frame.scene.orbitTargets.map{it.id}
                 val roomChanged=roomCamera?.target!=frame.scene.camera.target||roomTargets!=frame.scene.orbitTargets
                 roomCamera=frame.scene.camera;roomTargets=frame.scene.orbitTargets
@@ -450,29 +499,35 @@ internal class NativeWorldHostOwner(context:Context,private val interaction:Nati
                 cloudContext=frame.cloudContext;cloudKey=frame.clouds.key
                 cloudRandomTail=frame.clouds.randomTail;precipitationContext=frame.precipitationContext;precipitationKey=frame.precipitation.key
                 if(changedDatabase||narrative==WorldDisplayNarrative.SETTLEMENT&&spatial!=frame.spatialKey)loading=true
+                val animateSingleArrival=narrative==WorldDisplayNarrative.SINGLE&&priorSpatial!=null&&priorSpatial.startsWith("single:")&&priorSpatial!=frame.spatialKey
                 if(view==null||changedDatabase||recreateNeeded){
                     viewKey=null;view?.close();view=null;hasScene=false;loading=true
                     pendingView=frame.scene;database=prepared.identity.database;recreateNeeded=false;viewKey=++epoch
-                }else {view!!.updateGenerated(frame.scene,spatial!=frame.spatialKey);view!!.worldColor(worldColor)}
+                }else {view!!.updateGenerated(frame.scene,spatial!=frame.spatialKey,animateSingleArrival=animateSingleArrival);view!!.worldColor(worldColor)}
                 spatial=frame.spatialKey
             }
-        },onFailure={failure->if(!closed&&active&&queued==key&&target?.sceneIdentity==input.sceneIdentity){loading=false;error=true;queued=null;android.util.Log.e("BlockcolcP3","Native world preparation failed",failure)}})
+        },onFailure={failure->if(!closed&&active&&queued==key&&target?.sceneIdentity==input.sceneIdentity){loading=false;singleSwitching=false;error=true;queued=null;android.util.Log.e("BlockcolcP3","Native world preparation failed",failure)}},
+            onProgress={fraction->if(!closed&&queued==key)loadProgress=maxOf(loadProgress,fraction)})
     }
     private fun stopEnvironment(){environmentEpoch++;environmentTask?.cancel(true);environmentTask=null}
     private fun startEnvironment(presentation:Long){
         if(environmentTask!=null||closed||!active||presentation!=pendingPresentation)return
-        if(narrative==WorldDisplayNarrative.SINGLE&&singleBackdrop==SingleBuildingBackdrop.MAQUETTE)return
+        val isMaquette=narrative==WorldDisplayNarrative.SINGLE&&singleBackdrop==SingleBuildingBackdrop.MAQUETTE
         val before=environmentContext?:return
         val facts=atmosphere?.takeIf{it.inputs.ocean==before.ocean}?:return
         if(appliedAtmosphere?.let{it.first==presentation&&it.second==facts}==true)return
         val sampling=before.adopting(facts);environmentContext=sampling
         val cloudSampling=cloudContext?:return;val rainSampling=precipitationContext?:return;val epoch=environmentEpoch
         val beforeCloud=cloudKey;val beforeRain=precipitationKey;val beforeRandom=cloudRandomTail
+        val darkForMaquette=darkTheme
         environmentTask=environmentWorker.schedule({
                 val result=runCatching{
-                    val sample=sampling.project(facts);val paper=sampling.quality==NativeLightingQuality.PAPER
-                    val key=NativeCloudCompiler.key(cloudSampling,sample.weather,sampling.quality.cloudDensity,paper)
-                    val cloud=if(key==beforeCloud){environmentClouds.clear();null}else environmentClouds.prepare(cloudSampling,sample.weather,sampling.quality.cloudDensity,paper=paper)
+                    val rawSample=sampling.project(facts);val paper=sampling.quality==NativeLightingQuality.PAPER
+                    val sample=if(isMaquette)NativeWorldPacketCompiler.maquetteEnvironment(rawSample,sampling.quality,darkForMaquette) else rawSample
+                    val cloud=if(isMaquette){environmentClouds.clear();null}else{
+                        val key=NativeCloudCompiler.key(cloudSampling,sample.weather,sampling.quality.cloudDensity,paper)
+                        if(key==beforeCloud){environmentClouds.clear();null}else environmentClouds.prepare(cloudSampling,sample.weather,sampling.quality.cloudDensity,paper=paper)
+                    }
                     val tail=cloud?.randomTail?:beforeRandom
                     val rainKey=NativePrecipitationCompiler.key(rainSampling,sample.weather,sampling.quality.cloudDensity,tail,paper)
                     val rain=if(rainKey==beforeRain){environmentPrecipitation.clear();null}else environmentPrecipitation.prepare(rainSampling,sample.weather,sampling.quality.cloudDensity,tail,paper=paper)

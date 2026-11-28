@@ -32,6 +32,7 @@ import java.util.concurrent.*
     val resources=remember(context){NativeResourceController.get(context)}
     var selection by remember(resources){mutableStateOf(resources.snapshot().selection)}
     DisposableEffect(resources){val unsubscribe=resources.subscribe{selection=it.selection};onDispose{unsubscribe()}}
+    LaunchedEffect(resources){if(!resources.snapshot().ready)resources.refresh()}
     val owner=remember(context,source,dark,ui.reduceMotion,selection){NativeBlueprintPreviewOwner(context,source,dark,ui.reduceMotion,selection)}
     var measuredSize by remember{mutableStateOf(IntSize.Zero)}
     LaunchedEffect(owner,measuredSize){owner.resize(measuredSize.width,measuredSize.height)}

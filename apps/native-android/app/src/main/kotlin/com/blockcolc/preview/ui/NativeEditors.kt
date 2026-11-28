@@ -142,7 +142,7 @@ private data class SubtaskDraft(val id:String,val value:TextFieldValue)
 private data class ManualFocusSheet(val planId:String,val timer:TimerPresentation,val habit:Boolean){
     val resting get()=timer.surface==TimerSurface.REST
     val extending get()=timer.extensionStartedAt!=null
-    val deferred get()=timer.mode in setOf(PlanMode.MINIMAL,PlanMode.MARATHON)
+    val deferred get()=timer.mode==PlanMode.MINIMAL||(timer.mode==PlanMode.MARATHON&&!habit)
 }
 
 @Composable fun NativeManualEditor(open:Boolean,s:WorkspaceUiState,runtime:WorkspaceActions,onClose:()->Unit){
@@ -174,11 +174,10 @@ private data class ManualFocusSheet(val planId:String,val timer:TimerPresentatio
             FormalGlassAction(ui.text("结束并完成本次专注"),{request.submit{runtime.decideFocus(FocusDecision.FinishExtension,it)}},
                 pending=request.busy,enabled=enabled,reading=true)
         }else if(operation==null){
-            NativeText(timer?.taskTitle?:ui.text(if(habit)"习惯专注"else"本次专注"),NativeTextRole.BODY)
+            NativeText(if(deferred)ui.text("结束后统一分配") else timer?.taskTitle?:ui.text(if(habit)"习惯专注"else"本次专注"),NativeTextRole.BODY)
             if(!resting){
                 FormalEndChoice(ui.text("中断本轮"),ui.text("保留已有任务进度，不计完整轮次")+if(deferred||timer.totalRounds>1)ui.text("；本轮计划继续")else"","stop",enabled){operation="interrupt"}
                 val detail=when{
-                    deferred&&habit->if((timer?.completedRounds?:0)+1>=(timer?.totalRounds?:1))"推进当前习惯建筑，并结束本场计划"else"推进当前习惯建筑，并继续本场计划"
                     deferred->if((timer?.completedRounds?:0)+1>=(timer?.totalRounds?:1))"记录本轮，并进入本场统一汇报"else"记录本轮，并继续本场计划"
                     habit->"推进当前习惯建筑，并结束本轮计划"
                     else->"将当前小任务标为完成并结束本轮计划"

@@ -154,22 +154,23 @@ import kotlin.math.*
             // Naked Flush-Left Hero Percentage + Architectural Spec Line
             Column(Modifier.fillMaxWidth(),verticalArrangement=Arrangement.spacedBy(4.dp)){
                 Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.Bottom){
-                    if(current.kind=="habit"){
+                    val heroPercent=if(current.kind=="habit"){
                         val target=(details?.habitTarget?:10).coerceAtLeast(1)
                         val applied=if(details?.awaitingBuilding==true)target else details?.habitApplied?:0
-                        Text("$applied",style=MaterialTheme.typography.displayMedium,color=colors.onBackground,maxLines=1)
-                        NativeText(" / $target",NativeTextRole.TITLE,Modifier.padding(bottom=6.dp,start=4.dp),color=colors.onSurfaceVariant,accent=true)
-                        Spacer(Modifier.weight(1f))
+                        ((applied*100+target/2)/target).coerceIn(0,100)
                     }else{
-                        Text("${(current.progress+50)/100}%",style=MaterialTheme.typography.displayMedium,color=colors.onBackground,maxLines=1)
-                        Spacer(Modifier.weight(1f))
+                        ((current.progress+50)/100).coerceIn(0,100)
                     }
+                    Text("$heroPercent%",style=MaterialTheme.typography.displayMedium,color=colors.onBackground,maxLines=1)
+                    Spacer(Modifier.weight(1f))
                     workspace?.let{NativeOccasionEmblems(it.today,1,it.settings.birthday)}
                 }
                 val blueprintTitle=s.blueprintNames[current.blueprint]?:current.blueprint
                 val summaryLine=if(current.kind=="habit"){
+                    val target=(details?.habitTarget?:10).coerceAtLeast(1)
+                    val applied=if(details?.awaitingBuilding==true)target else details?.habitApplied?:0
                     if(details?.awaitingBuilding==true)ui.text("等待下一座建筑")
-                    else ui.text("第 {0} 座建筑",details?.habitCycle?:1)+" · "+blueprintTitle
+                    else ui.text("第 {0} 座建筑",details?.habitCycle?:1)+" · "+blueprintTitle+" · $applied"+ui.text(" / {0} 轮",target)
                 }else{
                     blueprintTitle+" · "+ui.text("已完成 {0} / {1} 项",current.tasks.count{it.progress>=10000},current.tasks.size)
                 }

@@ -29,6 +29,15 @@ object ClockSelection {
         val minutes=(local.hour*60L+local.minute+steps*5L).coerceIn(0,1435).toInt()
         return timeOfDay(minutes,reference,zone)
     }
+    fun detentEndMs(round:Int,anchor:Long,focusMinutes:Int,breakMinutes:Int):Long {
+        require(round in 1..24&&focusMinutes in 1..180&&breakMinutes in 0..60)
+        val minutes=round*focusMinutes+(round-1)*breakMinutes
+        return Math.floorDiv(anchor,60000)*60000+ceil(minutes/5.0).toLong()*300000
+    }
+    fun matchingDetentRound(endMs:Long,anchor:Long,focusMinutes:Int,breakMinutes:Int):Int? {
+        require(focusMinutes in 1..180&&breakMinutes in 0..60)
+        return (1..24).firstOrNull{abs(detentEndMs(it,anchor,focusMinutes,breakMinutes)-endMs)<=60_000L}
+    }
     fun detent(from:Long,to:Long,anchor:Long,focusMinutes:Int,breakMinutes:Int):RoundDetent? {
         require(focusMinutes in 1..180&&breakMinutes in 0..60)
         val ascending=to>=from
@@ -36,8 +45,7 @@ object ClockSelection {
             if(ascending)boundary>from&&boundary<=to else boundary>to-1&&boundary<=from-1}
         val round=if(ascending)rounds.firstOrNull()else rounds.lastOrNull()
         round?:return null
-        val minutes=round*focusMinutes+(round-1)*breakMinutes
-        val end=Math.floorDiv(anchor,60000)*60000+ceil(minutes/5.0).toLong()*300000
+        val end=detentEndMs(round,anchor,focusMinutes,breakMinutes)
         if(!ascending&&end>=from)return null
         return RoundDetent(round,end)
     }
